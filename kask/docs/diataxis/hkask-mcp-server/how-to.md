@@ -1,174 +1,142 @@
 ---
-title: "hkask-mcp-server — How-To: Common Server Tasks"
+title: "hkask-mcp-server — How-to: Common Server Tasks"
 audience: [developers building or extending hKask MCP servers]
-last_updated: 2026-08-28
-version: "1.2.0"
+last_updated: 2026-09-15
+version: "2.0.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [composition]
 ---
 
-# hkask-mcp-server — How-To: Common Server Tasks
+# hkask-mcp-server — How-to: Common Server Tasks
 
-Procedural recipes for the recurring tasks when building or extending an
-hKask MCP server. Each recipe is self-contained: copy the snippet, adapt the
-names, and run. All recipes assume the framework entry points and types
-re-exported from `hkask_mcp_server.rs:19-35`.
+Use these independent recipes when extending an hKask MCP server. Each recipe points to the current public entry point and its implementation.
 
-## Task index
+## Task map
 
 ```mermaid
-flowchart LR
-    A[Add a required credential] --> B[Open a database]
-    B --> C[Validate tool input]
-    C --> D[Classify an HTTP error]
-    D --> E[Contain a caller path]
-    E --> F[Validate a tool URL]
-    F --> G[Tag a span with ontology]
+flowchart TD
+    A[Declare credentials] --> B[Construct from ServerContext]
+    B --> C[Execute a typed tool]
+    C --> D[Map failures by variant]
+    D --> E[Contain file paths]
+    E --> F[Validate URLs]
+    F --> G[Inspect reg.tool outcome fields]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-010
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:14-22; kask/crates/hkask-mcp-server/src/server/credentials.rs:25-63
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:9-53,126-190; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,253-328,472-498; kask/crates/hkask-mcp-server/src/security.rs:334-395
 status: VERIFIED
 -->
 
-## How-to: Declare a required or optional credential
-
-Use `CredentialRequirement::required` for credentials the server cannot
-function without; `optional` for credentials that enable a degraded mode.
-The bootstrap returns `McpError::MissingCredentials` listing every missing
-required credential before the server struct is constructed
-(`transport.rs:58-71`).
+## Declare required and optional credentials
 
 ```rust
 use hkask_mcp_server::CredentialRequirement;
 
-let credentials = vec![
-    CredentialRequirement::required("HKASK_GITHUB_TOKEN", "GitHub PAT"),
-    CredentialRequirement::optional("HKASK_DB_PATH", "SQLite DB path"),
+let requirements = vec![
+    CredentialRequirement::required("SERVICE_API_KEY", "Service API key"),
+    CredentialRequirement::optional("SERVICE_CACHE_PATH", "Persistent cache path"),
 ];
 ```
 
-Resolution order: `resolve_credential` (`credentials.rs:25-63`) routes
-`HKASK_DB_PASSPHRASE` (the ONE kask passphrase) through its
-dedicated hkask-keystore resolver; every other env var is read from the
-process environment only — there is no keychain fallback for API keys
-(`credentials.rs:36-61`). API keys arrive via env injection performed by
-`build_mcp_server_env` in `kask_bridge` (see the kask_bridge reference doc).
+`required` and `optional` set the `required` field to `true` and `false`, respectively (`kask/crates/hkask-mcp-server/src/server/context.rs:24-53`). Bootstrap resolves every requirement and rejects the complete missing-required set before calling the factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-89`).
 
-## How-to: Open a database from the ServerContext
+API keys resolve from environment variables. `HKASK_DB_PASSPHRASE` alone uses the dedicated hKask keystore resolver (`kask/crates/hkask-mcp-server/src/server/credentials.rs:8-59`).
 
-`ServerContext::open_database` looks up the env var you name in the
-credentials map, resolves the passphrase via the keystore chain, and opens
-the database. If the env var is unset, it falls back to an in-memory database
-(`context.rs:151-160`).
+## Open a database from `ServerContext`
 
 ```rust
-let db = ctx.open_database("HKASK_DB_PATH")?;
+let database = ctx.open_database("SERVICE_DB_PATH")?;
 ```
 
-For servers that need custom DDL (e.g. FTS5 tables), use
-`open_database_with_extensions` (`context.rs:168-186`):
+When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:137-164`).
+
+For custom DDL:
 
 ```rust
-let db = ctx.open_database_with_extensions(
-    "HKASK_DB_PATH",
-    "CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(...);",
+let database = ctx.open_database_with_extensions(
+    "SERVICE_DB_PATH",
+    "CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY);",
 )?;
 ```
 
-The DB passphrase is resolved from the credentials map first, then falls back
-to `resolve_db_passphrase` (`context.rs:139-143`), which itself chains
-`ctx.credentials` → `resolve_credential("HKASK_DB_PASSPHRASE")`
-(`credentials.rs:80-108`).
+The extension-aware path has the same persistent/in-memory split (`kask/crates/hkask-mcp-server/src/server/context.rs:166-190`). For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:61-104`).
 
-## How-to: Validate a tool input identifier
-
-Use `validate_identifier` for tool names, server names, and other
-alphanumeric identifiers. Allowed characters: alphanumeric, `_`, `.`, `-`, `:`
-(`validation.rs:13-34`). For the common 3-line early-return pattern, use the
-`validate_field!` macro (`hkask_mcp_server.rs:69-76`).
+## Execute a tool and preserve typed errors
 
 ```rust
-use hkask_mcp_server::{validate_identifier, McpToolError};
+use hkask_mcp_server::{McpToolError, execute_tool};
+use serde_json::json;
+
+async fn status(&self) -> Result<String, McpToolError> {
+    execute_tool(self, "status", async {
+        Ok(json!({"ready": true}))
+    })
+    .await
+}
+```
+
+The future must return `Result<serde_json::Value, McpToolError>`. `execute_tool` returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). A successful value becomes a `{"content": value}` JSON string (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). A failure remains a typed error; rmcp marks it with `is_error: true` and includes `{"error", "kind"}` as structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
+
+Use the constructor that matches the recovery action:
+
+```rust
+return Err(McpToolError::not_found("record does not exist"));
+```
+
+Constructors cover `internal`, `not_found`, `invalid_argument`, `unavailable`, `permission_denied`, `rate_limited`, and `failed_precondition` (`kask/crates/hkask-mcp-server/src/server/error.rs:53-127`).
+
+## Validate an identifier or path string
+
+For identifiers:
+
+```rust
+use hkask_mcp_server::validate_identifier;
 
 validate_identifier("session_id", &session_id, 256)?;
 ```
 
-For filesystem paths, use `validate_path` instead — it allows legitimate
-filename punctuation but rejects NUL/control characters and parent-directory
-traversal (`validation.rs:43-69`).
+Allowed characters are alphanumeric, `_`, `.`, `-`, and `:`; empty and overlong inputs fail as `invalid_argument` (`kask/crates/hkask-mcp-server/src/server/validation.rs:5-34`).
 
-## How-to: Classify an HTTP error response
-
-`classify_http_error` maps an HTTP status code to a structured `McpToolError`
-kind. Use it after a `reqwest` call fails so the MCP client gets a meaningful
-error classification instead of a blanket `internal` (`http_helpers.rs:15-27`).
+For path syntax:
 
 ```rust
-use hkask_mcp_server::classify_http_error;
+use hkask_mcp_server::validate_path;
 
-let resp = client.get(url).send().await?;
-if !resp.status().is_success() {
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    return Err(classify_http_error("GitHub", status, &body));
-}
+validate_path("output", &output_path, 4096)?;
 ```
 
-Status mapping: `401/403 → permission_denied`, `404 → not_found`,
-`422 → invalid_argument`, `429 → rate_limited`, `502/503 → unavailable`,
-other 5xx → `unavailable`, anything else → `internal` (`http_helpers.rs:18-26`).
-The body is sanitized via `sanitize_error_body` before formatting
-(`http_helpers.rs:16`).
+`validate_path` rejects empty/overlong values, control characters, and parent-directory components (`kask/crates/hkask-mcp-server/src/server/validation.rs:36-69`). Syntax validation does not replace containment.
 
-## How-to: Contain a caller-supplied path under the project root
-
-`contain_for_read` and `contain_for_write` canonicalize a caller-supplied
-path and reject anything that escapes the process cwd (the project root).
-Reads require the target to exist; writes canonicalize leniently so the
-target may not exist yet (`validation.rs:314-323`; lenient canonicalization
-at `:206-234`).
+## Contain and read caller-supplied files
 
 ```rust
-use hkask_mcp_server::contain_for_read;
+use hkask_mcp_server::{MAX_READ_BYTES, contain_for_write, read_capped};
 
-let resolved = contain_for_read(&user_path)?;
-let bytes = std::fs::read(&resolved)?;
+let destination = contain_for_write(&output_path)?;
+let input = read_capped(&input_path, MAX_READ_BYTES)?;
 ```
 
-For a one-call read with a size cap, use `read_capped` — it combines
-containment with a metadata size check before reading, defending against
-CWE-200 (arbitrary file read) and CWE-400 (memory exhaustion)
-(`validation.rs:409-430`). The default cap is `MAX_READ_BYTES = 32 MiB`
-(`validation.rs:168`).
+`contain_for_read` and `contain_for_write` accept paths only under the process working directory, hKask data directory, or artifact directory after canonicalization (`kask/crates/hkask-mcp-server/src/server/validation.rs:253-328`). Writes may target a not-yet-created path; reads require an existing path. `read_capped` checks metadata length before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:472-498`). The default cap is 32 MiB (`kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`).[^cwe22]
 
-```rust
-use hkask_mcp_server::{read_capped, MAX_READ_BYTES};
+If the tool needs the environment-configurable cap, use `hkask_mcp_server::server::resolve_max_read_bytes()` (`kask/crates/hkask-mcp-server/src/server/validation.rs:171-201`). It warns on zero or malformed values and falls back to `MAX_READ_BYTES`.
 
-let bytes = read_capped(&user_path, MAX_READ_BYTES)?;
-```
+## Validate an untrusted URL
 
-## How-to: Validate a tool URL against SSRF
-
-For untrusted URLs (e.g. a `web_extract` tool input), use
-`validate_tool_url_with_dns` — it runs sync scheme/credential/literal-IP
-checks then resolves the hostname via `tokio::net::lookup_host` and rejects
-if any resolved IP is loopback or private (`security.rs:240-244`).
+For a normal tool input:
 
 ```rust
 use hkask_mcp_server::validate_tool_url_with_dns;
 
-validate_tool_url_with_dns(&user_url).await?;
+validate_tool_url_with_dns(&url).await?;
 ```
 
-For user-curated URL lists where the user has explicitly chosen a local
-address (e.g. a self-hosted RSS aggregator), use
-`validate_tool_url_permissive` — it allows private IPs and loopback
-(`security.rs:251-254`). Do NOT use the permissive variant for arbitrary
-untrusted input.
+This root-exported helper checks scheme, embedded credentials, literal destination addresses, and all DNS-resolved addresses (`kask/crates/hkask-mcp-server/src/security.rs:217-266`, `kask/crates/hkask-mcp-server/src/security.rs:341-354`).[^cwe918]
+
+For a user-curated local URL, opt into the permissive helper:
 
 ```rust
 use hkask_mcp_server::validate_tool_url_permissive;
@@ -176,75 +144,61 @@ use hkask_mcp_server::validate_tool_url_permissive;
 validate_tool_url_permissive(&feed_url)?;
 ```
 
-A TOCTOU between DNS resolution and the downstream `reqwest` connect (DNS
-rebinding) remains; closing that requires a custom reqwest connector
-(`security.rs:147-151`).
+It permits private and loopback addresses and must not gate arbitrary untrusted input (`kask/crates/hkask-mcp-server/src/security.rs:48-62`, `kask/crates/hkask-mcp-server/src/security.rs:356-364`).
 
-## How-to: Map an infrastructure or IO error to an McpToolError
-
-Use the canonical per-variant mappers instead of
-`McpToolError::internal(format!("...: {e}"))`, which mis-classifies
-caller-fixable errors as Internal.
-
-- `map_io_error` — `NotFound`/`PermissionDenied` → caller-fixable kinds,
-  everything else → `internal` (`validation.rs:82-90`).
-- `map_join_error` — cancellation → `unavailable`, panic → `internal`
-  (`validation.rs:98-104`).
-- `map_infra_error` — `NotFound` → `not_found`, DB connection failures →
-  `unavailable`, lock poisoning/serialization/IO/query → `internal`
-  (`validation.rs:114-129`).
-- `map_memory_store_error` — wraps `map_infra_error` for HMem/Embedding
-  infra variants; missing entities and centroid embeddings → `not_found`
-  (`validation.rs:139-162`).
+A redirect policy or connect-time validating resolver can use the public `server` module:
 
 ```rust
-use hkask_mcp_server::map_io_error;
-
-let file = std::fs::File::open(&resolved).map_err(|e| map_io_error(e, "open issues db"))?;
+hkask_mcp_server::server::validate_tool_url_literal(&redirect_url)?;
+hkask_mcp_server::server::validate_resolved_addresses(hostname, &addresses)?;
 ```
 
-## How-to: Tag a Regulation span with a domain ontology concept
+The first performs synchronous strict checks without DNS; the second validates the exact resolved addresses used for connection (`kask/crates/hkask-mcp-server/src/security.rs:366-395`).
 
-Use `execute_tool_semantic` with a `&'static str` concept from
-`hkask-bridge-ontology` so the Regulation loop can route feedback by type
-(`tool_span.rs:212-232`).
+## Classify HTTP and infrastructure errors
+
+`classify_http_error` is available through the public `server` module:
 
 ```rust
-use hkask_mcp_server::execute_tool_semantic;
-use hkask_bridge_ontology::pko::STEP_EXECUTION;
-
-execute_tool_semantic(self, "record_step_execution", Some(STEP_EXECUTION), async {
-    // ... business logic ...
-    Ok(serde_json::json!({"recorded": true}))
-}).await
+return Err(hkask_mcp_server::server::classify_http_error(
+    "service",
+    status,
+    &body,
+));
 ```
 
-If you pass `None`, the framework emits a `tracing::warn!` naming the tool —
-the algedonic signal that a registered tool lacks an ontology anchor
-(`tool_span.rs:222-229`). Add an arm to your server's `ontology_anchor` fn
-rather than leaving the anchor unset.
+It sanitizes the body and maps HTTP statuses to tool error kinds (`kask/crates/hkask-mcp-server/src/server/http_helpers.rs:1-27`).
 
-## Source citations
+For non-HTTP failures, use the root exports:
 
-| Claim | File:line |
-|-------|-----------|
-| `CredentialRequirement::required` / `optional` | `kask/crates/hkask-mcp-server/src/server/context.rs:32-53` |
-| Bootstrap credential resolution loop | `kask/crates/hkask-mcp-server/src/server/transport.rs:52-71` |
-| `resolve_credential` env-only API keys, passphrase keystore chain | `kask/crates/hkask-mcp-server/src/server/credentials.rs:25-63` |
-| `ServerContext::open_database` | `kask/crates/hkask-mcp-server/src/server/context.rs:151-160` |
-| `open_database_with_extensions` | `kask/crates/hkask-mcp-server/src/server/context.rs:168-186` |
-| `resolve_db_credential` fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:139-143` |
-| `validate_identifier` allowed chars | `kask/crates/hkask-mcp-server/src/server/validation.rs:13-34` |
-| `validate_path` traversal rejection | `kask/crates/hkask-mcp-server/src/server/validation.rs:43-69` |
-| `validate_field!` macro | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:69-76` |
-| `classify_http_error` status mapping | `kask/crates/hkask-mcp-server/src/server/http_helpers.rs:15-27` |
-| `contain_for_read` / `contain_for_write` | `kask/crates/hkask-mcp-server/src/server/validation.rs:314-323` |
-| `read_capped` + `MAX_READ_BYTES` | `kask/crates/hkask-mcp-server/src/server/validation.rs:409-430`, `:168` |
-| `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/security.rs:240-244` |
-| `validate_tool_url_permissive` | `kask/crates/hkask-mcp-server/src/security.rs:251-254` |
-| TOCTOU caveat for DNS rebinding | `kask/crates/hkask-mcp-server/src/security.rs:147-151` |
-| `map_io_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:82-90` |
-| `map_join_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:98-104` |
-| `map_infra_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:114-129` |
-| `map_memory_store_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:139-162` |
-| `execute_tool_semantic` ontology warn | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:212-232` |
+- `map_io_error`: file-not-found and permission failures remain caller-fixable (`kask/crates/hkask-mcp-server/src/server/validation.rs:71-90`);
+- `map_join_error`: cancellation becomes `unavailable`, panic becomes `internal` (`kask/crates/hkask-mcp-server/src/server/validation.rs:92-104`);
+- `map_infra_error`: not-found and database connection variants retain their categories (`kask/crates/hkask-mcp-server/src/server/validation.rs:106-129`);
+- `map_memory_store_error`: memory/storage variants delegate to the same classification policy (`kask/crates/hkask-mcp-server/src/server/validation.rs:131-163`).
+
+## Inspect `reg.tool` telemetry
+
+Every `execute_tool` call emits one event on success or typed error. If its private guard is dropped before completion, `Drop` emits `dropped` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:32-60`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:92-106`).
+
+Filter tracing output for target `reg.tool` and inspect these fields:
+
+| Field | Value |
+|---|---|
+| `tool` | tool name passed to `execute_tool` |
+| `outcome` | `ok`, `error`, or `dropped` |
+| `duration_ms` | elapsed wall-clock milliseconds |
+| `error_kind` | typed `McpErrorKind` string, empty otherwise |
+| `caller` | server `ToolContext.webid()` |
+
+The event definition is `kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`. It is child-process observability; production Regulation outcome recording occurs in host dispatch paths (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
+
+## See also
+
+- [Tutorial: build your first MCP server](./tutorial.md)
+- [Explanation: why the framework is narrow](./explanation.md)
+- [Reference: current API surface](./reference.md)
+
+---
+
+[^cwe22]: MITRE. (n.d.). *CWE-22: Improper Limitation of a Pathname to a Restricted Directory.* <https://cwe.mitre.org/data/definitions/22.html>.
+[^cwe918]: MITRE. (n.d.). *CWE-918: Server-Side Request Forgery.* <https://cwe.mitre.org/data/definitions/918.html>.

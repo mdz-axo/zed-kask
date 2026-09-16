@@ -1,283 +1,134 @@
 ---
-title: "hkask-mcp-server — Explanation: Why the Framework Looks Like This"
+title: "hkask-mcp-server — Explanation: Why the Framework Is Narrow"
 audience: [developers who want the design rationale, not just the API]
-last_updated: 2026-08-28
-version: "1.2.0"
+last_updated: 2026-09-15
+version: "2.0.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
 ---
 
-# hkask-mcp-server — Explanation: Why the Framework Looks Like This
+# hkask-mcp-server — Explanation: Why the Framework Is Narrow
 
-This document explains the design decisions behind `hkask-mcp-server`, not
-how to use them. The framework is intentionally narrow: it provides bootstrap,
-context, span emission, validation, and error classification — and almost
-nothing else. Each decision below traces to a concrete constraint in the
-codebase. All citations re-verified against the current tree on 2026-08-28.
+`hkask-mcp-server` centralizes construction context, typed tool outcomes, input safety, credential resolution, and stdio bootstrap. It intentionally leaves domain behavior in each MCP server. This keeps the common layer small enough to enforce cross-server invariants without becoming a second application runtime (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:3-11`, `kask/crates/hkask-mcp-server/src/server.rs:22-48`).
 
-## Why no ambient authority — identity and credentials flow through `ServerContext`
+## Why construction flows through `ServerContext`
 
-The framework's central rule is that a server never reads `std::env::var`
-directly for identity or secrets. The bootstrap resolves everything and
-hands the result to the factory as a `ServerContext` (`transport.rs:17-21`,
-`context.rs:122-131`).
+`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid, capability_tier }` (`kask/crates/hkask-mcp-server/src/server/context.rs:126-135`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
 
 ```mermaid
 sequenceDiagram
-    participant Main as main()
-    participant Boot as run_stdio_server
-    participant Keys as hkask-keystore
-    participant Factory as server_factory
-    participant Server as Server struct
-    Main->>Boot: run_server(name, version, factory, creds)
-    Boot->>Boot: init tracing subscriber (stderr)
-    Boot->>Keys: resolve_credential(env_var) per CredentialRequirement
-    Keys-->>Boot: resolved credentials map
-    Boot->>Boot: derive WebID from HKASK_WEBID or anonymous
-    Boot->>Boot: CapabilityTier::detect(webid, resolved)
-    Boot->>Factory: ServerContext { credentials, webid, capability_tier }
-    Factory->>Server: Server::new(ctx.webid, ...)
-    Boot->>Boot: server.serve(rmcp::transport::stdio())
+    participant Main as main
+    participant Bootstrap as run_stdio_server
+    participant Resolver as resolve_credential
+    participant Factory as server factory
+    participant Server as MCP server
+
+    Main->>Bootstrap: run_server(name, version, factory, requirements)
+    Bootstrap->>Bootstrap: configure tracing and database catalog
+    loop each requirement
+        Bootstrap->>Resolver: resolve_credential(env_var)
+        Resolver-->>Bootstrap: value or missing
+    end
+    Bootstrap->>Bootstrap: reject missing required credentials
+    Bootstrap->>Bootstrap: derive WebID and CapabilityTier
+    Bootstrap->>Factory: ServerContext
+    Factory-->>Bootstrap: Server
+    Bootstrap->>Server: serve(stdio)
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-030
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp-server/src/server/transport.rs:32-111
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:37-54; kask/crates/hkask-mcp-server/src/server/transport.rs:42-129; kask/crates/hkask-mcp-server/src/server/context.rs:126-135
 status: VERIFIED
 -->
 
-The reason is testability and safety. If a server reads `std::env::var`
-directly, tests have to mutate the process environment (which is global and
-race-prone), and production code can silently pick up ambient config that
-was never declared. By forcing every dep through the constructor, the
-framework makes the credential set explicit and the server a pure function
-of its `ServerContext`. The factory pattern additionally ensures server
-constructors that need credentials only run AFTER credential availability
-is confirmed — a missing required credential fails fast with
-`McpError::MissingCredentials` before the server struct is even built
-(`transport.rs:58-71`).
+The boundary is not a claim that no framework code reads environment variables. Bootstrap and credential helpers must read launch configuration (`kask/crates/hkask-mcp-server/src/server/transport.rs:50-60`, `kask/crates/hkask-mcp-server/src/server/transport.rs:91-103`; `kask/crates/hkask-mcp-server/src/server/credentials.rs:25-59`). The design claim is narrower: domain server construction receives resolved dependencies through context rather than independently inventing resolution chains.
 
-## Why two operating modes — Embedded vs Standalone
+## Why capability detection is descriptive
 
-`CapabilityTier::detect` computes three booleans from the resolved WebID
-and credentials (`context.rs:91-104`). Two operating modes emerge:
+`CapabilityTier::detect` reports three observed startup properties: whether the WebID is non-anonymous, whether the keychain responds, and whether resolved credentials include `HKASK_DB_PASSPHRASE` (`kask/crates/hkask-mcp-server/src/server/context.rs:56-74`, `kask/crates/hkask-mcp-server/src/server/context.rs:76-123`). It does not authorize tools. The fields let a server describe embedded identity, keychain reachability, and persistence configuration without hiding how those conclusions were reached.
 
-- **Embedded** — the server was launched by the hKask runtime, which injects
-  a real WebID via `HKASK_WEBID`. The WebID is non-anonymous, the keystore is
-  reachable, persistence is available, and Regulation consumes the `reg.tool`
-  spans.
-- **Standalone** — the server runs in an IDE with no `HKASK_WEBID`. The
-  WebID is anonymous (`WebID::from_persona(b"anonymous")`), the keystore may
-  be unavailable, persistence is unavailable, and spans go to stderr via the
-  tracing subscriber.
+Persistence detection uses the shared database passphrase, not a database-path variable (`kask/crates/hkask-mcp-server/src/server/context.rs:97-107`). Database opening remains explicit: `ServerContext::open_database` uses the named path from the credential map or creates an in-memory database when the path is absent (`kask/crates/hkask-mcp-server/src/server/context.rs:137-164`).
 
-The `embedded` flag is computed by comparing the WebID against the anonymous
-persona, not by probing the credential map (`context.rs:79-85, 95-96`). The
-reason: `HKASK_WEBID` is an identity (non-secret), not a credential, and is
-injected via `config_env`, not `credentials`. Probing the credential map for
-it would conflate identity with secrets and break the anonymous fallback for
-standalone IDE use.
+## Why `mcp_server!` is a macro
 
-There is no `reg_available()` wrapper — it was removed. The `embedded`
-field is the capability signal: Regulation spans are meaningful only when
-the runtime is there to consume them, so consumers read `embedded` directly.
-In standalone mode the spans still emit (via tracing to stderr), so a
-developer running the server in an IDE still sees the tool-outcome
-telemetry, but the Regulation loop does not act on them.
+Every server needs a WebID field, a constructor, and `ToolContext::webid`. `mcp_server!` emits those pieces together, while `impl_tool_context!` remains available for an existing struct (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:78-96`, `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:98-165`). A `macro_rules!` expansion avoids a proc-macro crate and makes the generated shape uniform.
 
-## Why the `mcp_server!` macro instead of a trait
+The macro does not register tools or a server globally. Tool discovery remains rmcp's responsibility, and the canonical built-in server registry remains in `kask_bridge` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:13-17`).
 
-Every hKask MCP server needs: a `webid: WebID` field, a constructor, and a
-`ToolContext` impl that returns `&self.webid`. The `mcp_server!` macro
-generates all three from a single declaration (`hkask_mcp_server.rs:113-165`).
+## Why `execute_tool` preserves typed errors
 
-The alternative — a trait with a default impl — would require the struct to
-forward to a helper, and the `webid` field would still have to be declared
-by hand. The macro is shorter, the generated code is uniform across servers,
-and `impl_tool_context!` is reusable on its own for servers that cannot use
-the full macro (`hkask_mcp_server.rs:87-96`).
+`execute_tool` accepts business logic returning `Result<Value, McpToolError>` and itself returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). Successful values are serialized as `{"content": value}` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). Errors remain `Err`, so rmcp sets `is_error: true`, emits the human message as text, and puts `{"error", "kind"}` in structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
 
-The macro is deliberately not a derive: a derive would need a helper
-attribute crate and would couple the framework to the proc-macro toolchain.
-A `macro_rules!` macro is hygienic, compiles in the same crate, and is
-debuggable with `cargo expand`.
+This avoids in-band error sniffing. A client can use protocol error state and the `McpErrorKind` value rather than parse prose. The Model Context Protocol explicitly distinguishes error tool results from successful content.[^mcp]
 
-## Why `ToolSpanGuard` is RAII
+## Why `ToolSpanGuard` uses RAII
 
-The guard emits a `reg.tool` span on `Drop` if neither `ok` nor `error` was
-called (`tool_span.rs:122-137`). This is the safety net for the case where a
-tool panics or early-returns without finishing the span — the operator still
-sees a `dropped` span with the tool name and duration, rather than a silent
-gap in the telemetry.
+The private guard records start time and caller identity. `ok` and `error` mark it emitted; `Drop` emits `dropped` when neither completion method ran (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-30`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:32-60`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:92-106`). RAII ensures abnormal control flow still leaves an observability signal, following Rust's scope-bound cleanup model.[^drop]
 
 ```mermaid
 stateDiagram-v2
     [*] --> Created: ToolSpanGuard::new
-    Created --> Ok: span.ok(output)
-    Created --> Error: span.error(kind, output)
-    Created --> Dropped: Drop without ok/error
-    Ok --> [*]: span emitted, outcome=ok
-    Error --> [*]: span emitted, outcome=error
-    Dropped --> [*]: span emitted, outcome=dropped (warning)
+    Created --> Ok: finish(Ok(value))
+    Created --> Error: finish(Err(error))
+    Created --> Dropped: Drop before finish
+    Ok --> [*]: outcome=ok
+    Error --> [*]: outcome=error, error_kind set
+    Dropped --> [*]: outcome=dropped
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-031
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:61-137
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-119,145-170
 status: VERIFIED
 -->
 
-The `emitted` flag prevents double-emission: `ok`/`error` set it to `true`
-before emitting, so `Drop` sees the flag and skips
-(`tool_span.rs:62, 81, 124`).
+The emitted `reg.tool` event has exactly five structured fields: `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`).
 
-## Why `execute_tool_semantic` warns on `None` ontology
+## Why child telemetry and production recording are separate
 
-`execute_tool_semantic` accepts `Option<&'static str>` for the ontology
-concept. When the caller passes `None`, it emits a `tracing::warn!` naming
-the tool (`tool_span.rs:222-229`). This is an algedonic signal — a registered
-tool that lacks an ontology anchor is visible at runtime, not silently
-producing an untagged span.
+The `reg.tool` event is written to child stderr for observability. The framework states that zed's context-server client does not feed that event into the Regulation loop; production outcomes are recorded at client-side dispatch by `McpRuntime::invoke` and `ContextServerTool::run` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
 
-The reason is the S1→S5 feedback channel. The Regulation loop routes
-feedback by ontology type; an untagged span is a blind spot. Rather than
-silently emitting an untagged span (which the loop would ignore), the
-framework makes the gap loud so a maintainer adds an arm to the server's
-`ontology_anchor` fn. The concept must be a `&'static str` from
-`hkask-bridge-ontology` so the type system prevents arbitrary debug strings
-from masquerading as ontology concepts (`tool_span.rs:35-54`).
+That separation gives each side the information it actually owns. The server knows duration, typed local failure, and caller identity. The client knows whether dispatch was admitted and how the invocation participates in the host's regulation cycle.
 
-## Why two error layers — `McpError` and `McpToolError`
+## Why there are two error layers
 
-The framework has two distinct error types because the two failure domains
-have different audiences.
+`McpError` represents server startup and infrastructure failures: missing required credentials, database passphrase, storage, infrastructure, and transport (`kask/crates/hkask-mcp-server/src/server/error.rs:11-42`). `McpToolError` represents a completed tool dispatch with a typed `McpErrorKind` and message (`kask/crates/hkask-mcp-server/src/server/error.rs:44-51`).
 
-- `McpError` (`error.rs:16-36`) is for server-level failures: missing
-  credentials, storage, transport. The audience is the operator starting the
-  server. These errors stop the server before it serves a single request.
-- `McpToolError` (`error.rs:48-51`) is for tool-level failures: a tool was
-  invoked and the invocation failed with a semantic classification. The
-  audience is the MCP client (and the agent behind it). These errors are
-  serialized into the MCP wire format and returned as the tool result.
+The split matches two recovery scopes:
 
-`McpToolError` carries a `kind: McpErrorKind` so the client can branch on the
-classification (`not_found`, `permission_denied`, `rate_limited`, …) rather
-than parsing a free-text message. The wire format is pinned by the
-`to_json_string` implementation (`error.rs:127-129`) itself — there is no
-golden-string test for it (not yet enforced by test; the only tests in the
-crate are the SSRF unit tests in `security.rs:256-355`).
+- startup failures are handled by the operator or launcher;
+- tool failures are returned to the MCP client, which can react to `not_found`, `invalid_argument`, `permission_denied`, `rate_limited`, `failed_precondition`, `unavailable`, or `internal` (`kask/crates/hkask-mcp-server/src/server/error.rs:53-127`).
 
-## Why per-variant error mappers instead of `internal(format!(...))`
+Canonical error mappers preserve caller-fixable and transient categories instead of flattening them to `internal` (`kask/crates/hkask-mcp-server/src/server/validation.rs:71-163`).
 
-The framework ships four canonical mappers: `map_io_error`, `map_join_error`,
-`map_infra_error`, `map_memory_store_error` (`validation.rs:82-162`). Each
-maps specific source-error variants to caller-fixable `McpToolError` kinds
-(`not_found`, `permission_denied`, `unavailable`) rather than flattening
-everything to `internal`.
+## Why path and URL safety live in the framework
 
-The reason is client experience. If a user supplies a missing path, the
-client should see `not_found` (caller-fixable: supply the right path), not
-`internal` (which reads as a server bug). The blanket
-`McpToolError::internal(format!("...: {e}"))` pattern mis-classifies
-caller-fixable errors as Internal and hides transient connection failures
-behind a generic message. The mappers are the canonical way to avoid that.
+Caller-controlled files and URLs present the same threat classes in every server. Shared helpers therefore enforce them once:
 
-## Why path containment is enforced in the framework, not the tool
+- path validation rejects control characters and parent traversal (`kask/crates/hkask-mcp-server/src/server/validation.rs:36-69`);
+- containment permits only the process working directory, hKask data directory, or artifact directory after canonicalization (`kask/crates/hkask-mcp-server/src/server/validation.rs:253-328`);
+- capped reads check metadata size before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:472-498`);
+- strict URL validation checks syntax and literal addresses, then resolves DNS and checks every result (`kask/crates/hkask-mcp-server/src/security.rs:185-266`, `kask/crates/hkask-mcp-server/src/security.rs:334-354`).
 
-`contain_for_read`, `contain_for_write`, and `read_capped` canonicalize a
-caller-supplied path and reject anything that escapes the process cwd
-(`validation.rs:265-323`). The containment is in the framework, not left to
-each tool, because the threat model is uniform: every tool that reads or
-writes a caller-supplied path has the same CWE-22/CWE-73/CWE-200/CWE-400
-exposure. Centralizing the check means a tool author cannot forget it.
+These controls address path traversal, arbitrary file access, resource exhaustion, and server-side request forgery.[^cwe22][^cwe918] Connect-time consumers can pair literal URL validation with `validate_resolved_addresses` to close the DNS resolve-to-connect gap (`kask/crates/hkask-mcp-server/src/security.rs:366-395`).
 
-`contain_for_write` canonicalizes leniently (the target may not exist yet)
-while `contain_for_read` requires the target to exist
-(`validation.rs:206-234`). The asymmetry matches the two operations: a write
-target is created by the write, a read target must already be there.
-`read_capped` adds a metadata size check before the read to bound memory
-(`validation.rs:409-430`), with `MAX_READ_BYTES = 32 MiB` as the default
-(`validation.rs:168`).
+## Why arbitrary JSON has a dedicated type
 
-## Why URL validation has two modes
+The root re-exports `AnyJsonValue` and `find_boolean_schema_positions` from `hkask_types::tool_schema` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35`). `AnyJsonValue` gives schema-generating tool inputs an explicit open JSON shape instead of relying on a bare `serde_json::Value` schema. Keeping the type in `hkask-types` lets non-MCP domain crates use it without depending on the server framework.
 
-`validate_tool_url_with_dns` is the strict default for untrusted URLs: it
-runs sync scheme/credential/literal-IP checks then resolves the hostname and
-rejects private/loopback resolved IPs (`security.rs:240-244`).
-`validate_tool_url_permissive` allows private IPs and loopback
-(`security.rs:251-254`). Both wrappers live in `security.rs`, not `validation.rs`.
+## See also
 
-The reason is that not every URL is untrusted. A user-curated RSS
-subscription list may legitimately point at `http://localhost:4000/feed.xml`
-(a self-hosted aggregator). Forcing the strict check there would break a
-real workflow. The permissive variant is opt-in and documented as
-unsuitable for arbitrary untrusted input (`security.rs:45-59`).
+- [Tutorial: build your first MCP server](./tutorial.md)
+- [How-to: common server tasks](./how-to.md)
+- [Reference: current API surface](./reference.md)
 
-A TOCTOU between DNS resolution and the downstream `reqwest` connect (DNS
-rebinding) remains; closing that requires a custom reqwest connector that
-re-checks the resolved IP at connect time (see the `validate_url_with_dns`
-doc comment, `security.rs:147-151`). The framework documents the gap rather
-than pretending the check is complete.
+---
 
-## Why `AnyJsonValue` is re-exported from `hkask-types`
-
-`AnyJsonValue` and `find_boolean_schema_positions` are re-exported from
-`hkask_types::tool_schema` at the lib root (`hkask_mcp_server.rs:35`). The
-canonical implementation lives in `hkask-types` so pure domain crates (e.g.
-`hkask-condenser`) can use them without depending on `hkask-mcp-server`, which
-drags in `rmcp`, `reqwest`, `hkask-keystore`, `hkask-storage`, and
-`tracing-subscriber` as transitive deps. The dedicated `tool_schema` module
-file was inlined as a `pub use` here — the `tool_schema::` path had no
-external users (`hkask_mcp_server.rs:29-34`).
-
-The reason is dependency hygiene. Tool input schemas accepting arbitrary
-JSON need a type that `schemars` renders as a proper open-ended schema (not
-the bare `true` that `serde_json::Value` produces, which breaks
-strict-schema providers). Putting that type in `hkask-types` keeps the
-dependency graph acyclic and lets domain crates stay light.
-
-## Why DB paths follow `mcp/{server_id}/{purpose}.db`
-
-Per D28, MCP server database paths follow the `mcp/{server_id}/{purpose}.db`
-pattern. The framework does not hardcode the path — it reads whatever env
-var the server declares (typically `HKASK_DB_PATH`) from the credentials map
-(`context.rs:151-160`). The path convention is enforced by the runtime that
-sets the env var, not by the framework, so a server stays agnostic to where
-its database lives and the runtime can relocate databases without touching
-server code.
-
-`ServerContext::open_database` falls back to an in-memory database when the
-env var is unset (`context.rs:158`), so a server runs in standalone mode
-without persistence and in embedded mode with a real database, all from the
-same code path.
-
-## Source citations
-
-| Claim | File:line |
-|-------|-----------|
-| No ambient authority, factory pattern | `kask/crates/hkask-mcp-server/src/server/transport.rs:17-21` |
-| `ServerContext` carries all deps | `kask/crates/hkask-mcp-server/src/server/context.rs:122-131` |
-| Missing required credential fails fast | `kask/crates/hkask-mcp-server/src/server/transport.rs:58-71` |
-| `CapabilityTier::detect` computes three booleans | `kask/crates/hkask-mcp-server/src/server/context.rs:91-104` |
-| `embedded` compares WebID to anonymous persona | `kask/crates/hkask-mcp-server/src/server/context.rs:79-85, 95-96` |
-| `embedded` field is the capability signal (no `reg_available`) | `kask/crates/hkask-mcp-server/src/server/context.rs:67-74` |
-| `mcp_server!` macro generates struct + ctor + ToolContext | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:113-165` |
-| `impl_tool_context!` reusable standalone | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:87-96` |
-| `ToolSpanGuard::Drop` emits dropped span | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:122-137` |
-| `emitted` flag prevents double-emission | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:62, 81, 124` |
-| `execute_tool_semantic` warns on `None` ontology | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:222-229` |
-| Ontology concept must be `&'static str` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:35-54` |
-| `McpError` server-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:16-36` |
-| `McpToolError` tool-level audience | `kask/crates/hkask-mcp-server/src/server/error.rs:48-51` |
-| Wire format pinned by `to_json_string` impl | `kask/crates/hkask-mcp-server/src/server/error.rs:127-129` |
-| Per-variant error mappers | `kask/crates/hkask-mcp-server/src/server/validation.rs:82-162` |
-| Path containment in framework | `kask/crates/hkask-mcp-server/src/server/validation.rs:265-323` |
-| `MAX_READ_BYTES` default | `kask/crates/hkask-mcp-server/src/server/validation.rs:168` |
-| Two URL validation modes | `kask/crates/hkask-mcp-server/src/security.rs:240-244, 251-254` |
-| `UrlValidationConfig::permissive` rationale | `kask/crates/hkask-mcp-server/src/security.rs:45-59` |
-| TOCTOU DNS rebinding caveat | `kask/crates/hkask-mcp-server/src/security.rs:147-151` |
-| `AnyJsonValue` re-export rationale | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35` |
-| `open_database` in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:151-160` |
+[^mcp]: Model Context Protocol. (2025). *Tools.* <https://modelcontextprotocol.io/specification/2025-06-18/server/tools>.
+[^drop]: The Rust Project Developers. (n.d.). *std::ops::Drop.* <https://doc.rust-lang.org/std/ops/trait.Drop.html>.
+[^cwe22]: MITRE. (n.d.). *CWE-22: Improper Limitation of a Pathname to a Restricted Directory.* <https://cwe.mitre.org/data/definitions/22.html>.
+[^cwe918]: MITRE. (n.d.). *CWE-918: Server-Side Request Forgery.* <https://cwe.mitre.org/data/definitions/918.html>.
