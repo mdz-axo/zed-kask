@@ -135,7 +135,7 @@ pub fn enrich_with_omc_and_provenance(
 
 /// Extract the asset src (a persisted file path) from a tool result,
 /// dispatching on the media kind. Media tools compose their results via
-/// `persist_and_slim_result` (assets.rs), so the `output` field carries the
+/// staged publication in `persist_slim_and_enrich` (assets.rs), so `output` carries the
 /// persisted path for every kind; the audio arm additionally accepts the
 /// `audio_path` field produced by the record-and-transcribe tools.
 pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn test_enrich_with_omc_and_provenance_generate_image() {
         // The slim result shape every media tool returns after
-        // persist_and_slim_result: `output` carries the persisted path.
+        // authoritative generated publication: `output` carries the persisted path.
         let result = serde_json::json!({"output": "/tmp/img.png"});
         let enriched = enrich_with_omc_and_provenance(
             result,
@@ -320,7 +320,7 @@ mod tests {
     }
 
     // The audio arm must also read `output` — generate_speech composes its
-    // slim result through persist_and_slim_result, whose path field is
+    // slim result through staged publication, whose path field is
     // `output` (same as every other kind). Without this fallback the speech
     // display hint never attached.
     #[test]

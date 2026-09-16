@@ -117,12 +117,18 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides (TTS,
 
 ### Resource bounds and lifecycle presentation
 
-`hkask_types::media_limits` is the shared admission-policy authority. Requests
-outside these bounds fail before allocation or external work; no caller input is
-clamped or silently truncated.
+`hkask_types::media_limits` is the shared cardinality-policy authority. A concrete
+four-slot heavy-operation admission authority is shared by direct provider,
+FFmpeg/ffprobe/yt-dlp, analysis, capture/transcription, and transcript-pass RPCs
+and by background jobs. Admission is try-only: the fifth combined operation
+fails before external work and is never queued. Job list/status/cancel and cheap
+gallery reads do not consume a slot. Requests outside cardinality bounds also
+fail before allocation or external work; no caller input is clamped or silently
+truncated.
 
 | Surface | Bound |
 |---|---:|
+| combined direct heavy operations + background jobs | 4 active, fail-fast |
 | audio/video concat inputs | 64 |
 | image-sequence inputs | 256 |
 | extracted keyframes | 256 |
@@ -265,13 +271,15 @@ Grouped by full repository-relative `tools/` source path. Descriptions are conde
 call produces an asset — image, video, and speech generation, transforms,
 upscales, background removal, variants, region edits, `image_to_video`,
 `video_meme`, `gallery_reproduce`, and the `job_submit` background path —
-composes its result through `assets::persist_and_slim_result`
-(`kask/mcp-servers/hkask-mcp-media/src/assets.rs`): the provider payload (base64 / data URI / URL) is decoded
-or downloaded exactly once, written under
-`{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, gallery-indexed, and the
-tool result carries the persisted path (`output`, plus `outputs` for
-multi-image responses where every `data[]` entry is persisted) and the
-provider's non-payload metadata — never the payload itself. Returning the
+composes its result through `assets::persist_slim_and_enrich`
+(`kask/mcp-servers/hkask-mcp-media/src/assets.rs`). The authoritative staged
+publication owner decodes or downloads the provider payload exactly once,
+writes a rollback-armed file under
+`{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and commits the gallery
+Asset, generation Task lineage, and canonical OMC creation graph in one SQLite
+transaction. The tool result carries the persisted path (`output`, plus
+`outputs` for multi-image responses where every `data[]` entry is persisted)
+and provider non-payload metadata — never the payload itself. Returning the
 raw provider response overflowed the model's context (the 2026-08-31
 context bomb: two ~65K-token base64 results breached the 262144-token
 limit on the following turn). A persist failure surfaces as a tool error
@@ -435,7 +443,7 @@ response contracts are pinned in `jobs.rs`, `tools/jobs.rs`, and `assets.rs`.
 
 ### Support modules (no registered tools)
 
-Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:44-48`): `assets.rs` (`persist_and_slim_result` — the slim-result composition site — over `persist_generated_asset`), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore`), `omc.rs` (OMC mapping).
+Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:44-48`): `assets.rs` (`persist_slim_and_enrich` over the rollback-armed Asset/lineage/OMC publication aggregate), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore` plus shared heavy-operation admission), `omc.rs` (OMC mapping).
 
 ## Error classification
 

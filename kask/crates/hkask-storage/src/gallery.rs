@@ -2313,6 +2313,35 @@ mod tests {
             task_id
         );
 
+        let mut failed = publication.clone();
+        failed.asset_id = "asset-publication-rollback".to_string();
+        failed.observation.absolute_path = root
+            .path()
+            .join("must-roll-back.png")
+            .to_string_lossy()
+            .into_owned();
+        failed.graph_json = format!(
+            r#"{{"asset_id":"{}","task_id":"{task_id}","entities":[],"relationships":[]}}"#,
+            failed.asset_id
+        );
+        store
+            .publish_asset_creation(&gallery.id, &failed)
+            .expect_err("duplicate Task id must roll back the whole aggregate");
+        assert!(
+            store
+                .list_assets(&gallery.id, 0, 100)
+                .expect("list after rollback")
+                .iter()
+                .all(|asset| asset.id != failed.asset_id),
+            "failed aggregate must not leave its Asset parent"
+        );
+        assert!(
+            store
+                .get_omc_creation_graph(&failed.asset_id)
+                .expect("read failed graph")
+                .is_none()
+        );
+
         store.delete_image(asset_id).expect("delete asset");
         assert!(
             store

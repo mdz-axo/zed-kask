@@ -55,7 +55,7 @@ pub enum MediaError {
 
     /// Generated-asset persistence failure. The raw provider payload is
     /// never the tool-result fallback (base64 payloads overflow the model
-    /// context — see `persist_and_slim_result`), so a persist failure fails
+    /// context — see `persist_slim_and_enrich`), so a persist failure fails
     /// the tool with this error and the operator can retry.
     #[error("Generated asset not persisted: {0}")]
     AssetPersistence(String),

@@ -1722,10 +1722,7 @@ mod tool_behavior_tests {
             .expect("open publication gallery");
         let mut state = GalleryState::new(temp.path().to_path_buf(), GalleryMode::ReadOnly);
         state.gallery_id = Some(gallery.id.clone());
-        *server
-            .gallery_state
-            .lock()
-            .expect("gallery state lock") = Some(state);
+        *server.gallery_state.lock().expect("gallery state lock") = Some(state);
         use base64::Engine;
         let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
         let result = serde_json::json!({
@@ -1773,7 +1770,33 @@ mod tool_behavior_tests {
             .expect("lineage exists");
         assert_eq!(generation.id, task_id);
         assert_eq!(generation.prompt.as_deref(), Some("a cat"));
-        leth prior {
+        let graph = server
+            .gallery_store
+            .get_omc_creation_graph(asset_id)
+            .expect("read OMC graph")
+            .expect("OMC graph exists");
+        let graph: crate::omc::CreationGraph =
+            serde_json::from_str(&graph.graph_json).expect("decode OMC graph");
+        assert_eq!(graph.asset_id, asset_id);
+        assert_eq!(graph.task_id, task_id);
+        let types = graph
+            .entities
+            .iter()
+            .flat_map(|entity| entity.types.iter().map(String::as_str))
+            .collect::<std::collections::HashSet<_>>();
+        for expected in [
+            crate::omc::ASSET,
+            crate::omc::TASK,
+            crate::omc::STATE,
+            crate::omc::STATE_DESCRIPTOR,
+            crate::omc::PROVENANCE,
+            crate::omc::PARTICIPANT,
+            crate::omc::SERVICE,
+        ] {
+            assert!(types.contains(expected), "missing OMC type {expected}");
+        }
+
+        match prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
             None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
         }

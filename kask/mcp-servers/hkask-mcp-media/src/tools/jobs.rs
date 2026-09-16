@@ -84,7 +84,7 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("op must not be empty"));
             }
             // Only asset-producing generation ops are accepted: the job's
-            // result is persisted through `persist_and_slim_result`, and a
+            // result is persisted through the authoritative staged publication aggregate, and a
             // non-generation op has no asset to persist (the raw provider
             // response is never stored — base64 payloads overflow the
             // model's context).
@@ -758,6 +758,71 @@ mod tests {
             0
         );
         assert_eq!(server.gallery_store.count_assets(&gallery.id)?, 0);
+
+        match prior {
+            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+        }
+        Ok(())
+    }
+
+    /// expect: Job completion publishes one durable Asset creation graph before becoming terminal.
+    #[tokio::test]
+    async fn completed_job_publishes_lineage_and_omc_graph()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let temp = tempfile::TempDir::new()?;
+        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+
+        let store = crate::jobs::new_job_store();
+        let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
+        let gallery = server.gallery_store.open(
+            &temp.path().to_string_lossy(),
+            hkask_storage::GalleryMode::ReadOnly,
+        )?;
+        let mut state = GalleryState::new(
+            temp.path().to_path_buf(),
+            hkask_storage::GalleryMode::ReadOnly,
+        );
+        state.gallery_id = Some(gallery.id.clone());
+        *server
+            .gallery_state
+            .lock()
+            .map_err(|error| error.to_string())? = Some(state);
+
+        let job_id = submit(&server).await?;
+        wait_until(|| {
+            store
+                .get(&job_id)
+                .is_ok_and(|job| job.is_some_and(|job| job.status == "completed"))
+        })
+        .await?;
+        let job = store
+            .get(&job_id)?
+            .ok_or_else(|| "completed job record missing".to_string())?;
+        let result = job
+            .result
+            .ok_or_else(|| "completed job omitted publication result".to_string())?;
+        let asset_id = result["gallery_asset_id"]
+            .as_str()
+            .ok_or_else(|| "completed job omitted Asset id".to_string())?;
+        let task_id = result["omc_task_id"]
+            .as_str()
+            .ok_or_else(|| "completed job omitted Task id".to_string())?;
+        let generation = server
+            .gallery_store
+            .get_generation(asset_id)?
+            .ok_or_else(|| "completed job omitted generation lineage".to_string())?;
+        assert_eq!(generation.id, task_id);
+        assert_eq!(generation.prompt.as_deref(), Some("blocked test image"));
+        let graph = server
+            .gallery_store
+            .get_omc_creation_graph(asset_id)?
+            .ok_or_else(|| "completed job omitted OMC graph".to_string())?;
+        let graph: crate::omc::CreationGraph = serde_json::from_str(&graph.graph_json)?;
+        assert_eq!(graph.asset_id, asset_id);
+        assert_eq!(graph.task_id, task_id);
 
         match prior {
             Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },

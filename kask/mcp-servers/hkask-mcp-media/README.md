@@ -73,8 +73,13 @@ Pins: `media_blocks_round_trip_escaped_paths`,
 
 ## Resource and lifecycle bounds
 
-Shared admission limits live in `hkask_types::media_limits`; server and panel
-callers import them rather than copying values. Concat accepts at most 64 audio
+Cardinality limits live in `hkask_types::media_limits`; server and panel callers
+import them rather than copying values. Direct heavy provider, FFmpeg/ffprobe,
+yt-dlp, analysis, capture/transcription, and transcript-pass RPCs share one
+four-slot fail-fast authority with background jobs. The fifth combined operation
+fails before external work; it is never queued, clamped, or silently truncated.
+Job list/status/cancel and cheap gallery reads remain available under load.
+Concat accepts at most 64 audio
 or video inputs, image-sequence rendering accepts 256 images, keyframe
 extraction accepts 256 frames, and image generation accepts 10 variants.
 Workflow graphs are limited to 1 MiB. Cap violations fail before work begins;
@@ -160,7 +165,11 @@ valid results. Generated assets capture
 the gallery at operation admission, before the first inference await: the snapshot
 travels immutably through inference, downloads, and every variant, so a root switch
 mid-flight never retargets an in-flight generation (background jobs capture at
-submission). Canonically published media also persist an OMC v2.8 creation graph:
+submission). Provider-generated variants, job completions, and canonically
+published local media share one rollback-armed publication aggregate. It commits
+the gallery Asset, generation lineage, effective parameters, and OMC v2.8
+creation graph in one SQLite transaction; coupled files and rows roll back on
+failure, and cancellation arbitrates before terminal job publication. Each graph:
 the output Asset links to its creation Task and Provenance; the Task links to its
 completed State/StateDescriptor; and an OMC Role links that Task to the responsible
 hkask media Service/Participant. `gallery_asset_detail` returns this structured
