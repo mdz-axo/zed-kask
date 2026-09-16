@@ -587,6 +587,10 @@ pub struct CreateLocalAgentRequest {
     /// fermi's create, which defaults to 0.3.
     #[serde(default)]
     pub temperature: Option<f64>,
+    /// Provider-agnostic sampling overrides. Must be a JSON object whose known
+    /// fields deserialize as `LLMParameters`; partial objects are allowed.
+    #[serde(default)]
+    pub model_params: Option<AnyJsonValue>,
     /// Per-card declared evaluators (the evaluator contract). When present,
     /// every `swarm_delegate_local` call to this agent runs them against the
     /// response and stamps a deterministic `task_success` verdict.
@@ -642,6 +646,10 @@ pub struct ReconfigureLocalAgentRequest {
     pub mcp_tools: Vec<String>,
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Optional replacement for provider-agnostic sampling overrides. When
+    /// absent, the existing card value is preserved.
+    #[serde(default)]
+    pub model_params: Option<AnyJsonValue>,
 }
 
 // ── Local swarm membership (local replica of an ABW workspace) ───────────────

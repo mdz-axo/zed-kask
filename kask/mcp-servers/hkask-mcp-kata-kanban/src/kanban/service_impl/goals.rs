@@ -6,16 +6,12 @@
 //! intake predictions. Schema lifted from the validated `goal-analysis`
 //! skill templates.
 //!
-//! **Persistent until resolved (operator ruling 2026-09-09, superseding the
-//! 2026-08-29 ephemerality ruling):** the goal store is the same DB-backed
-//! `HMemStore` that persists boards and tasks, so the Brier closure
-//! (`kanban_goal_score`) survives server restarts. Resolution is the prune
-//! point — a scored goal's row is deleted, so resolved goals leave no
-//! persistent clutter. The curator's memory remains the durable outcome
-//! record: every `kanban_goal_*` tool result in a turn is extracted by the
-//! thread-side record builder and written as a first-class goal h_mem by
-//! `kask_bridge/src/memory/ingest.rs`, so therapy / algedonic-review find
-//! goal entities, not prose archaeology.
+//! **Persistent through memory acknowledgment (operator ruling 2026-09-16):**
+//! the goal store is the same DB-backed `HMemStore` that persists boards and
+//! tasks. `kanban_goal_score` records resolution but retains the row until the
+//! production turn-ingestion path confirms that the score outcome was stored
+//! in curator memory. Only `goal_acknowledge_memory` prunes it. Same-outcome
+//! scoring is retryable; a conflicting outcome is rejected.
 //!
 //! HMem scheme (kanban DB store):
 //!   kanban:goal → {goal_id} → JSON Goal
@@ -262,9 +258,13 @@ impl KanbanService {
                 "goal {goal_id} is not owned by caller — cannot score"
             )));
         }
-        if goal.resolution.is_some() {
+        if let Some(resolution) = &goal.resolution {
+            if resolution.achieved == achieved {
+                return Ok(goal);
+            }
             return Err(KanbanError::InvalidInput(format!(
-                "goal {goal_id} is already resolved"
+                "goal {goal_id} is already resolved with achieved={} — conflicting outcome {achieved} rejected",
+                resolution.achieved
             )));
         }
 
@@ -282,12 +282,10 @@ impl KanbanService {
         });
         goal.updated_at = chrono::Utc::now();
 
-        // Resolution is the prune point (operator ruling 2026-09-09): the
-        // goal row is deleted so resolved goals leave no clutter. The
-        // resolution itself is durable where it matters — the tool response
-        // (with the Brier score) is ingested into the curator's memory by
-        // the turn-ingestion path, and the tracing log records it.
-        self.goal_prune(goal.id)?;
+        // The resolved row is the durable outbox entry. It remains retryable
+        // until the production turn-ingestion path confirms the score outcome
+        // was stored in curator memory and explicitly acknowledges it.
+        self.goal_persist(&goal)?;
 
         tracing::info!(
             target: "hkask.kanban",
@@ -299,6 +297,30 @@ impl KanbanService {
         );
 
         Ok(goal)
+    }
+
+    /// Confirm that a resolved goal's score outcome is present in curator
+    /// memory, then prune the kanban outbox row. Missing rows are already
+    /// acknowledged, making retries idempotent.
+    pub(crate) fn goal_acknowledge_memory(
+        &self,
+        goal_id: GoalID,
+        owner: WebID,
+    ) -> Result<(), KanbanError> {
+        let Some(goal) = self.goal_get(goal_id)? else {
+            return Ok(());
+        };
+        if goal.owner != owner {
+            return Err(KanbanError::PermissionDenied(format!(
+                "goal {goal_id} is not owned by caller — cannot acknowledge memory"
+            )));
+        }
+        if goal.resolution.is_none() {
+            return Err(KanbanError::InvalidInput(format!(
+                "goal {goal_id} is not resolved — no scored outcome can be acknowledged"
+            )));
+        }
+        self.goal_prune(goal_id)
     }
 
     /// Fetch a goal by id or return `KanbanError::NotFound`.
@@ -313,9 +335,8 @@ impl KanbanService {
     }
 
     /// The goal store — the same DB-backed `HMemStore` that persists
-    /// boards and tasks (operator ruling 2026-09-09 supersedes the
-    /// 2026-08-29 ephemerality ruling: goals persist until resolved, then
-    /// are pruned). Goals live under their own entity (`kanban:goal`), so
+    /// boards and tasks. Goals persist through resolution until curator-memory
+    /// acknowledgment. They live under their own entity (`kanban:goal`), so
     /// they never collide with board or task rows.
     fn goal_store(&self) -> Result<HMemStore, KanbanError> {
         Ok(self.store.clone())
@@ -586,71 +607,41 @@ mod goal_tests {
     }
 
     #[test]
-    fn goals_persist_in_the_kanban_store_until_resolved_then_prune() {
-        // Operator ruling 2026-09-09 (superseding 2026-08-29): goals persist
-        // in the kanban store until resolved; the curator's memory (fed by
-        // the turn-ingestion goal-event path) remains the durable outcome
-        // record. This pins both halves: an unresolved goal IS in the
-        // service's store, and resolution prunes it — no kanban-DB clutter.
+    fn resolved_goal_survives_service_restart_until_memory_acknowledgment() {
         let svc = make_service();
         let owner = WebID::new();
         let goal = svc
-            .goal_create("ephemeral goal".into(), criteria(2), None, None, owner)
-            .unwrap();
-        let _ = svc
-            .goal_judge(
-                goal.id,
-                GoalVerdict {
-                    verdict: GoalVerdictValue::Done,
-                    confidence: 0.9,
-                    criterion_results: vec![
-                        CriterionJudgment {
-                            index: 0,
-                            passed: true,
-                            note: "observable".into(),
-                        },
-                        CriterionJudgment {
-                            index: 1,
-                            passed: true,
-                            note: "observable".into(),
-                        },
-                    ],
-                    reasoning: "done".into(),
-                    judged_at: chrono::Utc::now(),
-                },
+            .goal_create(
+                "retain outcome until memory confirms".into(),
+                criteria(1),
+                Some(0.8),
+                None,
                 owner,
             )
             .unwrap();
 
-        // The kanban store serves the goal.
+        let scored = svc.goal_score(goal.id, true, owner).unwrap();
+        assert!(scored.resolution.is_some());
         assert!(svc.goal_get(goal.id).unwrap().is_some());
 
-        // The goal IS written to the kanban store while unresolved
-        // (operator ruling 2026-09-09: goals persist until resolved).
-        let stored = svc
-            .store
-            .query_by_entity("kanban:goal")
-            .expect("kanban store query");
-        assert_eq!(
-            stored.len(),
-            1,
-            "an unresolved goal must persist in the kanban store"
-        );
+        let restarted = KanbanService::new(svc.store.clone());
+        let retained = restarted
+            .goal_get(goal.id)
+            .unwrap()
+            .expect("resolved goal survives reconstructed service");
+        assert!(retained.resolution.as_ref().is_some_and(|r| r.achieved));
 
-        // Resolution is the prune point: scoring deletes the row.
-        svc.goal_score(goal.id, true, owner).unwrap();
-        assert!(
-            svc.goal_get(goal.id).unwrap().is_none(),
-            "a resolved goal must no longer be retrievable"
-        );
-        let stored = svc
-            .store
-            .query_by_entity("kanban:goal")
-            .expect("kanban store query");
-        assert!(
-            stored.is_empty(),
-            "a resolved goal must be pruned from the kanban store"
-        );
+        let retry = restarted.goal_score(goal.id, true, owner).unwrap();
+        assert!(retry.resolution.as_ref().is_some_and(|r| r.achieved));
+        assert!(restarted.goal_score(goal.id, false, owner).is_err());
+
+        restarted
+            .goal_acknowledge_memory(goal.id, owner)
+            .expect("memory acknowledgment prunes resolved goal");
+        assert!(restarted.goal_get(goal.id).unwrap().is_none());
+        restarted
+            .goal_acknowledge_memory(goal.id, owner)
+            .expect("acknowledgment is idempotent");
     }
 
     #[test]

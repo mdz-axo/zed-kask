@@ -7,3 +7,4 @@ pub mod jobs;
 pub mod models;
 pub mod processing;
 pub mod workflows;
+pub mod youtube;

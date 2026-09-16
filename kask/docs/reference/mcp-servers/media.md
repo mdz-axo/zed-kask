@@ -28,8 +28,8 @@ flowchart TD
     port["InferencePort: vision/chat/embed via IPC; media generation child-local"]
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
-    server["MediaServer<br/>7 state fields"]
-    router["combined_router<br/>8 sub-routers, 80 tools"]
+    server["MediaServer<br/>8 state fields"]
+    router["combined_router<br/>9 sub-routers, 81 tools"]
     dispatch["execute_tool<br/>reg.tool.* outcome span"]
     sinks["Sinks: gallery.db rows,<br/>persisted assets, media_block hints"]
 
@@ -52,7 +52,7 @@ status: VERIFIED
 
 ### Server struct
 
-`MediaServer` is declared via the `mcp_server!` macro with seven state fields (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:155-175`):
+`MediaServer` is declared via the `mcp_server!` macro with eight state fields (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:155-177`):
 
 | Field | Role |
 |-------|------|
@@ -63,10 +63,11 @@ status: VERIFIED
 | `ffmpeg: FfmpegRunner` | ffmpeg availability probe (`kask/mcp-servers/hkask-mcp-media/src/video/ffmpeg.rs:39`) |
 | `ytdlp: YtDlpRunner` | yt-dlp availability probe (`kask/mcp-servers/hkask-mcp-media/src/video/ytdlp.rs:19`), used by `video_fetch` |
 | `job_store: jobs::JobStore` | In-memory async generation job tracking (`kask/mcp-servers/hkask-mcp-media/src/jobs.rs:1`) |
+| `serpapi_key: Option<String>` | Credential for structured YouTube search metadata; never used to download media |
 
 ### Router composition
 
-`combined_router()` sums eight sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `generation_router` + `models_router` + `jobs_router` + `workflows_router` + `educt_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:439-453`).
+`combined_router()` sums nine sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `generation_router` + `models_router` + `jobs_router` + `workflows_router` + `educt_router` + `youtube_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:457-467`).
 
 ## Bootstrap and configuration
 
@@ -87,7 +88,7 @@ provider 401/403 maps to `permission_denied`. For migration, qualify saved
 media model settings/replays and remove fixed-op model overrides. See the
 [inference policy](../../diataxis/hkask-inference/reference.md#media-routing-policy--operator-decision-2026-09-06).
 
-**Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`. These env-injected keys serve the child-local `MediaRouter`; vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — the media process does read provider keys for media generation (D35).
+**Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, and `HKASK_SERPAPI_API_KEY`. The first two serve the child-local `MediaRouter`; SerpApi supplies structured YouTube discovery metadata. Vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — `yt-dlp` is not a metadata provider and needs no credential.
 
 **Environment variables** (all optional; the five `HKASK_MEDIA_*_MODEL` vars resolve through the server's `models` module — `None` when unset, no constant fallback; callers fail visibly naming the env var, `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:76-108`):
 
@@ -102,6 +103,7 @@ media model settings/replays and remove fixed-op model overrides. See the
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | Image generation model (`models::image_gen_model()`) | not configured |
 | `HKASK_MEDIA_VIDEO_MODEL` | Video generation model (`models::video_model()`) | not configured |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for gallery similarity search (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:377-392`) | not configured — embedding-dependent calls fail visibly naming `kask.models.embedding_model` |
+| `HKASK_SERPAPI_API_KEY` | SerpApi credential for `youtube_search` metadata | `youtube_search` returns `permission_denied` naming the missing key |
 
 `build_model_list` lists only configured models — an unset modality is absent from the list, never a hidden default (`kask/mcp-servers/hkask-mcp-media/src/tools/models.rs:15-30`).
 
@@ -110,7 +112,8 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides (TTS,
 **System dependencies:**
 
 - **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `McpToolError::unavailable("ffmpeg not found on system PATH — video tools unavailable.")` when absent (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:339-348`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:1009` tool description).
-- **yt-dlp** — required only by `video_fetch` for platform URLs (YouTube, Vimeo). `require_yt_dlp` returns `unavailable` with install instructions ("pip install yt-dlp or apt install yt-dlp on Ubuntu 24.04+") when absent (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:350-360`).
+- **SerpApi** — required by `youtube_search` for structured discovery metadata. Search never invokes `yt-dlp`; missing credentials return `permission_denied` naming `HKASK_SERPAPI_API_KEY`.
+- **yt-dlp** — required only by `video_fetch` to retrieve media bytes for durable local publication from platform URLs (YouTube, Vimeo). It is not used for search or metadata. `require_yt_dlp` returns `unavailable` with install instructions when absent.
 - **Vision-capable provider** — required by describe/analyze/caption/expand-prompt tools. `require_vision` returns `permission_denied` directing the operator to enable a vision model in the kask inference provider settings (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:362-368`).
 
 **Image size cap:** gallery images larger than 32 MiB are rejected before base64 encoding to prevent OOM (`MAX_IMAGE_READ_BYTES`, `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:61-63`).
@@ -334,6 +337,12 @@ No routing or layout change is part of this repair.
 | `gallery_delete_album` | Delete an album; assets remain in the gallery. |
 | `gallery_list_album_members` | List all image indices in an album. |
 
+### YouTube discovery (`kask/mcp-servers/hkask-mcp-media/src/tools/youtube.rs`, 1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `youtube_search` | Search YouTube through SerpApi and return structured ranking metadata: views, duration, channel verification, publication date, provider quality labels, thumbnail, and URL. It does not download media. |
+
 ### Image and video processing (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs`, 15 tools)
 
 | Tool | Description |
@@ -352,7 +361,7 @@ No routing or layout change is part of this repair.
 | `video_extract_frames` | Extract keyframes from a video as searchable gallery assets, each with its own lineage. |
 | `video_meme` | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
-| `video_fetch` | Download a video from a URL (YouTube, Vimeo, direct file) to local storage, index it in the gallery, return a media block; requires yt-dlp for platform URLs. |
+| `video_fetch` | Download a selected video URL to local storage, index it in the gallery, and return a media block; yt-dlp performs platform extraction and binary retrieval, not search metadata. |
 
 The local final-media tools `video_clip`, `video_to_gif`,
 `video_add_caption`, `video_remix`, `video_from_images`, and `video_concat`
@@ -466,7 +475,7 @@ Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`ka
 | `omc:CreativeWork` | `generate_image`, `generate_video`, `video_meme`, `expand_prompt`, `image_create_collage` |
 | `omc:VersionInfo` | `transform_image`, `upscale_image`, `image_remove_background`, `image_apply_style`, `image_edit_region` |
 | `omc:Scene` | `describe_image`, `gallery_analyze`, `video_caption` |
-| `omc:Asset` | gallery management + retrieval (`gallery_search` … `video_fetch`), all face tools — faces are gallery assets (people identified within images), not OMC `Participant`, which is a production-side concept about who made the media (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:22-24`) |
+| `omc:Asset` | gallery management + retrieval (`gallery_search` … `youtube_search` and `video_fetch`), all face tools — faces are gallery assets (people identified within images), not OMC `Participant`, which is a production-side concept about who made the media (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:22-24`) |
 | `omc:Capture` | `generate_speech`, `audio_capture`, `record_and_transcribe`, `voice_design`, `transcribe_and_store`, `transcribe_bundle`, `audio_trim`, `audio_concat` |
 | `omc:Sequence` | `video_clip`, `video_to_gif`, `image_to_video`, `video_concat`, `video_add_caption`, `video_remix`, `video_from_images`, `video_info` |
 | `omc:Shot` | `video_extract_frames` |
@@ -483,7 +492,7 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 - **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors, and its `face_registry.embedding` store column was dropped with it via the forward schema update). Full build-out is deferred.
 - **Generation with lineage:** `generate_image` → save to gallery → `gallery_organize`/`gallery_refresh` → `gallery_record_generation` → later `gallery_reproduce` or `gallery_lineage`/`gallery_asset_detail`
 - **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
-- **Video from gallery assets:** `video_fetch` (acquire) or `gallery_add_media` (import) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` to turn keyframes back into searchable assets
+- **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` turns keyframes back into searchable assets
 - **Async generation:** `job_submit` → `job_status` (poll) → `job_cancel` if needed; `workflow_save` / `workflow_load` to persist multi-step recipes
 
 ## Cross-links

@@ -43,11 +43,9 @@ pub struct TurnRecord {
     /// WebID, not the user's.
     pub agent_id: Option<String>,
     /// Goal-tool events observed in this turn (every `kanban_goal_*` tool
-    /// result from the last agent message). The goal store is ephemeral
-    /// (operator ruling 2026-08-29: zed-agent goals are ephemeral; curator
-    /// memory is the durable vehicle) — these events are what the memory
-    /// write path turns into first-class goal h_mems, so therapy and
-    /// algedonic reviews find goal entities, not prose archaeology.
+    /// result from the current turn). The memory path turns these into
+    /// first-class goal h_mems; a resolved kanban goal remains retained until
+    /// its score event is stored and explicitly acknowledged.
     pub goal_events: Vec<GoalEvent>,
 }
 

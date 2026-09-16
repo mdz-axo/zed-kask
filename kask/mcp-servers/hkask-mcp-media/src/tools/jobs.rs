@@ -564,6 +564,7 @@ mod tests {
             FfmpegRunner::detect(),
             YtDlpRunner::detect(),
             job_store,
+            None,
         ))
     }
 
@@ -899,6 +900,7 @@ mod tests {
             FfmpegRunner::detect(),
             YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
+            None,
         );
         let response = server
             .job_list(Parameters(JobListRequest {

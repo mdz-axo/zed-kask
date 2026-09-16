@@ -343,8 +343,12 @@ rebuilds the consolidation service.
 ### Brier loop → memory confidence (goal scores)
 
 A `kanban_goal_score` goal event is the one outcome the memory system
-observes automatically, and it closes the calibration loop (spec §11
-item 4): the Brier it carries is mapped to a confidence signal —
+observes automatically. The kanban database retains the resolved goal until
+this score event is stored successfully; the production thread path then calls
+`kanban_goal_memory_acknowledge` to prune the retained outbox row. A failed
+memory write returns failure and emits no acknowledgment, while retrying the
+same score deduplicates the curator-memory outcome. The Brier it carries closes
+the calibration loop (spec §11 item 4) and is mapped to a confidence signal —
 `(1 − 2·Brier)` clamped to [0.05, 0.95], so a binary no-skill prediction
 (Brier 0.25) is the neutral point — and Bayesian-combined
 (`hkask_memory::combine_confidences`, the same log-odds pooling

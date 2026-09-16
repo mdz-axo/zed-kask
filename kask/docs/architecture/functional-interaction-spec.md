@@ -209,11 +209,11 @@ The interaction is implemented as two coupled layers.[^kata]
   functional-first closeout (`crates/agent/src/templates.rs`).
 - **Persistent goal layer.** `kanban_goal_create`, `kanban_goal_judge`,
   `kanban_goal_list`, and `kanban_goal_score` use the kanban service's DB-backed
-  goal store. Goals survive server restarts until scoring resolves and removes
-  them; the score remains the Brier closure and curator memory remains the
-  durable outcome record
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-15,40-50,176-244`;
-  `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:393-429,541-543`).
+  goal store. Scoring records resolution but retains the goal across restarts as
+  a durable outbox entry. The production turn-memory path stores the score event
+  in curator memory and only then calls `kanban_goal_memory_acknowledge`, which
+  removes the retained row. Failed ingestion or acknowledgment leaves the same
+  outcome retryable; conflicting outcomes are rejected.
 - **Criterion coupling.** A judge result covers every criterion exactly once.
   Task `advances` citations bind technical work to a goal criterion and remain
   readable after the goal is resolved. The citation is captured task data, not
@@ -234,8 +234,9 @@ The current definition of done is structural and falsifiable:
    verifies that an idempotent create returns the same still-live persistent
    goal after a server restart
    (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/idempotent_creates.rs`).
-3. Goal service tests exercise create, judge, list, score, owner isolation, and
-   removal on resolution through the DB-backed service
+3. Goal service tests exercise create, judge, list, idempotent score retry,
+   owner isolation, retention through reconstructed service state, and removal
+   only on memory acknowledgment through the DB-backed service
    (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs`).
 4. Outcome quality is resolved against each criterion's named instrument — a
    test result, tool result, file state, market resolution, log line, or date —

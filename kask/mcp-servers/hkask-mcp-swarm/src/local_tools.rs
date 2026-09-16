@@ -35,6 +35,34 @@ pub const MAX_EVAL_REPEATS: u32 = 10;
 /// not just the factors — needs a ceiling.
 pub const MAX_EVAL_ROLLOUTS: usize = 50;
 
+fn validate_model_params(
+    input: Option<hkask_mcp_server::AnyJsonValue>,
+) -> Result<Option<serde_json::Value>, McpToolError> {
+    let Some(input) = input else {
+        return Ok(None);
+    };
+    let overlay = serde_json::Value::from(input);
+    let Some(overlay_object) = overlay.as_object() else {
+        return Err(McpToolError::invalid_argument(
+            "model_params must be a JSON object",
+        ));
+    };
+    let mut merged =
+        serde_json::to_value(hkask_types::LLMParameters::default()).map_err(|error| {
+            McpToolError::internal(format!("failed to validate model_params: {error}"))
+        })?;
+    let merged_object = merged.as_object_mut().ok_or_else(|| {
+        McpToolError::internal("LLMParameters did not serialize as a JSON object")
+    })?;
+    for (key, value) in overlay_object {
+        merged_object.insert(key.clone(), value.clone());
+    }
+    serde_json::from_value::<hkask_types::LLMParameters>(merged).map_err(|error| {
+        McpToolError::invalid_argument(format!("model_params contains an invalid value: {error}"))
+    })?;
+    Ok(Some(overlay))
+}
+
 /// Run a deterministic evaluator check against a response. Shared by
 /// `swarm_evaluate_local` and `swarm_execute_plan_local` so the evaluation
 /// logic lives once — a bad evaluator spec or regex errors propagate to the
@@ -1766,6 +1794,7 @@ impl SwarmServer {
             // is an explicit per-agent override, resolved via the zed
             // LanguageModelRegistry.
             let model = req.model.clone();
+            let model_params = validate_model_params(req.model_params)?;
             let card = LocalAgentCard {
                 agent_id: safe_id.clone(),
                 agent_type: req.agent_type,
@@ -1786,10 +1815,7 @@ impl SwarmServer {
                     output_contract: req.output_contract.map(serde_json::Value::from),
                     input_contract: req.input_contract.map(serde_json::Value::from),
                     temperature: req.temperature,
-                    // fermi's create does not accept model_params (it
-                    // stamps an empty object) — local create mirrors that;
-                    // the field flows via clone/push/card-edit.
-                    model_params: None,
+                    model_params,
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },
@@ -1864,6 +1890,7 @@ impl SwarmServer {
                 ))
             })?;
             card.capabilities.system_prompt = Some(req.system_prompt);
+            let model_params = validate_model_params(req.model_params)?;
             if !req.model.trim().is_empty() {
                 card.capabilities.model = req.model;
             }
@@ -1875,6 +1902,9 @@ impl SwarmServer {
             }
             if !req.skills.is_empty() {
                 card.capabilities.skills = filter_declared_skills(req.skills);
+            }
+            if let Some(model_params) = model_params {
+                card.capabilities.model_params = Some(model_params);
             }
             // write_card sanitizes the id, path-contains against the registry
             // root, writes, and reloads — the single enforcement point for C6.

@@ -891,7 +891,16 @@ pub struct AudioConcatRequest {
     pub audio_urls: Vec<String>,
 }
 
-// ── Video fetch request types ───────────────────────────────────────────
+// ── YouTube search and video fetch request types ────────────────────────
+
+/// Request to search YouTube metadata through SerpApi.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct YoutubeSearchRequest {
+    /// YouTube search query.
+    pub query: String,
+    /// Maximum number of video results to return (default 20, maximum 50).
+    pub max_results: Option<u32>,
+}
 
 /// Request to download a video from a URL (YouTube, Vimeo, direct file, etc.)
 /// to local storage and index it in the gallery.

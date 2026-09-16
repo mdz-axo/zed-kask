@@ -469,11 +469,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — AI media generation (image, video, audio, gallery)",
-        // Both keys are load-bearing for the child-local MediaRouter: media
-        // generation (image, video, TTS, STT) runs in this process with
-        // env-injected keys and never crosses the IPC bridge. Vision/chat/
-        // embed DO cross the bridge to zed's LanguageModelRegistry.
-        credentials: Some(&["OPENROUTER_API_KEY", "DEEPINFRA_API_KEY"]),
+        // Provider keys are load-bearing in the media child: generation runs
+        // through the child-local MediaRouter, while SerpApi supplies structured
+        // YouTube discovery metadata. yt-dlp is download-only and needs no key.
+        // Vision/chat/embed cross the IPC bridge to zed's LanguageModelRegistry.
+        credentials: Some(&[
+            "OPENROUTER_API_KEY",
+            "DEEPINFRA_API_KEY",
+            "HKASK_SERPAPI_API_KEY",
+        ]),
         config_env: Some(&[
             // IPC bridge socket — required for vision/chat/embed routing
             // through zed's LanguageModelRegistry (media generation is

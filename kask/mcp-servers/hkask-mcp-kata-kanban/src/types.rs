@@ -191,6 +191,17 @@ pub(crate) struct GoalScoreResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalMemoryAcknowledgeRequest {
+    pub goal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalMemoryAcknowledgeResponse {
+    pub goal_id: String,
+    pub acknowledged: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GoalListRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

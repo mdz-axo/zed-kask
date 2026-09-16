@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-09-16",
+  "entries": [
+    {
+      "provider_id": "openai",
+      "model_id": "gpt-5.6-sol",
+      "selection_name": "OpenAI/GPT-5.6 Sol",
+      "display_name": "GPT-5.6 Sol",
+      "quality_tier": "frontier",
+      "supports_thinking_disabled": true,
+      "transport_scope": "direct_provider",
+      "capability_evidence_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "quality_evidence_url": "https://openai.com/index/gpt-5-6/",
+      "observed_at": "2026-09-16",
+      "note": "Official model documentation lists reasoning.effort none. This claim covers the direct OpenAI provider; OpenRouter aliases require independent evidence."
+    },
+    {
+      "provider_id": "openai",
+      "model_id": "gpt-5.6-terra",
+      "selection_name": "OpenAI/GPT-5.6 Terra",
+      "display_name": "GPT-5.6 Terra",
+      "quality_tier": "near_frontier",
+      "supports_thinking_disabled": true,
+      "transport_scope": "direct_provider",
+      "capability_evidence_url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "quality_evidence_url": "https://openai.com/index/gpt-5-6/",
+      "observed_at": "2026-09-16",
+      "note": "Official model documentation lists reasoning.effort none. This claim covers the direct OpenAI provider; OpenRouter aliases require independent evidence."
+    },
+    {
+      "provider_id": "openai",
+      "model_id": "gpt-5.6-luna",
+      "selection_name": "OpenAI/GPT-5.6 Luna",
+      "display_name": "GPT-5.6 Luna",
+      "quality_tier": "near_frontier",
+      "supports_thinking_disabled": true,
+      "transport_scope": "direct_provider",
+      "capability_evidence_url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+      "quality_evidence_url": "https://openai.com/index/gpt-5-6/",
+      "observed_at": "2026-09-16",
+      "note": "Official model documentation lists reasoning.effort none. This claim covers the direct OpenAI provider; OpenRouter aliases require independent evidence."
+    }
+  ]
+}

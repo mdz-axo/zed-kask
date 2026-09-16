@@ -220,34 +220,74 @@ impl AgentExecutor {
             return LocalSwarmError::Unavailable(format!("local inference failed: {error}"));
         }
 
-        let guidance = match self
+        let (configured_models, configured_registry_status) = match self
             .inference
             .list_models_supporting_thinking_disabled()
             .await
         {
-            Ok(models) => {
-                let suggestions: Vec<String> = models
+            Ok(models) => (
+                models
                     .into_iter()
                     .filter(|model| model != &agent.capabilities.model)
                     .take(MAX_MODEL_SUGGESTIONS)
-                    .collect();
-                if suggestions.is_empty() {
-                    "No other configured model explicitly advertises support for disabled reasoning; configure one in Settings → AI → LLM Providers, then update capabilities.model."
-                        .to_string()
-                } else {
-                    format!(
-                        "Select a frontier or near-frontier model from the configured alternatives that explicitly advertise disabled-reasoning support, then update capabilities.model. Suggestions: {}.",
-                        suggestions.join(", ")
-                    )
-                }
-            }
-            Err(suggestion_error) => format!(
-                "Compatible-model suggestions are unavailable because the model registry query failed: {suggestion_error}. Select a configured frontier or near-frontier model that explicitly supports disabled reasoning, then update capabilities.model."
+                    .collect::<Vec<_>>(),
+                "available".to_string(),
             ),
+            Err(suggestion_error) => (Vec::new(), format!("unavailable: {suggestion_error}")),
         };
+        let (catalogue, catalogue_registry_status, registry_as_of) =
+            match crate::model_compatibility::registry() {
+                Ok(registry) => {
+                    let as_of = registry.as_of.clone();
+                    let entries = registry
+                        .entries
+                        .into_iter()
+                        .filter(|entry| entry.supports_thinking_disabled)
+                        .take(MAX_MODEL_SUGGESTIONS)
+                        .collect::<Vec<_>>();
+                    (entries, "available".to_string(), Some(as_of))
+                }
+                Err(registry_error) => (Vec::new(), format!("unavailable: {registry_error}"), None),
+            };
+
+        let guidance = if !configured_models.is_empty() {
+            format!(
+                "Select a frontier or near-frontier model from the configured alternatives that explicitly advertise disabled-reasoning support, then update capabilities.model. Configured suggestions: {}.",
+                configured_models.join(", ")
+            )
+        } else if !catalogue.is_empty() {
+            let names = catalogue
+                .iter()
+                .map(|entry| format!("{} ({})", entry.selection_name, entry.quality_tier))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "No other configured model explicitly advertises disabled-reasoning support. Configure a direct provider and update capabilities.model. Evidence-backed recommendations: {names}."
+            )
+        } else {
+            "No compatible recommendation is currently available; review the registry status in compatibility_context before selecting another model."
+                .to_string()
+        };
+        let selected_model = if agent.capabilities.model.is_empty() {
+            "host_session_default"
+        } else {
+            agent.capabilities.model.as_str()
+        };
+        let compatibility_context = serde_json::json!({
+            "failure_kind": "mandatory_reasoning_incompatible",
+            "selected_model": selected_model,
+            "requested_thinking_allowed": false,
+            "configured_compatible_models": configured_models,
+            "catalogue_recommendations": catalogue,
+            "registry_status": {
+                "configured_models": configured_registry_status,
+                "catalogue": catalogue_registry_status,
+                "catalogue_as_of": registry_as_of,
+            },
+        });
 
         LocalSwarmError::Unavailable(format!(
-            "local inference failed: {error}. The card explicitly sets model_params.thinking_allowed=false, but the selected endpoint requires reasoning. {guidance}"
+            "local inference failed: {error}. The card explicitly sets model_params.thinking_allowed=false, but the selected endpoint requires reasoning. {guidance} compatibility_context={compatibility_context}"
         ))
     }
 

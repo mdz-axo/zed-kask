@@ -151,6 +151,7 @@ mod tests {
             FfmpegRunner::detect(),
             YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
+            None,
         ))
     }
 

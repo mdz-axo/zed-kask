@@ -125,6 +125,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "gallery_remove_from_album"
         | "gallery_delete_album"
         | "gallery_list_album_members"
+        | "youtube_search"
         | "video_fetch" => Some(ASSET),
         // Face management — faces are gallery assets (people identified within
         // images, NOT production participants).

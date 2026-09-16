@@ -1355,6 +1355,62 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn resolved_goal_ingestion_is_idempotent_and_fails_when_memory_is_unavailable() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "goal-ack".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test".to_string(),
+            thread_title: None,
+            agent_id: None,
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-ack", "achieved": true, "brier": null}
+                }),
+            }],
+        };
+
+        port.ingest_turn(record.clone())
+            .await
+            .expect("first ingest");
+        port.ingest_turn(record.clone())
+            .await
+            .expect("retry ingest");
+        let stored = port
+            .curator_store
+            .get()
+            .expect("curator store")
+            .h_mems_by_entity_prefix("curator:goal:g-ack")
+            .expect("goal query");
+        assert_eq!(
+            stored
+                .iter()
+                .filter(|h_mem| h_mem.attribute == "kanban_goal_score")
+                .count(),
+            1,
+            "retrying an unacknowledged score must not duplicate the outcome memory"
+        );
+
+        port.curator_store.set_for_tests(None);
+        assert!(
+            port.ingest_turn(TurnRecord {
+                goal_events: vec![hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "content": {"goal_id": "g-unavailable", "achieved": false, "brier": null}
+                    }),
+                }],
+                ..record
+            })
+            .await
+            .is_err(),
+            "missing curator memory must block goal acknowledgment"
+        );
+    }
+
+    #[tokio::test]
     async fn ingest_turn_goal_events_are_single_copy() {
         // 2026-09-04 single-copy ruling: goal events get ONE shared h_mem
         // under curator:goal:{goal_id} — the curator-perspective goal:{id}

@@ -2,7 +2,7 @@
 
 Media generation MCP server — image, video, and audio generation via the configured media providers.
 
-## Tools (80)
+## Tools (81)
 
 The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
@@ -25,6 +25,8 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 | `image_remove_background` | Remove background from a gallery image. Delegates to the configured background-removal provider |
 | `image_apply_style` | Apply style transfer to a gallery image. Delegates to the configured style-transfer provider |
 | `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms, similar_to_index, or image_indices |
+| `youtube_search` | Search YouTube through SerpApi for structured metadata (views, duration, channel, publication date, provider extensions, URL); does not invoke yt-dlp or download media |
+| `video_fetch` | Download a selected YouTube/Vimeo/platform URL with yt-dlp and publish it as a durable local gallery asset |
 | `video_clip` | Trim a video to specified start/end times using local ffmpeg |
 | `video_to_gif` | Convert a video segment to GIF format using local ffmpeg |
 | `image_to_video` | Animate a gallery image into a short video clip. Delegates to the configured video-generation provider |

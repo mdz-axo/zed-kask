@@ -158,8 +158,10 @@ pub(crate) async fn write_turn(
     }
 
     // ── 1. Goal events — first-class goal memory, single shared copy ──
-    // The goal store is ephemeral (operator ruling 2026-08-29: zed-agent
-    // goals are ephemeral; the curator's memory is the durable vehicle).
+    // Resolved kanban goals remain durable outbox entries until a score event
+    // is stored here and the thread path acknowledges the handoff. Score writes
+    // therefore fail the ingestion and deduplicate retries; other goal events
+    // retain their existing best-effort behavior.
     // Each `kanban_goal_*` tool result becomes one structured goal h_mem so
     // therapy / algedonic-review find goal entities (text, criteria,
     // verdicts, Brier scores), not prose archaeology. One key convention:
@@ -181,8 +183,8 @@ pub(crate) async fn write_turn(
         let goal_ontology = HMemOntology {
             dimensions: vec![Dimension::Why.as_str().to_string()],
             // `pplan:Step` (P-Plan, soft-reused by PKO) — the same term the
-            // kanban goal store and the goal responses use, so the ephemeral
-            // and durable records of the same goal agree. Operator decision
+            // kanban goal store and the goal responses use, so the retained
+            // outbox record and curator-memory record agree. Operator decision
             // 2026-08-30: goals anchor on the PKO family — one linked
             // dataset. (The former `pko:Goal` was fabricated; PKO publishes
             // no Goal class; the interim IAO:0000005 anchor was rejected as
@@ -192,17 +194,45 @@ pub(crate) async fn write_turn(
             ..Default::default()
         };
 
-        let shared_goal = HMem::new(
-            &format!("curator:goal:{goal_id}"),
-            event.tool_name.as_str(),
-            event.output.clone(),
-            ctx.curator_webid,
-        )
-        .with_visibility(Visibility::Shared)
-        .with_ontology(goal_ontology)
-        .with_confidence(Confidence::new(0.5));
-        if let Some(ref curator_store) = curator_store {
+        let goal_entity = format!("curator:goal:{goal_id}");
+        let is_score = event.tool_name == "kanban_goal_score";
+        let Some(ref curator_store) = curator_store else {
+            if is_score {
+                return Err(MemoryError::Ingestion(format!(
+                    "curator store unavailable for resolved goal {goal_id}"
+                )));
+            }
+            continue;
+        };
+        let already_stored = if is_score {
+            curator_store
+                .h_mems_by_entity_prefix(&goal_entity)
+                .map_err(|e| {
+                    MemoryError::Ingestion(format!(
+                        "failed to query resolved goal {goal_id} before ingest: {e}"
+                    ))
+                })?
+                .into_iter()
+                .any(|h_mem| h_mem.attribute == event.tool_name && h_mem.value == event.output)
+        } else {
+            false
+        };
+        if !already_stored {
+            let shared_goal = HMem::new(
+                &goal_entity,
+                event.tool_name.as_str(),
+                event.output.clone(),
+                ctx.curator_webid,
+            )
+            .with_visibility(Visibility::Shared)
+            .with_ontology(goal_ontology)
+            .with_confidence(Confidence::new(0.5));
             if let Err(e) = curator_store.store(shared_goal) {
+                if is_score {
+                    return Err(MemoryError::Ingestion(format!(
+                        "failed to store resolved goal {goal_id}: {e}"
+                    )));
+                }
                 tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
@@ -234,9 +264,6 @@ pub(crate) async fn write_turn(
                     goal_id = %goal_id,
                     "Goal score without a Brier — no prediction to calibrate"
                 );
-                continue;
-            };
-            let Some(curator_store) = curator_store.as_ref() else {
                 continue;
             };
             let goal_entity = format!("curator:goal:{goal_id}");

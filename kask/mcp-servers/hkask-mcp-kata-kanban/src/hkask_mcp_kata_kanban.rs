@@ -396,7 +396,7 @@ impl KanbanServer {
     /// for the four-moves interaction loop
     /// (`kask/docs/architecture/functional-interaction-spec.md`).
     #[tool(
-        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals persist in the kanban database until resolved (auto-removed on resolution), so the Brier closure survives restarts; the curator's memory remains the durable outcome record."
+        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals persist through resolution until curator-memory ingestion acknowledges the scored outcome, so failed ingestion remains retryable across restarts."
     )]
     pub async fn kanban_goal_create(
         &self,
@@ -535,11 +535,36 @@ impl KanbanServer {
         .await
     }
 
+    /// Internal completion of the goal-memory handoff. The production agent
+    /// calls this only after the scored outcome is stored in curator memory.
+    #[tool(
+        description = "Acknowledge that a resolved goal outcome was stored in curator memory, then remove the retained goal. Internal lifecycle operation; call only with a confirmed memory-ingestion receipt."
+    )]
+    pub async fn kanban_goal_memory_acknowledge(
+        &self,
+        Parameters(GoalMemoryAcknowledgeRequest { goal_id }): Parameters<
+            GoalMemoryAcknowledgeRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "kanban_goal_memory_acknowledge", async {
+            let gid = parse_goal_id(&goal_id)?;
+            self.service
+                .goal_acknowledge_memory(gid, self.webid)
+                .map_err(map_kanban_error)?;
+            serde_json::to_value(GoalMemoryAcknowledgeResponse {
+                goal_id,
+                acknowledged: true,
+            })
+            .map_err(|e| McpToolError::internal(e.to_string()))
+        })
+        .await
+    }
+
     /// List the caller's goals, newest first — the cross-session recall
     /// for Move 4 (bank the learning): the next bit of work starts from
     /// these.
     #[tool(
-        description = "List the caller's functional goals (persisted until resolved) with latest verdicts and resolution state, newest first."
+        description = "List the caller's functional goals, including resolved goals retained until curator-memory ingestion is acknowledged, newest first."
     )]
     pub async fn kanban_goal_list(
         &self,

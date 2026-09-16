@@ -30,7 +30,7 @@ use hkask_mcp_media::types::{
     VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest,
     VideoFromImagesRequest, VideoInfoRequest, VideoMemeRequest, VideoRemixRequest,
     VideoToGifRequest, VoiceDesignRequest, WorkflowDeleteRequest, WorkflowLoadRequest,
-    WorkflowSaveRequest,
+    WorkflowSaveRequest, YoutubeSearchRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -147,6 +147,7 @@ schema_clean_test!(workflow_load_request_schema, WorkflowLoadRequest);
 schema_clean_test!(workflow_delete_request_schema, WorkflowDeleteRequest);
 schema_clean_test!(video_info_request_schema, VideoInfoRequest);
 schema_clean_test!(video_fetch_request_schema, VideoFetchRequest);
+schema_clean_test!(youtube_search_request_schema, YoutubeSearchRequest);
 schema_clean_test!(audio_trim_request_schema, AudioTrimRequest);
 schema_clean_test!(audio_concat_request_schema, AudioConcatRequest);
 schema_clean_test!(

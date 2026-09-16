@@ -266,10 +266,10 @@ pub enum Message {
 }
 
 /// Extract `kanban_goal_*` tool results from an agent message as first-class
-/// goal events for curator memory. The goal store is ephemeral (operator
-/// ruling 2026-08-29: zed-agent goals are ephemeral; the curator's memory
-/// is the durable vehicle) — these events are what the memory write path
-/// turns into structured goal h_mems, so therapy / algedonic-review find
+/// goal events for curator memory. Resolved goals remain in the kanban store
+/// until the score event is stored here and the thread path acknowledges that
+/// handoff. These events become structured goal h_mems, so therapy and
+/// algedonic review find
 /// goal entities (text, criteria, verdicts, Brier scores), not prose
 /// archaeology.
 ///
@@ -327,6 +327,45 @@ pub(crate) fn collect_goal_events_for_current_turn(
         }
     }
     events
+}
+
+async fn ingest_turn_and_acknowledge_goal_scores(
+    port: Arc<dyn crate::ThreadMemoryPort>,
+    record: crate::ThreadTurnRecord,
+    tool_source: Option<Arc<dyn crate::KaskToolSource>>,
+) -> Result<(), String> {
+    let goal_ids: HashSet<String> = record
+        .goal_events
+        .iter()
+        .filter(|event| event.tool_name == "kanban_goal_score")
+        .filter_map(|event| {
+            event
+                .output
+                .get("goal_id")
+                .or_else(|| event.output.pointer("/content/goal_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+
+    port.ingest_turn(record).await?;
+    if goal_ids.is_empty() {
+        return Ok(());
+    }
+    let source = tool_source.ok_or_else(|| {
+        "goal score stored in curator memory but kata-kanban acknowledgment is unavailable"
+            .to_string()
+    })?;
+    for goal_id in goal_ids {
+        source
+            .invoke(
+                "kata-kanban",
+                "kanban_goal_memory_acknowledge",
+                serde_json::json!({ "goal_id": goal_id }),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -3022,9 +3061,18 @@ impl Thread {
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();
+                                let tool_source = crate::kask_tool_source();
                                 cx.background_spawn(async move {
-                                    if let Err(e) = port.ingest_turn(record).await {
-                                        log::warn!("Memory ingestion failed: {e}");
+                                    if let Err(e) = ingest_turn_and_acknowledge_goal_scores(
+                                        port,
+                                        record,
+                                        tool_source,
+                                    )
+                                    .await
+                                    {
+                                        log::warn!(
+                                            "Memory ingestion or goal acknowledgment failed: {e}"
+                                        );
                                     }
                                 })
                                 .detach();
@@ -8328,7 +8376,7 @@ mod tests {
         );
     }
 
-    // ── Goal-event extraction (D6: ephemeral goals → curator memory) ────
+    // ── Goal-event ingestion and acknowledgment (D6) ───────────────────
 
     fn tool_use(id: &str, name: &str) -> AgentMessageContent {
         AgentMessageContent::ToolUse(language_model::LanguageModelToolUse {
@@ -8355,10 +8403,103 @@ mod tests {
         }
     }
 
+    struct GoalAckMemoryPort {
+        fail: bool,
+    }
+
+    impl crate::ThreadMemoryPort for GoalAckMemoryPort {
+        fn ingest_turn(
+            &self,
+            _record: crate::ThreadTurnRecord,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+            Box::pin(async move {
+                if self.fail {
+                    Err("injected memory failure".to_string())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    struct RecordingGoalAckSource {
+        calls: Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+    }
+
+    impl crate::KaskToolSource for RecordingGoalAckSource {
+        fn tools(&self) -> Vec<crate::KaskToolDescriptor> {
+            Vec::new()
+        }
+
+        fn invoke(
+            &self,
+            server_id: &str,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send>> {
+            self.calls.lock().expect("calls lock").push((
+                server_id.to_string(),
+                tool.to_string(),
+                args,
+            ));
+            Box::pin(async { Ok(json!({"acknowledged": true})) })
+        }
+    }
+
+    fn goal_score_turn_record() -> crate::ThreadTurnRecord {
+        crate::ThreadTurnRecord {
+            thread_id: "goal-ack-thread".to_string(),
+            user_input: "confirm outcome".to_string(),
+            agent_response: "outcome scored".to_string(),
+            model: "fake".to_string(),
+            thread_title: None,
+            agent_id: None,
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: json!({"content": {"goal_id": "g-ack", "achieved": true}}),
+            }],
+        }
+    }
+
+    #[gpui::test]
+    async fn goal_memory_acknowledgment_runs_only_after_successful_ingestion(
+        _cx: &mut TestAppContext,
+    ) {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let source: Arc<dyn crate::KaskToolSource> = Arc::new(RecordingGoalAckSource {
+            calls: Arc::clone(&calls),
+        });
+
+        let failed = ingest_turn_and_acknowledge_goal_scores(
+            Arc::new(GoalAckMemoryPort { fail: true }),
+            goal_score_turn_record(),
+            Some(Arc::clone(&source)),
+        )
+        .await;
+        assert!(failed.is_err());
+        assert!(calls.lock().expect("calls lock").is_empty());
+
+        ingest_turn_and_acknowledge_goal_scores(
+            Arc::new(GoalAckMemoryPort { fail: false }),
+            goal_score_turn_record(),
+            Some(source),
+        )
+        .await
+        .expect("successful ingestion acknowledges the retained goal");
+        assert_eq!(
+            *calls.lock().expect("calls lock"),
+            vec![(
+                "kata-kanban".to_string(),
+                "kanban_goal_memory_acknowledge".to_string(),
+                json!({"goal_id": "g-ack"}),
+            )]
+        );
+    }
+
     #[test]
     fn extract_goal_events_filters_and_preserves_output() {
-        // The goal store is ephemeral (operator ruling 2026-08-29); these
-        // events are the durable record the curator's memory stores. Pins:
+        // Goal events are the curator-memory record; resolved kanban rows are
+        // retained until the score event is stored and acknowledged. Pins:
         // (1) only kanban_goal_* tools are extracted; (2) the raw output
         // JSON is preferred; (3) a missing result (turn ended mid-call) is
         // skipped — an unobserved result is not a goal event; (4) a
