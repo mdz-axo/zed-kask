@@ -492,7 +492,12 @@ impl AgentExecutor {
 /// keeps the defaults for keys it does not name, and unknown keys are
 /// ignored by serde rather than failing the run.
 fn sampling_params(agent: &crate::local_registry::LocalAgentCard) -> hkask_types::LLMParameters {
-    let mut params = hkask_types::LLMParameters::default();
+    let mut params = hkask_types::LLMParameters {
+        // Agent-card `reasoning` controls the optional structured reasoning
+        // tool, not whether a mandatory-reasoning model may execute internally.
+        thinking_allowed: true,
+        ..Default::default()
+    };
     if let Some(temperature) = agent.capabilities.temperature {
         params.temperature = temperature as f32;
     }
@@ -861,6 +866,10 @@ mod tests {
         // No card values → the executor's default preset.
         let defaults = hkask_types::LLMParameters::default();
         assert_eq!(sampling_params(&card).temperature, defaults.temperature);
+        assert!(
+            sampling_params(&card).thinking_allowed,
+            "agent execution allows model-internal reasoning independently of the optional reasoning tool"
+        );
 
         // The temperature field overrides the default temperature.
         card.capabilities.temperature = Some(0.2);
@@ -878,6 +887,14 @@ mod tests {
         assert_eq!(resolved.temperature, 0.8);
         assert_eq!(resolved.top_k, 10);
         assert_eq!(resolved.top_p, defaults.top_p);
+
+        card.capabilities.model_params = Some(serde_json::json!({
+            "thinking_allowed": false
+        }));
+        assert!(
+            !sampling_params(&card).thinking_allowed,
+            "an explicit card model parameter still disables thinking"
+        );
     }
 
     /// A stub that records the `model_override` it was called with, so tests
