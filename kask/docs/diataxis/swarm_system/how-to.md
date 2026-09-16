@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — How-to: Compose and Steer a Swarm"
 audience: [operators, developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Swarm"
@@ -33,7 +33,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-010
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:530-925; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-638; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-909
 status: VERIFIED
 -->

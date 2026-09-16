@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -242,6 +242,6 @@ The editor process hosts the Agent panel, Curator, shared Regulation graph, and 
 [^bibo]: D'Arcus, B. & Giasson, F. *Bibliographic Ontology (BIBO)*. <https://bibliontology.com/>.
 [^pko]: Carriero, V. A. et al. (2024). "The Procedural Knowledge Ontology (PKO)." ISWC 2024 / PERKS Project. <https://w3id.org/pko>.
 [^miller-ocap]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control*. Johns Hopkins University.
-[^onto4mat]: Hepworth, A. J., Baxter, D. P., & Abbass, H. A. (2022). Onto4MAT: A Swarm Shepherding Ontology for Generalized Multiagent Teaming. *IEEE Access*, 10, 59843–59861. https://doi.org/10.1109/ACCESS.2022.3180032 — the multi-agent teaming ontology whose `energy` property the swarm runtime reads interpretively (`hkask-mcp-swarm/src/local_runtime.rs:598,977`); it is not a vocabulary bridge module in `hkask-bridge-ontology`.
+[^onto4mat]: Hepworth, A. J., Baxter, D. P., & Abbass, H. A. (2022). Onto4MAT: A Swarm Shepherding Ontology for Generalized Multiagent Teaming. *IEEE Access*, 10, 59843–59861. https://doi.org/10.1109/ACCESS.2022.3180032 — prior art for multi-agent teaming concepts; it is not a vocabulary bridge module in `hkask-bridge-ontology`.
 
 ---

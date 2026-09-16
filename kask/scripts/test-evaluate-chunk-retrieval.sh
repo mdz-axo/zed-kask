@@ -91,8 +91,9 @@ jq -e '
     .source_fidelity_violations == 0 and
     .exact_evidence_recall_at_5 == 1 and
     .correct_source_recall_at_20 == 1 and
-    .budget_exceeded_queries == 1 and
-    .ndcg.status == "unavailable"
+    .budget_exceeded_queries == 0 and
+    .ndcg.status == "unavailable" and
+    .answer_grounding.status == "unavailable"
 ' "$tmp/direct-output/summary.json" >/dev/null
 [[ $(wc -l < "$tmp/direct-output/raw-results.jsonl") -eq 2 ]]
 [[ $(wc -l < "$tmp/direct-output/per-query-results.jsonl") -eq 2 ]]
@@ -117,7 +118,7 @@ jq -e '
     .source_fidelity_violations == 0 and
     .exact_evidence_recall_at_5 == 1 and
     .budgeted_exact_evidence_recall == 0.5 and
-    .budget_exceeded_queries == 1 and
+    .budget_exceeded_queries == 0 and
     .small_to_big.parent_expansion_count == 3 and
     .small_to_big.boundary_crossing_children == 1 and
     .small_to_big.retrieved_children == 2 and
@@ -132,7 +133,10 @@ HKASK_CORPUS_BINARY="$tmp/does-not-exist" "$evaluator" --reuse-raw "$tmp/small-o
 jq -e '.query_count == 2 and .budgeted_exact_evidence_recall == 0.5 and .source_fidelity_gate == "pass"' \
     "$tmp/reaggregated-output/summary.json" >/dev/null
 
-"$evaluator" corrupt-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tmp/corrupt.db" "$tmp/corrupt-output" 20 5
+if "$evaluator" corrupt-test direct "$tmp/queries.jsonl" "$tmp/direct.jsonl" "$tmp/corrupt.db" "$tmp/corrupt-output" 20 5; then
+    echo "source-fidelity failure must return nonzero" >&2
+    exit 1
+fi
 jq -e '.source_fidelity_gate == "fail" and .source_fidelity_violations == 2' \
     "$tmp/corrupt-output/summary.json" >/dev/null
 

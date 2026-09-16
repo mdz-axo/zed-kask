@@ -1,7 +1,7 @@
 ---
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Foundation"
@@ -82,7 +82,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/hkask_types.rs:6-44
 status: VERIFIED
 -->
@@ -162,7 +162,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:100-161,161-380; kask/crates/hkask-types/src/ports/memory_port.rs:95-147; kask/crates/hkask-types/src/event.rs:536-552
 status: VERIFIED
 -->
@@ -208,7 +208,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-010
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/inference_ipc.rs:1-47,53-120,122-278
 status: VERIFIED
 -->
@@ -244,7 +244,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-005
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/agent_paths.rs:12-26,31-44,63-232
 status: VERIFIED
 -->

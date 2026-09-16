@@ -1,7 +1,7 @@
 ---
 title: "hkask-tool-port — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "Sovereignty"
@@ -84,7 +84,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62,89-123; kask/crates/hkask-tool-port/src/tool_port.rs:8-53; kask/crates/hkask-mcp/src/runtime.rs:1286
 status: VERIFIED
 -->
@@ -246,7 +246,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:67,91,95
 status: VERIFIED
 -->

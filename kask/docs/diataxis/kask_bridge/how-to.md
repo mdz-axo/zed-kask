@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — How-to: Add a Built-in MCP Server"
 audience: [developers extending the kask MCP surface]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Integration"
@@ -27,7 +27,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-50; kask/crates/kask_bridge/src/mcp_servers.rs:52-506; kask/crates/kask_bridge/src/mcp_servers.rs:570-600; kask/crates/kask_bridge/src/mcp_servers.rs:612-769; kask/crates/kask_bridge/src/mcp_servers.rs:873-894
 status: VERIFIED
 -->

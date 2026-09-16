@@ -1,7 +1,7 @@
 ---
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.4.0"
 status: "Active"
 domain: "Condensation"
@@ -61,7 +61,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-condenser/src/engine.rs:20-108; kask/crates/hkask-condenser/src/algorithms.rs:33-45; kask/crates/hkask-condenser/src/algorithms.rs:463-492; kask/crates/kask_bridge/src/condenser_bridge.rs:19-125; crates/agent/src/thread.rs:3594-3643
 status: VERIFIED
 -->

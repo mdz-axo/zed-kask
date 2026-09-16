@@ -1,7 +1,7 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.3.0"
 status: "Active"
 domain: "agent interaction"
@@ -178,7 +178,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FUNCTIONAL-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/agent/src/templates/system_prompt.hbs:1-20,304-343; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:393-429,541-543
 status: VERIFIED
 -->

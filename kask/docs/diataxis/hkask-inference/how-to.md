@@ -1,7 +1,7 @@
 ---
 title: "hkask-inference — How-to: Route and Configure Inference"
 audience: [developers, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "3.0.0"
 status: "Active"
 domain: "Inference"
@@ -39,7 +39,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-WIRE
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:88-105,155-375,389-490
 status: VERIFIED
 -->
@@ -103,7 +103,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-PROVIDER
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/hkask_inference.rs:409-490; kask/crates/kask_bridge/src/inference_chat.rs:579-621
 status: VERIFIED
 -->

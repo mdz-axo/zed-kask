@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "Regulation"
@@ -99,7 +99,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:142-202,609-703; kask/crates/hkask-regulation/src/runtime.rs:498-609; kask/crates/hkask-regulation/src/sensor_provider.rs:27-71; kask/crates/hkask-regulation/src/energy.rs:131-267; kask/crates/hkask-regulation/src/inference_resilience.rs:59-80; kask/crates/hkask-regulation/src/metacognition.rs:172-342; kask/crates/hkask-regulation/src/algedonic.rs:84-102
 status: VERIFIED
 -->
@@ -135,7 +135,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-regulation/src/loops/actions.rs:12-43,76-148
 status: VERIFIED
 -->

@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — Reference"
 audience: [developers, architects]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "Persistence"
@@ -90,7 +90,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:294-306; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
 status: VERIFIED
 -->
@@ -148,7 +148,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/gallery.rs:84-135,598-725,741-815,836-930
 status: VERIFIED
 -->
@@ -224,7 +224,7 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-008
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-29
 status: VERIFIED
 -->

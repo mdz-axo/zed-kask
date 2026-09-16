@@ -1,7 +1,7 @@
 ---
 title: "hkask-mcp-server — How-to: Common Server Tasks"
 audience: [developers building or extending hKask MCP servers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "MCP"
@@ -26,7 +26,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-010
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:9-53,126-190; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,253-328,472-498; kask/crates/hkask-mcp-server/src/security.rs:334-395
 status: VERIFIED
 -->

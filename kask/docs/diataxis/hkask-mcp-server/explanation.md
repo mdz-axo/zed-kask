@@ -1,7 +1,7 @@
 ---
 title: "hkask-mcp-server — Explanation: Why the Framework Is Narrow"
 audience: [developers who want the design rationale, not just the API]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "MCP"
@@ -39,7 +39,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-030
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:37-54; kask/crates/hkask-mcp-server/src/server/transport.rs:42-129; kask/crates/hkask-mcp-server/src/server/context.rs:126-135
 status: VERIFIED
 -->
@@ -81,7 +81,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-031
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-119,145-170
 status: VERIFIED
 -->

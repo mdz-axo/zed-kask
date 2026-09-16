@@ -11,7 +11,7 @@ use hkask_bridge_ontology::sepio;
 /// key it must have been tagged with to bypass the subject/object-in-text
 /// check. GOLEM-family prefixes (`gc:`, `crm:`, `dlp:`, `lrmoo:` — GOLEM
 /// reuses CIDOC-CRM, LRMoo, and DOLCE-Lite-Plus terms) all map to the
-/// `"golem"` tag key emitted by `tag-chunks-batch.j2`. Returns `None` for
+/// `"golem"` tag key produced by deterministic ontology resolution. Returns `None` for
 /// non-abstract namespaces (schema, rdf, dcterms, ...), which never bypass.
 pub(crate) fn abstract_namespace_tag_key(pred_ns: &str) -> Option<&'static str> {
     if let Some(family) = golem::tag_family(pred_ns) {

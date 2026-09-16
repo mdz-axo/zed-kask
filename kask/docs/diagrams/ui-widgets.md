@@ -1,7 +1,7 @@
 ---
 title: "UI Widget Diagrams — Graph, Kanban, Portfolio, Prediction Markets, Scenarios, Swarm"
 audience: [architects, developers]
-last_updated: 2026-08-28
+last_updated: 2026-09-16
 version: "1.0.0"
 status: "Active"
 domain: "Composition"
@@ -117,7 +117,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-GRAPH
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L49-59 — evidence HashMap<usize, EvidenceKind>, repropagate L161)
 status: VERIFIED
 -->
@@ -249,7 +249,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs (KanbanWidget L104-114 — column_meta S8, provenance; render_dispatch_status L260; evaluate_move L974); crates/hkask-kanban-widget/src/move_controller.rs (L61-121)
 status: VERIFIED
 -->
@@ -352,7 +352,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-PORTFOLIO
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER/DEFAULT_TOOL L42-44, INVOKER_NOT_WIRED_MSG/PROVENANCE_INCOMPLETE_MSG L46-50, from_focus/to_focus L59-66, from_input/to_input L104-120)
 status: VERIFIED
 -->
@@ -497,7 +497,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L60, combined_router L85-89 = prediction_markets_router + economic_data_tools_router, tool fns — 17 market/CMP tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (14 economic-data tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L17); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L27); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
 status: VERIFIED
 -->
@@ -539,7 +539,7 @@ flowchart LR
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM-PIPELINE-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L85-89); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs
 status: VERIFIED
 -->
@@ -661,7 +661,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SCENARIOS
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-scenarios-widget/src/block.rs; crates/hkask-scenarios-widget/src/view.rs (dispatch fields L35-42, SCENARIO_TOOL_SERVER fallback L21-22, dispatch_rung L554, provenance routing L548-561)
 status: VERIFIED
 -->
@@ -757,7 +757,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SWARM
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (SwarmWidget L47-50, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213, RESPONSE_TRUNCATE_CHARS L43); crates/hkask-swarm-widget/src/block.rs; crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L163-176)
 status: VERIFIED
 -->

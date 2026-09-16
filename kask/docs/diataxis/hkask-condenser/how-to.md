@@ -1,7 +1,7 @@
 ---
 title: "hkask-condenser — How-to: Tune Compression and Manual Precompression"
 audience: [developers, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.4.0"
 status: "Active"
 domain: "Condensation"
@@ -26,7 +26,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs:40-108; kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3594-3643
 status: VERIFIED
 -->

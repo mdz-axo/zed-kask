@@ -58,10 +58,14 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKA
         local name=$1
         tr '\0' '\n' < "/proc/$host_pid/environ" | sed -n "s/^${name}=//p"
     }
-    HKASK_INFERENCE_SOCKET=$(read_host_env HKASK_INFERENCE_SOCKET)
-    HKASK_INFERENCE_TIMEOUT_SECS=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
-    HKASK_EMBEDDING_MODEL=$(read_host_env HKASK_EMBEDDING_MODEL)
-    DEEPINFRA_TOKEN=$(read_host_env DEEPINFRA_TOKEN)
+    host_inference_socket=$(read_host_env HKASK_INFERENCE_SOCKET)
+    host_inference_timeout=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
+    host_embedding_model=$(read_host_env HKASK_EMBEDDING_MODEL)
+    host_deepinfra_token=$(read_host_env DEEPINFRA_TOKEN)
+    HKASK_INFERENCE_SOCKET=${HKASK_INFERENCE_SOCKET:-$host_inference_socket}
+    HKASK_INFERENCE_TIMEOUT_SECS=${HKASK_INFERENCE_TIMEOUT_SECS:-$host_inference_timeout}
+    HKASK_EMBEDDING_MODEL=${HKASK_EMBEDDING_MODEL:-$host_embedding_model}
+    DEEPINFRA_TOKEN=${DEEPINFRA_TOKEN:-$host_deepinfra_token}
     export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL DEEPINFRA_TOKEN
 fi
 if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ) ]]; then

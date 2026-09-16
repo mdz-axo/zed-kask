@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — Explanation: Boundaries, Maintenance, and Gallery Identity"
 audience: [architects, developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "Persistence"
@@ -62,7 +62,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-005
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/core/connection.rs:194-252,337-366,394-466; kask/crates/hkask-storage/src/maintenance_inventory.rs:41-48,103-152
 status: VERIFIED
 -->
@@ -117,7 +117,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/gallery.rs:103-135,598-624,626-725,728-815
 status: VERIFIED
 -->

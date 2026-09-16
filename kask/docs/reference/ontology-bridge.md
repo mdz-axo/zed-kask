@@ -1,7 +1,7 @@
 ---
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.39.0"
 status: "Active"
 domain: "Cross-cutting"

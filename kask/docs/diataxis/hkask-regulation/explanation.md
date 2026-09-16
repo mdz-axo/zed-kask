@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "Regulation"
@@ -47,7 +47,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-005
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:306-447,450-536,538-680; kask/crates/hkask-regulation/src/loops/actions.rs:141-160
 status: VERIFIED
 -->
@@ -92,7 +92,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-007
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/kask_bridge/src/inference_resilience.rs:10-58,73-199,202-275; kask/crates/hkask-regulation/src/inference_resilience.rs:8-80; kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:150-303
 status: VERIFIED
 -->
@@ -129,7 +129,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:574-680; kask/crates/hkask-regulation/src/algedonic.rs:58-102; kask/crates/hkask-regulation/src/loops/core.rs:789-794
 status: VERIFIED
 -->

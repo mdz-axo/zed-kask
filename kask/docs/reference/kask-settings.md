@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.38.0"
 status: "Active"
 domain: "Composition"

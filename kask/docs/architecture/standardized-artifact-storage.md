@@ -1,7 +1,7 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Lifecycle"
@@ -149,7 +149,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506
 status: VERIFIED
 -->

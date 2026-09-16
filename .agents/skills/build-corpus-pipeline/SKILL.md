@@ -279,19 +279,32 @@ The minimum reference suite is:
    propositions, summaries and contextual prefixes may be retrieval keys but never
    source quotations.
 
-Hold corpus, query set, embedding model, retriever, top-k and retrieved-token budget
-constant. Report exact-evidence Recall@k, MRR or nDCG, duplicate retrieval rate,
-retrieved tokens, chunk/index size, grounded answer accuracy when measured, and every
-source-fidelity violation. Select on the Pareto frontier: source fidelity is a hard
-gate, then retrieval quality under the fixed token/cost budget. Do not add semantic
-breakpoint chunking, dynamic routing, contextual generation or linked tiers merely to
-complete the comparison; a missing challenger is a capability gap to implement and
-verify, not a fabricated result. The design taxonomy is segmentation × embedding
-paradigm (Zhou et al., 2026); in-document needle retrieval and in-corpus retrieval are
-separate evaluation strata.
+Hold corpus, query set, actual embedding model, retriever, top-k and retrieved-word
+budget constant. Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-json>
+<output-dir>`; use `--resume` only with the same immutable identity. The run spec must
+name every accepted source with raw/canonical paths and SHA-256 values, one entity-ref
+namespace, the exact embedding model, embedding batch size, query limit, fixed
+`corpus_query_cosine` controls, and complete current/fine/parent shared-contract
+parameters (`min_words`, `max_words`, `overlap_words`, `sentence_boundary`). Never put
+a DB passphrase in this record.
 
-Call `corpus_chunk` with `input_dir` set to the accepted `.txt` directory,
-explicit `output`, `entity_ref_prefix`, selected `max_tokens`, `overlap_tokens`,
+The runner derives candidate-independent queries from accepted canonical sources,
+calls `corpus_build_chunk_representations`, embeds reference/current/fine retrieval
+representations into isolated indexes with one actual model, queries all three, and
+records fidelity, Recall@k, MRR, duplicate overlap, retrieved words, index size and
+measured wall/storage costs. nDCG and answer grounding remain explicitly unavailable
+unless separately measured; never encode absence as zero. Selection admits only
+source-fidelity-passing policies, then ranks retrieval quality under the fixed budget.
+The sealed run identity hashes accepted sources, queries, the actual model, full policy
+and retriever parameters, every representation, the child-parent map, parents and all
+indexes; any resume drift fails. Do not add semantic breakpoint chunking, dynamic
+routing, contextual generation or linked tiers merely to complete the comparison. The
+design taxonomy is segmentation × embedding paradigm (Zhou et al., 2026);
+in-document needle retrieval and in-corpus retrieval are separate evaluation strata.
+
+After calibration selects a policy, call `corpus_chunk` with `input_dir` set to the
+accepted `.txt` directory, explicit `output`, `entity_ref_prefix`, selected
+`max_tokens`, `overlap_tokens`,
 `multi_tier=false`, and `index=false` when Stage 3 will persist embeddings.
 Directory mode enumerates immediate `.txt` children, not a recursive file tree.
 Every child is containment-checked before reading; broken/escaping symlinks fail.

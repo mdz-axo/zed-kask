@@ -278,12 +278,32 @@ mod tool_surface_tests {
     fn tool_surface_is_exactly_24_registered_tools() {
         let tools = CorpusServer::combined_router().list_all();
         assert_eq!(tools.len(), 24, "corpus registered tool surface changed");
-        assert!(
-            tools
-                .iter()
-                .any(|tool| tool.name == "corpus_build_chunk_representations"),
-            "calibration representation tool must be registered"
-        );
+        let calibration = tools
+            .iter()
+            .find(|tool| tool.name == "corpus_build_chunk_representations")
+            .expect("calibration representation tool must be registered");
+        let schema = serde_json::to_value(&calibration.input_schema).expect("schema JSON");
+        for required in [
+            "accepted_sources",
+            "output_dir",
+            "entity_ref_prefix",
+            "current_policy",
+            "fine_policy",
+            "parent_policy",
+        ] {
+            assert!(
+                schema["properties"].get(required).is_some(),
+                "calibration schema is missing {required}"
+            );
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .expect("required fields")
+                    .iter()
+                    .any(|field| field == required),
+                "calibration schema must require {required}"
+            );
+        }
     }
 
     /// expect: "Step 6 extends the existing centroid tool, not the tool count." [P3]

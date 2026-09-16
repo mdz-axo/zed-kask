@@ -1,7 +1,7 @@
 ---
 title: "hkask-mcp-server — Tutorial: Build Your First MCP Server"
 audience: [developers new to hKask MCP servers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "MCP"
@@ -28,7 +28,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:37-54,98-165; kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170; kask/crates/hkask-mcp-server/src/server/transport.rs:32-129
 status: VERIFIED
 -->

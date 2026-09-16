@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Swarm"
@@ -39,7 +39,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-030
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:606-925; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-638; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2575-2669; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2812-2899
 status: VERIFIED
 -->
@@ -117,7 +117,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-031
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:188-205; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:399-609; kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:606-925
 status: VERIFIED
 -->

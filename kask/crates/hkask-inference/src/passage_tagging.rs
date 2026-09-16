@@ -17,6 +17,13 @@ const MIN_CANDIDATE_TERMS: usize = 3;
 const MAX_CANDIDATE_TERMS: usize = 5;
 const MAX_CORRELATION_ID_LEN: usize = 32;
 
+/// One process-lifetime snapshot of the fixed deployed template. Explicit
+/// alternate roots (used by isolated tests) render uncached, so the cache and
+/// leaked source remain strictly bounded to one entry.
+static TEMPLATE_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<PathBuf, minijinja::Environment<'static>>>,
+> = std::sync::OnceLock::new();
+
 /// One passage with a caller-generated, batch-local correlation identifier.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Passage {
@@ -158,7 +165,7 @@ pub fn render_deployed_tagging_prompt(
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .ok_or(PassageTaggingError::TemplateRootNotConfigured)?;
-    render_tagging_prompt(&root, request)
+    render_named_template(&root, TEMPLATE_NAME, request, true)
 }
 
 /// Render the fixed deployed passage-tagging template with strict variables.
@@ -166,13 +173,14 @@ pub fn render_tagging_prompt(
     template_root: &Path,
     request: &PassageTaggingRequest,
 ) -> Result<String, PassageTaggingError> {
-    render_named_template(template_root, TEMPLATE_NAME, request)
+    render_named_template(template_root, TEMPLATE_NAME, request, false)
 }
 
 fn render_named_template(
     template_root: &Path,
     template_name: &str,
     request: &PassageTaggingRequest,
+    cache_deployed: bool,
 ) -> Result<String, PassageTaggingError> {
     if template_name.contains('/') || template_name.contains('\\') || template_name.contains("..") {
         return Err(PassageTaggingError::TemplateTraversal(
@@ -197,9 +205,60 @@ fn render_named_template(
     if !canonical_path.starts_with(&canonical_root) {
         return Err(PassageTaggingError::TemplateTraversal(canonical_path));
     }
-    let source = std::fs::read_to_string(&canonical_path).map_err(|source| {
+    if !cache_deployed {
+        return render_uncached(&canonical_path, request);
+    }
+    let cache = TEMPLATE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !cache.contains_key(&canonical_path) && !cache.is_empty() {
+        drop(cache);
+        return render_uncached(&canonical_path, request);
+    }
+    if !cache.contains_key(&canonical_path) {
+        let source = std::fs::read_to_string(&canonical_path).map_err(|source| {
+            PassageTaggingError::TemplateRead {
+                path: canonical_path.clone(),
+                source,
+            }
+        })?;
+        let source: &'static str = Box::leak(source.into_boxed_str());
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+        env.add_template(TEMPLATE_NAME, source)
+            .map_err(PassageTaggingError::TemplateSyntax)?;
+        cache.insert(canonical_path.clone(), env);
+    }
+    let env = cache.get(&canonical_path).ok_or_else(|| {
+        PassageTaggingError::InvalidRequest("deployed template cache insertion failed".to_string())
+    })?;
+    let template = env
+        .get_template(TEMPLATE_NAME)
+        .map_err(PassageTaggingError::TemplateSyntax)?;
+    let context = serde_json::json!({
+        "passages": request.passages,
+        "model_dimensions": request.model_dimensions,
+        "server_dimensions": request.server_dimensions,
+        "expertise_mode": request.expertise_mode,
+    });
+    let rendered = template
+        .render(minijinja::Value::from_serialize(&context))
+        .map_err(PassageTaggingError::TemplateRender)?;
+    let rendered = rendered.trim().to_string();
+    if rendered.is_empty() {
+        return Err(PassageTaggingError::BlankTemplateOutput);
+    }
+    Ok(rendered)
+}
+
+fn render_uncached(
+    canonical_path: &Path,
+    request: &PassageTaggingRequest,
+) -> Result<String, PassageTaggingError> {
+    let source = std::fs::read_to_string(canonical_path).map_err(|source| {
         PassageTaggingError::TemplateRead {
-            path: canonical_path,
+            path: canonical_path.to_path_buf(),
             source,
         }
     })?;
@@ -539,7 +598,8 @@ mod tests {
             render_named_template(
                 root.path(),
                 "../secret",
-                &request(ExpertiseMode::ServerDerived)
+                &request(ExpertiseMode::ServerDerived),
+                false,
             ),
             Err(PassageTaggingError::TemplateTraversal(_))
         ));

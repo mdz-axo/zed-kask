@@ -1,7 +1,7 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "architecture"
@@ -82,7 +82,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PROMPT-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/agent/src/templates.rs; crates/agent/src/curator_agent_server.rs; crates/agent/src/kask_thread_state.rs; crates/hkask-steer/src/hkask_steer.rs:174-184; crates/media_panel/src/media_panel.rs:235-314
 status: VERIFIED
 -->
@@ -711,7 +711,7 @@ Skill execution is bounded by the **per-agent call cap** (System A): every gover
 
 Tool-call bounding is the per-agent `CallCap`.
 
-Cost consumption is observable via Regulation spans. Query the in-process Regulation span surface (agent panel) and look for `reg.tool.invoked` (pre-invocation) and `reg.tool.completed` (post-invocation).
+Tool use is observable after dispatch through two concrete records: server-side execution emits one `reg.tool` tracing event with `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:111-119`); governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1534-1540`). There is no separate pre-invocation `reg.tool.invoked` event.
 
 ### Error Handling
 

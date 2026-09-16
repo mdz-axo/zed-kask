@@ -55,7 +55,7 @@ pub fn qa_prompt_id(source: &str, chunk_ref: &str, qa_type: &str, ordinal: usize
 /// non-classifier callers constructing unverified metadata.
 ///
 /// Serialization is lowercase to match the JSONL format produced by the
-/// tagging template (`tag-chunks.j2`).
+/// shared passage-tagging wire contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ExpertiseLevel {
     Practitioner,

@@ -1,7 +1,7 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -140,7 +140,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,510-723; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88
 status: VERIFIED
 -->
@@ -312,7 +312,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-IC-017
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,271-321; kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-78; kask/crates/hkask-types/src/kanban_status.rs:24
 status: VERIFIED
 -->

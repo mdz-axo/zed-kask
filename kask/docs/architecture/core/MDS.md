@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -49,15 +49,15 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 | `ColumnDef` | Ordered column on a board representing a workflow phase | `column_id: ColumnId`, `name`, `status: TaskStatus`, `wip_limit: Option<u32>` |
 | `Task` | Unit of work with status lifecycle, priority, verification criteria | `task_id: TaskId`, `title`, `status: TaskStatus`, `priority: Priority`, `owner: WebID`, `board_id: BoardId` |
 | `Priority` | Task urgency level | `Low \| Medium \| High \| Critical` |
-| `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`hkask-types/src/kanban_status.rs:24`) |
+| `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`kask/crates/hkask-types/src/kanban_status.rs:24`) |
 | `VerificationCriterion` | Acceptance spec with optional LLM evaluation prompt | `description: String`, `llm_prompt: Option<String>` |
-| `Goal` | Functional target persisted in the kanban database until resolution: text, observable criteria, and optional intake prediction | `goal_id`, `goal_text`, `criteria`, `prediction` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:20-40`; persistence contract at `kanban/service_impl/goals.rs:9-15,40-50`) |
-| `GoalVerdict` | Persisted judge verdict with confidence and exactly one result for every criterion | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:145-160`; write at `kanban/service_impl/goals.rs:240-244` |
-| `GoalResolution` | Brier-scored closure; scoring removes the resolved goal while curator memory retains the outcome record | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:163-175`; lifecycle contract at `kanban/service_impl/goals.rs:9-15` |
+| `Goal` | Functional target persisted in the kanban database until resolution: text, observable criteria, and optional intake prediction | `goal_id`, `goal_text`, `criteria`, `prediction` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:20-40`; persistence contract at `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-15,40-50`) |
+| `GoalVerdict` | Persisted judge verdict with confidence and exactly one result for every criterion | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:145-160`; write at `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:240-244` |
+| `GoalResolution` | Brier-scored closure; scoring removes the resolved goal while curator memory retains the outcome record | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:163-175`; lifecycle contract at `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-15` |
 
 **5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-coaching` skill (`.agents/skills/kata-coaching/`); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
 
-**Regulation spans:** `reg.kata` — coaching-prompt generation (`kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists (zero hits in `kask/`, verified 2026-09-04).
+**Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists (zero hits in `kask/`, verified 2026-09-04).
 
 ### 1.3 Adapter Domain
 
@@ -65,15 +65,15 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 
 | Entity | Description | Key Attributes |
 |--------|-------------|---------------|
-| `TrainedLoRAAdapter` | A trained LoRA adapter with provenance metadata | `id: Uuid`, `source: AdapterSource`, `checksum: Checksum`, `expertise: Expertise`, `owner: WebID`, `skill_name: Option<String>`, `lifecycle: AdapterLifecycle` (`adapter/adapter_store.rs:103`) |
+| `TrainedLoRAAdapter` | A trained LoRA adapter with provenance metadata | `id: Uuid`, `source: AdapterSource`, `checksum: Checksum`, `expertise: Expertise`, `owner: WebID`, `skill_name: Option<String>`, `lifecycle: AdapterLifecycle` (`kask/mcp-servers/hkask-mcp-training/src/adapter/adapter_store.rs:103`) |
 | `AdapterSource` | Provenance of the adapter | `HuggingFace { repo }` |
 | `AdapterStore` | CRUD store for trained adapters with checksum verification | Store, get_by_id, get_by_expertise, get_by_skill_name, list_all, list_owner, delete, store_blob, get_blob |
 | `Expertise` | Describes the domain expertise of a trained adapter | `domains: Vec<MdsDomain>`, `provenance: TrainingProvenance`, `capabilities: Vec<String>` (`adapter/expertise.rs`) |
-| `AdapterLifecycle` | Lifecycle state of a stored adapter | `adapter/expertise.rs:85` |
+| `AdapterLifecycle` | Lifecycle state of a stored adapter | `kask/mcp-servers/hkask-mcp-training/src/adapter/expertise.rs:85` |
 
 > The former `AdapterRouter`, `EndpointLifecycle`/`EndpointPhase`, `AdapterConfig`, `CompositionEstimate`, and `ProviderSelection` entities are deleted: the prior `AdapterPort` trait + `AdapterRouter` impl were removed, and the tools use `AdapterStore` (CRUD) and `InferencePort` (inference) directly (`adapter.rs:18-20`, verified 2026-09-04).
 
-**Regulation spans:** `reg.adapter` — store/get/delete operations (`adapter/adapter_store.rs:275,347`)
+**Regulation spans:** `reg.adapter` — store/get/delete operations (`kask/mcp-servers/hkask-mcp-training/src/adapter/adapter_store.rs:275,347`)
 
 **Key contracts:** 8 `expect:` contract annotations across the adapter modules (`adapter/adapter_store.rs`, `adapter/expertise.rs`, `adapters.rs`; verified 2026-09-04)
 
@@ -184,7 +184,7 @@ The style exemplar system models a **human exemplar** — a named individual who
 
 ### Discovery pipelines
 
-`corpus_discover` accepts an author name, mode, work limit, transcript/web switches, and optional output path; it delegates multi-source enumeration and emits a `corpus.yaml` for the processing pipeline (`tools/gather.rs:44-54,78-84`). `corpus_discover_company` starts from an approved company-source manifest, records excluded non-allowlisted sources, and emits coverage by source tier (`tools/gather.rs:230-235,480-529`). Both are current gather-stage tools, not planned wrappers around the research server.
+`corpus_discover` accepts an author name, mode, work limit, transcript/web switches, and optional output path; it delegates multi-source enumeration and emits a `corpus.yaml` for the processing pipeline (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:44-54,78-84`). `corpus_discover_company` starts from an approved company-source manifest, records excluded non-allowlisted sources, and emits coverage by source tier (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:230-235,480-529`). Both are current gather-stage tools, not planned wrappers around the research server.
 
 
 ---
@@ -482,7 +482,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |
 | `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053). The former `SYSTEM_MAX_RECURSION` cascade-depth bound was removed with the `hkask-templates` crate (2026-08-20, commit `80e466c1a5`) |
-| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `hkask-keystore/Cargo.toml:14`, `keychain.rs:104`) |
+| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `kask/crates/hkask-keystore/Cargo.toml:14`, `kask/crates/hkask-keystore/src/keychain.rs:104`) |
 | `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into MCP children (`config.rs:109-129,218-228`); media generation is child-local while chat/vision/embed/list/rerank may cross the IPC bridge (`hkask_inference.rs:190-383`). The `InferencePort` has no `generate_batch` method, and the IPC protocol has no media-generation route. |
 | `hkask-mcp-server` (framework) | Composition | Per-tool child-process observability at tracing target `reg.tool` through `ToolSpanGuard` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`). These stderr events are not Regulation-ledger records (`:128-131`). |
@@ -529,7 +529,7 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/zed/src/main.rs:772-896; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-506; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
 status: VERIFIED
 -->
@@ -554,7 +554,7 @@ other than the caller being checked; the rows below satisfy that.
 | Information flow | **None — absent by decision (RR-0053).** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
 | MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs:445-455,576-680`) | P1 |
 | Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
-| Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `src/keychain.rs:36-38,133-161`) | P1 |
+| Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `kask/crates/hkask-keystore/src/keychain.rs:36-38,133-161`) | P1 |
 
 ### Bootstrap Sequence
 

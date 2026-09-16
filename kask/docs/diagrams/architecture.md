@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Diagrams — CMP Pipeline, Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core"
 audience: [architects, developers, agents]
-last_updated: 2026-08-28
+last_updated: 2026-09-16
 version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -86,7 +86,7 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-001
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L733, contract_price_coherence L802); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L488); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (solve_portfolio_cohort L467); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626, compose_cmp_tree L653, compose_cmp_tree_with_deps L655); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L219)
 status: VERIFIED
 -->
@@ -120,7 +120,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-002
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_oriented_constituents L335, build_cmp_indices_from_lines L488); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (select_available_buckets L197, solve_portfolio L383, solve_portfolio_cohort L467)
 status: VERIFIED
 -->
@@ -146,7 +146,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-003
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626-687, convert_cmp_index format L666); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (compose_cmp_tree, compose_cmp_tree_with_deps, convert_cmp_index — called at hkask_mcp_scenarios.rs L653-655); kask/mcp-servers/hkask-mcp-scenarios/src/requests.rs (CmpDependencySpec L119)
 status: VERIFIED
 -->
@@ -169,7 +169,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-004
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L733, contract_price_coherence L802); falsification.rs deleted — falsification_log / h2_duration_test / h3_coherence_test no longer exist in kask/crates/hkask-forecast/src/
 status: VERIFIED
 -->
@@ -193,12 +193,12 @@ graph TD
     scenarios -->|"depends on"| forecast
     scenarios -->|"depends on"| pm
     companies -->|"depends on"| forecast
-    companies -.->|"caller-mediated<br/>(EventTreeProjection JSON)"|-. scenarios
+    companies -.->|"caller-mediated<br/>(EventTreeProjection JSON)"| scenarios
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-005
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-forecast/Cargo.toml; kask/mcp-servers/hkask-mcp-prediction-markets/Cargo.toml (hkask-forecast L28); kask/mcp-servers/hkask-mcp-scenarios/Cargo.toml (hkask-forecast L28, hkask-mcp-prediction-markets L29); kask/mcp-servers/hkask-mcp-companies/Cargo.toml (hkask-forecast L36)
 status: VERIFIED
 -->
@@ -272,7 +272,7 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SKILL-CFR
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: .agents/skills/gradient-seeded-recombination/SKILL.md; .agents/skills/constraint-forces-recast/SKILL.md; .agents/skills/falsifiability/SKILL.md; .agents/skills/gradient-hunter/SKILL.md; .agents/skills/gpa-evolution/SKILL.md; .agents/skills/pragmatic-cybernetics/SKILL.md; .agents/skills/metacognition/SKILL.md
 status: VERIFIED
 -->
@@ -348,7 +348,7 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis, dc_bibo, eso, fibo, golem, ml_schema, omc, pko, sdmx, sumo L58-67); kask/crates/hkask-bridge-ontology/src/axis.rs; dependent Cargo.tomls (hkask-mcp-companies, hkask-mcp-corpus, hkask-mcp-media, hkask-mcp-portfolio, hkask-mcp-prediction-markets, hkask-mcp-research, hkask-mcp-scenarios, hkask-mcp-swarm, hkask-mcp-training, hkask-condenser, crates/hkask-media-widget, crates/hkask-portfolio-widget)
 status: VERIFIED
 -->
@@ -383,7 +383,7 @@ flowchart LR
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-002
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L210-340, matches_kw token matching L213-221, SDMX branch, FIBO branch, SEPIO branch, GOLEM branch, ML-Schema branch, PKO DualAxis branch, DC+BIBO DualAxis branch, SUMO universal fallback)
 status: VERIFIED
 -->
@@ -439,7 +439,7 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 11 servers incl. media)
 status: VERIFIED
 -->
@@ -548,7 +548,7 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:677 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
 status: VERIFIED
 -->
@@ -625,7 +625,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPortError variants L12-51, is_retryable L50-52); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
 status: VERIFIED
 -->
@@ -711,12 +711,12 @@ classDiagram
     EventStore ..> EventStoreError : propagates
     EventRecord ..> VerdictSource : payload carries
     EventRecord ..> RolloutKind : payload carries
-    VerdictSource --|> "trusted for task_success" : DeterministicEvaluator, Operator
+    note for VerdictSource "Trusted for task_success: DeterministicEvaluator, Operator"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ES-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs; kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
@@ -799,7 +799,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-101, impls for GraphWidget/KanbanWidget/PortfolioWidget/ScenariosWidget/SwarmWidget L103-176, CachedWidget L186-204, try_create L209-224, viz_factories L233-241, MAX_CACHE_SIZE L243, VizCache L251-281, cache_key L285-289, block_renderer L299-330); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L48); crates/agent_ui/src/conversation_view.rs (media_block_renderer L3539)
 status: VERIFIED
 -->

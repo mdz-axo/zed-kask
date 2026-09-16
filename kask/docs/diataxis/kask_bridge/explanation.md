@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.3.0"
 status: "Active"
 domain: "Integration"
@@ -61,7 +61,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/zed/src/main.rs:1520-1578; crates/zed/src/main.rs:1582-1624; crates/zed/src/main.rs:1806-1849; crates/zed/src/main.rs:1918-1993; crates/zed/src/main.rs:2190-2202
 status: VERIFIED
 -->
@@ -119,7 +119,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-007
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/zed/src/main.rs:1806-1869; crates/zed/src/main.rs:1912-1917; crates/zed/src/main.rs:2037-2048; kask/crates/kask_bridge/src/memory/curator_stores.rs:52-61,118-137
 status: VERIFIED
 -->

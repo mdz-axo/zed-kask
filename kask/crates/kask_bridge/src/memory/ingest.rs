@@ -78,14 +78,17 @@ pub(crate) struct IngestionReport {
     pub(crate) stored: usize,
     /// Chunks whose embedding row and passage text were stored successfully.
     pub(crate) embedded: usize,
-    /// Chunks missing any expected durable output. A partially stored chunk is
-    /// counted here as well as in `stored` or `embedded`.
+    /// Chunks missing any expected configured durable output. A partially
+    /// stored chunk is counted here as well as in `stored` or `embedded`.
     pub(crate) failed: usize,
+    /// Chunks stored without semantic embeddings because the embedding
+    /// capability itself was unavailable.
+    pub(crate) degraded: usize,
 }
 
 impl IngestionReport {
     pub(crate) fn degraded(self) -> bool {
-        self.failed > 0
+        self.failed > 0 || self.degraded > 0
     }
 }
 
@@ -387,7 +390,7 @@ pub(crate) async fn write_turn(
             }
         }
         None => {
-            tracing::debug!(
+            tracing::warn!(
                 target: "reg.memory",
                 thread_id = %thread_id,
                 "No embedding port — chunks written without embeddings (semantic recall degraded to keyword-only)"
@@ -402,6 +405,9 @@ pub(crate) async fn write_turn(
         ..Default::default()
     };
     let embedding_expected = ctx.embedding_port.is_some();
+    if !embedding_expected {
+        report.degraded = report.attempted;
+    }
     for (index, chunk_text) in chunk_texts.iter().enumerate() {
         let mut ontology = structural_ontology(&thread_id, turn_ms, index);
         if let Some(tags) = content_tags.as_ref().and_then(|tags| tags.get(index)) {
@@ -471,6 +477,7 @@ pub(crate) async fn write_turn(
             stored = report.stored,
             embedded = report.embedded,
             failed = report.failed,
+            degraded = report.degraded,
             tagged,
             source_words = chunking_report.source_words,
             emitted_words = chunking_report.emitted_words,
@@ -487,6 +494,7 @@ pub(crate) async fn write_turn(
             stored = report.stored,
             embedded = report.embedded,
             failed = report.failed,
+            degraded = report.degraded,
             tagged,
             source_words = chunking_report.source_words,
             emitted_words = chunking_report.emitted_words,

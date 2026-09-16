@@ -1,7 +1,7 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "5.1.0"
 status: "Active"
 domain: "Lifecycle"
@@ -162,7 +162,7 @@ status: VERIFIED
 | `BridgeMemoryPort`           | `kask_bridge`   | Adapts `agent::ThreadMemoryPort` (`crates/agent/src/agent.rs:2924`) → `RealMemoryPort`     |
 | `RealMemoryPort`             | `kask_bridge`   | The real implementation: ingestion, curator recall, consolidation timer (`memory.rs:74`)   |
 | `BridgeContextInjector`      | `kask_bridge`   | Implements `agent::ContextInjector`; curator variant calls `recall_*_curator` (`context_injector.rs:164`) |
-| `CuratorStore`               | `kask_bridge`   | Self-healing handle over the curator's `MemoryStore` (`memory/curator_stores.rs:52`)       |
+| `CuratorStore`               | `kask_bridge`   | Self-healing handle over the curator's `MemoryStore` (`kask/crates/kask_bridge/src/memory/curator_stores.rs:52`)       |
 | `MemoryStore`                | `hkask-memory`  | Wraps `HMemStore` + `EmbeddingStore`; `store`, `query_deduped`, `search_similar` (`memory_store.rs:128`) |
 | `MemoryConsolidator`         | `hkask-memory`  | Confidence cleanup + budget pruning (`consolidation_service.rs:20`)                        |
 | `HMemStore`                  | `hkask-storage` | Relational EAV table (`hmems`, `hmem.rs:135`)                                              |
@@ -1125,7 +1125,7 @@ Defined in `kask/crates/kask_bridge/src/settings.rs:211-234`; defaults at
 
 **T16 enforcement update (2026-09-08, operator ruling 2026-09-07):**
 `RealMemoryPort::new` threads the setting into `CuratorStore`, including
-self-healing reopen; `memory/curator_stores.rs::open_curator_store` applies
+self-healing reopen; `kask/crates/kask_bridge/src/memory/curator_stores.rs::open_curator_store` applies
 `MemoryStore::with_memory_life_days`. The curator MCP server receives
 `HKASK_MEMORY_LIFE_DAYS` through settings emission and its scoped allowlist,
 validates it, and applies it on both store-construction paths. Historical
@@ -1146,7 +1146,7 @@ default budget with no env override. T16 does not change that policy.
 | `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:647`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:25-35`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
-| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`hkask-keystore/src/keychain.rs:321`) |
+| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`kask/crates/hkask-keystore/src/keychain.rs:321`) |
 
 ### Settings UI
 

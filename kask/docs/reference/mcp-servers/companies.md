@@ -1,7 +1,7 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.39.0"
 status: "Active"
 domain: "Companies"
@@ -65,7 +65,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004A
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1111-1174; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs; kask/mcp-servers/hkask-mcp-companies/src/financial_model/scenario_impact.rs
 status: VERIFIED
 -->
@@ -163,7 +163,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492; kask/mcp-servers/hkask-mcp-companies/src/tools.rs; kask/mcp-servers/hkask-mcp-companies/src/providers.rs; kask/mcp-servers/hkask-mcp-companies/src/research_store.rs; kask/mcp-servers/hkask-mcp-companies/src/learning.rs; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs
 status: VERIFIED
 -->

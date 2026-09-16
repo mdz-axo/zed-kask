@@ -1,7 +1,7 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.38.0"
 status: "Active"
 domain: "Composition"
@@ -264,7 +264,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-792
 status: VERIFIED
 -->

@@ -1,7 +1,7 @@
 ---
 title: "MCP Dispatch Diagrams — Runtime Invoke, Tool-Call Sequence, CMP Tool Flow"
 audience: [architects, developers, agents]
-last_updated: 2026-08-28
+last_updated: 2026-09-16
 version: "1.0.0"
 status: "Active"
 domain: "Trust"
@@ -36,7 +36,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs
 status: VERIFIED
 -->
@@ -78,7 +78,7 @@ sequenceDiagram
     participant Runtime as McpRuntime<br/>hkask-mcp/src/runtime.rs
     participant Cap as CallCapManager<br/>hkask-regulation/src/energy.rs
     participant Server as MCP server child<br/>kask/mcp-servers/hkask-mcp-*
-    participant Unwrap as unwrap_tool_envelope<br/>hkask-types/src/tool_response.rs
+    participant Unwrap as unwrap_tool_envelope<br/>kask/crates/hkask-types/src/tool_response.rs
 
     Agent->>Enabled: enabled_tools (full registered MCP surface, D44 — no per-turn filtering)
     Enabled-->>Agent: enabled_tools set (profile/scope/curator-gated tools named by the visibility marker)
@@ -113,7 +113,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, count_hidden_mcp_tools, D44 removal comment); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool, enumerate_tool_listing); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
 status: VERIFIED
 -->
@@ -127,10 +127,10 @@ are named by the system-prompt visibility marker, and the `list_mcp_tools`
 meta-tool lets the model enumerate the registered surface on demand.
 
 Every MCP tool response is a `{"content": <value>}` envelope.
-`unwrap_tool_envelope` (`hkask-types/src/tool_response.rs:61`) is the single
+`unwrap_tool_envelope` (`kask/crates/hkask-types/src/tool_response.rs:61`) is the single
 seam that extracts the inner value; the property
 `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads `P` is
-pinned by proptest in `hkask-types/src/tool_response.rs`.
+pinned by proptest in `kask/crates/hkask-types/src/tool_response.rs`.
 
 ## CMP Tool Call Flow
 
@@ -157,7 +157,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-001
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L488); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
 status: VERIFIED
 -->
@@ -193,7 +193,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-002
-verified_date: 2026-08-28
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626-687); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L219); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481)
 status: VERIFIED
 -->

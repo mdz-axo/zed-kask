@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -76,7 +76,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,267,273-1769,1900-1916; kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->

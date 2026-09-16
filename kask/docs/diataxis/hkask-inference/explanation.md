@@ -1,7 +1,7 @@
 ---
 title: "hkask-inference — Explanation: Bridge-First Inference and Visible Failure"
 audience: [architects, developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "3.0.0"
 status: "Active"
 domain: "Inference"
@@ -44,7 +44,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:210-244; kask/crates/hkask-inference/src/inference_ipc_client.rs:351-450; kask/crates/kask_bridge/src/inference_chat.rs:579-621,674-690
 status: VERIFIED
 -->
@@ -75,7 +75,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-005
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:155-375,389-490; kask/crates/hkask-inference/src/media_router.rs:9-72; kask/crates/hkask-inference/src/provider.rs:218-288
 status: VERIFIED
 -->

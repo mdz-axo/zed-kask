@@ -1,7 +1,7 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.3.0"
 status: "Active"
 domain: "Media"
@@ -55,7 +55,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-001
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/media_panel/src/media_panel.rs:337-420; crates/media_panel/src/media_viewer.rs:33-100; crates/media_panel/src/media_viewer.rs:140-196
 status: VERIFIED
 -->
@@ -107,7 +107,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: crates/media_panel/src/media_viewer.rs:540-694; crates/media_panel/src/media_viewer.rs:1631-1743
 status: VERIFIED
 -->

@@ -1,7 +1,7 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.3.0"
 status: "Active"
 domain: "Lifecycle"

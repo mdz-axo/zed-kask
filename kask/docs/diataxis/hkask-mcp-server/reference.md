@@ -1,7 +1,7 @@
 ---
 title: "hkask-mcp-server — Reference: API Surface"
 audience: [developers building or extending hKask MCP servers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "MCP"
@@ -57,7 +57,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-020
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-35,37-165; kask/crates/hkask-mcp-server/src/server.rs:22-48; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
 status: VERIFIED
 -->

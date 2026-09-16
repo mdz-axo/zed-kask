@@ -1,7 +1,7 @@
 ---
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "3.0.0"
 status: "Active"
 domain: "Inference"
@@ -96,7 +96,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-REF
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/inference_ipc_client.rs:299-349,425-677; kask/crates/hkask-inference/src/hkask_inference.rs:88-105,155-375,389-490; kask/crates/hkask-inference/src/media_router.rs:9-72
 status: VERIFIED
 -->

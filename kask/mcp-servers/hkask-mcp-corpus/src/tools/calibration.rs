@@ -59,7 +59,7 @@ struct RepresentationRow {
     provenance: Provenance,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct ChildParentRow {
     child_ref: String,
     source: String,
@@ -331,7 +331,7 @@ fn build_representations(
     file.write_all(b"\n")
         .map_err(|error| McpToolError::internal(format!("cannot finish manifest: {error}")))?;
 
-    let temporary_path = temporary.keep();
+    let temporary_path = temporary.path().to_path_buf();
     fs::rename(&temporary_path, &output_dir).map_err(|error| {
         McpToolError::internal(format!(
             "cannot publish {} as {}: {error}",
@@ -821,7 +821,51 @@ mod tests {
                 .lines()
                 .map(serde_json::from_str)
                 .collect::<Result<_, _>>()?;
-        assert!(reference.last().is_some_and(|row| row.word_count >= 50));
+        assert_eq!(
+            reference
+                .iter()
+                .map(|row| row.word_count)
+                .collect::<Vec<_>>(),
+            vec![100, 130],
+            "the final 30-word reference remainder must merge backward"
+        );
+        let children: Vec<RepresentationRow> =
+            fs::read_to_string(output_dir.join("fine-children.jsonl"))?
+                .lines()
+                .map(serde_json::from_str)
+                .collect::<Result<_, _>>()?;
+        let parents: Vec<RepresentationRow> = fs::read_to_string(output_dir.join("parents.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        let mappings: Vec<ChildParentRow> =
+            fs::read_to_string(output_dir.join("child-parent-map.jsonl"))?
+                .lines()
+                .map(serde_json::from_str)
+                .collect::<Result<_, _>>()?;
+        let parent_sources: BTreeMap<_, _> = parents
+            .iter()
+            .map(|row| (row.entity_ref.as_str(), row.source.as_str()))
+            .collect();
+        assert_eq!(children.len(), mappings.len());
+        for child in &children {
+            let mapping = mappings
+                .iter()
+                .find(|mapping| mapping.child_ref == child.entity_ref)
+                .ok_or_else(|| anyhow::anyhow!("child is not mapped"))?;
+            assert_eq!(mapping.source, child.source);
+            assert!(!mapping.parent_refs.is_empty());
+            for parent_ref in &mapping.parent_refs {
+                assert_eq!(
+                    parent_sources.get(parent_ref.as_str()),
+                    Some(&child.source.as_str())
+                );
+            }
+        }
+        assert!(children.iter().all(|row| {
+            row.provenance.raw_sha256 == row.provenance.canonical_sha256
+                && row.provenance.canonical_normalization == "split_whitespace_join_single_space"
+        }));
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 ---
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Foundation"
@@ -77,7 +77,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-008
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/ocr_health.rs:1-71; kask/crates/hkask-regulation/src/sensor_provider.rs:739-806
 status: VERIFIED
 -->
@@ -119,7 +119,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-009
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/event.rs:14-28,59-75,280-358,399-511,536-552
 status: VERIFIED
 -->

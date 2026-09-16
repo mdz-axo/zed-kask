@@ -69,7 +69,7 @@ PID-bound. See the settings reference for provisioning and revocation behavior.
 
 | Surface | Location | Role |
 |---|---|---|
-| `Visibility` enum (`Private`/`Shared`/`Public`) | `hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
+| `Visibility` enum (`Private`/`Shared`/`Public`) | `kask/crates/hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
 | Parent-held delegated-tool grant intersected with the request allowlist | `kask_bridge/src/delegation_grants.rs` + `inference_ipc_server.rs` `tool_invoke` dispatch | Refuses `server/tool` outside either set before tool dispatch; missing/invalid grants deny. Settings unload revokes before child stop. |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:224-229` (declared set), `:441-447` (refusal) | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
@@ -91,7 +91,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `SovereigntyConsent` / `DenyAllConsent` | OUGHT — zero hits | Intended consent port and fail-closed default |
 | `require_sovereignty` | OUGHT — zero hits | Intended data-class policy gate; not yet enforced |
 | `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous (RR-0056). Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
-| `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `hkask-types/src/visibility.rs:18-19` and `:29-31`; no struct or impl exists |
+| `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `kask/crates/hkask-types/src/visibility.rs:18-19` and `:29-31`; no struct or impl exists |
 
 One nuance: the `reg.sovereignty.*` span namespaces (`reg.sovereignty`, `reg.sovereignty.consent_anomaly`, `reg.sovereignty.consent_audited`, `reg.sovereignty.governance_report`, `reg.sovereignty.portability_failure`, `reg.sovereignty.portability_verified`) **are registered** in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:277-282`) — but no code emits them (zero emission sites as of 2026-09-04). Registered namespace, no enforcement: still OUGHT.
 
@@ -110,7 +110,7 @@ Data sovereignty boundaries implement the principle of informational self-determ
 > **OUGHT — not implemented.** `DataSovereigntyBoundary` is a charter design
 > intention, not live code (zero hits in `kask/crates/`; see
 > [IS vs OUGHT Status](#is-vs-ought-status)). The live per-h_mem enforcement is
-> the `Visibility` enum at `hkask-types/src/visibility.rs:34-39` and the
+> the `Visibility` enum at `kask/crates/hkask-types/src/visibility.rs:34-39` and the
 > delegated-tool allowlist on the inference IPC `tool_invoke` dispatch.
 
 **Default hKask Configuration:**
@@ -198,7 +198,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-28; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-28; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
 
 ---
 
@@ -245,7 +245,7 @@ per-call capability token today.**
    denied nothing. What *is* live is capability **separation** — which tools a
    caller may reach at all:
    - the per-request delegated-tool allowlist on the inference IPC `tool_invoke`
-     dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
+     dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
      missing or empty allowlist;
    - each swarm agent card's declared `mcp_tools` allowlist
      (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`);
@@ -374,11 +374,11 @@ When triggered, the Curator escalates to:
 > reference `SovereigntyChecker` and `require_sovereignty` as the
 > enforcement gate; both are charter design intentions, not verifiable
 > code (`SovereigntyChecker` appears only in doc comments at
-> `hkask-types/src/visibility.rs:18-19, 29-31`; `require_sovereignty` has
+> `kask/crates/hkask-types/src/visibility.rs:18-19, 29-31`; `require_sovereignty` has
 > zero hits). The manifest's `gate: require_sovereignty` field describes
 > the intended (OUGHT) surface. The live denial gate is the delegated-tool
 > allowlist on the inference IPC `tool_invoke` dispatch
-> (`kask_bridge/src/inference_ipc_server.rs:802-820`). See
+> (`kask/crates/kask_bridge/src/inference_ipc_server.rs:802-820`). See
 > [IS vs OUGHT Status](#is-vs-ought-status).
 
 The intended verifier would verify each principle using YAML manifests and Jinja2 templates, anchored to the principles for stability as implementations evolve.
@@ -478,7 +478,7 @@ When an assertion fails, the verification report is escalated to the Curator. Th
 > `DenyAllConsent`, `require_sovereignty` — has zero hits in `kask/crates/` and
 > `kask/mcp-servers/` as of 2026-08-28 (see
 > [IS vs OUGHT Status](#is-vs-ought-status)). The live per-h_mem enforcement is
-> the `Visibility` enum at `hkask-types/src/visibility.rs:34-39`; the live denial
+> the `Visibility` enum at `kask/crates/hkask-types/src/visibility.rs:34-39`; the live denial
 > gate is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch
 > (`kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`), with the
 > runaway-loop call breaker charged in `McpRuntime::invoke`
@@ -542,7 +542,7 @@ impl SovereigntyChecker {
 
 The Magna Carta is not aspirational. It is enforced:
 
-1. **Capability Boundaries (IS)** — The delegated-tool allowlist on the inference IPC `tool_invoke` dispatch verifies authority before dispatch (`kask_bridge/src/inference_ipc_server.rs`)[^miller-ocap]
+1. **Capability Boundaries (IS)** — The delegated-tool allowlist on the inference IPC `tool_invoke` dispatch verifies authority before dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`)[^miller-ocap]
 2. **Sovereignty Checks (OUGHT — not yet enforced)** — The charter intent is that every invocation is sovereignty-checked; `require_sovereignty` is not yet implemented (see [IS vs OUGHT Status](#is-vs-ought-status))
 3. **Consent Verification (OUGHT — not yet enforced)** — Scoped, versioned, expiring consent is the charter intent; `SovereigntyConsent`/`DenyAllConsent` are not yet implemented
 4. **Regulation Alerts (IS)** — Violations of the live capability gate trigger `Regulation` alerts

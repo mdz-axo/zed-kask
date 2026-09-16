@@ -1,7 +1,7 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.40.0"
 status: "Active"
 domain: "MCP Servers"

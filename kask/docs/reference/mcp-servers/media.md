@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "0.40.0"
 status: "Active"
 domain: "Composition"
@@ -45,7 +45,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:155-175,439-466,555-659; kask/mcp-servers/hkask-mcp-media/src/tools.rs
 status: VERIFIED
 -->
@@ -60,8 +60,8 @@ status: VERIFIED
 | `gallery_state: Arc<Mutex<Option<GalleryState>>>` | Currently-organized gallery; `None` until `gallery_organize` runs |
 | `gallery_store: Arc<GalleryStore>` | Durable SQLite-backed store (tags, faces, lineage, albums) |
 | `template_env: minijinja::Environment` | Jinja2 prompt templates for vision calls |
-| `ffmpeg: FfmpegRunner` | ffmpeg availability probe (`video/ffmpeg.rs:39`) |
-| `ytdlp: YtDlpRunner` | yt-dlp availability probe (`video/ytdlp.rs:19`), used by `video_fetch` |
+| `ffmpeg: FfmpegRunner` | ffmpeg availability probe (`kask/mcp-servers/hkask-mcp-media/src/video/ffmpeg.rs:39`) |
+| `ytdlp: YtDlpRunner` | yt-dlp availability probe (`kask/mcp-servers/hkask-mcp-media/src/video/ytdlp.rs:19`), used by `video_fetch` |
 | `job_store: jobs::JobStore` | In-memory async generation job tracking (`kask/mcp-servers/hkask-mcp-media/src/jobs.rs:1`) |
 
 ### Router composition

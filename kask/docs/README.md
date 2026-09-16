@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -14,9 +14,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), whose current range is D1–D56 (`DIVERGENCE.md:125-186`; retired numbers are retained and never reused).
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-15; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 63 files under `kask/docs/` on 2026-09-15, within the fewer-than-70 cap.
+**Corpus size:** 63 files under `kask/docs/` on 2026-09-16, within the fewer-than-70 cap.
 
 ## Architecture
 
@@ -93,7 +93,7 @@ Git history is the archive of record. Every removed document names its active su
 | `reference/upstream-removal-principles.md` | `reference/upstream-rebase-process.md` §9. |
 | `diataxis/hkask-bridge-ontology/how-to.md` | `reference/ontology-bridge.md` under How to use the bridge and term resolver. |
 
-### Deleted 2026-09-15 (tutorial folds and implemented inference plan)
+### Deleted 2026-09-16 (tutorial folds and implemented inference plan)
 
 The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`; each successor below is the retained task-oriented document for that set. The implemented inference plan was removed in `5322725bdbaa067580943c2bf33634c3640d8341`.
 

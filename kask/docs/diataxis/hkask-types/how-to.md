@@ -1,7 +1,7 @@
 ---
 title: "hkask-types — How-to: Extend a Foundation Boundary"
 audience: [developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Foundation"
@@ -45,7 +45,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/agent_paths.rs:12-26,63-154,157-232,241-313
 status: VERIFIED
 -->
@@ -75,7 +75,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:11-36,100-161; kask/crates/hkask-types/src/ports/memory_port.rs:92-147; kask/crates/hkask-types/src/hkask_types.rs:66
 status: VERIFIED
 -->

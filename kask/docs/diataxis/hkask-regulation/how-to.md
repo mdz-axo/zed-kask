@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — How-to: Add a Regulation Sensor"
 audience: [developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Regulation"
@@ -44,7 +44,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-71; kask/crates/hkask-regulation/src/cybernetics_loop.rs:231-279; kask/crates/hkask-regulation/src/loops/signals.rs:14-99,227-293; kask/crates/hkask-regulation/src/regulation_policy.rs:66-102; kask/crates/hkask-regulation/src/loops/actions.rs:141-160; kask/crates/hkask-regulation/src/set_points.rs:186-330
 status: VERIFIED
 -->

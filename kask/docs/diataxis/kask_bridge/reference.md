@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "1.3.0"
 status: "Active"
 domain: "Integration"
@@ -96,7 +96,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/kask_bridge/src/settings.rs:35-96; kask/crates/kask_bridge/src/settings.rs:98-166; kask/crates/kask_bridge/src/settings.rs:416-463; kask/crates/kask_bridge/src/settings.rs:599-633
 status: VERIFIED
 -->
@@ -154,7 +154,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-50; kask/crates/kask_bridge/src/mcp_servers.rs:52-506
 status: VERIFIED
 -->

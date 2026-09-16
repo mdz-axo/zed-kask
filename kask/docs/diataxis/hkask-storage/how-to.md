@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — How-to: Add a Store and Review Maintenance Inventory"
 audience: [developers]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.2.0"
 status: "Active"
 domain: "Persistence"
@@ -29,7 +29,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/core/connection.rs:272-335,394-415; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/hmem.rs:404-476
 status: VERIFIED
 -->
@@ -105,7 +105,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-007
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/crates/hkask-storage/src/maintenance_inventory.rs:57-101,168-218,220-295,297-375
 status: VERIFIED
 -->

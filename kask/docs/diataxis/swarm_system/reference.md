@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Reference: The 87-Tool Surface and Components"
 audience: [developers, operators]
-last_updated: 2026-09-15
+last_updated: 2026-09-16
 version: "2.1.0"
 status: "Active"
 domain: "Swarm"
@@ -52,7 +52,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-020
-verified_date: 2026-09-15
+verified_date: 2026-09-16
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:157-179; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-790; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138; kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-232; kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172
 status: VERIFIED
 -->

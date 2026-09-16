@@ -119,6 +119,23 @@ if [[ "$mode" == small-to-big ]]; then
                   (.word_count | type == "number")) and
         ([.[].entity_ref] | length == (unique | length))
     ' "$parent_representation" >/dev/null
+    jq -n -e \
+        --slurpfile children "$retrieval_representation" \
+        --slurpfile maps "$child_parent_map" \
+        --slurpfile parents "$parent_representation" '
+      (reduce $maps[] as $row ({}; .[$row.child_ref] = $row)) as $maps_by_child
+      | (reduce $parents[] as $row ({}; .[$row.entity_ref] = $row)) as $parents_by_ref
+      | ($maps | length) == ($children | length)
+        and all($children[]; . as $child
+          | ($maps_by_child[$child.entity_ref] // null) as $map
+          | $map != null and $map.source == $child.source
+            and all($map.parent_refs[]; . as $parent_ref
+              | ($parents_by_ref[$parent_ref] // null) as $parent
+              | $parent != null and $parent.source == $child.source))
+    ' >/dev/null || {
+        echo "small-to-big source fidelity preflight failed" >&2
+        exit 65
+    }
 fi
 
 mkdir -p "$output_dir"
@@ -152,8 +169,15 @@ fi
 query_count=$(wc -l < "$queries" | tr -d ' ')
 chunk_count=$(wc -l < "$retrieval_representation" | tr -d ' ')
 index_bytes=$(stat -c %s "$index_db")
+index_sha256=$(sha256sum "$index_db" | cut -d' ' -f1)
 query_sha256=$(sha256sum "$queries" | cut -d' ' -f1)
 representation_sha256=$(sha256sum "$retrieval_representation" | cut -d' ' -f1)
+child_parent_map_sha256=
+parent_representation_sha256=
+if [[ "$mode" == small-to-big ]]; then
+    child_parent_map_sha256=$(sha256sum "$child_parent_map" | cut -d' ' -f1)
+    parent_representation_sha256=$(sha256sum "$parent_representation" | cut -d' ' -f1)
+fi
 parameter_embedding_model=${HKASK_EMBEDDING_MODEL:-host-resolved}
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "$resume" == true ]]; then
@@ -161,12 +185,19 @@ if [[ "$resume" == true ]]; then
         --arg policy "$policy" --arg mode "$mode" --arg queries "$queries" \
         --arg query_sha256 "$query_sha256" --arg representation "$retrieval_representation" \
         --arg representation_sha256 "$representation_sha256" --arg index_db "$index_db" \
+        --arg index_sha256 "$index_sha256" --arg embedding_model "$parameter_embedding_model" \
+        --arg child_parent_map_sha256 "$child_parent_map_sha256" \
+        --arg parent_representation_sha256 "$parent_representation_sha256" \
         --argjson query_count "$query_count" --argjson chunk_count "$chunk_count" \
         --argjson index_bytes "$index_bytes" --argjson top_k "$top_k" \
         --argjson word_budget "$word_budget" '
           .policy == $policy and .mode == $mode and .queries == $queries and
           .query_sha256 == $query_sha256 and .retrieval_representation == $representation and
           .representation_sha256 == $representation_sha256 and .index_db == $index_db and
+          .index_sha256 == $index_sha256 and
+          .child_parent_map_sha256 == $child_parent_map_sha256 and
+          .parent_representation_sha256 == $parent_representation_sha256 and
+          ($embedding_model == "host-resolved" or .embedding_model == $embedding_model) and
           .query_count == $query_count and .chunk_count == $chunk_count and
           .index_bytes == $index_bytes and .top_k == $top_k and .word_budget == $word_budget
         ' "$parameters" >/dev/null || {
@@ -182,6 +213,9 @@ else
         --arg representation "$retrieval_representation" \
         --arg representation_sha256 "$representation_sha256" \
         --arg index_db "$index_db" \
+        --arg index_sha256 "$index_sha256" \
+        --arg child_parent_map_sha256 "$child_parent_map_sha256" \
+        --arg parent_representation_sha256 "$parent_representation_sha256" \
         --arg started_at "$started_at" \
         --arg embedding_model "$parameter_embedding_model" \
         --argjson query_count "$query_count" \
@@ -191,7 +225,9 @@ else
         --argjson word_budget "$word_budget" \
         '{policy:$policy,mode:$mode,queries:$queries,query_sha256:$query_sha256,
           retrieval_representation:$representation,representation_sha256:$representation_sha256,
-          index_db:$index_db,index_bytes:$index_bytes,chunk_count:$chunk_count,
+          child_parent_map_sha256:$child_parent_map_sha256,
+          parent_representation_sha256:$parent_representation_sha256,
+          index_db:$index_db,index_sha256:$index_sha256,index_bytes:$index_bytes,chunk_count:$chunk_count,
           query_count:$query_count,top_k:$top_k,word_budget:$word_budget,
           embedding_model:$embedding_model,started_at:$started_at}' > "$parameters"
 fi
@@ -360,7 +396,7 @@ def admit($contexts; $budget):
   reduce $contexts[] as $context
     ({contexts:[],retrieved_words:0};
      ($context.word_count // word_count($context.text)) as $words
-     | if (.contexts | length) == 0 or (.retrieved_words + $words) <= $budget
+     | if (.retrieved_words + $words) <= $budget
        then .contexts += [$context + {context_rank:((.contexts | length) + 1),word_count:$words}]
             | .retrieved_words += $words
        else . end)
@@ -474,6 +510,9 @@ jq -s \
     --arg model "$parameter_embedding_model" \
     --arg query_sha256 "$query_sha256" \
     --arg representation_sha256 "$representation_sha256" \
+    --arg index_sha256 "$index_sha256" \
+    --arg child_parent_map_sha256 "$child_parent_map_sha256" \
+    --arg parent_representation_sha256 "$parent_representation_sha256" \
     --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson top_k "$top_k" \
     --argjson word_budget "$word_budget" \
@@ -488,7 +527,10 @@ jq -s \
   | {
       policy:$policy,mode:$mode,query_count:$count,top_k:$top_k,word_budget:$word_budget,
       embedding_model:$model,query_sha256:$query_sha256,
-      representation_sha256:$representation_sha256,index_bytes:$index_bytes,chunk_count:$chunk_count,
+      representation_sha256:$representation_sha256,index_sha256:$index_sha256,
+      child_parent_map_sha256:$child_parent_map_sha256,
+      parent_representation_sha256:$parent_representation_sha256,
+      index_bytes:$index_bytes,chunk_count:$chunk_count,
       source_fidelity_gate:(if $violations == 0 then "pass" else "fail" end),
       source_fidelity_violations:$violations,
       exact_evidence_recall_at_5:ratio(hit_count("first_exact_rank"; 5); $count),
@@ -505,6 +547,7 @@ jq -s \
       duplicate_overlap:{total_sixgrams:$sixgrams,duplicate_sixgrams:$duplicate_sixgrams,
         rate:ratio($duplicate_sixgrams; $sixgrams)},
       ndcg:{status:"unavailable",reason:"No exhaustive or graded relevance judgments exist for the candidate corpus; observed exact/source hits cannot define an unbiased ideal DCG."},
+      answer_grounding:{status:"unavailable",reason:"The fixed retriever evaluation does not generate answers; grounding is unavailable unless a separate answer-and-citation measurement is run."},
       completed_at:$completed_at
     }
     + (if $mode == "small-to-big" then
@@ -520,5 +563,10 @@ sync -d "$summary"
 rm -f "$transform_program"
 trap - EXIT
 
-printf 'policy=%s queries=%d source_fidelity_violations=%s summary=%s\n' \
-    "$policy" "$completed" "$(jq -r '.source_fidelity_violations' "$summary")" "$summary" >&2
+source_fidelity_gate=$(jq -r '.source_fidelity_gate' "$summary")
+printf 'policy=%s queries=%d source_fidelity_gate=%s source_fidelity_violations=%s summary=%s\n' \
+    "$policy" "$completed" "$source_fidelity_gate" \
+    "$(jq -r '.source_fidelity_violations' "$summary")" "$summary" >&2
+if [[ "$source_fidelity_gate" != pass ]]; then
+    exit 65
+fi
