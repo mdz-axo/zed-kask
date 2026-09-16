@@ -254,6 +254,47 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// expect: Provider substitutions and omitted identities remain distinct from the requested embedding model.
+    #[tokio::test]
+    async fn embedding_response_preserves_provider_confirmed_identity() {
+        let provider = crate::INFERENCE_PROVIDERS
+            .first()
+            .expect("at least one embedding provider");
+        for (response_body, expected_actual) in [
+            (
+                r#"{"data":[{"embedding":[1.0,0.0]}],"model":"provider/substituted-model"}"#,
+                Some("provider/substituted-model"),
+            ),
+            (r#"{"data":[{"embedding":[1.0,0.0]}]}"#, None),
+        ] {
+            let response_body = response_body.to_string();
+            let http_client = http_client::FakeHttpClient::create(move |_| {
+                let response_body = response_body.clone();
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from_bytes(response_body.into_bytes().into()))?)
+                }
+            });
+            let port = LanguageModelEmbeddingPort::new(
+                crate::ResolvedEmbeddingCredentials {
+                    provider,
+                    api_key: "fixture-key".into(),
+                },
+                http_client,
+                tokio::runtime::Handle::current(),
+            );
+            let requested = format!("{}/requested-alias", provider.id);
+            let batch = port
+                .embed_with_identity(&requested, &["source text".to_string()])
+                .await
+                .expect("embedding succeeds");
+            assert_eq!(batch.requested_model, requested);
+            assert_eq!(batch.actual_model.as_deref(), expected_actual);
+            assert_eq!(batch.vectors, vec![vec![1.0, 0.0]]);
+        }
+    }
+
     /// expect: "An embedding override never sends my text to a different provider" [P1]
     #[tokio::test]
     async fn embedding_provider_mismatch_sends_no_http() {
