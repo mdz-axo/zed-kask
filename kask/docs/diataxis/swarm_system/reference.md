@@ -60,7 +60,7 @@ status: VERIFIED
 ## Cloud tools — 48
 
 All 48 are defined in
-`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:157-2943`:
+`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:157-2937`:
 
 | Group | Tools |
 | --- | --- |
