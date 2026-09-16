@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <corpus_build_chunk_representations|corpus_embed|corpus_query> <arguments-json> <response-json> <server-log>" >&2
+    echo "usage: $0 <corpus_build_chunk_representations|corpus_embed|corpus_query|corpus_tag_chunks> <arguments-json> <response-json> <server-log>" >&2
     exit 64
 fi
 
@@ -15,10 +15,17 @@ binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
 case "$tool_name" in
     corpus_build_chunk_representations)
         needs_inference=false
+        required_model_var=
         default_timeout=120
         ;;
     corpus_embed|corpus_query)
         needs_inference=true
+        required_model_var=HKASK_EMBEDDING_MODEL
+        default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
+        ;;
+    corpus_tag_chunks)
+        needs_inference=true
+        required_model_var=HKASK_CLASSIFIER_MODEL
         default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
         ;;
     *)
@@ -27,12 +34,10 @@ case "$tool_name" in
         ;;
 esac
 
-for command in jq; do
-    if ! command -v "$command" >/dev/null 2>&1; then
-        echo "required command not found: $command" >&2
-        exit 69
-    fi
-done
+if ! command -v jq >/dev/null 2>&1; then
+    echo "required command not found: jq" >&2
+    exit 69
+fi
 for path in "$arguments_file" "$binary"; do
     if [[ ! -f "$path" ]]; then
         echo "required file does not exist: $path" >&2
@@ -48,7 +53,11 @@ for path in "$response_file" "$log_file"; do
 done
 jq -e 'type == "object"' "$arguments_file" >/dev/null
 
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ) ]]; then
+required_model=
+if [[ -n "$required_model_var" ]]; then
+    required_model=${!required_model_var:-}
+fi
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
     host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
     if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
         echo "running host-managed hkask-mcp-corpus process not found" >&2
@@ -61,15 +70,23 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKA
     host_inference_socket=$(read_host_env HKASK_INFERENCE_SOCKET)
     host_inference_timeout=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
     host_embedding_model=$(read_host_env HKASK_EMBEDDING_MODEL)
+    host_classifier_model=$(read_host_env HKASK_CLASSIFIER_MODEL)
     host_deepinfra_token=$(read_host_env DEEPINFRA_TOKEN)
+    host_openrouter_token=$(read_host_env OPENROUTER_API_KEY)
     HKASK_INFERENCE_SOCKET=${HKASK_INFERENCE_SOCKET:-$host_inference_socket}
     HKASK_INFERENCE_TIMEOUT_SECS=${HKASK_INFERENCE_TIMEOUT_SECS:-$host_inference_timeout}
     HKASK_EMBEDDING_MODEL=${HKASK_EMBEDDING_MODEL:-$host_embedding_model}
+    HKASK_CLASSIFIER_MODEL=${HKASK_CLASSIFIER_MODEL:-$host_classifier_model}
     DEEPINFRA_TOKEN=${DEEPINFRA_TOKEN:-$host_deepinfra_token}
-    export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL DEEPINFRA_TOKEN
+    OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-$host_openrouter_token}
+    export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL
+    export HKASK_CLASSIFIER_MODEL DEEPINFRA_TOKEN OPENROUTER_API_KEY
 fi
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ) ]]; then
-    echo "$tool_name requires HKASK_INFERENCE_SOCKET and HKASK_EMBEDDING_MODEL" >&2
+if [[ -n "$required_model_var" ]]; then
+    required_model=${!required_model_var:-}
+fi
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
+    echo "$tool_name requires HKASK_INFERENCE_SOCKET and $required_model_var" >&2
     exit 69
 fi
 

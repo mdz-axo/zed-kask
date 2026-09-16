@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 6 ]]; then
-    echo "usage: $0 <queue-jsonl> <corpus-tool-runner> <max-cost-usd> <concurrency> <tag-batch-size> <estimated-cost-per-chunk-usd>" >&2
+if [[ $# -ne 6 && $# -ne 7 ]]; then
+    echo "usage: $0 <queue-jsonl> <corpus-tool-runner> <max-cost-usd> <concurrency> <tag-batch-size> <estimated-cost-per-chunk-usd> [max-units]" >&2
     exit 64
 fi
 
@@ -12,6 +12,7 @@ max_cost=$3
 concurrency=$4
 tag_batch_size=$5
 estimated_cost_per_chunk=$6
+max_units=${7:-0}
 
 for path in "$queue" "$runner"; do
     if [[ ! -f "$path" ]]; then
@@ -27,6 +28,10 @@ for command in jq sha256sum cmp; do
 done
 if [[ ! "$concurrency" =~ ^[1-9][0-9]*$ || ! "$tag_batch_size" =~ ^[1-9][0-9]*$ ]]; then
     echo "concurrency and tag-batch-size must be positive integers" >&2
+    exit 64
+fi
+if [[ ! "$max_units" =~ ^[0-9]+$ ]]; then
+    echo "max-units must be a nonnegative integer" >&2
     exit 64
 fi
 for value in "$max_cost" "$estimated_cost_per_chunk"; do
@@ -46,7 +51,7 @@ jq -s -e '
       (.args | type == "string" and length > 0) and
       (.response | type == "string" and length > 0) and
       (.log | type == "string" and length > 0) and
-      (.status == "pending" or .status == "completed" or (.status | startswith("failed"))))
+      (.status == "pending" or .status == "completed" or .status == "reconciled_partial" or (.status | startswith("failed"))))
 ' "$queue" >/dev/null
 
 update_unit() {
@@ -60,10 +65,11 @@ update_unit() {
     mv -f "$tmp" "$queue"
 }
 
-spent=$(jq -s '[.[] | select(.status == "completed") | .reported_cost_usd] | add // 0' "$queue")
+spent=$(jq -s '[.[] | if .status == "completed" then .reported_cost_usd elif .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
 mapfile -t units < "$queue"
 planned=${#units[@]}
 completed=$(jq -s '[.[] | select(.status == "completed")] | length' "$queue")
+processed_this_run=0
 
 for row in "${units[@]}"; do
     unit=$(jq -r '.unit' <<<"$row")
@@ -75,9 +81,9 @@ for row in "${units[@]}"; do
     response=$(jq -r '.response' <<<"$row")
     log=$(jq -r '.log' <<<"$row")
 
-    if [[ "$status" == completed ]]; then
+    if [[ "$status" == completed || "$status" == reconciled_partial ]]; then
         if [[ ! -f "$output" || ! -f "$response" || ! -f "$log" ]]; then
-            echo "completed unit is missing durable artifacts: $unit" >&2
+            echo "terminal unit is missing durable artifacts: $unit" >&2
             exit 65
         fi
         continue
@@ -85,6 +91,9 @@ for row in "${units[@]}"; do
     if [[ "$status" != pending ]]; then
         echo "queue contains unresolved failed unit $unit with status $status; reconcile it before resume" >&2
         exit 65
+    fi
+    if (( max_units > 0 && processed_this_run >= max_units )); then
+        break
     fi
     if [[ ! -f "$input" ]]; then
         echo "pending unit input does not exist: $input" >&2
@@ -190,6 +199,7 @@ for row in "${units[@]}"; do
 
     spent=$(jq -n --argjson spent "$spent" --argjson cost "$cost" '$spent + $cost')
     completed=$((completed + 1))
+    processed_this_run=$((processed_this_run + 1))
     completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     patch=$(jq -cn --arg completed_at "$completed_at" --arg output_sha256 "$(sha256sum "$output" | cut -d' ' -f1)" --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" --argjson cost_complete "$cost_complete" --argjson cumulative_cost "$spent" '{status:"completed",completed_at:$completed_at,tagged:$tagged,failed:$failed,reported_cost_usd:$cost,cost_reporting_complete:$cost_complete,cumulative_reported_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
     update_unit "$unit" "$patch"
@@ -201,4 +211,10 @@ for row in "${units[@]}"; do
     fi
 done
 
-printf 'classification_queue_complete units=%d cumulative_reported_cost_usd=%s\n' "$planned" "$spent" >&2
+pending=$(jq -s '[.[] | select(.status == "pending")] | length' "$queue")
+if (( pending == 0 )); then
+    printf 'classification_queue_complete units=%d cumulative_accounted_cost_usd=%s\n' "$planned" "$spent" >&2
+else
+    printf 'classification_queue_checkpoint processed_this_run=%d completed_units=%d pending_units=%d cumulative_accounted_cost_usd=%s\n' \
+        "$processed_this_run" "$completed" "$pending" "$spent" >&2
+fi

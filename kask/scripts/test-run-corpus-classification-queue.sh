@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 executor="$repo_root/kask/scripts/audit/run-corpus-classification-queue.sh"
+reconciler="$repo_root/kask/scripts/audit/reconcile-corpus-classification-unit.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/inputs" "$tmp/outputs" "$tmp/args" "$tmp/responses" "$tmp/logs"
@@ -42,6 +43,9 @@ BASH
 chmod +x "$tmp/fake-runner"
 export FAKE_CALL_LOG="$tmp/calls.log"
 
+"$executor" "$tmp/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001 1
+jq -s -e 'length == 2 and ([.[] | select(.status == "completed")] | length) == 1 and ([.[] | select(.status == "pending")] | length) == 1' "$tmp/queue.jsonl" >/dev/null
+[[ $(wc -l < "$tmp/calls.log") -eq 1 ]]
 "$executor" "$tmp/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001
 jq -s -e 'length == 2 and all(.[]; .status == "completed" and .failed == 0 and .cost_reporting_complete == true)' "$tmp/queue.jsonl" >/dev/null
 [[ $(wc -l < "$tmp/calls.log") -eq 2 ]]
@@ -59,5 +63,27 @@ if "$executor" "$tmp/low/queue.jsonl" "$tmp/fake-runner" 0.001 2 10 0.001; then
 fi
 [[ ! -e "$tmp/low/outputs/unit-000.jsonl" ]]
 jq -e '.status == "pending"' "$tmp/low/queue.jsonl" >/dev/null
+
+mkdir -p "$tmp/partial/inputs" "$tmp/partial/outputs" "$tmp/partial/args" "$tmp/partial/responses" "$tmp/partial/logs"
+cat > "$tmp/partial/inputs/unit-000.jsonl" <<'JSONL'
+{"entity_ref":"partial:0","source":"a.txt","text":"alpha","word_count":1}
+{"entity_ref":"partial:1","source":"a.txt","text":"beta","word_count":1}
+{"entity_ref":"partial:2","source":"a.txt","text":"gamma","word_count":1}
+JSONL
+cat > "$tmp/partial/outputs/unit-000.jsonl" <<'JSONL'
+{"entity_ref":"partial:0","source":"a.txt","text":"alpha","word_count":1,"classification":{"status":"classified","ontology_protocol":"published-term-resolution-v1"},"candidate_terms":["one","two","three"],"ontology_tags":{"core":["5w1h_core"]},"concepts":["5w1h_core"]}
+{"entity_ref":"partial:1","source":"a.txt","text":"beta","word_count":1,"classification":{"status":"failed","reason":"temporary route loss"},"candidate_terms":[],"ontology_tags":{},"concepts":[]}
+{"entity_ref":"partial:2","source":"a.txt","text":"gamma","word_count":1,"classification":{"status":"failed","reason":"temporary route loss"},"candidate_terms":[],"ontology_tags":{},"concepts":[]}
+JSONL
+printf '%s\n' '{"result":"partial"}' > "$tmp/partial/responses/unit-000.json"
+printf '%s\n' 'partial failure' > "$tmp/partial/logs/unit-000.log"
+jq -cn --arg input "$tmp/partial/inputs/unit-000.jsonl" --arg output "$tmp/partial/outputs/unit-000.jsonl" --arg args "$tmp/partial/args/unit-000.json" --arg response "$tmp/partial/responses/unit-000.json" --arg log "$tmp/partial/logs/unit-000.log" '{unit:"unit-000",ordinal:0,rows:3,input:$input,output:$output,args:$args,response:$response,log:$log,status:"failed_classification"}' > "$tmp/partial/queue.jsonl"
+"$reconciler" "$tmp/partial/queue.jsonl" unit-000 0.001
+jq -s -e 'length == 2 and .[0].status == "reconciled_partial" and .[0].tagged == 1 and .[0].failed == 2 and .[0].reserved_cost_usd == 0.003 and .[1].status == "pending" and .[1].rows == 2 and .[1].parent_unit == "unit-000"' "$tmp/partial/queue.jsonl" >/dev/null
+recovery_input=$(jq -r 'select(.parent_unit == "unit-000") | .input' "$tmp/partial/queue.jsonl")
+[[ $(wc -l < "$recovery_input") -eq 2 ]]
+[[ $(jq -r '.entity_ref' "$recovery_input" | sort | tr '\n' ' ') == 'partial:1 partial:2 ' ]]
+"$executor" "$tmp/partial/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001 1
+jq -s -e 'length == 2 and .[0].status == "reconciled_partial" and .[1].status == "completed" and .[1].tagged == 2' "$tmp/partial/queue.jsonl" >/dev/null
 
 printf '%s\n' "corpus classification queue tests passed"

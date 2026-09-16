@@ -139,6 +139,13 @@ while IFS= read -r line; do
                     respond "$id" "$(jq -cn --arg query "$query" --argjson results "$results" --argjson total "$total" \
                         '{query:$query,results:$results,total_indexed:$total}')"
                     ;;
+                corpus_tag_chunks)
+                    chunks=$(jq -r '.chunks_jsonl' <<<"$arguments")
+                    output=$(jq -r '.output' <<<"$arguments")
+                    total=$(wc -l < "$chunks" | tr -d ' ')
+                    jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},candidate_terms:["one","two","three"],ontology_tags:{core:["5w1h_core"]},concepts:["5w1h_core"]}' "$chunks" > "$output"
+                    respond "$id" "$(jq -cn --argjson total "$total" '{total_chunks:$total,tagged:$total,failed:0,reported_cost_usd:0.001,cost_reporting_complete:true}')"
+                    ;;
                 *)
                     jq -cn --argjson id "$id" '{jsonrpc:"2.0",id:$id,error:{code:-32601,message:"unsupported"}}'
                     ;;
@@ -153,12 +160,15 @@ export HKASK_CORPUS_BINARY="$tmp/fake-corpus"
 export HKASK_INFERENCE_SOCKET="test-socket"
 export HKASK_INFERENCE_TIMEOUT_SECS=5
 export HKASK_EMBEDDING_MODEL="requested-test-embedding-model"
+export HKASK_CLASSIFIER_MODEL="requested-test-classifier-model"
 export HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS=10
 
-if "$host_call" corpus_tag_chunks "$tmp/run-spec.json" "$tmp/unsupported-response.json" "$tmp/unsupported.log" >/dev/null 2>&1; then
-    echo "host bridge accepted a non-calibration operation" >&2
-    exit 1
-fi
+printf '%s\n' '{"entity_ref":"test:tag:0","source":"source-a.txt","text":"alpha beta","word_count":2}' > "$tmp/tag-input.jsonl"
+jq -n --arg input "$tmp/tag-input.jsonl" --arg output "$tmp/tag-output.jsonl" \
+    '{chunks_jsonl:$input,output:$output,concurrency:1,tag_batch_size:1,dry_run:false}' > "$tmp/tag-args.json"
+"$host_call" corpus_tag_chunks "$tmp/tag-args.json" "$tmp/tag-response.json" "$tmp/tag.log"
+[[ $(wc -l < "$tmp/tag-output.jsonl") -eq 1 ]]
+jq -e '.classification.status == "classified" and .classification.ontology_protocol == "published-term-resolution-v1"' "$tmp/tag-output.jsonl" >/dev/null
 
 "$runner" "$tmp/run-spec.json" "$tmp/run"
 jq -e '
