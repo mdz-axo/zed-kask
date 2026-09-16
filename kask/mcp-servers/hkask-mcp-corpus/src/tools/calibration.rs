@@ -1,7 +1,7 @@
 //! Deterministic chunk-retrieval calibration representations.
 
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
-use hkask_memory::text_chunking::{ChunkConfig, TextChunk, chunk_text_with_config};
+use hkask_memory::text_chunking::{ChunkConfig, TextChunk, chunk_text_with_config, sanitize_text};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -680,7 +680,7 @@ fn provenance(source: &AcceptedSource) -> Provenance {
         raw_sha256: source.raw_sha256.to_ascii_lowercase(),
         canonical_path: source.canonical_path.clone(),
         canonical_sha256: source.canonical_sha256.to_ascii_lowercase(),
-        canonical_normalization: "split_whitespace_join_single_space".into(),
+        canonical_normalization: "sanitize_c0_split_whitespace_join_single_space".into(),
     }
 }
 
@@ -689,7 +689,10 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 }
 
 fn normalize_words(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    sanitize_text(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn word_count(text: &str) -> usize {
@@ -864,8 +867,51 @@ mod tests {
         }
         assert!(children.iter().all(|row| {
             row.provenance.raw_sha256 == row.provenance.canonical_sha256
-                && row.provenance.canonical_normalization == "split_whitespace_join_single_space"
+                && row.provenance.canonical_normalization
+                    == "sanitize_c0_split_whitespace_join_single_space"
         }));
+        Ok(())
+    }
+
+    /// expect: reconstruction applies the same C0 sanitization as every emitted chunk policy.
+    #[tokio::test]
+    async fn reconstruction_matches_shared_c0_sanitization() -> anyhow::Result<()> {
+        let (_directory, mut request) = fixture()?;
+        let accepted = request
+            .accepted_sources
+            .first_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture source missing"))?;
+        let canonical = PathBuf::from(&accepted.canonical_path);
+        let text = fs::read_to_string(&canonical)?.replace("word100", "word100\u{2}µ");
+        fs::write(&canonical, text)?;
+        let digest = sha256_bytes(&fs::read(&canonical)?);
+        accepted.raw_sha256 = digest.clone();
+        accepted.canonical_sha256 = digest;
+
+        let output_dir = PathBuf::from(&request.output_dir);
+        server()
+            .corpus_build_chunk_representations(Parameters(request))
+            .await?;
+        let reference = fs::read_to_string(output_dir.join("reference.jsonl"))?;
+        assert!(!reference.contains('\u{2}'));
+        let rows: Vec<RepresentationRow> = reference
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        assert!(
+            rows.iter()
+                .map(|row| row.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("word100 µ")
+        );
+        let row = rows
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("reference row missing"))?;
+        assert_eq!(
+            row.provenance.canonical_normalization,
+            "sanitize_c0_split_whitespace_join_single_space"
+        );
         Ok(())
     }
 
