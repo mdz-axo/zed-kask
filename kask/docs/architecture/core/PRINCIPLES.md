@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-09-04
-version: "0.40.0"
+last_updated: 2026-09-15
+version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -182,37 +182,27 @@ Regulation (Cybernetic Nervous System) spans are the primary observability primi
 
 Skills are measured by execution outcome, recorded at runtime: `SkillTool::run` fires `agent::record_skill_outcome(skill_id, success, error)` at its outcome points (rendered envelope → success; missing dependencies or unreadable body → failure). Not-found and authorization-denial are request errors, not skill outcomes — neither is recorded. The composition root (`crates/zed/src/main.rs`) wires the hook to `RegulationLedger::record_skill_span(skill_id, "outcome", payload)`, stored in the bounded `SkillSpanStore` (`kask/crates/hkask-regulation/src/runtime.rs`); the metacognition loop's `sense_feedback_drift` reads the store for per-skill success-rate decline and escalates drift. Pinned by `skill_outcome_recorder_records_and_is_replaceable` + `test_skill_tool_records_outcome` (agent crate).
 
-The v0.31.0 design — six semantic spans per PDCA phase (`classify/gather/draft/evaluate/convergence/write`), declared per-manifest and CI-gated by `kask/scripts/check-skill-span-namespace.sh` — never landed: no emitter existed for any phase, no manifest declared a `ledger.span_namespace`, and the gate validated a manifests directory that did not exist (vacuous pass, flagged by its own selftest). It is superseded by the runtime outcome loop above; the gate and its selftest are deleted. The `operator_feedback` phase (acceptance-rate sensing in `sense_feedback_drift`) remains read-side-only with no recording source — a documented future wiring point, not an enforced surface.
+Skill outcomes and operator feedback both have live writers. `SkillTool::run` records activation outcomes; `record_skill_feedback` and successful skill-naming `curator_advice_mark_applied` calls feed the process-global operator-feedback recorder. The composition root forwards both channels into the shared `RegulationLedger` (`crates/zed/src/main.rs:914-1012`). The loop measures activation reliability and operator acceptance; it does not infer downstream work quality from activation alone.
 
-| Domain | Target | Spans | Status | RegulationSpan Variant |
-|--------|--------|-------|--------|-----------------|
-| Tool dispatch (all MCP servers) | `reg.tool.*` | 368 registered `#[tool]` methods fleet-wide (verified 2026-09-04; method and caveats in `kask/docs/reference/mcp-servers/README.md`) | ✅ shared `ToolSpanGuard` RAII guard per tool (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10`, emit on drop at `:92`) | `Tool { subsystem }` |
-| Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
-| Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
-| Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
-| Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |
-
-| Skill lifecycle | `reg.skill` | 5 | ✅ activate/load/discover/validate | `Skill` |
-| MCP server infra | `reg.mcp.*` | 47 | ✅ startup gates + in-process wiring | *(stringly-typed)* |
-| Kata coaching | `reg.kata` | 20 | ✅ PDCA cycles, automaticity | `Kata` |
-| Agent pod | `reg.agent_pod` | — | ~~✅ revert, spawn_agent (via PodBackupOps)~~ **Removed (v0.31.1):** `hkask-pods` deleted; `PodBackupOps` and the `AgentPod` variant removed. Per-user data directory replaces the pod abstraction. | ~~`AgentPod`~~ (deleted) |
-| Wallet | `reg.wallet.*` | — | ~~✅ pre-existing~~ **Removed (2026-08-30):** wallet module deleted (219c74b180); span namespaces, `SpanCategory::Wallet`, and the unsensed `WalletBalanceRatio`/`WalletKeyHealth` policy rules removed with it | ~~`WalletBalance`~~ (deleted) |
-| Memory | `reg.memory.*` | — | ✅ pre-existing | `MemoryEncode` |
-| Curation | `reg.curation` | — | ✅ pre-existing | `Curation` |
+| Event surface | Actual emission | Regulation consumption |
+|---|---|---|
+| MCP tool body | `ToolSpanGuard` emits tracing target `reg.tool` with `tool`, `outcome`, `duration_ms`, `error_kind`, and caller (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`) | None directly: child stderr is observability and is not ingested by the Regulation loop (`tool_span.rs:128-131`) |
+| Governed MCP dispatch | `McpRuntime::invoke` charges the per-agent call cap and emits cap diagnostics at `reg.mcp.cap` (`kask/crates/hkask-mcp/src/runtime.rs:1499-1517`) | It persists one `RegulationRecord` with `SpanKind::ToolCompleted`; `reg.mcp` is the warning target if persistence fails (`runtime.rs:1534-1543`) |
+| Agent-path MCP outcome | Process-global recorder forwards server/tool success and error kind into the shared ledger (`crates/zed/src/main.rs:907-932`) | `ToolReliabilitySensor` reads the ledger outcome breakdown |
+| Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:957-976`) | Metacognition senses per-skill activation reliability |
+| Operator skill feedback | Direct rating and advice-apply bridge use the process-global feedback recorder (`crates/zed/src/main.rs:995-1012`) | Metacognition trends operator acceptance |
 
 > **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 11 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
-**§9.2 — Span Emission Pattern**
+**§9.2 — Event emission pattern**
 
-```rust
-// Regulation span emission — pre: {precondition}, post: reg.{domain} span emitted
-tracing::info!(target: "reg.{domain}", operation = "{verb}", {key} = %{value}, ..., "Regulation");
-```
-
-- Target: `"reg.{canonical_domain}"` — uses the `reg.*` namespace convention. Essential domains map to `RegulationSpan` variants in `hkask-types::regulation`; performative spans (CLI, API) use stringly-typed tracing targets.
-- Message: Must be `"Regulation"` — enables ν-event filtering
-- Latency: Use `std::time::Instant`, emit as `latency_ms`
-- Authority: Every span carries a `webid` or `owner` WebID
+There is no universal tracing-message contract across the process boundary.
+Server tool wrappers emit message `REG` at target `reg.tool`; managed runtime
+completion persists a typed `RegulationRecord`; cap and persistence diagnostics
+use `reg.mcp.cap` and `reg.mcp`. Documentation must name which substrate carries
+an event rather than treating every `reg.*` target as a ledger span. Typed
+records carry WebID identity; tracing events carry the fields shown in the table
+above.
 
 ---
 
@@ -227,18 +217,24 @@ Users, via their per-user data directory, can explicitly control what is private
 **P11.1 — SQLCipher File as Private Sphere Boundary (v0.29.0):** The per-user data directory's SQLCipher database file IS the private sphere boundary. Each user owns their own encrypted file at `{data_dir}/agents/{sanitized_name}/{sanitized_name}.db`. No cross-user data access is structurally possible — a user cannot accidentally query another user's data because it has no connection handle to that file. Backup IS copying the SQLCipher file. This was already the backup model; the storage layer now matches.
 
 #### P12 — Authenticated Host Mandate
-Every action has an accountable host identity. No anonymous agency.
+Every action should have an accountable host identity. The current system surfaces,
+rather than hides, the two startup fallbacks: the editor proceeds immediately with
+agent identity `kask` when the Zed account has not resolved
+(`crates/zed/src/main.rs:1552-1571`), while an MCP child with missing or invalid
+`HKASK_WEBID` warns and uses the anonymous WebID
+(`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). The latter is a
+degraded attribution state, not a claim of authenticated agency.
 
 **P12.1 — Surface-Host Mapping (v0.31.0, in-process pivot):**
 
 > **Incorporated from:** `docs/architecture/mandates/P12-authenticated-host-mandate.md`
 
-Every interaction with hKask carries a per-user data directory (or Curator) host identity. After the in-process pivot, there is no standalone CLI, no HTTP API, and no daemon — hKask runs compiled into zed-kask. Two in-process interaction surfaces map to host classes (the former kask panel (D10) was removed — its visualization views moved to inline chat-stream widgets under D18; the slim admin CLI referenced by earlier revisions of this table is also gone — no `kask` binary ships, verified 2026-08-28):
+The editor process hosts the Agent panel, Curator, shared Regulation graph, and managed MCP runtime. The 11 MCP servers are child processes over stdio, not a second in-process surface. The former Kask panel and standalone admin CLI are deleted; inline D18 widgets and the scoped Steer panels are the live interaction surfaces.
 
 | Surface | Host | WebID Source | Storage | Keychain |
 |---------|------|-------------|---------|----------|
-| **Agent panel** (zed Assistant) | Human user (via per-user data directory) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active user from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/{sanitized_name}.db` (SQLCipher) | OS keychain via `hkask-keystore` |
-| **MCP servers** (11, child processes over stdio governed by the in-process `McpRuntime`; registered in `BUILT_IN_MCP_SERVERS` at `kask/crates/kask_bridge/src/mcp_servers.rs:55`) | The active per-user data directory | `ServerContext.webid` resolved from `HKASK_WEBID` (anonymous fallback) — no capability tokens (the `DelegationToken` surface was removed 2026-08-12, RR-0056) | Per-user SQLCipher DB | User-attested HKDF keys |
+| **Agent panel and Steer panels** | Human user plus native Curator | Current Zed username when available; nonblocking `kask` fallback at startup (`crates/zed/src/main.rs:1552-1571`) | Internal data root plus visible artifact root by artifact class | `hkask-keystore` uses `oo7` for sovereignty entries |
+| **Managed MCP children** | Per-child `ServerContext` | `HKASK_WEBID`, with warning + anonymous fallback when absent/invalid (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`) | Per-server/agent DBs and allowlisted artifact routes | Credentials are injected as filtered child env; inference config reads env only |
 
 **Dual-presence pattern:** The agent panel hosts both the user's agent AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's agent is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 

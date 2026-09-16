@@ -1,8 +1,8 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-08-28
-version: "2.0.0"
+last_updated: 2026-09-15
+version: "2.1.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -122,36 +122,35 @@ artifact files and outputs = visible `{server}-mcp/` routes), and the
 self-healing/protection posture are specified normatively in §0 — this
 section only defines the resolution precedence.
 
-This root is injected as `HKASK_DATA_DIR` into every MCP server child process
-by `KaskSettings::mcp_env()`
-(`kask/crates/kask_bridge/src/settings.rs:667`) so servers resolve paths
-consistently regardless of launch context.
+`KaskSettings::mcp_env()` emits both `HKASK_DATA_DIR` and
+`HKASK_ARTIFACTS_DIR`; `build_mcp_server_env` filters them through each
+`BuiltinMcpServer.config_env` allowlist before child launch
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478`). Servers therefore
+receive only the roots they actually resolve.
 
 ## 2. Artifact-class → path mapping
 
 ```mermaid
-erDiagram
-    DATA_ROOT ||--o{ AGENTS : "agents/{name}/"
-    DATA_ROOT ||--o{ MCP : "mcp/{server_id}/"
-    DATA_ROOT ||--o{ SKILLS : "skills/{name}/"
-    DATA_ROOT ||--o{ THREADS : "threads/"
-    AGENTS ||--o{ USER_AGENT : "{username}/"
-    AGENTS ||--o{ CURATOR : "curator/"
-    USER_AGENT ||--|| USER_DB : "{username}.db"
-    USER_AGENT ||--|| USER_MEM : "memory.db"
-    CURATOR ||--|| CURATOR_DB : "curator.db"
-    MCP ||--o{ KATA_KANBAN : "kata-kanban/kanban.db"
-    MCP ||--o{ SWARM : "swarm/ledger.db"
-    MCP ||--o{ TRAINING : "training/training.db"
-    SKILLS ||--o{ SKILL_DIR : "{skill_name}/"
-    SKILLS ||--o{ REGISTRY : "registry/"
-    THREADS ||--|| THREADS_DB : "threads.db"
+flowchart TD
+    R{Artifact classification}
+    R -->|database or machine state| D[Hidden data root]
+    R -->|user-facing file or export| A[Visible artifacts root]
+
+    D --> AG[agents/{name}/]
+    D --> MC[mcp/{server_id}/]
+    D --> SK[skills/{name}/]
+    D --> TH[threads/threads.db]
+
+    A --> CO[companies-mcp/reports and screens]
+    A --> PO[portfolio-mcp/transactions]
+    A --> CA[corpus-mcp/cache]
+    A --> ME[media-mcp/generated]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-types/src/agent_paths.rs (resolve_data_dir :63, resolve_under_data_dir :99, agent_dir :157, agent_db :198, sanitize_name :209), kask/crates/kask_bridge/src/settings.rs:667 (mcp_env), kask/crates/kask_bridge/src/mcp_servers.rs:55 (BUILT_IN_MCP_SERVERS)
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478
 status: VERIFIED
 -->
 
@@ -161,6 +160,7 @@ status: VERIFIED
 | User skills | `{data_dir}` | `skills/{skill_name}/` | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:209-241`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
 | User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` (`agent_paths.rs:157`) + `agent_db(name)` (`agent_paths.rs:198`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
+| User-facing MCP outputs | `{artifacts_dir}` | `{server}-mcp/{artifact-type}/` | readable purpose names such as `reports`, `transactions`, `cache`, `generated` | `resolve_under_artifacts_dir(mcp_artifacts_subdir(server_id, artifact_type))` (`agent_paths.rs:154-156,202-218`) |
 
 ## 3. Ownership principle
 
@@ -182,13 +182,10 @@ The system has three agent classes:
    escalation). The curator is an in-process agent (`Agent::Curator`,
    D2) that escalates *to the user* rather than acting autonomously.
 
-3. **Replica agents** — static memory built from a corpus of text
-   materials using the corpus MCP server. Replicas are *not* provisioned
-   agents — they have no `agents/` directory. Their memory DBs are
-   opened from agent-provided paths (tool parameters), not from the
-   `agents/` tree. If replicas gain a canonical home in the future, they
-   would live under `mcp/corpus/replicas/{replica_name}/` (server-scoped,
-   not agent-scoped), since the corpus server owns them.
+3. **Corpus/style stores** — tool-supplied corpus DB paths are opened by the
+   corpus server and are not provisioned agent directories. This document does
+   not assign a future canonical location that the current resolvers do not
+   enforce.
 
 The `agent_db(name)` function (`agent_paths.rs:198`) produces `{name}.db` — for the user, that's
 `{username}.db`; for the curator, that's `curator.db`. The name always
@@ -227,6 +224,7 @@ under the visible artifacts dir at `{server}-mcp/{artifact-type}/`:
 | Corpus cache files | corpus server | `corpus-mcp/cache/` (artifacts dir) |
 | Company research reports | companies server | `companies-mcp/reports/` (artifacts dir) |
 | Company screens | companies server | `companies-mcp/screens/` (artifacts dir) |
+| Generated media | media server | `media-mcp/generated/` (artifacts dir) |
 
 LoRA adapter weights are hosted on HuggingFace (`AdapterSource::HuggingFace`);
 only SQLite metadata is local (`mcp/training/training.db`).

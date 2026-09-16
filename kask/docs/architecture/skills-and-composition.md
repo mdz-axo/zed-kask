@@ -1,8 +1,8 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-09-04
-version: "2.1.0"
+last_updated: 2026-09-15
+version: "2.2.0"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
@@ -35,23 +35,24 @@ change is dominated not by writing it but by later readers reconstructing why it
 was made[^nygard-adr]. Prompts are especially prone to this because their
 "behaviour" is unobservable from the artifact alone.
 
-## 2. The four prompt surfaces
+## 2. The base prompt and five overlays
 
-Upstream Zed renders **one** system prompt. zed-kask renders that same prompt
-plus **four overlays**, all delivered through a single channel.
+Upstream Zed renders one base system prompt. zed-kask keeps that shared file and
+adds five scoped contexts:
 
-| # | Surface | Location | Size | Scope |
-|---|---------|----------|------|-------|
-| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | 26,309 B / 361 lines | Every thread |
-| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs:37` (`CURATOR_STATIC_CONTEXT`) | ~1.7 KB | Curator threads |
-| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | ~9.8 KB | Swarm panel, Steer mode |
-| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | ~3.2 KB | Kanban panel, Steer mode |
-| 5 | Portfolio Steer overlay | `crates/portfolio_panel/src/portfolio_panel.rs:175` (`steer_system_prompt`) | ~1.1 KB | Portfolio panel, Steer mode (added 2026-08-28) |
+| # | Surface | Location | Scope |
+|---|---------|----------|-------|
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | Every thread |
+| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs` (`CURATOR_STATIC_CONTEXT`) | Curator threads |
+| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | Swarm panel |
+| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
+| 5 | Portfolio Steer overlay | `crates/portfolio_panel/src/portfolio_panel.rs` (`steer_system_prompt`) | Portfolio panel |
+| 6 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:235-314` (`ensure_steer`, `steer_system_prompt`) | Media panel |
 
-Upstream's base template is 19,815 B, so zed-kask carries **+6.5 KB** of
-fork-specific instruction in the base plus up to ~9.8 KB more when an overlay is
-active. The swarm overlay is the largest single instruction block in the system —
-roughly 38 % of the base prompt's size.
+The four panel overlays all use `hkask_steer::ensure_steer`; their advertised
+tool names are rendered from each server's generated `TOOL_NAMES` and checked
+before the conversation is created (`crates/hkask-steer/src/hkask_steer.rs:174-184`;
+media coverage pins at `crates/media_panel/src/media_panel.rs:500-541`).
 
 Overlays are **appended, never substituted**: the Zed coding instructions remain
 intact and the overlay adds role and scope on top. `CuratorAgentServer` documents
@@ -66,35 +67,30 @@ modified, so upstream changes to it keep flowing through[^martin-ocp].
 render context; `TEMPLATE_NAME` pins it to `system_prompt.hbs` (`:67-69`).
 
 ```mermaid
-%% DIAG-PROMPT-001
 flowchart TD
-    A[ProjectContext<br/>worktrees, rules, skills, os, shell] --> T[SystemPromptTemplate]
-    B[available_tools] --> T
-    C[user_agents_md<br/>personal AGENTS.md] --> T
-    D[sandboxing / is_linux / is_windows] --> T
-    E[static_context] --> T
-    T --> R[system_prompt.hbs]
-    R --> M[Rendered prompt]
+    P[Project context, tools, rules, and skills] --> T[SystemPromptTemplate]
+    T --> B[system_prompt.hbs base]
+    C[Curator static context] --> K[KaskThreadState static context]
+    K --> B
 
-    F[CURATOR_STATIC_CONTEXT] --> G[Thread::set_static_context]
-    H[swarm steer_system_prompt] --> I[NativeAgent::set_curator_static_context]
-    J[kanban steer_system_prompt] --> I
-    I --> G
-    G --> K[KaskThreadState::set_static_context]
-    K --> E
+    S[Swarm Steer prompt] --> H[hkask_steer ensure_steer]
+    N[Kanban Steer prompt] --> H
+    O[Portfolio Steer prompt] --> H
+    M[Media Steer prompt] --> H
+    H --> V[Scoped ConversationView]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PROMPT-001
-verified_date: 2026-08-28
-verified_against: crates/agent/src/templates.rs:37-69 (SystemPromptTemplate, TEMPLATE_NAME), crates/agent/src/thread.rs (Thread::set_static_context → KaskThreadState::set_static_context), crates/agent/src/kask_thread_state.rs (KaskThreadState::static_context, set_static_context)
+verified_date: 2026-09-15
+verified_against: crates/agent/src/templates.rs; crates/agent/src/curator_agent_server.rs; crates/agent/src/kask_thread_state.rs; crates/hkask-steer/src/hkask_steer.rs:174-184; crates/media_panel/src/media_panel.rs:235-314
 status: VERIFIED
 -->
 
-The overlay path is the load-bearing detail: **all four overlays converge on
-the single `agent_static_context` field** (on `KaskThreadState`, accessed via
-`thread.kask.static_context()`), so a defect in that one field disables all
-three at once. That is exactly what happened (§5.1).
+The Curator context is stored on `KaskThreadState`. Panel Steer overlays instead
+construct scoped conversation views through the shared `hkask_steer` lifecycle;
+changing panel state invalidates and rebuilds that conversation. Conflating these
+paths would hide failures at the editor-panel seam.
 
 ### 3.1 Conditional sections
 
@@ -242,50 +238,27 @@ fenced tag. The prompt must disambiguate the two, not deny either.
   `crates/agent_ui/src/conversation_view.rs:3546`), so the prompt bullets
   remain live for any tool that emits the ` ```media ` fenced block.
 
-### 5.5 `## Agent Skills` — body injection (D1)
+### 5.5 `## Agent Skills` — project-aware body injection (D1)
 
-**Reverted 2026-08-20 (commit `e7503c0cf4`, "revert skill cascade") — the
-prompt-side divergence is gone.** Body injection still happens, but as runtime
-behaviour of the `skill` tool, not as prompt text.
+The prompt uses progressive disclosure: skill name, description, and location are
+listed up front; the body is loaded only when the model invokes `skill`.[^anthropic-skills]
+The live execution path is project-aware rather than filesystem-only:
 
-- **zed-kask** `:225-250` is byte-identical to upstream except an em-dash
-  (`:227`): it instructs the model to "use the `skill` tool to retrieve the
-  full instructions", "Follow the instructions in the Skill", and to use
-  `read_file` for files a Skill references — exactly upstream's text.
-- **Body injection lives at the tool boundary:** `SkillTool::run`
-  (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from
-  disk via `agent_skills::read_skill_body` (`:256`) and wraps it via
-  `render_skill_envelope` (`:47`, applied at `:261`), returning
-  `SkillToolOutput::Found { rendered }` (`:263`). The model reads the injected
-  body and follows it; the prompt catalog carries only `name`, `description`,
-  and `location`.
+- `NativeAgent::register_session` constructs `SkillTool::with_body_resolver`
+  with `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:1016-1021`).
+- Project-local skill bodies are opened through the project buffer, so remote
+  workspaces and unsaved buffer edits are visible (`crates/agent/src/agent.rs:4339-4373`).
+- Global skills still resolve through `agent_skills::read_skill_body` on the
+  filesystem (`crates/agent/src/agent.rs:4376-4380`).
+- Slash activation uses the same resolver, preventing tool and slash invocation
+  from reading different bodies (`crates/agent/src/agent.rs:2317-2342`).
 
-This is the progressive disclosure pattern. Anthropic's Agent Skills use
-*progressive disclosure*: only `name` and `description` are preloaded into the
-system prompt, and the `SKILL.md` body loads only when judged
-relevant[^anthropic-skills]. zed-kask keeps the catalog-in-prompt half and
-injects the body via the `skill` tool when the model invokes it.
-
-**The former `read_file` gate is a no-op stub.** The earlier prohibition —
-prompt text forbidding `read_file` on `SKILL.md`, backed by
-`refuse_skill_catalog_read` and the `skill.catalog_read_blocked` telemetry key —
-was removed with the cascade revert:
-
-- `refuse_skill_catalog_read` (`crates/agent/src/tools/read_file_tool.rs:37-45`)
-  now returns `Ok(())` unconditionally; its body carries the revert comment:
-  "zed-kask D1 revert: SKILL.md body injection is restored. `read_file` may
-  read SKILL.md files — the `skill` tool also reads them and injects the body
-  into the conversation. No gate needed."
-- The `skill.catalog_read_blocked` telemetry key no longer exists.
-- No no-body fallback remains: `SkillToolOutput` has only `Found`/`Error`
-  (`skill_tool.rs:94-104`); an unreadable `SKILL.md` body surfaces as
-  `SkillToolOutput::Error` via `read_skill_body` (`:256-259`).
-
-**Pinned by** `test_system_prompt_skills_section_describes_body_retrieval`
-(`templates.rs:546`), which asserts the retrieval phrasing ("use the `skill`
-tool to retrieve the full instructions"), and on the `read_file` side by
-`test_read_file_allows_global_skill_catalog_entry` (`read_file_tool.rs:1848`)
-and `test_refuse_skill_catalog_read_allows_skill_md` (`:589`).
+`test_project_skill_body_resolves_through_buffer` proves the distinction by
+changing a buffer without saving it and asserting that the resolver returns the
+buffer content rather than the disk content (`crates/agent/src/agent.rs:6781-6835`).
+The Kask authorization, dependency, and outcome-recording behavior remains around
+this upstream resolver seam; unreadable bodies and missing dependencies surface as
+errors rather than no-body fallbacks.
 
 ### 5.6 `skill_bundle` composition — removed section (D1)
 
@@ -405,17 +378,18 @@ session's core lesson: an unanchored term is an unredeemable claim — it
 can only be sustained by reassertion, and resolution then requires the
 operator's authority instead of inspectable grounds.
 
-## 6. Divergence-free sections
+## 6. Shared upstream structure and seam boundary
 
-Twelve of the eighteen upstream `##` sections are byte-identical, including all
-of `## Terminal sandbox` (`:162-216`) with its platform matrix. This is
-deliberate: the fork's leverage is in skill execution and context injection, not
-in re-litigating upstream's coding guidance. Keeping unrelated sections identical
-is what makes `git merge upstream/main` tractable on this file — every additional
-edited line is a future conflict.
+`system_prompt.hbs` remains an upstream-shared file, but it is not byte-identical:
+the current fork diff is 93 inserted and 6 deleted lines. Kask changes include
+the role opening, ontology/tool guidance, media display hints, functional decision
+rules, failure-mode warnings, and session context. Unchanged regions should still
+merge from upstream normally; only the named D1/D2/D26/D40/D54 prompt obligations
+are mapped reapplications. The complete authoritative boundary is the current
+`DIVERGENCE.md`, not a count of apparently identical sections.
 
-*Scope-exempt from the Sourced-Ideas Mandate: this section decides nothing, it
-records the absence of change relative to §4's inventory.*
+*Scope-exempt from the Sourced-Ideas Mandate: this section records the observable
+vendor-branch boundary (`git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs`).*
 
 ## 7. Rebase procedure for this file
 
@@ -426,11 +400,10 @@ divergence fails a named test instead of shipping, which is the regression-test
 discipline applied to a vendor-branch merge[^fowler-vendor-branch]. On upstream
 sync:
 
-1. Merge normally. Conflicts will land in the five hunks of §5.
-2. Re-apply each §5 divergence. The pinning tests are the checklist — run
-   `cargo test -p agent --lib templates::` (26 tests) and
-   `cargo test -p markdown --lib mermaid` (21 tests). A dropped divergence fails a
-   named test rather than silently reverting.
+1. Merge normally and inspect every conflict against the seam records in
+   `DIVERGENCE.md`; the number and location of hunks are not stable.
+2. Re-apply each mapped prompt obligation. Run the targeted agent template and
+   markdown Mermaid tests; do not encode test-count totals in the procedure.
 3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,
    not a merge: the two versions state opposite instructions, so a textual merge
    can produce a prompt that both forbids and requires reading `SKILL.md`.
@@ -444,20 +417,14 @@ asserted results, so a reader can falsify this document rather than trust
 it[^popper-1959].
 
 ```sh
-# Structure and size
-wc -c crates/agent/src/templates/system_prompt.hbs          # 26309
-git show upstream/main:crates/agent/src/templates/system_prompt.hbs | wc -c  # 19815
-
-# The complete divergence
+# The complete current seam
+git diff --numstat upstream/main -- crates/agent/src/templates/system_prompt.hbs
 git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs
 
-# The pinning tests
-cargo test -p agent --lib templates::                        # 26 pass
-cargo test -p agent --lib read_file_tool                     # 25 pass
-cargo test -p markdown --lib mermaid                         # 21 pass
-
-# The skill count (76 SKILL.md directories in .agents/skills/)
-ls .agents/skills/ | wc -l                                    # 76
+# Targeted pinning tests
+cargo test -p agent --lib templates::
+cargo test -p agent --lib test_project_skill_body_resolves_through_buffer
+cargo test -p markdown --lib mermaid
 ```
 
 ## References
@@ -825,159 +792,111 @@ Four-phase pipeline: **detect-gap** (classify gaps: coverage, feature, automatio
 
 ## Building MCP Servers
 
-zed-kask hosts 11 MCP servers as child processes over stdio via zed's `context_server` host (companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, the in-process governed `McpRuntime` (D3) launches the servers as child processes over stdio — single spawn authority since 2026-08-29, no `ContextServerStore` registration — and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
+zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 11
+registered `hkask-mcp-*` binaries as child processes over stdio, performs the MCP
+handshake and tool discovery, and owns child shutdown/reconnect
+(`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-680`). The canonical
+server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478`).[^mcp-spec-build][^ousterhout-mcp-build]
 
-### Prerequisites
+### Current crate shape
 
-- zed-kask source tree with `crates/hkask-mcp-server/` built
-- A new crate under `mcp-servers/` named `<your-mcp-package>`
-- Familiarity with the `rmcp` crate (the MCP protocol library hKask uses)
-
-Add to your new crate's `Cargo.toml`:
+Create the package under `kask/mcp-servers/hkask-mcp-<name>/`. Follow the
+repository's no-`mod.rs` and explicit-library-root conventions:
 
 ```toml
-[dependencies]
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
-hkask-inference = { path = "../../crates/hkask-inference" }  # if you need inference
-rmcp = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+[lib]
+name = "hkask_mcp_example"
+path = "src/hkask_mcp_example.rs"
+
+[[bin]]
+name = "hkask-mcp-example"
+path = "src/main.rs"
 ```
 
-### Step 1: Define the Server Struct
+The production servers use the workspace dependencies rather than relative path
+dependencies. For example, the corpus package declares its explicit lib and bin
+at `kask/mcp-servers/hkask-mcp-corpus/Cargo.toml:63-70`.
 
-Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with a mandatory `webid` field plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation.
+### Server and tool routers
+
+Define the server with `hkask_mcp_server::mcp_server!`; the macro supplies the
+constructor and `ToolContext` implementation. Put tool methods in one or more
+`#[tool_router(router = ..., vis = "pub")]` impl blocks, and combine every
+sub-router into the server router. Missing a router compiles but silently removes
+its tools, so each server should pin `combined_router().list_all()` against its
+intended surface (corpus example: `hkask_mcp_corpus.rs:268-278`).
+
+Every tool boundary returns a typed MCP result and wraps its future with
+`execute_tool(self, "tool_name", ...)`. `ToolSpanGuard` then emits one child
+tracing event at target `reg.tool`, including outcome and duration
+(`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119,166-170`).
+That stderr event is observability only; the editor-side managed runtime records
+completed governed calls separately through the injected Regulation sink
+(`kask/crates/hkask-mcp/src/runtime.rs:1534-1543`).
+
+### Bootstrap and child binary
+
+Expose `pub async fn run() -> Result<(), hkask_mcp_server::McpError>` in the
+library. Resolve async dependencies before the synchronous factory when needed,
+then call:
 
 ```rust
-// mcp-servers/<your-mcp-package>/src/lib.rs
-
-use hkask_mcp_server::mcp_server;
-use std::sync::Arc;
-use hkask_types::InferencePort;
-
-mcp_server! {
-    /// Example MCP server — demonstrates the bootstrap pattern.
-    pub struct ExampleServer {
-        /// Optional inference port for LLM calls.
-        inference_port: Option<Arc<dyn InferencePort>>,
-        /// Your domain-specific state.
-        items: std::collections::HashMap<String, String>,
-    }
-}
+hkask_mcp_server::run_server(
+    "hkask-mcp-example",
+    env!("CARGO_PKG_VERSION"),
+    |ctx: hkask_mcp_server::ServerContext| {
+        Ok(ExampleServer::new(ctx.webid /* domain fields */))
+    },
+    vec![],
+).await
 ```
 
-### Step 2: Define Tool Methods
-
-Annotate methods with `#[tool(description = "...")]` and use `execute_tool` for Regulation span emission:
-
-```rust
-use hkask_mcp_server::server::execute_tool;
-use rmcp::tool;
-
-#[tool(description = "Liveness check")]
-async fn example_ping(&self) -> String {
-    execute_tool(self, "example_ping", async {
-        Ok(serde_json::json!({
-            "status": "ok",
-            "server": "example",
-        }))
-    }).await
-}
-```
-
-### Step 3: Apply the `tool_router` Macro
-
-Use rmcp's `#[tool_router(server_handler)]` attribute on the `impl` block that contains your `#[tool]`-annotated methods.
+The framework signature is at
+`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:42-52`; the corpus server
+shows async inference-port resolution followed by factory construction at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:308-368`. The binary
+entry point is intentionally thin:
 
 ```rust
-use rmcp::tool_router;
-
-#[tool_router(server_handler)]
-impl ExampleServer {
-    #[tool(description = "Liveness check")]
-    pub async fn example_ping(&self) -> String {
-        execute_tool(self, "example_ping", async {
-            Ok(serde_json::json!({"status": "ok", "server": "example"}))
-        }).await
-    }
-}
-```
-
-### Step 4: Write the `run()` Function
-
-Every hKask MCP server has a `run()` function that calls `run_server()` with a factory closure:
-
-```rust
-use hkask_mcp_server::{McpError, run_server, ServerContext};
-
-pub async fn run() -> Result<(), McpError> {
-    run_server(
-        "example",
-        env!("CARGO_PKG_VERSION"),
-        |ctx: ServerContext| {
-            let server = ExampleServer::new(
-                ctx.webid,
-                /* your custom fields */
-            );
-            Ok(server)
-        },
-        vec![],  // CredentialRequirements
-    ).await
-}
-```
-
-### Step 5: Write the Binary Entry Point
-
-```rust
-// mcp-servers/<your-mcp-package>/src/main.rs
-
 #[tokio::main]
 async fn main() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_example::run().await
 }
 ```
 
-### Step 6: Register as an In-Process Builtin
+### Register the managed child
 
-Add your server to the canonical registry in `kask/crates/kask_bridge/src/mcp_servers.rs` so zed-kask's in-process transport can discover and load it:
+Add a `BuiltinMcpServer` entry in
+`kask/crates/kask_bridge/src/mcp_servers.rs`. All four fields are required:
 
 ```rust
-pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
-    // ... existing entries ...
-    BuiltinMcpServer {
-        id: "example",
-        binary: "<your-mcp-package>",
-        description: "Example — what it does",
-    },   // ← add this entry
-];
+BuiltinMcpServer {
+    id: "example",
+    binary: "hkask-mcp-example",
+    description: "Example — what it does",
+    credentials: Some(&[]),
+    config_env: Some(&[]),
+}
 ```
 
-### Testing the Server
+The runtime resolves `HKASK_MCP_<ID>_BIN` (upper case, dashes as underscores)
+or the registered binary on `PATH`, then starts it as a child. Add the package to
+the workspace and to `kask/scripts/build/mcp-servers.txt` so release installation
+builds and copies the child binary.
 
-Manual test (stdio, for development):
+### Validation and common failures
 
-```bash
-cargo build -p <your-mcp-package>
-HKASK_WEBID=<webid-uuid> cargo run -p <your-mcp-package>
-```
-
-In-process test (production path): launch zed-kask and verify the server appears in the agent panel tool list.
-
-### Common Pitfalls
-
-| Pitfall | Fix |
-|---------|-----|
-| Missing `#[tool]` attribute | Every public async method that should be an MCP tool must have `#[tool(description = "...")]` |
-| Duplicate `ToolContext` impl | `mcp_server!` already calls `impl_tool_context!` — do not duplicate it |
-| No Regulation spans emitted | Always wrap tool logic in `execute_tool(self, "tool_name", async { ... }).await` |
-| Server starts as `"anonymous"` | Set `HKASK_WEBID` before starting (the server reads it at startup and falls back to anonymous if unset) |
-| Server not loaded by zed-kask | Add a `BuiltinMcpServer { id, binary, description }` entry to `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs` |
-| Tool name conflicts | Tool names are global across all MCP servers. Use a prefix convention (e.g., `example_ping`) |
-
----
+- Build and test the package by its real package name; run live-mutation tests
+  with `--test-threads=1`.
+- Assert the registered tool surface and any generated `TOOL_NAMES` coverage.
+- Treat missing credentials as `permission_denied` naming the env var; never
+  silently substitute an empty result or in-memory store.
+- Keep `credentials` and `config_env` allowlists aligned with actual reads.
+- An unset/invalid `HKASK_WEBID` produces a warning and anonymous child identity
+  (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). This is
+  distinct from editor startup, which proceeds immediately with fallback agent
+  identity `kask` when the Zed account has not resolved.
 
 ## Common Skill Pitfalls
 

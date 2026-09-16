@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-31
-version: "2.0.0"
+last_updated: 2026-09-15
+version: "2.1.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [domain, trust]
@@ -20,15 +20,18 @@ The crate lives at `kask/crates/hkask-regulation/`. Its public surface is
 re-exported from `kask/crates/hkask-regulation/src/hkask_regulation.rs:24-39`.
 The crate is dependency-light: it depends on `hkask-types` and tokio, but
 not on any storage crate — durable sinks are injected as traits
-(`RegulationSink`, `AlertEscalationSink`) implemented elsewhere.
+(`RegulationSink`, `AlertEscalationSink`) implemented elsewhere. The editor
+composition root creates one process-global ledger/loop graph and passes it to
+the managed MCP runtime; MCP servers themselves remain child processes
+(`crates/zed/src/main.rs:772-896`; `kask/crates/hkask-mcp/src/runtime.rs:4-12`).
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
 | Crate root (re-exports) | `kask/crates/hkask-regulation/src/hkask_regulation.rs:24-39` |
-| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:146-213` |
-| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:721` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:142-202` |
+| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:646-656` |
 | `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:231,248-279` |
 | `CyberneticsLoop::reset_all_caps` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:689` |
 | `CyberneticsLoop::process_inbox` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:697` |
@@ -36,15 +39,15 @@ not on any storage crate — durable sinks are injected as traits
 | `CyberneticsLoop::submit_rollout_impact_check` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:609` |
 | `RolloutEventSource` trait | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:73-110` |
 | `RolloutEventError` enum | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:47-57` |
-| `sense` / `compare` / `compute` / `act` / `verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:253,248,350,408,684` |
-| `route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:510` |
-| `persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:147` |
+| `sense` / `compare` / `compute` / `act` / `verify_impact` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:305-309,140-144,409-413,448-452,686-690` |
+| `route_action_as_alert` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:540-544` |
+| `persist_alert_to_queue` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:63-67` |
 
 | `build_regulation_action` | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:1080` |
 | `handle_curation_directive` | `kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs:14` |
-| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:446-448` |
-| `RegulationLedger::record_cycle_outcome` | `kask/crates/hkask-regulation/src/runtime.rs:526` |
-| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:328-400` |
+| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:498-500` |
+| `RegulationLedger::record_cycle_outcome` | `kask/crates/hkask-regulation/src/runtime.rs:576-580` |
+| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:380-382` |
 | `VarietyTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:140-208` |
 | `OutcomeTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:222-302` |
 | `StoredSkillSpan` / `SkillSpanStore` | `kask/crates/hkask-regulation/src/runtime.rs:52-124` |
@@ -74,7 +77,10 @@ not on any storage crate — durable sinks are injected as traits
 | `VarietySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs` |
 | `TestCoverageSensor` / `MutationScoreSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:251,382` |
 | `ToolReliabilitySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:331` |
-| `InferenceResilienceSource` | `kask/crates/hkask-regulation/src/inference_resilience.rs` |
+| `InferenceResilienceSource` / observation types | `kask/crates/hkask-regulation/src/inference_resilience.rs:8-80` |
+| Local circuit state machine | `kask/crates/kask_bridge/src/inference_resilience.rs:10-58,73-199,202-275` |
+| Live port observation adapter | `kask/crates/kask_bridge/src/inference_chat.rs:1065-1088` |
+| Resilience defaults and wiring | `kask/crates/kask_bridge/src/settings.rs:121-136`; `crates/zed/src/main.rs:3169-3192` |
 | `ContextServerHealthSource` / sensor | `kask/crates/hkask-regulation/src/sensor_provider.rs:572,593` |
 | `MemoryHealthSource` / `MemoryHealthSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:649,677` |
 | `StrategyEvaluator` | `kask/crates/hkask-regulation/src/strategy_evaluator.rs:66` |
@@ -111,10 +117,10 @@ not on any storage crate — durable sinks are injected as traits
 
 ## Class diagram
 
-The crate has six responsibility clusters: the cybernetic loop, the
-regulation ledger, the per-agent call cap, the algedonic alert path, the
-metacognition loop, and the sensor bus. The class diagram below shows the
-key types and their relationships.
+The crate has seven responsibility clusters: the cybernetic loop, regulation
+ledger, per-agent call cap, algedonic alert path, metacognition loop, sensor bus,
+and the typed inference-resilience observation seam. The class diagram shows
+the key types and their relationships.
 
 ```mermaid
 classDiagram
@@ -200,12 +206,17 @@ classDiagram
         +metric_before_and_after(rollout, metric, pos) Option
         +append_impact_verdict(rollout, metric, before, after, improved, decision)
     }
+    class InferenceResilienceSource {
+        <<trait>>
+        +observe_since(cursor) InferenceObservation
+    }
     CyberneticsLoop --> RegulationLedger
     CyberneticsLoop --> CallCapManager
     CyberneticsLoop --> Dampener
     CyberneticsLoop --> StagnationDetector
     CyberneticsLoop --> SensorBus
     CyberneticsLoop --> RolloutEventSource : optional
+    CyberneticsLoop --> InferenceResilienceSource : replaceable
     CallCapManager --> CallCap
     RegulationLedger --> AlgedonicManager : RegState.algedonic
     AlgedonicManager --> RuntimeAlert
@@ -214,8 +225,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-003
-verified_date: 2026-08-31
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:146-213,73-110; kask/crates/hkask-regulation/src/runtime.rs:480; kask/crates/hkask-regulation/src/energy.rs:131; kask/crates/hkask-regulation/src/dampener.rs:100,231; kask/crates/hkask-regulation/src/algedonic.rs:230,41; kask/crates/hkask-regulation/src/metacognition.rs:172; kask/crates/hkask-regulation/src/sensor_provider.rs:39
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:142-202; kask/crates/hkask-regulation/src/runtime.rs:498-500; kask/crates/hkask-regulation/src/energy.rs:131-178; kask/crates/hkask-regulation/src/dampener.rs:100-110,231-238; kask/crates/hkask-regulation/src/algedonic.rs:34-54; kask/crates/hkask-regulation/src/metacognition.rs:195-205; kask/crates/hkask-regulation/src/inference_resilience.rs:59-80
 status: VERIFIED
 -->
 
@@ -242,7 +253,9 @@ classDiagram
         VarietyDeficit
         ErrorRate
         ConnectorLatency
-        +25 more
+        CircuitBreakerState
+        InferenceModelAvailable
+        additional variants
     }
     class Signal {
         +source: LoopId
@@ -314,32 +327,72 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-004
-verified_date: 2026-08-31
-verified_against: kask/crates/hkask-regulation/src/loops/core.rs:24,80,173; kask/crates/hkask-regulation/src/loops/signals.rs:14,227,249,275; kask/crates/hkask-regulation/src/loops/actions.rs:19,168,236,278
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-regulation/src/loops/core.rs; kask/crates/hkask-regulation/src/loops/signals.rs; kask/crates/hkask-regulation/src/loops/actions.rs
+status: VERIFIED
 status: VERIFIED
 -->
 
 ## Regulation dispositions and inference resilience
 
-Central regulation has two truthful dispositions: `Notify` records an
-observation and `Escalate` routes an evidence-bearing condition through the
-review queue, live Curator channel, archive, and email fallback. The removed
-`Throttle`, `CircuitBreak`, `Calibrate`, and budget action labels had no
-handlers and therefore did not represent additional regulatory variety.
+### Central dispositions
 
-Fast inference correction lives beside enforcement in
-`kask_bridge::LanguageModelInferencePort`. Consecutive transient failures open
-a local circuit; new work receives `InferenceError::CircuitOpen`; after the
-configured interval one half-open probe is admitted. Success closes the
-circuit and failure reopens it. `InferenceResilienceSource` supplies one
-coherent snapshot plus cursor-addressed transition and permanent-failure
-receipts to `CyberneticsLoop`.
+`ActionType` has two live central dispositions: `Notify` and `Escalate`
+(`kask/crates/hkask-regulation/src/loops/actions.rs`). `Notify` records an
+observation. `Escalate` routes evidence through the pending queue and available
+notification sinks. There is no central throttle, circuit-break, calibration,
+energy-adjustment, prune, or generic action-dispatch implementation.
 
-Circuit transitions are recorded as `reg.inference.circuit_transition`.
-A later close is `reg.inference.observed_recovery` with
-`causal_attribution: unverified`. The initial open remains a local correction. A failed half-open probe or a
-permanent auth, configuration, model, or provider failure is escalated once
-per pending condition. Full utilization without failures is not an outage.
+### Local circuit contract
+
+| Item | Contract | Evidence |
+|---|---|---|
+| Configuration | `transient_failure_threshold` defaults to 3; `open_duration` defaults to 30 seconds | `kask/crates/kask_bridge/src/settings.rs:121-136`; wired at `crates/zed/src/main.rs:3169-3174` |
+| States | `Closed`, `Open { until }`, `HalfOpen { probe_in_flight }` | `kask/crates/kask_bridge/src/inference_resilience.rs:16-21` |
+| Admission | Closed admits; open rejects with retry delay; elapsed open admits one half-open probe; concurrent probes reject | `inference_resilience.rs:73-104`; `inference_chat.rs:623-628` |
+| Transient failure | Timeout/connection and provider errors marked transient count toward opening; a failed half-open probe reopens | `inference_chat.rs:206-218`; `inference_resilience.rs:107-127` |
+| Permanent failure | Authorization, configuration, model, and non-transient provider failures become typed receipts | `inference_chat.rs:220-239`; `inference_resilience.rs:175-188` |
+| Success | Resets the consecutive count; a successful half-open probe closes the circuit | `inference_resilience.rs:130-135` |
+| Cancelled probe | Clears `probe_in_flight`; `Drop` also releases an incomplete probe | `inference_resilience.rs:138-149,270-275` |
+
+The bridge exposes one coherent `InferenceObservation`: snapshot, transition
+receipts, permanent-failure receipts, and `next_cursor`
+(`kask/crates/hkask-regulation/src/inference_resilience.rs:49-80`). Both receipt
+kinds share one monotonically increasing event id; `observe_since` prunes events
+already acknowledged by the supplied cursor and returns only later events
+(`kask/crates/kask_bridge/src/inference_resilience.rs:151-188`).
+
+### Central reconciliation
+
+`CyberneticsLoop::sense_inference_resilience` merges and sorts both receipt kinds.
+It requires a contiguous id sequence and advances its atomic cursor only after
+each event is handled (`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:178-210,289-296`).
+
+| Event | Durable path | Escalation |
+|---|---|---|
+| `CircuitOpened` | `reg.inference.circuit_transition` Regulation record | No; initial protection stays local |
+| `CircuitHalfOpened` | `reg.inference.circuit_transition` Regulation record | No |
+| `CircuitClosed` | `reg.inference.observed_recovery`, `observed_recovery: true`, `causal_attribution: unverified` | No |
+| `CircuitReopened` | transition record after alert routing succeeds | Yes; reason `circuit_breaker_open` |
+| Permanent failure | acknowledgement after alert routing succeeds | Yes; reason includes typed failure kind and detail |
+
+The implementation is at
+`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:213-285`.
+Persistence or escalation failure stops cursor advancement, so the event remains
+available for a later tick. Full concurrency with successful completions does not
+create a circuit event. Per-agent call-cap depletion remains a separate local
+meter and never changes global inference capacity.
+
+### Event substrates
+
+- `reg.inference.circuit_transition` and
+  `reg.inference.observed_recovery` are typed Regulation records persisted by the
+  injected sink (`cycle.rs:230-264`).
+- `reg.tool` is child-process tracing from `ToolSpanGuard`, not a consumed
+  Regulation record (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:117-131`).
+- Governed tool completion creates `SpanKind::ToolCompleted`; `reg.mcp` is the
+  warning target if that record cannot be persisted
+  (`kask/crates/hkask-mcp/src/runtime.rs:1534-1543`).
 
 ## Set-points
 

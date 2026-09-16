@@ -9,6 +9,7 @@
 use gpui::{
     App, AppContext, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
+    relative,
 };
 use theme::ActiveTheme;
 
@@ -157,7 +158,7 @@ impl Render for SimpleSlider {
                     .top_0()
                     .left_0()
                     .h_full()
-                    .w(px(fraction * 100.0))
+                    .w(relative(fraction))
                     .min_w(px(4.0))
                     .rounded(px(3.0))
                     .bg(fill_color),
@@ -166,7 +167,7 @@ impl Render for SimpleSlider {
                 div()
                     .absolute()
                     .top(px(-3.0))
-                    .left(px(fraction * 100.0))
+                    .left(relative(fraction))
                     .ml(px(-6.0))
                     .size(px(12.0))
                     .rounded(px(6.0))

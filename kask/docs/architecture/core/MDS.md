@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-09
-version: "0.40.0"
+last_updated: 2026-09-15
+version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -51,9 +51,9 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 | `Priority` | Task urgency level | `Low \| Medium \| High \| Critical` |
 | `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`hkask-types/src/kanban_status.rs:24`) |
 | `VerificationCriterion` | Acceptance spec with optional LLM evaluation prompt | `description: String`, `llm_prompt: Option<String>` |
-| `Goal` | Ephemeral in-memory functional goal: text, observable criteria, intake prediction (dies with the process — operator ruling 2026-08-29) | `goal_id`, `goal_text`, `criteria`, `prediction` (`kanban/types/goal.rs:20`) |
-| `GoalVerdict` | Judge verdict with confidence and a result for every criterion, exactly once | `kanban/types/goal.rs:145` |
-| `GoalResolution` | Resolution record; Brier-scores the intake prediction | `kanban/types/goal.rs:163` |
+| `Goal` | Functional target persisted in the kanban database until resolution: text, observable criteria, and optional intake prediction | `goal_id`, `goal_text`, `criteria`, `prediction` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:20-40`; persistence contract at `kanban/service_impl/goals.rs:9-15,40-50`) |
+| `GoalVerdict` | Persisted judge verdict with confidence and exactly one result for every criterion | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:145-160`; write at `kanban/service_impl/goals.rs:240-244` |
+| `GoalResolution` | Brier-scored closure; scoring removes the resolved goal while curator memory retains the outcome record | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:163-175`; lifecycle contract at `kanban/service_impl/goals.rs:9-15` |
 
 **5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-coaching` skill (`.agents/skills/kata-coaching/`); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
 
@@ -77,9 +77,9 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 
 **Key contracts:** 8 `expect:` contract annotations across the adapter modules (`adapter/adapter_store.rs`, `adapter/expertise.rs`, `adapters.rs`; verified 2026-09-04)
 
-### 1.4 Service Layer Subsystems (in-process)
+### 1.4 Service and runtime subsystems
 
-**Crate:** `hkask-services-core` (the only surviving `hkask-services-*` crate) | **Goal Principle:** P5 (Essentialism) — thin scaffolding (config, error types, settings) genuinely shared by 2 consumers (`hkask-mcp-corpus`, `hkask-mcp-curator`; verified 2026-09-04). The other `hkask-services-*` subcrates were folded into their sole MCP server consumers (F6 refactor-architecture pass); the T3.0 refactor resolved by deleting the daemon transport outright (not by building `KaskCore` — `KaskCore` was never implemented; MCP servers run standalone with identity from `ServerContext.webid`).
+**Crate:** `hkask-services-core` is the only surviving `hkask-services-*` crate, a thin shared library used by corpus and curator. The editor process owns one `McpRuntime`; it spawns the 11 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-478`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -102,7 +102,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 | ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
 | ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
 | ~~`hkask-services-inference`~~ (folded) | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` (internal `inference_svc` + `model_cache` modules) | `P{N}-svc-inference-*` | 7 | ✅ Folded |
-| `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`) — reads API keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) | `P{N}-svc-inference-*` | 7 | ✅ Realigned |
+| `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). `InferenceConfig::from_env` reads provider configuration from the child process environment only (`kask/crates/hkask-inference/src/config.rs:109-129,218-228`). Chat, vision, embedding, rerank, and model listing can use IPC; media generation is child-local (`hkask_inference.rs:356-383`). | `P{N}-svc-inference-*` | 7 | ✅ Current |
 
 ---
 
@@ -167,7 +167,7 @@ The corpus server provides tools for style corpus management, prose generation, 
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | `corpus_compose`, `corpus_rewrite`, `corpus_discover`, `corpus_discover_company`, `corpus_is_complex`, `corpus_cache_work`, `corpus_convert`, `corpus_ocr`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`, `corpus_build_prompts`, `corpus_generate_qa`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented (23 tools, pinned by `tool_surface_is_exactly_23_registered_tools`, `hkask_mcp_corpus.rs:298`) |
+| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 23 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:10-18` and pinned by `tool_surface_is_exactly_23_registered_tools` at `:268-278` |
 
 ### 4.3 Style Exemplar Architecture
 
@@ -177,28 +177,14 @@ The style exemplar system models a **human exemplar** — a named individual who
 
 | Exemplar type | Discovery | Source examples | Status |
 |--------------|-----------|----------------|--------|
-| Public domain author | Static YAML (`works:` list pointing to Gutenberg URLs) | Hemingway, Woolf, Austen, Wilde, Twain, Grant, Christie, Eliot | ✅ Implemented |
-| Mashup exemplar | Two-author centroid interpolation; exemplars drawn from both source corpora | Jane Wilde (Austen×Wilde), Ulysses S. Twain (Grant×Twain), Agatha Eliot (Christie×Eliot) | ✅ Implemented |
-| Academic author | Dynamic corpus discovery via research MCP tools; disambiguation required | "David Dunning" → "David Dunning, University of Michigan" | 🔮 Planned |
+| Public domain author | Static YAML (`works:` list pointing to Gutenberg URLs) | Named public-domain works | ✅ Implemented |
+| Mashup exemplar | Two-author centroid interpolation over source corpora | Registry-defined mashups | ✅ Implemented |
+| Academic author | `corpus_discover` in curated or agentic mode | Semantic Scholar, arXiv, web, and optional transcripts | ✅ Implemented (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:44-54,78-84`) |
+| Company corpus | `corpus_discover_company` from an approved-source manifest | SEC filings plus channel-allowlisted transcripts | ✅ Implemented (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:230-235,480-490`) |
 
-### Academic Author Pipeline (Planned)
+### Discovery pipelines
 
-For academic exemplars, the corpus is not statically declared — it is discovered dynamically through the existing research infrastructure. The research MCP server (`hkask-mcp-research`) provides tools that can discover, extract, and cache academic content:
-
-| Research tool | Role in corpus discovery |
-|--------------|--------------------------|
-| `web_search` | Find the author's papers, talks, interviews, and profiles across the open web |
-| `web_extract` | Download full-text content from discovered URLs (papers, transcripts, blog posts) |
-| `web_find_similar` | Expand the corpus by finding related work and responses to the author |
-| `web_browse` | Navigate academic profiles (Google Scholar, Semantic Scholar, arXiv author pages) to enumerate works |
-
-The planned `corpus_discover` tool would orchestrate this pipeline:
-
-1. **Name disambiguation**: Given a name (e.g., "David Dunning"), search academic and open sources, present candidate matches to the Curator for confirmation. This is a consent boundary — the Curator selects *which* David Dunning.
-2. **Work enumeration**: From the confirmed identity, enumerate their known works across sources (arXiv, Semantic Scholar, open web, institutional pages, conference proceedings, transcripts).
-3. **Content acquisition**: Download and cache each work via `web_extract`, producing `.cache/{slug}.txt` files mirroring the public-domain author pattern.
-4. **Corpus config generation**: Produce a `corpus.yaml` with the discovered works, ready for style exemplar construction.
-5. **Embedding and composition**: Standard pipeline from this point forward — chunk, tag, embed, store hMems, compute centroid.
+`corpus_discover` accepts an author name, mode, work limit, transcript/web switches, and optional output path; it delegates multi-source enumeration and emits a `corpus.yaml` for the processing pipeline (`tools/gather.rs:44-54,78-84`). `corpus_discover_company` starts from an approved company-source manifest, records excluded non-allowlisted sources, and emits coverage by source tier (`tools/gather.rs:230-235,480-529`). Both are current gather-stage tools, not planned wrappers around the research server.
 
 
 ---
@@ -330,7 +316,7 @@ keystore:
   encryption: AES-256-GCM
   key_derivation: Argon2id + HKDF-SHA256
   storage: OS_keychain + SQLCipher
-  sovereignty_backend: keyring crate (direct OS keychain; not zed CredentialsProvider)
+  sovereignty_backend: oo7 (direct Secret Service access; not zed CredentialsProvider)
 ```
 
 ### 7.4 Lifecycle Spec Template
@@ -353,9 +339,11 @@ deprecation:
 observability:
   reg_spans:
     - namespace: reg.tool
-      covers: "Tool invocation governance"
+      covers: "Child-process tool outcome tracing; observability only"
+    - namespace: reg.mcp
+      covers: "Managed-runtime persistence diagnostics; completed calls are typed ToolCompleted Regulation records"
     - namespace: reg.inference
-      covers: "Inference budget tracking"
+      covers: "Inference circuit transitions, permanent failures, and observed recovery"
   variety_counters:
     - counter: tool_diversity
       threshold: 50
@@ -475,7 +463,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.40.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`, compiled in-process inside zed-kask) and 11 MCP servers launched as child processes over stdio by zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (the goal entities live in `hkask-mcp-kata-kanban`: `Goal`/`GoalVerdict`/`GoalResolution`, `kanban/types/goal.rs`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
+*MDS v0.41.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) loaded into the editor process and 11 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist until resolved. The SpecStore surface in §4 is not implemented.*
 
 ---
 
@@ -483,7 +471,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 > The pre-fork `AgentService` orchestration layer, `hkask-cli` `ReplState` wrapper, and `hkask-api` `ApiState` wrapper are not present. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
 
-**Boundary:** In-process only. MCP servers reach hKask primitives via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach hKask through the in-process transport (D1–D3). There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
+**Boundary:** The Regulation ledger, bridge adapters, and managed `McpRuntime` are process-global in the editor process (`crates/zed/src/main.rs:772-896`). The 11 MCP servers are separate child processes over stdio (`kask/crates/hkask-mcp/src/runtime.rs:4-12,576-580`). They link hKask libraries but never Zed crates; Zed-facing access crosses `kask_bridge`. There is no daemon, HTTP server, Matrix transport, or REPL state wrapper.
 
 ### Crate-to-Domain Mappings
 
@@ -496,14 +484,14 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053). The former `SYSTEM_MAX_RECURSION` cascade-depth bound was removed with the `hkask-templates` crate (2026-08-20, commit `80e466c1a5`) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `hkask-keystore/Cargo.toml:14`, `keychain.rs:104`) |
 | `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
-| `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into the MCP server child process (no keychain dependency; the child-local `MediaRouter` builds from `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY`, D35); chat/vision/embedding calls route over `InferenceIpcClient` to zed's `LanguageModelRegistry` via `kask_bridge` D4/D8 |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 11 MCP servers (no capability gating — RR-0056) |
+| `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into MCP children (`config.rs:109-129,218-228`); media generation is child-local while chat/vision/embed/list/rerank may cross the IPC bridge (`hkask_inference.rs:190-383`). The `InferencePort` has no `generate_batch` method, and the IPC protocol has no media-generation route. |
+| `hkask-mcp-server` (framework) | Composition | Per-tool child-process observability at tracing target `reg.tool` through `ToolSpanGuard` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`). These stderr events are not Regulation-ledger records (`:128-131`). |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, SEPIO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
-| `hkask-mcp` | Composition | MCP governance |
+| `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs:1534-1543`). |
 | `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation, training-data generation, and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | `hkask-services-core` | Domain | Foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Kept (shared by 2 crates: `hkask-mcp-corpus`, `hkask-mcp-curator`). |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
@@ -515,48 +503,38 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ```mermaid
 graph TD
-    ZEDSURF["zed-kask surfaces<br/>kask panel, agent panel"]
-    subgraph BRIDGE["kask_bridge D8"]
-        ADAPT["Port adapters"]
+    subgraph EDITOR["zed-kask editor process"]
+        AGENT[Agent panel and Curator]
+        STEER[Swarm, Kanban, Portfolio, and Media Steer panels]
+        BRIDGE[kask_bridge adapters and inference IPC server]
+        RUNTIME[Managed McpRuntime]
+        REG[Process-global Regulation ledger and loops]
+        KEYSTORE[hkask-keystore via oo7]
     end
-    subgraph MCP["11 MCP servers"]
-        MSRV[servers]
+    subgraph CHILDREN["11 MCP child processes over stdio"]
+        MCP[MCP server binaries]
+        LOCALINF[Child-local hkask-inference and MediaRouter]
     end
-    subgraph HKASK["hKask domain crates"]
-        TYPES[hkask-types]
-        STORE[hkask-storage]
-        MEM[hkask-memory]
-        REG[hkask-regulation]
-        CAP[hkask-tool-port]
-        KS[hkask-keystore]
-        STEER[hkask-steer-core]
-        INF[hkask-inference]
-        SVCCORE[hkask-services-core]
-    end
-    subgraph ZED["zed-kask host"]
-        CRED[OS keychain via oo7]
-        LM[language_model routing]
-        AGENT[agent / agent_ui]
-    end
+    HOSTLM[Zed LanguageModelRegistry]
+    SECRET[OS Secret Service]
 
-    ZEDSURF --> ADAPT
-    MSRV --> ADAPT
-    ADAPT --> HKASK
-    KS -.->|keychain| CRED
-    MSRV --> INF
-    HKASK --> TYPES
-    HKASK --> STORE
-    AGENT -.->|chat| ZEDSURF
-    LM -.->|inference| ZEDSURF
+    AGENT --> BRIDGE
+    STEER --> RUNTIME
+    RUNTIME -->|spawn, discover, invoke| MCP
+    RUNTIME --> REG
+    MCP -->|chat, vision, embed, list, rerank IPC| BRIDGE
+    MCP --> LOCALINF
+    BRIDGE --> HOSTLM
+    KEYSTORE --> SECRET
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-09-09
-verified_against: kask/crates/ directory listing (18 crates, 2026-09-09: 17 hkask-* + kask_bridge; hkask-ledger deleted 2026-09-08 with the local budget system, hkask-steer-core added 2026-09-07); kask/crates/hkask-keystore/Cargo.toml:14 (oo7, no keyring dep); kask/crates/kask_bridge/src/mcp_servers.rs:55 (11 servers)
+verified_date: 2026-09-15
+verified_against: crates/zed/src/main.rs:772-896; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-478; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
 status: VERIFIED
 -->
 
-Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through in-process transport (D1–D3). The composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
+Domain and MCP crates never depend on Zed crates. The editor-side `kask_bridge` is the only adapter allowed to cross that dependency boundary; `McpRuntime` crosses the process boundary over stdio and the inference IPC client crosses it over the configured socket (`kask/crates/hkask-mcp/src/runtime.rs:576-680`; `kask/crates/hkask-inference/src/hkask_inference.rs:61-83`).
 
 ### Capability Separation Boundaries
 
@@ -574,14 +552,14 @@ other than the caller being checked; the rows below satisfy that.
 | Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
 | Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038) | P1 |
 | Information flow | **None — absent by decision (RR-0053).** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
-| MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
+| MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs:445-455,576-680`) | P1 |
 | Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
-| Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage via the `keyring` crate directly (D5 — not zed `CredentialsProvider`) | P1 |
+| Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `src/keychain.rs:36-38,133-161`) | P1 |
 
 ### Bootstrap Sequence
 
-The composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly. The actual wiring sequence is documented in `zed-host-architecture-plan.md` §13.3 (Composition root). Sovereignty keys are resolved via the trimmed `hkask-keystore` using the `keyring` crate directly (D5 — not zed's `CredentialsProvider`).
+The composition root constructs one shared `RegulationLedger`, one governed `McpRuntime`, and the bridge adapters in the editor process (`crates/zed/src/main.rs:772-896`). Deferred provisioning does not wait for Zed account resolution: it uses the current username when available and otherwise proceeds with fallback identity `kask` (`crates/zed/src/main.rs:1552-1571`). MCP children independently resolve `HKASK_WEBID` and warn before falling back to anonymous (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). Sovereignty-key access uses `oo7`, not the `keyring` crate (`kask/crates/hkask-keystore/src/keychain.rs:36-38,133-161`).
 
 ### Interface Equivalence
 
-The `kask` admin CLI, the curator MCP server, and zed-kask surfaces (kask panel) all reach hKask primitives through the same `kask_bridge` (D8) port-trait adapters. Surface-specific state is composed at the surface, not threaded through a shared singleton.
+The agent panel, four Steer panels, and the managed MCP children reach hKask through distinct adapters and transports. The former Kask panel and admin CLI do not exist; inline D18 widgets provide visualization, while panel conversations dispatch through the process-global managed runtime. Regulation is intentionally shared process-wide through the single ledger and loop graph wired in `crates/zed/src/main.rs:772-896,922-1012`.

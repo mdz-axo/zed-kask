@@ -105,8 +105,7 @@ impl TransportBar {
         }
     }
 
-    fn format_time(duration: Duration) -> SharedString {
-        let total_secs = duration.as_secs();
+    fn format_seconds(total_secs: u64) -> SharedString {
         let hours = total_secs / 3600;
         let minutes = (total_secs % 3600) / 60;
         let seconds = total_secs % 60;
@@ -115,6 +114,24 @@ impl TransportBar {
         } else {
             SharedString::from(format!("{minutes}:{seconds:02}"))
         }
+    }
+
+    fn format_position(position: Duration, duration: Duration) -> SharedString {
+        let seconds = if !duration.is_zero() && position >= duration {
+            duration
+                .as_secs()
+                .saturating_add(u64::from(duration.subsec_nanos() > 0))
+        } else {
+            position.as_secs()
+        };
+        Self::format_seconds(seconds)
+    }
+
+    fn format_duration(duration: Duration) -> SharedString {
+        let seconds = duration
+            .as_secs()
+            .saturating_add(u64::from(duration.subsec_nanos() > 0));
+        Self::format_seconds(seconds)
     }
 }
 
@@ -146,8 +163,8 @@ impl gpui::Render for TransportBar {
             .update(cx, |slider, cx| slider.set_value(self.state.volume, cx));
 
         let play_label = play_label(&self.state);
-        let time_text = Self::format_time(self.state.position);
-        let duration_text = Self::format_time(self.state.duration);
+        let time_text = Self::format_position(self.state.position, self.state.duration);
+        let duration_text = Self::format_duration(self.state.duration);
         let entity = cx.entity().downgrade();
         let entity_stop = entity.clone();
 
@@ -206,6 +223,20 @@ mod tests {
     /// [P1] Motivating: users can distinguish slow loading from an idle player.
     /// pre: transport state reports loading.
     /// post: the control label reports Loading rather than Play or Pause.
+    #[test]
+    fn subsecond_duration_is_visible_and_terminal_position_converges() {
+        let duration = Duration::from_millis(600);
+        assert_eq!(TransportBar::format_duration(duration).as_ref(), "0:01");
+        assert_eq!(
+            TransportBar::format_position(Duration::from_millis(300), duration).as_ref(),
+            "0:00"
+        );
+        assert_eq!(
+            TransportBar::format_position(duration, duration).as_ref(),
+            "0:01"
+        );
+    }
+
     #[test]
     fn loading_state_has_a_visible_transport_label() {
         let state = TransportState {

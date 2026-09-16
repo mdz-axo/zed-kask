@@ -1,8 +1,8 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-09-04
-version: "1.2.0"
+last_updated: 2026-09-15
+version: "1.3.0"
 status: "Active"
 domain: "agent interaction"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -141,11 +141,13 @@ experiences in every bit of work:
    its understanding of the goal — what the user will be able to do, or
    what stops being a problem — and the user corrects it if wrong. One
    exchange; then both know what "done" means, in the user's words.
-2. **Bring choices to the user as experiences.** When a choice changes
-   what the user will experience, the agent frames it as the experience
-   ("if X, you'll see Y; if Z, you'll see W; I recommend Z because
-   [goal]"), with options and a recommendation. The user decides; the
-   agent implements.
+2. **Decide by class.** Functional decisions — what should be true and
+   what the user will experience — belong to the user; the agent presents
+   them as experiences with a recommendation. Technical decisions — design,
+   structure, naming, and implementation — belong to the agent; it decides
+   and presents the result with its functional consequence. A technical
+   choice that genuinely needs user input is framed by what each option lets
+   the user do, with technical detail attached as context.
 3. **Report outcomes, not artifacts.** Work reports lead with what the
    user can now do, or what no longer breaks. Technical detail follows,
    each piece tied to the part of the goal it serves. The user never
@@ -163,12 +165,23 @@ flowchart TD
     A --> C{User corrects?}
     C -- yes --> A
     C -- no --> T[Target condition agreed<br/>the local anchor]
-    T --> W[Agent works<br/>choices surfaced as experiences]
+    T --> D{Decision class}
+    D -->|functional| U2[User decides from<br/>experience-framed options]
+    D -->|technical| A2[Agent decides and states<br/>functional consequence]
+    U2 --> W[Agent works]
+    A2 --> W
     W --> R[Report: outcome first<br/>then detail tied to goal]
     R --> L[Bank the learning]
     L --> N[Next bit of work<br/>starts from learning]
     N --> U
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-FUNCTIONAL-001
+verified_date: 2026-09-15
+verified_against: crates/agent/src/templates/system_prompt.hbs:1-20,304-343; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:393-429,541-543
+status: VERIFIED
+-->
 
 ## 5. Target condition (the agreed experience)
 
@@ -176,194 +189,62 @@ When a user works with the agent:
 
 - The agent opens by stating its understanding of what the user wants —
   and the user never discovers a misread at the diff.
-- Choices that change the user's experience arrive as experiences, with
-  options and a recommendation; the user decides.
+- Functional choices arrive as experiences with a recommendation; the user
+  decides them. Technical choices arrive as agent decisions with their
+  functional consequences.
 - Reports lead with what the user can now do or what no longer breaks.
 - Learning carries forward between sessions.
 - None of it requires enforcement by the user.
 
-## 6. Implementation direction: A then B
+## 6. Implemented architecture
 
-- **Phase A — the conversational loop (landed 2026-08-29, D40).** The four
-  moves wired into the agent's turn structure: the `## Division of
-  Responsibilities (kask)` section in `system_prompt.hbs` (intake
-  interpretation, functional-first reporting, choice surfacing), plus the
-  amended autonomy, ambition, and Final Message bullets. Pinned by five
-  template tests.
-- **Phase B — the work-tracking layer (goal slice landed 2026-08-29;
-  ephemerality ruling applied same day).** The native goal system in the
-  kata-kanban MCP server: `kanban_goal_create` (functional goal +
-  observable criteria + intake prediction), `kanban_goal_judge`
-  (recorded verdicts with confidence — the history IS the learning),
-  `kanban_goal_score` (resolution + Brier of the intake prediction;
-  `null` surfaced when no prediction was recorded), and
-  `kanban_goal_list` (session recall). Schema lifted from the validated
-  `goal-analysis` skill; Brier via `hkask_forecast::brier_score`. The
-  kanban Steer prompt advertises all four tools (the
-  `server_tools_are_all_advertised` gate).
+The interaction is implemented as two coupled layers.[^kata]
 
-  **Goals persist until resolved (operator ruling 2026-09-09, superseding
-  the 2026-08-29 ephemerality ruling); curator memory remains the outcome
-  record.** The goal store is the same DB-backed HMemStore that persists
-  boards and tasks, so the Brier closure (`kanban_goal_score`) survives
-  server restarts. Resolution is the prune point — a scored goal's row is
-  deleted, so resolved goals leave no persistent clutter. Replay protection
-  for `kanban_goal_create` shares the durable kanban-DB idempotency store:
-  a replayed create returns a live goal's id, not a ghost pointer. Pinned by
-  `goal_replay_protection_survives_a_restart_and_replays_the_live_goal`.
-  The durable outcome record is the curator's memory: every `kanban_goal_*`
-  tool result in a turn is extracted by the thread-side record builder
-  (`ThreadTurnRecord.goal_events`) and written by the bridge's ingestion
-  path (`kask_bridge/src/memory/ingest.rs`) as first-class goal h_mems —
-  curator-perspective Private for curator turns ("the curator remembers all
-  goals it is involved with"), shared copy for zed-agent turns (recallable,
-  not sovereign). Lessons are learned in `therapy` and `algedonic-review`
-  sessions with the curator; the goal store persists only unresolved goals.
-
-  **Criterion-coupling layer (2026-08-30).** Two seams closed the
-  functional–technical join — the mapping between the technical plan and
-  the functional goal it serves. (1) `kanban_goal_judge` requires a result
-  for **every** criterion, exactly once: the per-criterion results are the
-  explicit obligation the Brier score discharges, so a verdict with missing
-  or duplicate results is an unanchored claim and is rejected with an
-  error naming the missing indices. (2) `kanban_task_create` accepts
-  `advances`: citations of the form `{goal_id, criterion_index,
-  criterion_text}` declaring which goal criterion the task advances.
-  Citations are **documentation-grade** (per-session re-anchoring, extending
-  the ephemerality ruling): validated against the live goal at creation —
-  the goal must exist, the index must be in range, and the text must match
-  verbatim — and the captured text keeps the citation readable after the
-  ephemeral goal is gone. Tasks are the durable side, so the citation is
-  captured data on the task, never a foreign key into the in-memory goal
-  store. `advances_count` is surfaced on task create/list/update responses
-  so the citation rate is observable. `kanban_task_update` accepts
-  `advances` as a full-list replacement, re-anchoring every citation
-  against the live goal store at each write — an invalid replacement is
-  rejected and leaves the task's existing citations untouched.
-
-  **Criterion-instrument rule (2026-08-30, operator ruling).** A goal
-  criterion must name its resolution instrument — a test outcome, a
-  tool result, a file state, a market resolution, a log line, a date.
-  A criterion that cannot name one is a preference, not a criterion:
-  preferences live in the goal text, never the criteria. The Brier
-  signal is only as empirical as the criteria it resolves against.
-
-- **Loop closed (2026-08-29):** the Division section now wires the moves
-  to the native tools — conditionally on `kanban_goal_create` being in
-  the turn's tool registry (Move 1 → `kanban_goal_create` at intake,
-  Move 3 → `kanban_goal_judge` at report, Move 4 → `kanban_goal_score`
-  at resolution). When the kata-kanban server is connected, the loop
-  runs on the native system; when it isn't, the wiring vanishes and the
-  four moves survive as conversational discipline.
-
-- A without B stays per-conversation; B without A changes tracking but
-  not the conversation the user sits in. Both are landed and wired;
-  the behavioral probe has run (2026-08-30) — its record is §7.
+- **Conversation layer (D40).** The prompt opening fixes the roles; the
+  `Division of Responsibilities` section implements the four moves; move 2 is
+  **Decide by class**. Functional questions remain with the user, while the
+  agent decides technical questions and reports their functional consequence
+  (`crates/agent/src/templates/system_prompt.hbs:1-20,304-343`). Template tests
+  pin the opening roles, decision classification, goal-tool wiring, and
+  functional-first closeout (`crates/agent/src/templates.rs`).
+- **Persistent goal layer.** `kanban_goal_create`, `kanban_goal_judge`,
+  `kanban_goal_list`, and `kanban_goal_score` use the kanban service's DB-backed
+  goal store. Goals survive server restarts until scoring resolves and removes
+  them; the score remains the Brier closure and curator memory remains the
+  durable outcome record
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-15,40-50,176-244`;
+  `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:393-429,541-543`).
+- **Criterion coupling.** A judge result covers every criterion exactly once.
+  Task `advances` citations bind technical work to a goal criterion and remain
+  readable after the goal is resolved. The citation is captured task data, not
+  a foreign key to an ephemeral store.
+- **Conditional use.** The prompt advertises native goal-tool steps only when
+  `kanban_goal_create` is available. Without the server, the conversational
+  discipline remains but no persistence capability is claimed.
 
 ## 7. Verification
 
-The pinning is behavioral, not textual: a session probe in which a task
-with an embedded functional decision is run fresh, checking that the
-interpretation arrives before code, choices arrive as experiences, and
-the report leads with the outcome. Longitudinally: convergence across
-the series — the user's goal-statements sharpen and the agent's language
-drifts functional. Gradient strength is an empirical parameter; the
-series of prompts is what accumulates the pressure.
+The current definition of done is structural and falsifiable:
 
-### Probe record (2026-08-30)
+1. `test_system_prompt_contains_division_of_responsibilities` and its sibling
+   template tests verify the role opening, Decide-by-class rule, and
+   functional-outcome reporting in the rendered prompt
+   (`crates/agent/src/templates.rs`).
+2. `goal_replay_protection_survives_a_restart_and_replays_the_live_goal`
+   verifies that an idempotent create returns the same still-live persistent
+   goal after a server restart
+   (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/idempotent_creates.rs`).
+3. Goal service tests exercise create, judge, list, score, owner isolation, and
+   removal on resolution through the DB-backed service
+   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs`).
+4. Outcome quality is resolved against each criterion's named instrument — a
+   test result, tool result, file state, market resolution, log line, or date —
+   rather than an agent's self-report. The operator supplies final ground truth;
+   `kanban_goal_score` records the achieved/not-achieved outcome and Brier-scores
+   the intake prediction.
 
-The probe ran live. Two defects blocked it across three prior sessions —
-both found by the probe's own attempts, and recorded here because they
-are failure modes a future probe must not reintroduce:
-
-- **The thread-stop defect (D42):** hardcoded 4096-token thinking budgets
-  in provider model modes silently killed reasoning-heavy turns —
-  `finish_reason: "length"` mapped to `StopReason::MaxTokens`, the turn
-  ended with no operator-visible error, and six consecutive probe turns
-  died after announcing tool calls. Fixed in the provider layer
-  (`budget_tokens: None`); D43 additionally logs MaxTokens turn-ends
-  with the stop reason and content state.
-- **Per-turn tool pruning (D44):** the LazyToolRouter removed
-  `kanban_goal_create` from every probe turn — the probe could not run
-  its own instrument. Removed outright (2026-08-30): the full registered
-  MCP surface is presented every turn, a system-prompt visibility
-  marker names the count of tools hidden by the remaining filter layers
-  (agent-profile allowlists, per-tab server scope, curator edit-tool
-  gating), and the `list_mcp_tools` meta-tool enumerates the registered
-  surface on demand.
-
-**Verified live (2026-08-30):**
-
-- The goal tools instantiate and loop on the native system: a goal
-  created with 4 criteria and an intake prediction (0.75) before any
-  work — the first session of the mission with the full MCP surface
-  present.
-- The ephemerality architecture works end-to-end: prior sessions' goals
-  died with their processes, and the mission's predictions returned
-  from curator memory — the durable vehicle carried the record across
-  the restart. Write leg (turn → memory ingest, 26+ ingests) verified
-  2026-08-30; read leg verified in both forms:
-  `curator_semantic_search` (5 results) and entity recall on
-  `curator:thread:<uuid>` (17 h_mems).
-- **The score did not fire — the ephemeral goal store died with a
-  mid-session server restart.** The concurrent session's rebuild landed
-  between turns; `kanban_goal_judge` and `kanban_goal_score` return
-  not-found on the dead goal (fix A's no-ghost-replay design working as
-  intended — the fresh store already carries another session's goal,
-  created post-restart). The outcome resolves from the durable record,
-  per criterion: goal-create ✓, recall leg ✓, spec §7 ✓, judge/score ✗
-  — the instrument died before it could record. Intake prediction
-  0.75, committed before the work. Strict reading: achieved=false →
-  Brier 0.5625. **Operator ground truth (2026-08-30): goal achieved**
-  — C3's failure was the instrument's death, not the work's — so the
-  recorded score is **Brier 0.0625**, computed from the record, not
-  instrument-scored. Two
-  calibration lessons: (1) the 0.75 did not price the mid-session
-  restart hazard (concurrent commits landing, a rebuild expected) —
-  intake predictions price environmental liveness; (2) a criterion's
-  resolution instrument must outlive the work, or the score fires
-  before the instrument dies. The first live instrument-scored Brier
-  awaits the next goal that closes within its process's life.
-
-**Operational findings (the recall surface):**
-
-- Turn records are keyed under `curator:thread:<uuid>` entities; recall
-  on topic names returns 0. An agent that does not know its thread uuid
-  should use semantic search.
-- Zed-agent turns are ingested as shared, perspective-free copies:
-  `perspective_scoped` recall returns 0 on agent threads while
-  `entity_wide` returns the records — consistent with the design
-  (shared, not sovereign).
-- This session's own turns were not surfaced by semantic search at
-  close: the query naming the goal id and its prediction returned only
-  prior-session turns (top-3). Either this thread's turns have not
-  ingested since the restart, or their embeddings lag the searchable
-  surface. The write leg was verified on the prior session's thread
-  (26+ ingests); this session's thread is unresolved — discriminator:
-  entity recall on this thread's uuid, or a later search once
-  embeddings settle. Reported, not chased.
-
-**Design lesson (operator corrections, 2026-08-30, two steps):** the
-probe's scoring basis was corrected twice, each step deeper. First:
-the scoring basis must be the operator's own observation channel — an
-agent's evidence table is self-report, not ground truth. Then the
-deeper correction: no subjective reading of a long text stream is a
-stable optimization target — optimizing to it optimizes to reading
-comprehension, attention, and mood. The calibration signal must be
-empirical and out-of-sample: predictions committed before observation,
-resolved by the world (a test outcome, a tool result, a file state, a
-market resolution, a log line, a date), Brier-scored against the
-resolution. The operator's subjective experience is the requirements
-signal and a longitudinal check across the series — never a per-turn
-scoring instrument. Behavioral properties of the interaction are
-pinned structurally (the D40 template tests), not scored by reading.
-The behavioral predictions P1 = 0.75 (report leads with the functional
-outcome), P2 = 0.60 (interpretation before code), P4 = 0.65 (choices as
-experiences with options + recommendation) are retired as scored
-instruments; P3 was structural (the wiring) all along. The reference
-models were anchored precisely so the loop inherits their empirical
-validation instead of inventing homegrown signals — the behavioral
-probe invented one anyway; this correction retires it.
+*Scope-exempt from the Sourced-Ideas Mandate: this section indexes executable
+verification for the design in §§3–6.*
 
 ## 8. Stewardship
 

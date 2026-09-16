@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-04
-version: "5.0.0"
+last_updated: 2026-09-15
+version: "5.1.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -203,7 +203,7 @@ creation (`hmem.rs:141-149`).
 | `vector`      | BLOB    | Encoded float vector                               |
 | `dimensions`  | INTEGER | Vector dimension (default 1024)                   |
 | `model`       | TEXT    | Embedding model name                               |
-| `passage_text`| TEXT    | Chunk text stored alongside the vector (corpus writes; memory writes pass `None`) |
+| `passage_text`| TEXT    | Original passage stored beside the vector. Corpus writers persist source/synthesis text; bridge memory ingestion persists each turn chunk (`kask/crates/kask_bridge/src/memory/ingest.rs:313-317,394-404`) so KNN recall can pinpoint one hMem rather than inject the whole entity. |
 | `created_at`  | TEXT    | Creation timestamp                                 |
 
 ### `vec_embeddings` (virtual, sqlite-vec — `schema.sql:6`)
