@@ -1008,6 +1008,31 @@ mod tests {
         assert_eq!(strip_provider_prefix("trailing-slash/"), "");
     }
 
+    #[tokio::test]
+    async fn embedding_ipc_preserves_requested_and_actual_model_identity() {
+        for actual_model in [Some("provider/substituted".to_string()), None] {
+            let bridge = TestBridge::with_response(
+                response_line(
+                    InferenceOutcome::Embeddings {
+                        embeddings: vec![vec![1.0, 0.0]],
+                        requested_model: "Provider/requested-alias".to_string(),
+                        actual_model: actual_model.clone(),
+                    },
+                    1,
+                )
+                .into_bytes(),
+            );
+            let batch = bridge
+                .client()
+                .call_embed("Provider/requested-alias", &["source text".to_string()])
+                .await
+                .expect("IPC embedding succeeds");
+            assert_eq!(batch.requested_model, "Provider/requested-alias");
+            assert_eq!(batch.actual_model, actual_model);
+            assert_eq!(batch.vectors, vec![vec![1.0, 0.0]]);
+        }
+    }
+
     #[test]
     fn thinking_disabled_suggestions_require_positive_registry_evidence() {
         use hkask_types::inference_ipc::ModelListEntry;
@@ -1125,6 +1150,8 @@ mod tests {
             response_line(
                 InferenceOutcome::Embeddings {
                     embeddings: vec![vec![0.0]],
+                    requested_model: "fixture/requested".to_string(),
+                    actual_model: Some("fixture/actual".to_string()),
                 },
                 1,
             )

@@ -37,6 +37,106 @@ pub(crate) use ontology_io::read_ontology_namespaces;
 pub(crate) use ontology_io::read_ontology_tags;
 pub(crate) use qa::configured_qa_model;
 
+#[derive(Default)]
+struct EmbeddingIdentityState {
+    actual_model: Option<String>,
+    confirmed_batches: usize,
+    missing_batches: usize,
+}
+
+impl EmbeddingIdentityState {
+    fn observe(
+        &mut self,
+        requested_model: &str,
+        batch: &hkask_types::EmbeddingBatch,
+    ) -> Result<(), McpToolError> {
+        if batch.requested_model != requested_model {
+            return Err(McpToolError::internal(format!(
+                "embedding transport changed requested model identity: expected '{requested_model}', got '{}'",
+                batch.requested_model
+            )));
+        }
+        match batch.actual_model.as_deref() {
+            Some(actual_model) => {
+                if let Some(previous) = self.actual_model.as_deref()
+                    && previous != actual_model
+                {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "embedding provider returned inconsistent model identities: '{previous}' and '{actual_model}'"
+                    )));
+                }
+                self.actual_model
+                    .get_or_insert_with(|| actual_model.to_string());
+                self.confirmed_batches += 1;
+            }
+            None => self.missing_batches += 1,
+        }
+        Ok(())
+    }
+
+    fn status(&self) -> &'static str {
+        match (self.confirmed_batches, self.missing_batches) {
+            (0, _) => "unavailable",
+            (_, 0) => "confirmed",
+            _ => "partial",
+        }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    fn batch(actual_model: Option<&str>) -> hkask_types::EmbeddingBatch {
+        hkask_types::EmbeddingBatch {
+            vectors: vec![vec![1.0]],
+            requested_model: "requested/model".to_string(),
+            actual_model: actual_model.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn identity_status_distinguishes_confirmed_partial_and_unavailable() {
+        let mut confirmed = EmbeddingIdentityState::default();
+        confirmed
+            .observe("requested/model", &batch(Some("actual/model")))
+            .expect("identity matches");
+        assert_eq!(confirmed.status(), "confirmed");
+
+        let mut partial = EmbeddingIdentityState::default();
+        partial
+            .observe("requested/model", &batch(Some("actual/model")))
+            .expect("identity matches");
+        partial
+            .observe("requested/model", &batch(None))
+            .expect("missing identity is observable");
+        assert_eq!(partial.status(), "partial");
+
+        let mut unavailable = EmbeddingIdentityState::default();
+        unavailable
+            .observe("requested/model", &batch(None))
+            .expect("missing identity is observable");
+        assert_eq!(unavailable.status(), "unavailable");
+    }
+
+    #[test]
+    fn identity_reconciliation_rejects_requested_or_actual_model_drift() {
+        let mut state = EmbeddingIdentityState::default();
+        state
+            .observe("requested/model", &batch(Some("actual/one")))
+            .expect("first identity establishes the batch model");
+        assert!(
+            state
+                .observe("requested/model", &batch(Some("actual/two")))
+                .is_err()
+        );
+
+        let mut wrong_request = batch(Some("actual/one"));
+        wrong_request.requested_model = "other/request".to_string();
+        assert!(state.observe("requested/model", &wrong_request).is_err());
+    }
+}
+
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
@@ -96,7 +196,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. Returns total, embedded, failed, cancelled, model; clear/purge cancellation includes a note — no inline vectors."
+        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. Returns total, embedded, failed, cancelled, legacy model=requested_model, requested_model, provider-returned actual_model, and actual_model_status (confirmed, partial, or unavailable); clear/purge cancellation includes a note — no inline vectors."
     )]
     pub async fn corpus_embed(
         &self,
@@ -242,6 +342,7 @@ impl CorpusServer {
 
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let identity = Arc::new(std::sync::Mutex::new(EmbeddingIdentityState::default()));
 
         let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
@@ -256,6 +357,7 @@ impl CorpusServer {
             let model_name = Arc::clone(&model_name);
             let embedded = Arc::clone(&embedded);
             let failed = Arc::clone(&failed);
+            let identity = Arc::clone(&identity);
 
             let batch_len = chunk_batch.len();
 
@@ -263,17 +365,17 @@ impl CorpusServer {
                 let slot = limiter.acquire().await;
 
                 let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.2.clone()).collect();
-                let vectors = match retry_with_backoff(
+                let batch = match retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
                     &format!("batch {batch_idx} of {batch_len}"),
-                    || router.embed(&model_name, &batch_texts),
+                    || router.embed_with_identity(&model_name, &batch_texts),
                 )
                 .await
                 {
-                    Ok(v) => {
+                    Ok(batch) => {
                         slot.report_success();
-                        v
+                        batch
                     }
                     Err(e) => {
                         slot.report_failure();
@@ -288,6 +390,11 @@ impl CorpusServer {
                     }
                 };
 
+                identity
+                    .lock()
+                    .map_err(|_| McpToolError::internal("embedding identity lock poisoned"))?
+                    .observe(&model_name, &batch)?;
+                let vectors = batch.vectors;
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
                     failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
@@ -345,6 +452,11 @@ impl CorpusServer {
         // Includes rows lost to a task panic, not just reported provider/store errors.
         let failed = total - embedded;
         let cancelled = cancelled.load(std::sync::atomic::Ordering::Relaxed);
+        let identity = identity
+            .lock()
+            .map_err(|_| McpToolError::internal("embedding identity lock poisoned"))?;
+        let actual_model_status = identity.status();
+        let actual_model = identity.actual_model.clone();
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
@@ -358,6 +470,13 @@ impl CorpusServer {
             "failed": failed,
             "cancelled": cancelled,
             "model": model_name,
+            "requested_model": model_name,
+            "actual_model": actual_model,
+            "actual_model_status": actual_model_status,
+            "identity_batches": {
+                "confirmed": identity.confirmed_batches,
+                "missing": identity.missing_batches,
+            },
         });
         if cancelled > 0 {
             result["note"] =

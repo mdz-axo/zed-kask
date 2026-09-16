@@ -109,8 +109,9 @@ while IFS= read -r line; do
                     model=$(jq -r '.model' <<<"$arguments")
                     total=$(wc -l < "$chunks" | tr -d ' ')
                     basename "$chunks" > "$db"
-                    respond "$id" "$(jq -cn --arg model "$model" --argjson total "$total" \
-                        '{model:$model,total:$total,embedded:$total,failed:0,cancelled:false}')"
+                    status=${FAKE_ACTUAL_MODEL_STATUS:-confirmed}
+                    respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" \
+                        '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,cancelled:false}')"
                     ;;
                 corpus_query)
                     db=$(jq -r '.db_path' <<<"$arguments")
@@ -196,5 +197,12 @@ if "$runner" --resume "$tmp/changed-spec.json" "$tmp/run"; then
     echo "resume accepted changed run identity" >&2
     exit 1
 fi
+
+export FAKE_ACTUAL_MODEL_STATUS=unavailable
+if "$runner" "$tmp/run-spec.json" "$tmp/unconfirmed-run"; then
+    echo "calibration accepted an unconfirmed provider model identity" >&2
+    exit 1
+fi
+unset FAKE_ACTUAL_MODEL_STATUS
 
 printf '%s\n' "calibrate chunk retrieval end-to-end test passed"

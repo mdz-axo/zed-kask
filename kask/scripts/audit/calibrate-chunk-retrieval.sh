@@ -191,7 +191,17 @@ if [[ "$resume" != true ]]; then
         "$host_call" corpus_embed "$arguments" "$response" "$log"
         ended=$(now_ns)
         content=$(tool_content "$response")
-        model=$(jq -er '.model | select(type == "string" and length > 0)' <<<"$content")
+        reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
+        if [[ "$reported_requested_model" != "$requested_model" ]]; then
+            echo "embedding transport changed requested model identity for $policy: $reported_requested_model" >&2
+            exit 65
+        fi
+        actual_model_status=$(jq -er '.actual_model_status | select(type == "string")' <<<"$content")
+        if [[ "$actual_model_status" != "confirmed" ]]; then
+            echo "embedding provider did not confirm one model identity for $policy: $actual_model_status" >&2
+            exit 65
+        fi
+        model=$(jq -er '.actual_model | select(type == "string" and length > 0)' <<<"$content")
         embedded=$(jq -er '.embedded' <<<"$content")
         failed=$(jq -er '.failed' <<<"$content")
         total=$(jq -er '.total' <<<"$content")

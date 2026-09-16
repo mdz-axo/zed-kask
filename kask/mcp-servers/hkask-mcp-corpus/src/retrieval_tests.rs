@@ -19,6 +19,42 @@ const PASSPHRASE: &str = "retrieval-test-passphrase";
 const ORIGINAL: &str = "The archive records the river flooding in spring.";
 const SYNTHESIZED: &str = "The river floods each spring and replenishes the fertile valley.";
 
+struct IdentityPort {
+    actual_model: Option<String>,
+}
+
+impl InferencePort for IdentityPort {
+    fn generate(
+        &self,
+        _: &str,
+        _: &LLMParameters,
+        _: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        Box::pin(async {
+            Err(InferenceError::NotConfigured(
+                "generation unused".to_string(),
+            ))
+        })
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let requested_model = model.to_string();
+        let actual_model = self.actual_model.clone();
+        let count = texts.len();
+        Box::pin(async move {
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: vec![vec![1.0; crate::embedding_dim()]; count],
+                requested_model,
+                actual_model,
+            })
+        })
+    }
+}
+
 #[derive(Default)]
 struct RecordingPort {
     prompts: Mutex<Vec<String>>,
@@ -101,7 +137,7 @@ impl InferencePort for RecordingPort {
     }
 }
 
-fn server(port: Arc<RecordingPort>) -> CorpusServer {
+fn server<T: InferencePort + 'static>(port: Arc<T>) -> CorpusServer {
     let port: Arc<dyn InferencePort> = port;
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)
@@ -771,6 +807,41 @@ fn embed_request(directory: &std::path::Path, database: &str, text: &str) -> Emb
         passphrase: PASSPHRASE.into(),
         model: Some("offline".into()),
         batch_size: 10,
+    }
+}
+
+/// expect: corpus_embed reports requested and provider-confirmed model identities separately.
+#[tokio::test]
+async fn corpus_embed_surfaces_provider_confirmed_model_identity() {
+    for (actual_model, expected_status) in [
+        (Some("provider/substituted-model".to_string()), "confirmed"),
+        (None, "unavailable"),
+    ] {
+        let directory = fixture();
+        let server = server(Arc::new(IdentityPort {
+            actual_model: actual_model.clone(),
+        }));
+        let summary = content(
+            server
+                .corpus_embed(Parameters(embed_request(
+                    directory.path(),
+                    "identity.db",
+                    ORIGINAL,
+                )))
+                .await,
+        );
+        assert_eq!(summary["model"], "offline");
+        assert_eq!(summary["requested_model"], "offline");
+        assert_eq!(summary["actual_model"].as_str(), actual_model.as_deref());
+        assert_eq!(summary["actual_model_status"], expected_status);
+        assert_eq!(
+            summary["identity_batches"]["confirmed"],
+            usize::from(actual_model.is_some())
+        );
+        assert_eq!(
+            summary["identity_batches"]["missing"],
+            usize::from(actual_model.is_none())
+        );
     }
 }
 
