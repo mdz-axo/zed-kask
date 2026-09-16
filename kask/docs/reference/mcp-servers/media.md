@@ -29,7 +29,7 @@ flowchart TD
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
     server["MediaServer<br/>8 state fields"]
-    router["combined_router<br/>9 sub-routers, 81 tools"]
+    router["combined_router<br/>9 sub-routers, 80 tools"]
     dispatch["execute_tool<br/>reg.tool.* outcome span"]
     sinks["Sinks: gallery.db rows,<br/>persisted assets, media_block hints"]
 
@@ -147,17 +147,28 @@ path, removes failed durable copies, and aggregates failures rather than
 emitting one warning per frame. Workflow listing returns bounded summaries;
 `workflow_load` returns the full graph.
 
-The media panel uses latest-request ownership for Library, Queue, Detail, and
-edit calls. Both success and failure callbacks are epoch-gated; a malformed or
-failed refresh preserves the atomically committed last-good snapshot. Library
-pagination is user-reachable. Loading, ready/empty, degraded, and failed states
-are distinct, and progress does not use error styling. Queue polling is
+The media panel uses latest-request ownership for Library, Queue, and Detail.
+Mutation-driven and manual Library reloads supersede older same-page reads.
+Direct trim/concat edits are serialized and conflicting controls stay disabled
+until the admitted operation completes or fails. Both success and failure
+callbacks are epoch-gated; a malformed or failed refresh preserves the
+atomically committed last-good snapshot. Library pagination is user-reachable.
+Loading, ready/empty, degraded, and failed states are distinct, and progress
+does not use error styling. Queue polling is
 single-flight and uses a GPUI-native timer only while the Queue tab is active
 and a nonterminal job exists; it stops on hide, terminal completion, or error.
-Job responses expose `total` and `has_more`, and process-local restart loss plus
-bounded terminal-record retention are disclosed.
+Job responses use one strict typed payload containing `jobs`, `total`, `limit`,
+`has_more`, `history_scope`, and `restart_behavior`; process-local restart loss
+plus bounded terminal-record retention are disclosed. Legacy arrays and
+incomplete objects are rejected.
 
-The media widget clears stale failures on retry, synchronizes Pause/Stop into
+The media widget validates untrusted block locators before loading: local paths
+must be under the artifacts root or exactly approved by a successful gallery
+result, data URIs are MIME-checked and decoded under a 32 MiB limit, public
+image/audio fetches reject redirects, and platform inputs plus resolved stream
+URLs receive DNS/private-address validation. yt-dlp and FFmpeg still own their
+connect-time DNS, so preflight cannot eliminate subprocess DNS-rebinding TOCTOU;
+this is a documented transport limitation. The widget clears stale failures on retry, synchronizes Pause/Stop into
 the visible transport immediately, surfaces missing image/SVG filesystem causes,
 and invalidates in-flight remote resolution when suspended so hidden media
 cannot restart polling. A visible panel or inline lookup reactivates the shared
@@ -341,7 +352,7 @@ No routing or layout change is part of this repair.
 
 | Tool | Description |
 |------|-------------|
-| `youtube_search` | Search YouTube through SerpApi and return structured ranking metadata: views, duration, channel verification, publication date, provider extensions such as `4K` or `CC`, thumbnail, and URL. It does not download media. |
+| `youtube_search` | Search one YouTube provider page through exactly one paid SerpApi request. `max_results` caps that page; the response reports requested/returned cardinality, continuation availability, pages fetched, and request limit. It does not download media. |
 
 ### Image and video processing (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs`, 15 tools)
 
@@ -361,14 +372,14 @@ No routing or layout change is part of this repair.
 | `video_extract_frames` | Extract keyframes from a video as searchable gallery assets, each with its own lineage. |
 | `video_meme` | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
-| `video_fetch` | Download a selected video URL to local storage, index it in the gallery, and return a media block; yt-dlp performs platform extraction and binary retrieval, not search metadata. |
+| `video_fetch` | Validate a selected public video URL, download through yt-dlp, and atomically publish one durable indexed gallery asset. Missing gallery, download, file, lineage, or OMC failure leaves no residue; successful degradation is returned as a warning. |
 
 The local final-media tools `video_clip`, `video_to_gif`,
 `video_add_caption`, `video_remix`, `video_from_images`, and `video_concat`
 require an active gallery because their result contract includes a stable
 identity. Each captures the admission-time gallery before FFmpeg runs, consumes
-the processor-owned temporary MP4 or GIF into `media-mcp/generated/`, indexes
-the durable path, and returns the same `gallery_asset_id` in the result object
+the processor/downloader-owned temporary MP4 or GIF into `media-mcp/generated/`, indexes
+the durable path, marks `gallery_changed: true`, and returns the same `gallery_asset_id` in the result object
 and fenced media block. The final file therefore survives `FfmpegRunner` and
 server teardown.
 
@@ -422,8 +433,10 @@ enters `cancelling`, drops provider/staging work, rolls back staged or published
 files and gallery rows, releases its slot, and only then returns terminal
 `cancelled`; cleanup failure is surfaced instead of falsely acknowledging
 cancellation. Panic and task abort become terminal `failed` states and release
-the slot. `job_list` returns `{ jobs, history_scope, restart_behavior }`, newest
-first, with optional status and limit. The history scope is explicitly
+the slot. `job_list` returns the strict object `{ jobs, total, limit, has_more,
+history_scope, restart_behavior }`, newest first, with optional request status
+and limit. Legacy arrays, missing fields, incoherent counts, and unknown statuses
+fail decoding. The history scope is explicitly
 `ephemeral_process_local`; `job_list`, `job_status`, and `job_cancel` all expose
 that restart limitation. `parse_job_list_response` consumes the shared wire
 shape, and malformed data or tool errors remain visible at the panel boundary.

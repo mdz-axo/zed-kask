@@ -1816,7 +1816,7 @@ fn parse_delete_acknowledgement(output: &str, expected_id: &str) -> Result<usize
 }
 
 fn parse_job_listing(output: &str) -> Result<JobListing, String> {
-    parse_job_list_response(output).map_err(|error| error.to_string())
+    parse_job_list_response(output).map_err(|error| format!("job_list failed: {error}"))
 }
 
 fn job_is_nonterminal(job: &JobRecord) -> bool {
@@ -2175,7 +2175,7 @@ mod tests {
     /// expect: [P7] Queue refresh distinguishes an empty queue from a broken
     /// response, and preserves the last good rows when refresh fails.
     #[gpui::test]
-    fn load_jobs_surfaces_array_rows_and_response_failures(cx: &mut gpui::TestAppContext) {
+    fn load_jobs_surfaces_strict_rows_and_response_failures(cx: &mut gpui::TestAppContext) {
         struct RestoreInvoker(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
         impl Drop for RestoreInvoker {
             fn drop(&mut self) {
@@ -2193,7 +2193,15 @@ mod tests {
             error: None,
         };
         let viewer = cx.new(|_| MediaViewer::new());
-        let response = serde_json::json!({"content": [record]}).to_string();
+        let response = serde_json::json!({"content": {
+            "jobs": [record],
+            "total": 1,
+            "limit": hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+            "has_more": false,
+            "history_scope": hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE,
+            "restart_behavior": hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR
+        }})
+        .to_string();
         hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(response))));
         viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
         cx.run_until_parked();
@@ -2206,6 +2214,8 @@ mod tests {
             "not json",
             "{}",
             r#"{"content":[{"id":"broken"}]}"#,
+            r#"{"content":{"jobs":[]}}"#,
+            r#"{"content":[]}"#,
             r#"{"error":"job store unavailable","kind":"unavailable"}"#,
         ] {
             hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
@@ -2222,17 +2232,6 @@ mod tests {
                 if response.contains("job store unavailable") {
                     assert!(status.contains("job store unavailable"));
                 }
-            });
-        }
-        for response in [r#"{"content":{"jobs":[]}}"#, r#"{"content":[]}"#] {
-            hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(JobListInvoker(
-                response.into(),
-            ))));
-            viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
-            cx.run_until_parked();
-            viewer.update(cx, |viewer, _| {
-                assert!(viewer.jobs.is_empty());
-                assert_eq!(viewer.jobs_request.state, ResourceState::Ready);
             });
         }
     }

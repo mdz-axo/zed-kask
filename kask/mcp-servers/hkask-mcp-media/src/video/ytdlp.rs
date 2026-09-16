@@ -224,8 +224,6 @@ fn remove_partial_output(output_path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn server_uses_shared_version_and_tie_policy() {
         let current = hkask_types::ytdlp::parse_version("2026.08.19\n").expect("version parses");

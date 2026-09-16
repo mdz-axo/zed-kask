@@ -62,22 +62,35 @@ status: VERIFIED
 
 ## Request ownership
 
-Each asynchronous resource has an independent `RequestLifecycle` with an epoch,
+Each asynchronous read resource has an independent `RequestLifecycle` with an epoch,
 owner, and `Idle | Loading | Ready | Failed` state
 (`crates/media_panel/src/media_viewer.rs:33-100`). `begin` suppresses duplicate
 requests for the same loading owner; a newer owner advances the epoch. Callback
 handlers mutate state only when they still own that epoch. This prevents a slow
-page, job, detail, or edit response from overwriting newer state.
+page, job, or detail response from overwriting newer state. Direct edits are
+serialized instead: trim and concat controls disable while one side effect is
+active, so no completed operation can be hidden by a later epoch.
 
 | Resource | Owner key | Latest-response gate | Evidence |
 | --- | --- | --- | --- |
 | Gallery | requested offset | `gallery_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:547-605` |
 | Jobs | queue resource | `jobs_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:696-760` |
 | Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:782-863` |
-| Edit | editing tool name | `edit_request.owns(epoch)` | `crates/media_panel/src/media_viewer.rs:367-427` |
+| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | `crates/media_panel/src/media_viewer.rs` |
 
 Failures retain last-good data and surface degraded status instead of clearing
 the resource (`crates/media_panel/src/media_viewer.rs:1631-1662`).
+
+## Result-derived Library freshness
+
+Published assets, imports, transcript renders, and deletions carry
+`gallery_changed: true` only after their durable gallery transition succeeds.
+The panel observes that completed-result field rather than classifying tool
+names; read-only `gallery_*` results therefore do not trigger reloads. A
+mutation-driven or manual Library reload invalidates an older same-page request
+before dispatch, while switching to Library always requests current state.
+Completed background jobs carry the same enriched display/mutation result and
+are ingested once by stable job identity.
 
 ## Gallery pagination lifecycle
 
@@ -122,11 +135,11 @@ at least two clips and rechecks the upper bound before calling `video_concat`
 
 ## Job lifecycle
 
-The Queue calls `job_list` with the shared default limit of 20
-(`crates/media_panel/src/media_viewer.rs:696-725`;
-`kask/crates/hkask-types/src/media_limits.rs:14-18`). It records `total`,
-`limit`, and `has_more`, and accepts both the current object response and the
-legacy array shape (`crates/media_panel/src/media_viewer.rs:1745-1795`).
+The Queue calls `job_list` with the shared default limit of 20. Producer and
+panel consume one strict `JobListPayload` carrying `jobs`, `total`, `limit`,
+`has_more`, `history_scope`, and `restart_behavior`. Legacy arrays, incomplete
+objects, incoherent counts, and unknown statuses surface degradation while the
+last-good queue remains visible.
 
 While the Queue tab is active and any job remains nonterminal, one GPUI-native
 one-second poll task is scheduled. Polling stops on terminal state, tab change,

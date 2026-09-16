@@ -2,7 +2,7 @@
 
 Media generation MCP server — image, video, and audio generation via the configured media providers.
 
-## Tools (81)
+## Tools (80)
 
 The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
@@ -48,15 +48,17 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 
 ## Tool-result contracts
 
-The approved media wire cleanup (2026-09-05) keeps `job_list`'s existing
-`{"content": [JobRecord, ...]}` response. The Queue calls
-`tools::jobs::parse_job_list_response` and uses the existing `JobRecord` type:
-empty arrays are valid; missing fields, malformed responses, and tool errors
-surface a panel status instead of silently clearing the queue.
+`job_list` has one strict object response consumed through
+`tools::jobs::parse_job_list_response`: `jobs`, `total`, `limit`, `has_more`,
+`history_scope`, and `restart_behavior` are required and count-coherent. Legacy
+arrays, incomplete objects, unknown statuses, malformed responses, and tool
+errors surface a panel status instead of silently clearing the queue.
 
 `display_hint` / `display_hints` contain JSON-serialized fenced media blocks.
-Every hint for an indexed Asset carries its stable `gallery_asset_id`; inline
-conversation and Media-panel bodies therefore resolve one shared player key.
+Every hint for an indexed Asset carries its stable `gallery_asset_id`; indexed
+publication results also carry `gallery_changed: true`. The panel derives
+Library invalidation from that completed-result fact rather than tool names,
+and read-only gallery hints do not cause refreshes.
 The viewer consumes structured raw outputs directly through
 `hkask_types::tool_response::display_hints_from_output_value`; text transports
 use `display_hints_from_output_text`. Both viewer and widget validate bodies
@@ -67,10 +69,33 @@ Quotes, backslashes, newlines, and Unicode in paths are serialized, not
 interpolated into JSON. No provider routing or GPUI layout changes accompany
 this contract repair.
 
+`video_fetch` captures a required active gallery and validates the public source
+before starting `yt-dlp`. Its download is temporary input to the canonical
+rollback-armed local publisher, so file, Asset row, stable identity, lineage,
+and OMC graph commit together or leave no residue. Successful yt-dlp warnings
+such as a missing JavaScript runtime remain visible; authorization, unavailable
+video, extractor, missing-binary, and unknown failures retain distinct classes.
+
+The media widget treats every block locator as untrusted. Local media must be
+under the artifacts root or be an exact path observed through a successful
+gallery result; symlink escapes fail. Inline data is MIME-checked and capped at
+32 MiB decoded. Public image/audio fetches validate DNS, reject redirects, and
+read through the cap. Platform inputs and yt-dlp stream outputs are validated
+before FFmpeg. This preflight cannot pin opaque yt-dlp/FFmpeg connect-time DNS,
+so DNS rebinding inside those subprocesses remains an explicitly documented
+transport limitation rather than a claimed guarantee.
+
+`youtube_search` performs exactly one paid SerpApi request and reads one provider
+page. `max_results` caps that page; it does not trigger paid continuation calls.
+The response discloses `requested_max_results`, `count`,
+`more_results_available`, `provider_pages_fetched: 1`, and
+`provider_request_limit: 1` without returning continuation secrets.
+
 Pins: `media_blocks_round_trip_escaped_paths`,
-`job_list_response_round_trips_through_client_decoder`, and the media viewer's
+`job_list_response_round_trips_through_client_decoder`, `video_fetch_*`, the
+widget locator/redirect/yt-dlp tests, and the media viewer's
 `ingest_tool_result_accepts_structured_and_text_transports`,
-`load_jobs_surfaces_array_rows_and_response_failures`, and
+`load_jobs_surfaces_strict_rows_and_response_failures`, and
 `server_hint_round_trips_through_viewer_and_widget` tests.
 
 ## Resource and lifecycle bounds
@@ -100,10 +125,12 @@ retention are disclosed at list/status/cancel boundaries. Workflow listing is
 bounded to summaries (default 100, maximum 256); `workflow_load` is the only
 list/load surface that returns the full graph.
 
-The media panel applies one latest-request ownership rule to Library, Queue,
-Detail, and edits. Every success and failure is epoch-gated, malformed results
-preserve the complete last-good snapshot, pagination is reachable, and loading,
-ready/empty, degraded, and failed states are distinct. Queue polling uses a
+The media panel applies latest-request ownership to Library, Queue, and Detail.
+Direct trim/concat edits are serialized: while one side-effecting edit is active,
+conflicting controls are disabled and a second dispatch is rejected visibly.
+Every success and failure is epoch-gated, malformed results preserve the
+complete last-good snapshot, pagination is reachable, and loading, ready/empty,
+degraded, and failed states are distinct. Queue polling uses a
 single GPUI-native timer only while the Queue tab is active and a nonterminal
 job exists; hiding the tab, reaching terminal state, or failure cancels it.
 

@@ -1770,7 +1770,7 @@ mod tests {
         );
     }
 
-    /// expect: A fatal video-open failure is visible once and closes polling.
+    /// expect: A fatal video-source failure is visible once and closes polling.
     /// [P1] Motivating: broken media is diagnosable without a warning storm.
     /// pre: the source cannot be opened as video.
     /// post: one stable widget error remains and playback polling is inactive.
@@ -1795,7 +1795,7 @@ mod tests {
         let first_error = widget
             .read_with(cx, |widget, _cx| widget.error.clone())
             .expect("fatal open failure is visible");
-        assert!(first_error.contains("video playback failed"));
+        assert!(first_error.contains("media file not found"));
         assert!(!widget.read_with(cx, |widget, _cx| widget.playback_loop_active));
 
         for _ in 0..3 {

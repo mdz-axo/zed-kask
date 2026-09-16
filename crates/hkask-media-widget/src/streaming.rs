@@ -11,12 +11,10 @@
 //! to resolve the stream URL. yt-dlp supports 1000+ sites, so this is not
 //! YouTube-specific — any URL yt-dlp can handle will work.
 //!
-//! The yt-dlp binary is resolved once per call by probing PATH plus the
-//! common install locations and picking the newest version — a stale distro
-//! yt-dlp frequently 403s on YouTube while a newer `pip install --user`
-//! copy works (the same failure the media server's `YtDlpRunner` fixed;
-//! mirror that logic here — the two crates cannot share a dependency, so
-//! the probing is deliberately duplicated and must stay in sync).
+//! The yt-dlp binary is resolved once per call by probing PATH plus common
+//! install locations. Candidate order, version parsing, equal-version priority,
+//! and stderr classification come from `hkask_types::ytdlp`; only runtime-specific
+//! subprocess execution remains local to the widget.
 //!
 //! The format selector prefers a best-video + best-audio pair capped at
 //! 720p, then falls back to a progressive stream. DASH pairs are returned
@@ -113,8 +111,7 @@ fn is_direct_video_url(url: &str) -> bool {
     DIRECT_VIDEO_EXTENSIONS.contains(&extension.as_str())
 }
 
-/// Probe candidate yt-dlp binaries and return the newest by `--version`.
-/// Mirrors the media server's `YtDlpRunner::detect` — keep the two in sync.
+/// Probe candidates in shared priority order and return the newest valid version.
 async fn newest_yt_dlp_binary() -> Option<String> {
     let mut candidates = vec![hkask_types::ytdlp::PATH_CANDIDATE.to_string()];
     if let Ok(home) = std::env::var("HOME") {

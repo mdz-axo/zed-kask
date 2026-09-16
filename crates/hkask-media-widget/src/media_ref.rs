@@ -110,7 +110,16 @@ pub fn approve_gallery_media_path(path: &Path) -> anyhow::Result<()> {
 impl Default for PathMediaStorage {
     fn default() -> Self {
         let artifacts = hkask_types::agent_paths::resolve_artifacts_dir();
-        let allowed_roots = artifacts.canonicalize().into_iter().collect();
+        let allowed_roots = artifacts.canonicalize().into_iter().collect::<Vec<_>>();
+        #[cfg(test)]
+        let mut allowed_roots = allowed_roots;
+        #[cfg(test)]
+        if let Ok(test_data) = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data")
+            .canonicalize()
+        {
+            allowed_roots.push(test_data);
+        }
         let allowed_files = APPROVED_GALLERY_FILES
             .get_or_init(Default::default)
             .read()
@@ -319,8 +328,9 @@ fn ipv6_is_public(address: Ipv6Addr) -> bool {
         || (segments[0] & 0xffc0) == 0xfe80)
 }
 
-/// The parsed body of a ```` ```media ```` block. Carries the media reference
-/// plus optional ontology concept tag and server-authoritative provenance.
+/// The parsed body of a ```` ```media ```` block. Carries the untrusted media
+/// locator plus optional ontology and provenance metadata. Neither metadata
+/// field grants filesystem or network authority.
 ///
 /// `ontology` and `provenance` are `#[serde(default)]` so existing blocks without
 /// them still parse and render — just without the ontology-driven "Explain" and
@@ -343,7 +353,7 @@ pub struct MediaBlockBody {
     /// → the widget falls back to the default explain tool.
     #[serde(default)]
     pub ontology: Option<String>,
-    /// Server-authoritative provenance for re-issuing the originating tool
+    /// Model-visible provenance metadata for re-issuing the originating tool
     /// (Explain) or composing a revision request (I disagree). `None` on
     /// older blocks → the widget renders without dispatch/compose-back
     /// affordances.
