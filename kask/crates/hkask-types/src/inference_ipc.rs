@@ -258,6 +258,10 @@ pub struct ModelListEntry {
     pub provider: String,
     /// Whether the model supports vision/multimodal input.
     pub supports_vision: bool,
+    /// Whether provider metadata explicitly advertises a `none` reasoning
+    /// effort, making `thinking_allowed=false` a positively supported mode.
+    #[serde(default)]
+    pub supports_thinking_disabled: bool,
 }
 
 /// Info about a worktree-backed agent thread created via

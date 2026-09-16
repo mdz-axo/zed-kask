@@ -296,6 +296,16 @@ fn strip_provider_prefix(name: &str) -> &str {
     }
 }
 
+fn models_supporting_thinking_disabled(
+    entries: Vec<hkask_types::inference_ipc::ModelListEntry>,
+) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|entry| entry.supports_thinking_disabled)
+        .map(|entry| entry.name)
+        .collect()
+}
+
 /// An `InferencePort` that delegates to a Unix socket connection back to zed.
 ///
 /// Construct with `InferenceIpcClient::connect()` or
@@ -811,6 +821,18 @@ impl InferencePort for InferenceIpcClient {
                 .collect())
         })
     }
+
+    fn list_models_supporting_thinking_disabled<'a>(
+        &'a self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<String>, InferenceError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            Ok(models_supporting_thinking_disabled(
+                self.call_list_models().await?,
+            ))
+        })
+    }
 }
 
 impl ToolDispatchPort for InferenceIpcClient {
@@ -962,6 +984,28 @@ mod tests {
         assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
         assert_eq!(strip_provider_prefix("/leading-slash"), "leading-slash");
         assert_eq!(strip_provider_prefix("trailing-slash/"), "");
+    }
+
+    #[test]
+    fn thinking_disabled_suggestions_require_positive_registry_evidence() {
+        use hkask_types::inference_ipc::ModelListEntry;
+
+        let suggestions = models_supporting_thinking_disabled(vec![
+            ModelListEntry {
+                name: "Provider/explicit-none".to_string(),
+                provider: "Provider".to_string(),
+                supports_vision: false,
+                supports_thinking_disabled: true,
+            },
+            ModelListEntry {
+                name: "Provider/unknown-capability".to_string(),
+                provider: "Provider".to_string(),
+                supports_vision: false,
+                supports_thinking_disabled: false,
+            },
+        ]);
+
+        assert_eq!(suggestions, vec!["Provider/explicit-none"]);
     }
 
     #[test]

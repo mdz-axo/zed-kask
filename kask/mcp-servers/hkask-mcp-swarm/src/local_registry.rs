@@ -235,6 +235,8 @@ pub struct LocalAgentCapabilities {
     /// typical_p, seed, thinking_allowed, adapter). Merged over the
     /// executor's defaults at dispatch time — same precedence as fermi's
     /// `apply_tier_resolution` merging rung params over agent-level params.
+    /// An explicit `thinking_allowed: false` is never overridden or retried;
+    /// reasoning-mandatory endpoints fail with compatible-model guidance.
     #[serde(default)]
     pub model_params: Option<serde_json::Value>,
     /// Per-card declared evaluators (the evaluator contract, event-substrate

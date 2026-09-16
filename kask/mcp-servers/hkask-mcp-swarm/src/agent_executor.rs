@@ -20,6 +20,9 @@ use crate::local_registry::LocalAgentCard;
 /// is the credit gate, this is the round gate).
 pub const MAX_TOOL_ROUNDS: usize = 4;
 
+/// Keep compatibility guidance readable while still offering alternatives.
+const MAX_MODEL_SUGGESTIONS: usize = 5;
+
 /// The built-in reasoning tool name. When an agent card opts into reasoning
 /// (`capabilities.reasoning: true`), the executor registers this tool and
 /// handles it locally — no IPC dispatch. The model calls it to record a
@@ -208,6 +211,46 @@ impl AgentExecutor {
         Arc::clone(&self.inference)
     }
 
+    async fn local_inference_error(
+        &self,
+        agent: &LocalAgentCard,
+        error: hkask_types::InferenceError,
+    ) -> LocalSwarmError {
+        if !explicitly_disables_thinking(agent) || !is_mandatory_reasoning_error(&error) {
+            return LocalSwarmError::Unavailable(format!("local inference failed: {error}"));
+        }
+
+        let guidance = match self
+            .inference
+            .list_models_supporting_thinking_disabled()
+            .await
+        {
+            Ok(models) => {
+                let suggestions: Vec<String> = models
+                    .into_iter()
+                    .filter(|model| model != &agent.capabilities.model)
+                    .take(MAX_MODEL_SUGGESTIONS)
+                    .collect();
+                if suggestions.is_empty() {
+                    "No other configured model explicitly advertises support for disabled reasoning; configure one in Settings → AI → LLM Providers, then update capabilities.model."
+                        .to_string()
+                } else {
+                    format!(
+                        "Select a frontier or near-frontier model from the configured alternatives that explicitly advertise disabled-reasoning support, then update capabilities.model. Suggestions: {}.",
+                        suggestions.join(", ")
+                    )
+                }
+            }
+            Err(suggestion_error) => format!(
+                "Compatible-model suggestions are unavailable because the model registry query failed: {suggestion_error}. Select a configured frontier or near-frontier model that explicitly supports disabled reasoning, then update capabilities.model."
+            ),
+        };
+
+        LocalSwarmError::Unavailable(format!(
+            "local inference failed: {error}. The card explicitly sets model_params.thinking_allowed=false, but the selected endpoint requires reasoning. {guidance}"
+        ))
+    }
+
     /// Run a local agent: execute declared skills, build the declared tool
     /// set, and run the multi-round inference/tool-dispatch loop. Returns the
     /// raw result; the caller debits.
@@ -324,11 +367,13 @@ impl AgentExecutor {
                     .collect::<Vec<_>>(),
             )
             .unwrap_or_default();
-            let result = self
+            let result = match self
                 .inference
                 .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
                 .await
-                .map_err(|e| {
+            {
+                Ok(result) => result,
+                Err(error) => {
                     // Capture the failed call too — a failed inference is a
                     // real event, not an absence.
                     self.capture_inference(CapturedInference {
@@ -342,8 +387,9 @@ impl AgentExecutor {
                         request_body: cap_body(&request_body),
                         response_body: String::new(),
                     });
-                    LocalSwarmError::Unavailable(format!("local inference failed: {e}"))
-                })?;
+                    return Err(self.local_inference_error(agent, error).await);
+                }
+            };
             self.capture_inference(CapturedInference {
                 rollout_id: rollout_id.clone(),
                 model: result.model.clone(),
@@ -517,6 +563,21 @@ fn sampling_params(agent: &crate::local_registry::LocalAgentCard) -> hkask_types
         }
     }
     params
+}
+
+fn explicitly_disables_thinking(agent: &LocalAgentCard) -> bool {
+    agent
+        .capabilities
+        .model_params
+        .as_ref()
+        .and_then(|params| params.get("thinking_allowed"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+}
+
+fn is_mandatory_reasoning_error(error: &hkask_types::InferenceError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("reasoning is mandatory") && message.contains("cannot be disabled")
 }
 
 /// Parse a `reasoning/think` tool call's arguments into a `ReasoningStep`.
@@ -896,6 +957,81 @@ mod tests {
             !sampling_params(&card).thinking_allowed,
             "an explicit card model parameter still disables thinking"
         );
+    }
+
+    struct MandatoryReasoningInference {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl hkask_types::InferencePort for MandatoryReasoningInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Generation(
+                    "Reasoning is mandatory for this endpoint and cannot be disabled".to_string(),
+                ))
+            })
+        }
+
+        fn list_models_supporting_thinking_disabled<'a>(
+            &'a self,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<Vec<String>, hkask_types::InferenceError>> + Send + 'a>,
+        > {
+            Box::pin(async {
+                Ok(vec![
+                    "OpenAI/frontier-compatible".to_string(),
+                    "Other/near-frontier-compatible".to_string(),
+                ])
+            })
+        }
+    }
+
+    /// expect: An explicit thinking disable fails once and offers positively compatible configured models.
+    #[tokio::test]
+    async fn mandatory_reasoning_failure_preserves_explicit_disable_and_suggests_models() {
+        let inference = Arc::new(MandatoryReasoningInference {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
+        let card = crate::local_registry::LocalAgentCard {
+            agent_id: "explicit-disable".to_string(),
+            agent_type: "critic".to_string(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                model: "Provider/reasoning-mandatory".to_string(),
+                system_prompt: Some("Review the task.".to_string()),
+                model_params: Some(serde_json::json!({"thinking_allowed": false})),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = match executor.run(&card, "review this").await {
+            Ok(_) => panic!("mandatory-reasoning endpoint must not be retried or accepted"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert_eq!(
+            inference.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an explicit false setting must never self-heal by retrying with reasoning enabled"
+        );
+        assert!(message.contains("model_params.thinking_allowed=false"));
+        assert!(message.contains("OpenAI/frontier-compatible"));
+        assert!(message.contains("Other/near-frontier-compatible"));
+        assert!(!message.contains("retry"));
     }
 
     /// A stub that records the `model_override` it was called with, so tests

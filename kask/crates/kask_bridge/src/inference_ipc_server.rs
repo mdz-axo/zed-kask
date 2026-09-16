@@ -397,6 +397,10 @@ impl InferenceIpcServer {
                                     name: format!("{}/{}", provider_id, model.name().0),
                                     provider: provider_id.to_string(),
                                     supports_vision: model.supports_images(),
+                                    supports_thinking_disabled: model
+                                        .supported_effort_levels()
+                                        .iter()
+                                        .any(|level| level.value.eq_ignore_ascii_case("none")),
                                 }
                             })
                         })

@@ -339,6 +339,16 @@ pub trait InferencePort: Send + Sync {
         Box::pin(async { Ok(Vec::new()) })
     }
 
+    /// List configured models whose provider metadata explicitly advertises
+    /// support for disabling reasoning. The conservative default is empty:
+    /// absent metadata is not evidence of compatibility.
+    #[must_use]
+    fn list_models_supporting_thinking_disabled<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, InferenceError>> + Send + 'a>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     /// List only vision-capable models.
     ///
     /// Default: delegates to `list_models()` and filters by the vision flag.
