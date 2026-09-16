@@ -217,7 +217,7 @@ The interaction is implemented as two coupled layers.[^kata]
 - **Criterion coupling.** A judge result covers every criterion exactly once.
   Task `advances` citations bind technical work to a goal criterion and remain
   readable after the goal is resolved. The citation is captured task data, not
-  a foreign key to an ephemeral store.
+  a foreign key to a goal row that is deleted on resolution.
 - **Conditional use.** The prompt advertises native goal-tool steps only when
   `kanban_goal_create` is available. Without the server, the conversational
   discipline remains but no persistence capability is claimed.

@@ -458,7 +458,7 @@ cargo test -p markdown --lib mermaid
 
 # Skills and Composition
 
-Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from disk and injects it into the agent's context via `render_skill_envelope`. The model reads the body and follows the instructions. The agent is the executor.[^anthropic-skills]
+Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` resolves the current catalog and reads the selected `SKILL.md` through an injected body resolver (`crates/agent/src/tools/skill_tool.rs:184-288`). Session registration supplies the project-aware resolver, so project-local bodies come through project buffers—including remote workspaces and unsaved edits—while global bodies come through the filesystem (`crates/agent/src/agent.rs:4339-4383`; registration at `:1016-1021`). The model reads the resulting `render_skill_envelope`; the agent is the executor.[^anthropic-skills]
 
 This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers are launched as child processes over stdio by the in-process governed `McpRuntime` (D3 — single spawn authority since 2026-08-29; kask servers are no longer registered with zed's per-project `ContextServerStore`); the standalone `kask mcp start <id>` CLI is deleted.
 
@@ -480,10 +480,10 @@ A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kas
 
 When the agent invokes the `skill` tool with a skill name:
 
-1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) receives the skill name from `SkillToolInput`.
-2. It resolves the skill directory and reads the `SKILL.md` body from disk.
-3. It calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`), which wraps the body in a structured envelope.
-4. The envelope is returned to the agent as the tool result (`SkillToolOutput::Found { rendered }`).
+1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:184-288`) receives the skill name from `SkillToolInput` and snapshots the current project catalog.
+2. It selects the skill and invokes the injected body resolver (`skill_tool.rs:203-224,275-284`). In production that is `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:4339-4383`), shared by tool and slash activation (`:1016-1021,2317-2345`).
+3. It calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`), which wraps the resolved body in a structured envelope.
+4. The envelope is returned to the agent as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:285-288`).
 5. The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
 
 The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
@@ -493,7 +493,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 | Tool | Location | Purpose |
 |------|----------|---------|
 | `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
-| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `crates/zed/src/main.rs:716`. |
+| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:700-711`. |
 
 ### PDCA Loops Are Model-Coordinated
 
@@ -608,9 +608,9 @@ Open the zed-kask agent panel and invoke the skill:
 ```
 
 The agent panel routes this through `SkillTool::run` (D1), which:
-1. Resolves the skill directory
-2. Reads the `SKILL.md` body
-3. Calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`)
+1. Resolves the skill from the current project catalog
+2. Reads the body through the project-aware resolver shared with slash activation
+3. Calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`)
 4. Returns the envelope to the agent
 5. The agent reads the body and follows the instructions
 
@@ -618,7 +618,7 @@ The agent panel routes this through `SkillTool::run` (D1), which:
 
 ## Invoking Skills
 
-Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`), which reads the `SKILL.md` body and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
+Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:184-288`), which resolves the current catalog, obtains the body through its injected resolver, and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
 
 ### Via the Agent Panel
 
@@ -628,17 +628,17 @@ Open the zed-kask agent panel and invoke a skill:
 /skill diagnose "My application crashes on startup"
 ```
 
-The agent panel routes this through the `skill` tool, which calls `SkillTool::run` directly in-process.
+Model tool invocation uses `SkillTool::run`; `/skill` slash activation uses `send_skill_invocation`. Both execute in-process and share `skill_body_resolver_for_project`, so they resolve the same project-local body (`crates/agent/src/agent.rs:1016-1021,2310-2345,4339-4383`).
 
 ### What Happens During Execution
 
 When a skill is invoked in-process:
 
-1. **Lookup** — The skill name is resolved against the loaded skill catalog (from `agent_skills`). The `SkillTool` reads the `SKILL.md` body from disk.
-2. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:47`) wraps the body in a structured envelope.
-3. **Return to agent** — The envelope is returned as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:263`).
-4. **Agent follows instructions** — The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
-5. **Regulation span** — skill feedback is recorded through the unified skill namespace: `reg.skill.<skill-id>.<phase>` via `RegulationRuntime::record_skill_span` (`kask/crates/hkask-regulation/src/runtime.rs:779`; PRINCIPLES §9.2).
+1. **Lookup** — The skill name is resolved against the current loaded catalog (`skill_tool.rs:195-224`).
+2. **Body resolution** — The injected resolver obtains the body; production tool and slash activation share `skill_body_resolver_for_project`, so project-local unsaved/remote content is authoritative (`crates/agent/src/agent.rs:1016-1021,2317-2345,4339-4383`).
+3. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`) wraps the body in a structured envelope and returns `SkillToolOutput::Found { rendered }` (`:285-288`).
+4. **Agent follows instructions** — The agent reads the envelope content and calls `lisp_eval`, `render_template`, and MCP tools as the skill directs.
+5. **Regulation feedback** — activation success or resolver/dependency failure is persisted as `reg.skill.<skill-id>.outcome`; direct ratings and skill-naming advice applications persist `reg.skill.<skill-id>.operator_feedback` (`kask/crates/hkask-regulation/src/runtime.rs:773-790`; wiring at `crates/zed/src/main.rs:956-1020`).
 
 ### Convergence (Model-Coordinated)
 
@@ -778,15 +778,14 @@ Coverage assessment: **full** (fit >= 0.80), **partial** (0.40-0.79), **none** (
 
 Four-phase pipeline: **detect-gap** (classify gaps: coverage, feature, automation, knowledge, governance, quality) → **search** (rank catalog candidates by fit) → **evaluate** (score format/quality/safety) → **convergence-check** (is the gap resolved?).
 
-### Regulation Spans
+### Regulation feedback records
 
-| Span | When emitted |
-|------|-------------|
-| `reg.skill.routing.matched` | skill-router produces a ranked recommendation |
-| `reg.skill.routing.uncovered` | skill-router finds no matching skill (gap signal) |
-| `reg.skill.discovery.gap_detected` | skill-discovery classifies a capability gap |
-| `reg.skill.discovery.searched` | skill-discovery searches the catalog for candidates |
-| `reg.skill.discovery.evaluated` | skill-discovery scores a candidate skill |
+Routing and discovery are model-coordinated skill behavior; they do not emit dedicated runtime events. The process-global ledger accepts exactly two persisted skill-feedback phases (`kask/crates/hkask-regulation/src/runtime.rs:773-790`):
+
+| Record key | Producer |
+|---|---|
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` records successful envelope delivery and dependency/body-resolution failures; not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:203-288`). |
+| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` and successful skill-naming `curator_advice_mark_applied` observations feed the process-global recorder (`crates/zed/src/main.rs:991-1020`). |
 
 ---
 
@@ -797,7 +796,7 @@ registered `hkask-mcp-*` binaries as child processes over stdio, performs the MC
 handshake and tool discovery, and owns child shutdown/reconnect
 (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-680`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478`).[^mcp-spec-build][^ousterhout-mcp-build]
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506`).[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Current crate shape
 

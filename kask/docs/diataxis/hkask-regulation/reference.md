@@ -330,7 +330,6 @@ id: DIAG-REG-004
 verified_date: 2026-09-15
 verified_against: kask/crates/hkask-regulation/src/loops/core.rs; kask/crates/hkask-regulation/src/loops/signals.rs; kask/crates/hkask-regulation/src/loops/actions.rs
 status: VERIFIED
-status: VERIFIED
 -->
 
 ## Regulation dispositions and inference resilience

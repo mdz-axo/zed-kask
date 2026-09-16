@@ -125,7 +125,7 @@ section only defines the resolution precedence.
 `KaskSettings::mcp_env()` emits both `HKASK_DATA_DIR` and
 `HKASK_ARTIFACTS_DIR`; `build_mcp_server_env` filters them through each
 `BuiltinMcpServer.config_env` allowlist before child launch
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478`). Servers therefore
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506`). Servers therefore
 receive only the roots they actually resolve.
 
 ## 2. Artifact-class → path mapping
@@ -150,7 +150,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
 verified_date: 2026-09-15
-verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-478
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506
 status: VERIFIED
 -->
 

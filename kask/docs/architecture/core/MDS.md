@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via `SkillTool::run` → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:167,261`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) and 11 MCP servers are listed in the architecture plan §2.2/§2.4.
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via the project-aware `SkillTool` resolver → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:146-155,184-288`; resolver at `crates/agent/src/agent.rs:4339-4383`, registered at `:1016-1021`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) and 11 MCP servers are listed in the architecture plan §2.2/§2.4.
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -79,7 +79,7 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 
 ### 1.4 Service and runtime subsystems
 
-**Crate:** `hkask-services-core` is the only surviving `hkask-services-*` crate, a thin shared library used by corpus and curator. The editor process owns one `McpRuntime`; it spawns the 11 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-478`). There is no daemon or `KaskCore` singleton.
+**Crate:** `hkask-services-core` is the only surviving `hkask-services-*` crate, a thin shared library used by corpus and curator. The editor process owns one `McpRuntime`; it spawns the 11 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-506`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -87,7 +87,7 @@ The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkas
 |------------------|--------------|
 | `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
 | `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
-| `hkask-services-skill` | Upstream-Zed body injection via `SkillTool::run` → `render_skill_envelope` (`crates/agent/src/tools/skill_tool.rs:167,261`) — skill execution is native, no service layer. |
+| `hkask-services-skill` | Project-aware body injection via `SkillTool::with_body_resolver` → `render_skill_envelope` (`crates/agent/src/tools/skill_tool.rs:146-155,184-288`; resolver at `crates/agent/src/agent.rs:4339-4383`, registered at `:1016-1021`) — skill execution is native, no service layer. |
 | `hkask-services-wallet` | Removed. Governed tool-call bounding now lives in `hkask-regulation::CallCapManager`. |
 
 Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
@@ -530,7 +530,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
 verified_date: 2026-09-15
-verified_against: crates/zed/src/main.rs:772-896; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-478; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
+verified_against: crates/zed/src/main.rs:772-896; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-506; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
 status: VERIFIED
 -->
 
