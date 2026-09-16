@@ -1,7 +1,7 @@
 ---
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
-last_updated: 2026-08-28
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Training"
@@ -10,38 +10,29 @@ mds_categories: [domain, trust]
 
 # LoRA Training — Method & Gate Catalog
 
-Reference catalog for the `lora-training` skill
-(`.agents/skills/lora-training/SKILL.md`, 315 lines) and its runtime
-enforcement point, the `hkask-mcp-training` MCP server
-(`kask/mcp-servers/hkask-mcp-training/`). The registry templates
-(`kask/registry/templates/lora-training/`: `select-method.j2`,
-`audit-config.j2`, `preflight-dataset.j2`, `report.j2`) remain authoritative
-(P5.1); this document is a derived reference.
+Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/SKILL.md`, 320 lines) and its runtime enforcement point, the `hkask-mcp-training` MCP server (`kask/mcp-servers/hkask-mcp-training/`). The `SKILL.md` body is the process authority. The four templates under `kask/registry/templates/lora-training/` are companion resources rendered where that process directs; this document is a derived lookup reference.
 
 ## MCP Server Surface (9 tools)
 
-`hkask-mcp-training` exposes 9 tools, each tagged with an ML-Schema ontology
-concept via `ontology_anchor` (`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:314-326`):
+`hkask-mcp-training` exposes nine registered `#[tool]` methods across `kask/mcp-servers/hkask-mcp-training/src/tools/`; `combined_router` merges their subrouters in `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:288-310`. The tool framework records outcomes but does not attach a training-specific ontology tag.
 
-| Tool | Ontology anchor | Role |
+| Tool | Role | Implementation |
 |---|---|---|
-| `training_ingest_dataset` | `mls:Data` | Dataset ingestion |
-| `training_ingest_qa` | `mls:Data` | QA-pair ingestion |
-| `training_assemble_dataset` | `mls:Data` | Dataset assembly |
-| `training_submit` | `mls:Run` | Submit a training job |
-| `training_status` | `mls:Run` | Job status (consumes completion-manifest `runtime_metrics` for G-R1) |
-| `training_cancel` | `mls:Run` | Cancel a job |
-| `training_evaluate` | `mls:Model` | Post-training evaluation |
-| `training_validate_config` | `mls:Model` | Runtime enforcement point for the skill's `audit-config` phase |
-| `training_bridge_rollouts` | `mls:Run` | Rollout-harness bridge (`src/tools/rollout_bridge.rs:54-55`) |
+| `training_ingest_dataset` | Dataset ingestion | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:195-230` |
+| `training_ingest_qa` | QA-pair ingestion | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:13-68` |
+| `training_assemble_dataset` | Dataset assembly | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:70-193` |
+| `training_submit` | Submit a training job | `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:23-113` |
+| `training_status` | Job status and G-R1 runtime metrics | `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:12-125` |
+| `training_cancel` | Cancel a job | `kask/mcp-servers/hkask-mcp-training/src/tools/cancel.rs:10-25` |
+| `training_evaluate` | Post-training evaluation | `kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs:9-54` |
+| `training_validate_config` | Static/runtime-enforceable audit subset | `kask/mcp-servers/hkask-mcp-training/src/tools/validate.rs:10-131` |
+| `training_bridge_rollouts` | Verdict-labeled rollout bridge | `kask/mcp-servers/hkask-mcp-training/src/tools/rollout_bridge.rs:43-103` |
 
 `training_validate_config` is the runtime enforcement point: the skill reasons
 over config files and proposes regressions; the server enforces the static
 subset of gates at submit time and emits the `reg.lora.*` spans the skill's
 convergence-check phase consumes
-(`hkask_mcp_training.rs:53-58`). Host selection: RunPod is the only cloud
-host; the harness default is Axolotl, with per-job harness selection honored
-at submit time (`hkask_mcp_training.rs:42-48`).
+(`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:23-48`). Host selection and harness behavior are implemented under `kask/mcp-servers/hkask-mcp-training/src/providers/`; the default harness is Axolotl and per-job harness selection is honored at submit time.
 
 ## Method Catalog
 
@@ -152,7 +143,7 @@ Only apply if QLoRA mode selected (G2).
 
 | Gate | ID | Assertion | Source |
 |------|----|-----------|--------|
-| Harness-method compatibility | G-H1 | Selected harness supports the selected method/trainer. axolotl=SFT/DPO/KTO/ORPO/GRPO/GDPO/RM/FullFT (via `rl:`); trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO + advanced PEFT initializers. `trl_trainer` is TRL-specific — warn (not refuse) when set with axolotl or ludwig. Runtime enforcement: `validate_harness_compatibility` (`param_gates.rs:444-500`). | Axolotl — https://docs.axolotl.ai/docs/rlhf.html; TRL — huggingface.co/docs/trl/index; Ludwig — ludwig.ai/latest/configuration/ |
+| Harness-method compatibility | G-H1 | Selected harness supports the selected method/trainer. axolotl=SFT/DPO/KTO/ORPO/GRPO/GDPO/RM/FullFT (via `rl:`); trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO + advanced PEFT initializers. `trl_trainer` is TRL-specific — warn (not refuse) when set with axolotl or ludwig. Runtime enforcement: `validate_harness_compatibility` (`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:442-507`). | Axolotl — https://docs.axolotl.ai/docs/rlhf.html; TRL — huggingface.co/docs/trl/index; Ludwig — ludwig.ai/latest/configuration/ |
 
 ### Runtime Gates
 
@@ -166,10 +157,7 @@ Only apply if QLoRA mode selected (G2).
 The `select-method` phase is the first turn of a PDCA loop closed by
 re-entering the cycle, which routes `convergence_metric`, `blockers`, and
 `gate_results_summary` back as `prior_iteration`
-(`kask/registry/templates/lora-training/select-method.j2:122`; skill
-SKILL.md:135-140). **The loop converges when the convergence metric is
-≤ 0.10 and no hard blockers remain** (`select-method.j2:195`; skill
-SKILL.md:139-140). The operator may also revise inputs and re-invoke.
+(`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). **The loop converges when the convergence metric is ≤ 0.10 and no hard blockers remain** (`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). The operator may also revise inputs and re-invoke.
 
 > **Provenance note:** an earlier revision of this document carried a
 > weighted-dimension rubric (0.35/0.20/0.15/0.10) and Cauchy-criterion

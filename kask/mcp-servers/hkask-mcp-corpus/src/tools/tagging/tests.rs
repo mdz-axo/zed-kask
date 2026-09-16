@@ -52,7 +52,8 @@ fn tags(correlation_id: &str) -> Value {
     json!([
         correlation_id,
         ["who", "why"],
-        ["procedure", "assertion", "complexity"]
+        ["procedure", "assertion", "complexity"],
+        null
     ])
 }
 
@@ -215,7 +216,7 @@ async fn public_tagging_identity_contract() {
     assert_eq!(summary["cost_reporting_complete"], true);
     assert_eq!(rows[0]["entity_ref"], long_ref);
     let prompt = port.prompts.lock().expect("prompts").join("\n");
-    assert!(prompt.contains("Passage 1 (item-0)"));
+    assert!(prompt.contains("Passage item-0"));
     assert!(!prompt.contains(long_ref));
     assert!(!prompt.contains("source:"));
     let (summary, _, _) = run(&["a"], json!([tags("item-0")]).to_string(), 1, false).await;
@@ -258,18 +259,18 @@ async fn public_tagging_identity_contract() {
     // Whole-batch identity contract: unknown, duplicate, missing correlation ID,
     // and singleton object for a multi-input request must never be positional matches.
     for (response, reason) in [
-        (json!([tags("item-0")]), "omitted"),
+        (json!([tags("item-0")]), "expected 2 results"),
         (
             json!([tags("item-0"), tags("item-1"), tags("item-extra")]),
-            "unknown",
+            "expected 2 results",
         ),
         (json!([tags("item-0"), tags("item-unknown")]), "unknown"),
         (json!([tags("item-0"), tags("item-0")]), "duplicate"),
         (
             json!([{"dimensions":["what"]}, tags("item-1")]),
-            "invalid tagging JSON entry",
+            "four-field tuples",
         ),
-        (tags("item-0"), "invalid tagging JSON entry"),
+        (tags("item-0"), "four-field tuples"),
     ] {
         let (summary, rows, _) = run(&["a", "b"], response.to_string(), 2, false).await;
         assert_eq!(summary["failed"], 2, "{response}");
@@ -312,7 +313,7 @@ async fn public_tagging_identity_contract() {
         rows[0]["classification"]["reason"]
             .as_str()
             .expect("reason")
-            .contains("JSON")
+            .contains("passage-tagging response")
     );
     let mut unicode = tags("item-0");
     unicode[2] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
@@ -329,21 +330,27 @@ async fn public_tagging_identity_contract() {
 #[test]
 fn missing_outer_array_bracket_is_repaired_but_partial_semantics_are_rejected() {
     let complete = json!([tags("item-0")]).to_string();
-    let (value, repaired) = parse_tagging_json(&complete).expect("complete JSON");
-    assert!(value.is_array());
+    let (value, repaired) = repair_missing_outer_array(&complete);
+    assert_eq!(value, complete);
     assert!(!repaired);
 
     let missing_outer = complete.strip_suffix(']').expect("outer bracket");
-    let (value, repaired) = parse_tagging_json(missing_outer).expect("outer repair");
-    assert!(value.is_array());
+    let (value, repaired) = repair_missing_outer_array(missing_outer);
+    assert_eq!(value, complete);
     assert!(repaired);
 
+    let chunks = vec![InputChunk {
+        entity_ref: "a".to_string(),
+        source: "test".to_string(),
+        text: "passage".to_string(),
+        word_count: 1,
+    }];
     for partial in [
         r#"[["item-0",[],["unfinished"#,
-        r#"[["item-0",[],["one","two","three"]"#,
+        r#"[["item-0",[],["one","two","three"],null"#,
     ] {
         assert!(
-            parse_tagging_json(partial).is_err(),
+            correlate_tags(partial, &chunks).is_err(),
             "must reject {partial}"
         );
     }

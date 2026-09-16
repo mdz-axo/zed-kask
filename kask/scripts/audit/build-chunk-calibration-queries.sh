@@ -2,16 +2,16 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-    echo "usage: $0 <extracted-txt-dir> <output-jsonl> <max-queries>" >&2
+    echo "usage: $0 <accepted-sources-json> <output-jsonl> <max-queries>" >&2
     exit 64
 fi
 
-input_dir=$1
+sources_json=$1
 output=$2
 max_queries=$3
 
-if [[ ! -d "$input_dir" ]]; then
-    echo "input directory does not exist: $input_dir" >&2
+if [[ ! -f "$sources_json" ]]; then
+    echo "accepted-sources JSON does not exist: $sources_json" >&2
     exit 66
 fi
 if [[ ! "$max_queries" =~ ^[1-9][0-9]*$ ]]; then
@@ -22,10 +22,22 @@ if [[ -e "$output" ]]; then
     echo "refusing to overwrite output: $output" >&2
     exit 73
 fi
-if ! command -v jq >/dev/null 2>&1; then
-    echo "jq is required" >&2
-    exit 69
-fi
+for command in awk jq sha256sum; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "required command not found: $command" >&2
+        exit 69
+    fi
+done
+jq -e '
+  (.accepted_sources | type == "array" and length > 0) and
+  all(.accepted_sources[];
+    (.source | type == "string" and length > 0) and
+    (.raw_path | type == "string" and length > 0) and
+    (.raw_sha256 | test("^[0-9A-Fa-f]{64}$")) and
+    (.canonical_path | type == "string" and length > 0) and
+    (.canonical_sha256 | test("^[0-9A-Fa-f]{64}$"))) and
+  ([.accepted_sources[].source] | length == (unique | length))
+' "$sources_json" >/dev/null
 
 mkdir -p "$(dirname "$output")"
 tmp_output=$(mktemp "${output}.tmp.XXXXXX")
@@ -36,8 +48,26 @@ trap 'rm -f "$tmp_output" "$tmp_candidates" "$tmp_line" "$tmp_quote"' EXIT
 
 written=0
 skipped=0
-while IFS= read -r -d '' source_path; do
+while IFS= read -r source_row; do
     (( written < max_queries )) || break
+    source=$(jq -r '.source' <<<"$source_row")
+    source_path=$(jq -r '.canonical_path' <<<"$source_row")
+    raw_path=$(jq -r '.raw_path' <<<"$source_row")
+    expected_raw=$(jq -r '.raw_sha256 | ascii_downcase' <<<"$source_row")
+    expected_canonical=$(jq -r '.canonical_sha256 | ascii_downcase' <<<"$source_row")
+    for path in "$raw_path" "$source_path"; do
+        if [[ ! -f "$path" ]]; then
+            echo "accepted source file does not exist: $path" >&2
+            exit 66
+        fi
+    done
+    actual_raw=$(sha256sum "$raw_path" | cut -d' ' -f1)
+    actual_canonical=$(sha256sum "$source_path" | cut -d' ' -f1)
+    if [[ "$actual_raw" != "$expected_raw" || "$actual_canonical" != "$expected_canonical" ]]; then
+        echo "accepted source identity changed: $source" >&2
+        exit 65
+    fi
+
     awk '
         BEGIN { IGNORECASE = 1 }
         index($0, "\f") == 0 &&
@@ -105,7 +135,6 @@ while IFS= read -r -d '' source_path; do
             printf "?"
         }
     ' "$tmp_quote")
-    source=$(basename "$source_path")
     query_id=$(printf '%s\0%s\0%s' "$source" "$line_number" "$quote" | sha256sum | cut -c1-24)
 
     jq -cn \
@@ -113,13 +142,19 @@ while IFS= read -r -d '' source_path; do
         --arg query "$query" \
         --arg source "$source" \
         --arg source_path "$source_path" \
+        --arg raw_path "$raw_path" \
+        --arg raw_sha256 "$actual_raw" \
+        --arg canonical_sha256 "$actual_canonical" \
         --arg evidence_quote "$quote" \
         --arg construction "$construction" \
         --argjson source_line "$line_number" \
-        '{query_id:$query_id,query:$query,source:$source,source_path:$source_path,source_line:$source_line,evidence_quote:$evidence_quote,provenance:"source_derived",construction:$construction}' \
+        '{query_id:$query_id,query:$query,source:$source,source_path:$source_path,
+          raw_path:$raw_path,raw_sha256:$raw_sha256,canonical_sha256:$canonical_sha256,
+          source_line:$source_line,evidence_quote:$evidence_quote,
+          provenance:"source_derived",construction:$construction}' \
         >> "$tmp_output"
     ((written += 1))
-done < <(find "$input_dir" -maxdepth 1 -type f -name '*.txt' -print0 | sort -z)
+done < <(jq -c '.accepted_sources[]' "$sources_json")
 
 if (( written == 0 )); then
     echo "no eligible source lines found" >&2

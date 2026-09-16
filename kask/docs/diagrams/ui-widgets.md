@@ -115,6 +115,13 @@ classDiagram
     create_graph_widget ..> GraphWidget : viz is event_tree
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-GRAPH
+verified_date: 2026-09-15
+verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L49-59 — evidence HashMap<usize, EvidenceKind>, repropagate L161)
+status: VERIFIED
+-->
+
 **Block shape:** a JSON body with `viz: "event_tree"`, an optional `subject`
 and `joint_probability`, and a `nodes` array. Edges are child-side: each node
 lists its parents in `depends_on[].parent_event_ids` (the `scenario_quantify`
@@ -131,13 +138,6 @@ truth-assignment space of `depends_on[0]` parents (delegated to
 `hkask_forecast::marginalize`); a node in the `evidence` map is treated as
 observed — hard evidence clamps, soft evidence applies the likelihood-ratio
 posterior `P' = P·LR / (P·LR + (1−P))`.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-GRAPH
-verified_date: 2026-08-28
-verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L49-59 — evidence HashMap<usize, EvidenceKind>, repropagate L161)
-status: VERIFIED
--->
 
 ## Kanban Widget
 
@@ -247,6 +247,13 @@ classDiagram
     create_kanban_widget ..> KanbanWidget : viz is kanban
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-KANBAN
+verified_date: 2026-09-15
+verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs (KanbanWidget L104-114 — column_meta S8, provenance; render_dispatch_status L260; evaluate_move L974); crates/hkask-kanban-widget/src/move_controller.rs (L61-121)
+status: VERIFIED
+-->
+
 **Column grouping:** `group_tasks_into_columns` buckets tasks by lowercased
 `status`, emits the five standard columns in order (attaching WIP limits
 from `column_meta`), then appends any non-standard statuses sorted
@@ -255,13 +262,6 @@ alphabetically (title-cased).
 **Card detail (B3):** `detail_open` holds the task id whose detail panel is
 open. The panel renders the full task (description, criteria, comments,
 verification, gas spend log) passively from the block body.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-KANBAN
-verified_date: 2026-08-28
-verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs (KanbanWidget L104-114 — column_meta S8, provenance; render_dispatch_status L260; evaluate_move L974); crates/hkask-kanban-widget/src/move_controller.rs (L61-121)
-status: VERIFIED
--->
 
 ## Portfolio Widget
 
@@ -350,6 +350,13 @@ classDiagram
     create_portfolio_widget ..> PortfolioWidget : viz is portfolio
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-PORTFOLIO
+verified_date: 2026-09-15
+verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER/DEFAULT_TOOL L42-44, INVOKER_NOT_WIRED_MSG/PROVENANCE_INCOMPLETE_MSG L46-50, from_focus/to_focus L59-66, from_input/to_input L104-120)
+status: VERIFIED
+-->
+
 **Block shape:** a JSON body with `viz: "portfolio"`. `returns`,
 `characteristics`, and `attribution` are all optional so partial bodies still
 render the present sections. `AttributionRow.symbol` is required; other
@@ -362,13 +369,6 @@ with no FIBO term, so it falls past the universal axes (which cover
 artifacts and processes, not quantities) to rung 3, the SUMO upper
 ontology (`sumo:Quantity`). The dashboard header anchors on the real
 `FIBO_PORTFOLIO`. Nothing is ever untagged.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-PORTFOLIO
-verified_date: 2026-08-28
-verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER/DEFAULT_TOOL L42-44, INVOKER_NOT_WIRED_MSG/PROVENANCE_INCOMPLETE_MSG L46-50, from_focus/to_focus L59-66, from_input/to_input L104-120)
-status: VERIFIED
--->
 
 ## Prediction Markets Server
 
@@ -495,6 +495,13 @@ classDiagram
     note for MarketRecord "Every probability carries spread, volume grain,\ncalibration, volatility, reliability tier,\nand a PKO + Dublin Core ontology block.\nBase events come only from config — a market\ncan never auto-promote to benchmark status."
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-PM
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L60, combined_router L85-89 = prediction_markets_router + economic_data_tools_router, tool fns — 17 market/CMP tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (14 economic-data tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L17); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L27); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
+status: VERIFIED
+-->
+
 **Pipeline view** (providers → matcher → calibration; economic-data feeds
 the SDMX axis):
 
@@ -530,6 +537,13 @@ flowchart LR
     WB --> ECON
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-PM-PIPELINE-001
+verified_date: 2026-09-15
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L85-89); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs
+status: VERIFIED
+-->
+
 **Honest-degradation invariants:** a bucket with no data or a read failure
 is `stale: true` (never `brier: 0`); `constant_maturity` returns `None` on
 empty input; `residual_analysis` refuses below `MIN_OBSERVATIONS = 10`
@@ -542,13 +556,6 @@ constants (`MAPPING_VERSION`, `LIFECYCLE_STAGES`) so they cannot drift.
 `dcterms:*` / `pko:*` vocabulary is reused from `hkask-bridge-ontology`;
 economic-data vocabulary is SDMX-anchored (see
 [Architecture diagrams](./architecture.md) — ontology bridge).
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-RF-PM
-verified_date: 2026-08-28
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L60, combined_router L85-89 = prediction_markets_router + economic_data_tools_router, tool fns — 17 market/CMP tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (14 economic-data tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L17); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L27); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
-status: VERIFIED
--->
 
 ## Scenarios Widget
 
@@ -652,6 +659,13 @@ classDiagram
     create_scenarios_widget ..> ScenariosWidget : viz is scenarios
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-SCENARIOS
+verified_date: 2026-09-15
+verified_against: crates/hkask-scenarios-widget/src/block.rs; crates/hkask-scenarios-widget/src/view.rs (dispatch fields L35-42, SCENARIO_TOOL_SERVER fallback L21-22, dispatch_rung L554, provenance routing L548-561)
+status: VERIFIED
+-->
+
 **Block shape:** a JSON body with `viz: "scenarios"`. All sub-objects default
 to empty/`None` so partial bodies render the present sections. A body with
 `viz: "event_tree"` is NOT claimed (it goes to `hkask-graph-widget`).
@@ -665,13 +679,6 @@ and resolved forecasts with a calibration suggest `scenario_assess`.
 hKask-internal methodology labels, not ontology URIs — FIBO publishes no
 terms for forecast identifiers, Brier scores, or scenario probabilities
 (verified 2026-08-29).
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-SCENARIOS
-verified_date: 2026-08-28
-verified_against: crates/hkask-scenarios-widget/src/block.rs; crates/hkask-scenarios-widget/src/view.rs (dispatch fields L35-42, SCENARIO_TOOL_SERVER fallback L21-22, dispatch_rung L554, provenance routing L548-561)
-status: VERIFIED
--->
 
 ## Swarm Widget
 
@@ -748,6 +755,13 @@ classDiagram
     render_card ..> truncate_response
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-SWARM
+verified_date: 2026-09-15
+verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (SwarmWidget L47-50, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213, RESPONSE_TRUNCATE_CHARS L43); crates/hkask-swarm-widget/src/block.rs; crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L163-176)
+status: VERIFIED
+-->
+
 Notes:
 
 - `RESPONSE_TRUNCATE_CHARS` (240) caps the visible response body; the full
@@ -759,13 +773,6 @@ Notes:
 - The `ontology` field on `SwarmBlockBody` carries an optional concept URI
   (e.g. `pko:Procedure`) emitted by the swarm server; pinned by the
   registry-level S4 sensor test in `hkask-viz-core`.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-SWARM
-verified_date: 2026-08-28
-verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (SwarmWidget L47-50, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213, RESPONSE_TRUNCATE_CHARS L43); crates/hkask-swarm-widget/src/block.rs; crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L163-176)
-status: VERIFIED
--->
 
 ## See also
 

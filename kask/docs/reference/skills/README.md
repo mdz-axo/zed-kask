@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 version: "0.39.0"
 status: "Active"
 domain: "Core"
@@ -30,9 +30,9 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. 75 skills ship. 323 Jinja2 templates across 65 crates remain under
-> `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
-> source of truth for skill execution.
+> plus a markdown body of process instructions. **77 skills** ship. **325 Jinja2 templates across 67
+> template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
+> are companion resources, not the source of truth for skill execution.
 
 **Skill lifecycle:** A skill is activated when the agent invokes the `skill` tool with a skill
 name. `SkillTool::run` resolves the skill directory, reads `SKILL.md`, and injects the body via
@@ -48,12 +48,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-09)
+## Registry counts (verified 2026-09-15)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **75** | Every directory contains a `SKILL.md` |
-| Template crates (`kask/registry/templates/*/`) | **65** (323 `.j2` templates) | Companion Jinja2 resources for `render_template` |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **77** | Every counted directory contains a `SKILL.md`; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **67** (**325** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -125,13 +125,13 @@ read-only resources the skill body may reference via `render_template`.
 | `skill-router` | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals |
 | `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
 | `create-skill` | Convergent kask-native skill creation with ontological grounding |
-| `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and SKILL.md files against their stated goals |
+| `skill-logic-audit` | Bounded dual-layer logic audit of `.j2` templates and `manifest.yaml` files against their stated goals |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `therapy` | Memory therapy session — scan a memory DB (curator, replica/corpus, or swarm) for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
 
 ---
 
-## Specialized (24 skills)
+## Specialized (25 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -159,6 +159,7 @@ read-only resources the skill body may reference via `render_template`.
 | `transcript-reel` | Recording → highlight reel over the educt layer system: transcribe, correct, highlight, EDL, render, export |
 | `adapter-lifecycle` | Verifier-gated fine-tuning loop: rollout harness, verdict-bridged datasets, gated submit, A/B evaluation, feedback retrain |
 | `adhd-mode` | Session-scoped output mode shaping responses for a reader with ADHD: next-action-first, numbered steps, state restated across turns, capped lists, deterministic pre-send gate (render_template + lisp_eval), optional caveman compression variant (absorbed 2026-09-09) |
+| `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
 
 ---
 
@@ -174,7 +175,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Cross-Cutting & Audit (10 skills)
+## Cross-Cutting & Audit (11 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -183,11 +184,12 @@ read-only resources the skill body may reference via `render_template`.
 | `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast: inventory ontologies, build prior, map recombination field, detect gradients, select seeds |
 | `principle-constraints` | Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D52) |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md`, current authority D1–D56) |
 | `swarm-compose-guide` | Agent/swarm composition authoring aid: renders guidance templates, returns suggested completions or validation verdict |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
 | `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
+| `onto-anchor` | Resolve domain terms through the published-ontology fallback ladder before naming, classifying, or computing with them |
 
 ---
 
@@ -196,17 +198,17 @@ read-only resources the skill body may reference via `render_template`.
 | Category | Count |
 |----------|-------|
 | Guardrails | 1 |
-| Core Development | 13 |
+| Core Development | 12 |
 | Reasoning & Analysis | 10 |
 | Kata & Coaching | 3 |
 | Meta & Maintenance | 10 |
 | Specialized | 25 |
 | Research & Corpus | 5 |
-| Cross-Cutting & Audit | 10 |
+| Cross-Cutting & Audit | 11 |
 | **Total** | **77** |
 
-> **Filesystem reality (verified 2026-09-09):** `.agents/skills/` (repo root) contains 77 SKILL.md
-> directories (74 at the 2026-09-03 verification plus `product-manager` and `program-manager`,
-> added 2026-09-04 to operationalize the Division of Responsibilities, and `adhd-mode`,
-> added 2026-09-09 for reader-shaped output). `kask/registry/templates/` contains 67 template crates holding 324 `.j2` files (companion Jinja2 resources
-> for `render_template`).
+> **Filesystem reality (verified 2026-09-15):** `.agents/skills/` contains 77
+> `SKILL.md` directories, including `onto-anchor` and `writing-style`.
+> `kask/registry/templates/` contains 67 template namespaces holding 325 `.j2`
+> files. The registry counts are filesystem observations, not inferred from the
+> category table.

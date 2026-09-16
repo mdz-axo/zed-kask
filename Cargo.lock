@@ -8719,6 +8719,7 @@ dependencies = [
  "bytes 1.11.1",
  "futures-util",
  "hkask-types",
+ "minijinja",
  "serde",
  "serde_json",
  "tempfile",
@@ -9053,6 +9054,7 @@ version = "0.40.0"
 dependencies = [
  "a2a-lf",
  "chrono",
+ "hkask-bridge-ontology",
  "hkask-event-store",
  "hkask-inference",
  "hkask-keystore",

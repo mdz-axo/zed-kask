@@ -1,7 +1,7 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-09-04
+last_updated: 2026-09-15
 version: "0.39.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -73,7 +73,7 @@ Conventions:
 |-------|------|
 | Version | Semantic versioning[^semver]. MAJOR = breaking restructure; MINOR = substantive new content; PATCH = typo/correction. |
 | Last-Updated | ISO 8601 date on every content-bearing edit[^iso8601]. |
-| Status | Exactly one of the four values. `Deprecated` and `Superseded` documents are removed from the active tree (`git rm`) at the next review; git history is the canonical archive of record. A local `docs/archive/` snapshot may be kept on a maintainer's disk for personal reference but is gitignored. |
+| Status | Exactly one of five values: `Draft`, `Proposed`, `Active`, `Deprecated`, or `Superseded`. `Proposed` is reserved for an operator-retained, not-yet-authorized plan under `kask/docs/plans/`; it is not evidence of implementation. `Deprecated` and `Superseded` documents are removed from the active tree (`git rm`) at the next review; git history is the canonical archive of record. |
 | Audience | Named roles; avoid "everyone." |
 | MDS Categories | One or more of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §2: `domain`, `composition`, `trust`, `lifecycle`, `curation`. See [`MDS.md`](../architecture/core/MDS.md) §9.1 for category → directory mapping. Documents that spanned the deprecated 9-category DDMVSS taxonomy have been migrated; the old categories map as: `capability`→`trust`, `interface`→`composition`, `observability`→`lifecycle`, `persistence`→`lifecycle`. |
 | Domain | Optional for cross-cutting documents; mandatory for domain-specific documents. |
@@ -83,13 +83,16 @@ Conventions:
 ```mermaid
 stateDiagram-v2
     [*] --> Draft
-    Draft --> Active: first merged revision
+    Draft --> Proposed: operator retains plan for decision
+    Draft --> Active: first merged current-state revision
+    Proposed --> Active: implementation begins and claims are re-grounded
+    Proposed --> Removed: rejected, superseded, or implemented; successor recorded
     Active --> Active: content edits (PATCH/MINOR)
     Active --> Deprecated: replacement written
     Active --> Superseded: wholesale rewrite at new path
-    Active --> Removed: condensation (no formal role; folded or deleted, successor recorded in README ledger)
+    Active --> Removed: condensation; successor recorded
     Deprecated --> Removed: git rm in follow-up commit
-    Superseded --> Removed: git rm; replacement carries Replaces: header
+    Superseded --> Removed: git rm; replacement carries Replaces header
     Removed --> [*]
     note right of Removed
         Recoverable via
@@ -100,12 +103,12 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
-verified_date: 2026-08-28
-verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md; kask/docs/README.md (Document lifecycle ledger, 2026-08-28 condensation); .gitignore
+verified_date: 2026-09-15
+verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md:51-182; kask/docs/README.md:69-119; kask/docs/plans/logisheets-spreadsheet-capability-plan.md:1-17
 status: VERIFIED
 -->
 
-**Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. No active-tree document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves this purpose permanently.
+**Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. An operator-retained `Proposed` plan is not an archive: it remains under `kask/docs/plans/` while the product decision is open and explicitly states that it is a plan rather than an implementation record. No current-state document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves that purpose.
 
 **Condensation requirement (2026-08-28):** The docs tree is capped at **fewer than 70 documents**. A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
 
@@ -135,9 +138,9 @@ A Mermaid diagram[^mermaid] is required whenever the text describes any of:
 
 The Mermaid specification is published at <https://mermaid.js.org/>.
 
-### 4.2 DIAGRAM_ALIGNMENT metadata (required)
+### 4.2 DIAGRAM_ALIGNMENT metadata and Proposed exception
 
-Every Mermaid block MUST be followed by an HTML comment of this form:
+Every Mermaid block that describes current or implemented structure MUST be followed by an HTML comment of this form:
 
 ```html
 <!-- DIAGRAM_ALIGNMENT
@@ -149,12 +152,17 @@ status: VERIFIED | STALE | DEPRECATED
 -->
 ```
 
-The `id` is globally unique across the corpus and is registered in the diagram registry.
-The `verified_against` field MUST cite a code file, a shipping
-configuration, or an external canonical reference — not another prose
-document. This convention is imported verbatim from the Peripheral
-project's practice[^peripheral-diagrams], where it successfully prevented
-diagram drift across a 3 290-line architecture specification.
+The `id` is globally unique across the corpus and is registered in the diagram registry. Two contiguous Mermaid views of one subject MAY share the following metadata block only when the registry maps that ID to the complete source range and `verified_against` covers both views. The `verified_against` field MUST cite a code file, a shipping configuration, or an external canonical reference — not another prose document.
+
+**Operator-retained Proposed exception.** A document with `status: "Proposed"` is a future-state plan, not current-state authority. It may omit implementation `DIAGRAM_ALIGNMENT` metadata only when all three conditions hold:
+
+1. it lives under `kask/docs/plans/`;
+2. before its first Mermaid block it explicitly states at document level that it is a plan, not an implementation record, and that implementation is not yet authorized; and
+3. the Mermaid block depicts that conceptual future state rather than claiming current structure.
+
+Such a block is marked conceptual by the `Proposed` frontmatter plus that explicit document-level statement and is excluded from the implementation diagram registry until implementation begins. Once implementation begins, the document must become `Active` or be replaced by a current-state successor, and every surviving Mermaid block must gain normal implementation alignment. `Draft`, `Active`, `Deprecated`, and `Superseded` documents receive no conceptual exception: their current-state Mermaid remains strictly aligned.
+
+This convention follows the Peripheral project's Mermaid-alignment practice[^peripheral-diagrams] while preserving an explicit IS/OUGHT boundary for operator-retained plans.
 
 ### 4.3 Styling conventions
 
@@ -235,7 +243,7 @@ This ensures:
 
 ### 6.2 What belongs where
 
-For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the post-condensation tree (2026-08-28 — `plans/`, `explanation/`, `status/`, `qa/`, and `research/` were deleted; their durable content was folded into the surviving directories and each deletion is recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger):
+For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the condensed tree. `explanation/`, `status/`, `qa/`, and `research/` are not standalone top-level classes; operator-retained Proposed plans are the narrow exception and live under `kask/docs/plans/`. Every deletion remains recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger:
 
 | Content | Location |
 |---------|----------|
@@ -243,6 +251,7 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 | Foundational charters and taxonomy | `kask/docs/architecture/core/` |
 | Reference documentation (MCP servers, skills, settings) | `kask/docs/reference/` |
 | Per-crate Diataxis docs | `kask/docs/diataxis/` |
+| Operator-retained, not-yet-authorized plans (`status: "Proposed"`) | `kask/docs/plans/` |
 | Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
 | Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |
@@ -332,10 +341,10 @@ Before a document is merged:
 - [ ] Six-field metadata header present and correct
 - [ ] `MDS Categories` field present with ≥1 category
 - [ ] Every `##` section has ≥ 1 footnoted citation with URL
-- [ ] Every Mermaid block has a `DIAGRAM_ALIGNMENT` metadata comment
+- [ ] Every current-state Mermaid block has implementation `DIAGRAM_ALIGNMENT` metadata; a conceptual block is exempt only when its document satisfies all three `status: "Proposed"` conditions in §4.2
 - [ ] All internal links resolve (broken-link sweep: every relative link in the document resolves to a file in the tree — links to deleted documents fail this gate)
 - [ ] Document-count gate: the tree holds fewer than 70 documents (`find kask/docs -name '*.md' | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count
-- [ ] No aspirational content (if document is in `architecture/`)
+- [ ] No aspirational content is presented as current state; future-state material is confined to an operator-retained Proposed plan and explicitly marked under §4.2
 - [ ] `Last-Updated` date reflects the date of the final edit
 - [ ] Writing Excellence: document passes ≥ 3 of 4 perspective tests (see Appendix A §A.5)
     - [ ] Hopper (accessibility) — zero-context reader can accomplish the task
@@ -573,7 +582,7 @@ Created → Active → Superseded → Archived (git history)
 
 **Created:** An agent creates a handoff at session end. Includes: date (ISO 8601) in filename `{topic}-YYYY-MM-DD.md`, what was accomplished, what remains, key architectural decisions made, reference to predecessor handoff, recommended next steps.
 
-**Active:** A handoff is **session-scoped state, not a tree document** — the 2026-08-28 condensation removed the reserved `docs/handoffs/` and `docs/plans/` directories; the capped tree holds no handoff class. A handoff lives only for the session (chat context or a working-tree scratch file outside `kask/docs/`), has a clear successor path, and contains state not yet encoded elsewhere (code, docs, the README lifecycle ledger).
+**Active:** A handoff is **session-scoped state, not a tree document** — the capped tree holds no handoff class. A handoff lives only for the session (chat context or a working-tree scratch file outside `kask/docs/`), has a clear successor path, and contains state not yet encoded elsewhere. The `kask/docs/plans/` directory is separate: it may contain only operator-retained formal plans with `status: "Proposed"` under §3.
 
 **Superseded:** A newer handoff in the same workstream explicitly carries forward essential state. The successor must reference the superseded handoff by filename, re-encode all essential architectural decisions, and state: "This session builds on {predecessor}, which carried state X, Y, Z". The successor removes the superseded handoff from the working tree with `git rm`.
 
@@ -594,7 +603,7 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 | No handoff scratch file survives its session without a successor | Manual review |
 | Every handoff must reference its predecessor (if continuing workstream) | Manual review |
 | Superseded handoffs are deleted, not parked in the docs tree | Policy; count gate catches strays |
-| Handoffs never contain forward-looking plans — durable plans are folded into active architecture documents with the deletion recorded in the README ledger | Manual review |
+| Handoffs never contain forward-looking plans — an operator-retained formal plan lives under `kask/docs/plans/` with `status: "Proposed"`; other durable decisions are folded into current-state architecture with deletion recorded in the README ledger | Manual review |
 | No YAML frontmatter required (handoffs are transient, not formal docs) | Deliberate exclusion |
 
 ### B.5 Relationship to Other Lifecycle Policies
@@ -602,7 +611,7 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 - **DOCUMENTATION_STANDARDS.md** governs formal documents with frontmatter. Handoffs skip frontmatter.
 - **MDS.md §9** governs placement of formal documents. Handoffs are not formal documents and hold no reserved directory in the capped tree.
 - **The README lifecycle ledger** records fold-and-delete decisions for anything that transits through a handoff into (or out of) the tree.
-- **Forward-looking work** lives inside active architecture documents (or the workstream's own tooling), not in a reserved plans directory.
+- **Forward-looking work** lives in the workstream's tooling by default. When the operator explicitly retains a formal review artifact, it lives under `kask/docs/plans/` with `status: "Proposed"` and the §4.2 conceptual-diagram rule.
 
 ### B.6 Verification
 

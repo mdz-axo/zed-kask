@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 version: "2.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,101 +10,116 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 11 MCP servers are launched as child processes over stdio by zed's `context_server` host (`BUILT_IN_MCP_SERVERS`, `kask/crates/kask_bridge/src/mcp_servers.rs:55-503`).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 11 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs:52-506`).
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D52 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), whose current range is D1–D56 (`DIVERGENCE.md:125-186`; retired numbers are retained and never reused).
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 cross-cutting crate sets (36 artifacts).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-15; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
+
+**Corpus size:** 63 files under `kask/docs/` on 2026-09-15, within the fewer-than-70 cap.
 
 ## Architecture
 
 | Document | Description |
 | --- | --- |
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D52 integration seams, composition root, crate inventory, deletion history. |
-| [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md) | **D28** — the canonical path layout for all persistent kask artifacts (memory DBs, curator DBs, MCP server DBs, skills registry, archived threads). |
-| [`memory-system-specification.md`](architecture/memory-system-specification.md) | **Memory system spec** — schema, ingestion, recall, consolidation, decay, hygiene tools, sovereignty, design rationale, embedded diagrams. |
-| [`skills-and-composition.md`](architecture/skills-and-composition.md) | **Agent system** — the four prompt surfaces and their upstream divergences; skill anatomy, body-injection model, composition principles, testing. |
-| [`functional-interaction-spec.md`](architecture/functional-interaction-spec.md) | **Division of Responsibilities** — the operator/agent working agreement (four moves); designed against D40 and referenced from `crates/agent/src/templates.rs`. |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D56 integration authority, composition root, crate inventory, deletion history. |
+| [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md) | **D28** — canonical path layout for persistent Kask artifacts. |
+| [`memory-system-specification.md`](architecture/memory-system-specification.md) | **Memory system specification** — schema, ingestion, recall, consolidation, decay, hygiene, sovereignty, and embedded diagrams. |
+| [`skills-and-composition.md`](architecture/skills-and-composition.md) | **Agent system** — prompt surfaces, skill body injection, composition principles, and testing. |
+| [`functional-interaction-spec.md`](architecture/functional-interaction-spec.md) | **Division of Responsibilities** — operator/product-manager and agent/program-manager working agreement. |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
-| [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |
-| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification (5-category taxonomy, Composition Root: 18 surviving crates, 11 MCP servers). |
-| [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Documentation standards (frontmatter, Mermaid-First, Sourced-Ideas, Writing Excellence). |
+| [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |
+| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 18 library/composition crates, and 11 MCP servers. |
+| [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, lifecycle, Mermaid alignment, citation, and writing standards, including operator-retained Proposed plans. |
 
 ## Reference
 
 | Document | Description |
 | --- | --- |
-| [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation span catalog. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 11 built-in servers, 377 `#[tool]` methods fleet-wide, forecasting-stack overview. |
-| [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, portfolio. |
-| [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather→process→output pipeline. |
-| [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) | Media server — gallery, image/video/audio generation and processing, jobs, workflows (80 tools). |
+| [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation tracing, persisted records, and actual MCP outcome paths. |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 11 built-in servers and the fleet tool surface. |
+| [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, and portfolio analysis. |
+| [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline. |
+| [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) | Media server — gallery, generation, transcription, jobs, and workflows. |
 | [`reference/mcp-servers/portfolio.md`](reference/mcp-servers/portfolio.md) | Portfolio server — transaction-ledger portfolio store. |
-| [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration, economic data. |
-| [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web search/extraction, RSS feeds, evidence scoring, research-run ledger, paper identity (26 tools). |
+| [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
+| [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline. |
-| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator, local substrate (87 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Skill, template, and bundle registry — 77 skills, body-injection model. |
-| [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings reference. |
-| [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Ontology bridge API reference. |
-| [`reference/lora-training-catalog.md`](reference/lora-training-catalog.md) | LoRA training method/gate/harness catalog. |
-| [`reference/upstream-rebase-process.md`](reference/upstream-rebase-process.md) | Upstream rebase management process + removal principles (§9) for the seam. |
+| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (87 tools). |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 77 skills, 67 template namespaces, and 325 `.j2` resources. |
+| [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
+| [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
+| [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Published-vocabulary bridge, exact term resolver, and `onto_anchor` ladder. |
+| [`reference/lora-training-catalog.md`](reference/lora-training-catalog.md) | LoRA training method, gate, harness, and nine-tool catalog. |
+| [`reference/upstream-rebase-process.md`](reference/upstream-rebase-process.md) | Upstream rebase process and removal principles for D1–D56. |
 
 ## Diagrams
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry — 101 unique diagram IDs: 31 in the 5 consolidated files + 73 inline in per-crate and reference docs (3 IDs appear in both sets). |
-| [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture: CMP research pipeline, constraint-forces skills, ontology bridge, skill/MCP/Lisp seam, credential resolution, tool port, event store, viz core. |
-| [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban: task status and move-controller state machines. |
-| [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm: architecture, feedback loops, PDCA cascade, steering sequence, panel modes, server class. |
-| [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | UI widgets: graph, kanban, portfolio, prediction-markets, scenarios, swarm. |
-| [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP tool dispatch: runtime invoke flow, tool-call sequence, CMP tool-call flow. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 98 current `DIAGRAM_ALIGNMENT` records representing 97 unique IDs; 31 records are in the five consolidated files and 67 are inline. `DIAG-CAP-002` intentionally occurs at two current locations. |
+| [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
+| [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines. |
+| [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
+| [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
+| [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
+
+The operator-retained Proposed LogiSheets plan contains one explicitly conceptual future-state Mermaid block. Under [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3 and §4.2, it is not an implementation registry entry until implementation begins.
 
 ## Document lifecycle ledger
 
-Per `DOCUMENTATION_STANDARDS.md` §3 (Lifecycle). The 2026-08-28 condensation
-reduced the tree from 120 to 69 documents (cap: <70); four documents added
-since (functional-interaction-spec, research-server-capability-plan,
-media_panel reference, research server reference) brought it to 73, and the
-2026-09-09 realignment returned it to 69. Every deletion is
-recorded here with its successor; git history preserves full content.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 63 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 
 | Artifact | Successor |
 | --- | --- |
-| `plans/` (10 files) | Point-in-time plans and implemented designs: swarm plans → `diataxis/swarm_system/`; fact-checking design → `grounding-verify`/`falsifiability`/`hypothesis-framer` skills; memory plans → `architecture/memory-system-specification.md`; thread-hooks refactor (IMPLEMENTED), audits, deferred Nebius draft → git history. |
-| `explanation/` (13 files) | `skills-and-composition.md` → `architecture/`; `memory-system.md` → folded into `architecture/memory-system-specification.md`; `forecasting-and-scenarios.md` → folded into `reference/mcp-servers/README.md`; the rest duplicated diataxis/reference coverage or linked to non-existent diagrams → git history. |
-| `architecture/AGENT_SYSTEM_PROMPT.md` | Folded into `architecture/skills-and-composition.md` (Part I). |
-| `architecture/memory-system-and-therapy.md` | Folded into `architecture/memory-system-specification.md` (§9–§11). |
-| `architecture/salience-specification.md` | Described an unimplemented salience model; the implemented surface (`word_frequencies`) is documented in `diataxis/hkask-condenser/reference.md`. |
-| `architecture/hkask-types-core-domain-split.md` | Draft ADR, never accepted; `hkask-types` remains one crate. |
-| `architecture/core/scenarios-companies-bridge.md` | Folded into `reference/mcp-servers/companies.md` (§ Scenarios ↔ Companies Bridge). |
-| `diagrams/` (25 of 28 files) | Consolidated into 5 domain files (see Diagrams above); 3 memory diagrams folded into `architecture/memory-system-specification.md`. |
-| `REFRESH_TRIAGE.md` | Superseded by this ledger. |
+| `plans/` (10 files) | Point-in-time plans and implemented designs: swarm plans → `diataxis/swarm_system/`; fact-checking design → `grounding-verify`/`falsifiability`/`hypothesis-framer` skills; memory plans → `architecture/memory-system-specification.md`; other completed or abandoned work → git history. |
+| `explanation/` (13 files) | Durable content folded into `architecture/skills-and-composition.md`, `architecture/memory-system-specification.md`, `reference/mcp-servers/README.md`, and surviving Diataxis/reference coverage. |
+| `architecture/AGENT_SYSTEM_PROMPT.md` | `architecture/skills-and-composition.md` Part I. |
+| `architecture/memory-system-and-therapy.md` | `architecture/memory-system-specification.md` §§9–11. |
+| `architecture/salience-specification.md` | Implemented `word_frequencies` surface in `diataxis/hkask-condenser/reference.md`. |
+| `architecture/hkask-types-core-domain-split.md` | No accepted successor architecture; `hkask-types` remains one crate, with current coverage in `diataxis/hkask-types/`. |
+| `architecture/core/scenarios-companies-bridge.md` | `reference/mcp-servers/companies.md` scenarios/companies bridge coverage. |
+| `diagrams/` (25 of 28 files) | Five consolidated files under `diagrams/`; three memory diagrams moved into `architecture/memory-system-specification.md`. |
+| `REFRESH_TRIAGE.md` | This lifecycle ledger. |
 
-### Deleted 2026-09-09 (doc-update realignment — implemented design / stale duplicate / seam fold)
+### Deleted 2026-09-09 (doc-update realignment)
 
 | Artifact | Successor |
 | --- | --- |
-| `architecture/research-server-capability-plan.md` | Implemented design (all six capability commits landed 2026-09-09). Implementation record + pending-ratification deviations folded into `reference/mcp-servers/research.md` (§ Capability adoption record); full design rationale in git history. |
-| `reference/README.md` | Stale navigation duplicate of this portal's Reference table (claimed 19 crates / 10 servers / D1–D28 / companies=54). This README is the index. |
-| `reference/upstream-removal-principles.md` | Folded into `reference/upstream-rebase-process.md` §9 (Removal principles); MCDA/metacognition derivation in git history. |
-| `diataxis/hkask-bridge-ontology/how-to.md` | Folded into `reference/ontology-bridge.md` (§ How to tag spans with this crate); the diataxis set was single-file with its Reference column already pointing there. `diataxis/INDEX.md` moves the crate to out-of-scope. |
+| `architecture/research-server-capability-plan.md` | Implemented record in `reference/mcp-servers/research.md` under Capability adoption record. |
+| `reference/README.md` | This portal's Reference table. |
+| `reference/upstream-removal-principles.md` | `reference/upstream-rebase-process.md` §9. |
+| `diataxis/hkask-bridge-ontology/how-to.md` | `reference/ontology-bridge.md` under How to use the bridge and term resolver. |
+
+### Deleted 2026-09-15 (tutorial folds and implemented inference plan)
+
+The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`; each successor below is the retained task-oriented document for that set. The implemented inference plan was removed in `5322725bdbaa067580943c2bf33634c3640d8341`.
+
+| Deleted artifact | Named successor |
+| --- | --- |
+| `diataxis/hkask-condenser/tutorial.md` | `diataxis/hkask-condenser/how-to.md` |
+| `diataxis/hkask-inference/tutorial.md` | `diataxis/hkask-inference/how-to.md` |
+| `diataxis/hkask-regulation/tutorial.md` | `diataxis/hkask-regulation/how-to.md` |
+| `diataxis/hkask-storage/tutorial.md` | `diataxis/hkask-storage/how-to.md` |
+| `diataxis/hkask-tool-port/tutorial.md` | `diataxis/hkask-tool-port/reference.md` |
+| `diataxis/hkask-types/tutorial.md` | `diataxis/hkask-types/how-to.md` |
+| `diataxis/kask_bridge/tutorial.md` | `diataxis/kask_bridge/how-to.md` |
+| `diataxis/swarm_system/tutorial.md` | `diataxis/swarm_system/how-to.md` |
+| `plans/inference-regulation-loop-completion-plan.md` | Implemented inference-resilience behavior in `kask/crates/kask_bridge/src/inference_resilience.rs` and current operational explanation in `kask/docs/diataxis/hkask-regulation/explanation.md`. |
 
 ### Verification gate
 
-- [x] Six-field metadata header present and correct on all active files
-- [x] `mds_categories` field present with ≥1 category
-- [x] Every Mermaid block has `DIAGRAM_ALIGNMENT` metadata
-- [x] All internal links resolve
-- [x] No aspirational content in `architecture/`
-- [x] `last_updated` reflects final edit date (2026-09-09)
-- [x] Document count < 70 (69)
+- [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document.
+- [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
+- [ ] Global internal-link gate is blocked by two pre-existing links outside this edit boundary: `kask/docs/diataxis/hkask-tool-port/explanation.md:147` and `kask/docs/diataxis/hkask-tool-port/reference.md:258` still target the deleted `tutorial.md`; both should target `reference.md` or omit the self-link in a separately authorized edit.
+- [x] Diagram metadata has unique-ID/location registry parity.
+- [x] Edited citations use full repository-relative paths.
+- [x] Document count is 63 and remains fewer than 70.
 
 ## See also
 
-- [`DIVERGENCE.md`](../../DIVERGENCE.md) — the fork's divergence manifest and upstream-sync runbook (repo root).
-- [`diataxis/INDEX.md`](diataxis/INDEX.md) — per-crate Diataxis documentation set.
-- [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) — cross-cutting Mermaid diagram registry.
+- [`DIVERGENCE.md`](../../DIVERGENCE.md) — authoritative D1–D56 divergence manifest.
+- [`diataxis/INDEX.md`](diataxis/INDEX.md) — retained Diataxis sets.
+- [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) — Mermaid verification registry.

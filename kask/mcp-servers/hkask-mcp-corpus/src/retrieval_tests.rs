@@ -149,7 +149,7 @@ async fn tagging_persists_method_signals_without_trusting_the_model() {
         return;
     }
     for response in [
-        json!([["item-0", [], ["quantity", "process", "assertion"]]]).to_string(),
+        json!([["item-0", [], ["quantity", "process", "assertion"], null]]).to_string(),
         "not JSON".to_string(),
     ] {
         let directory = fixture();

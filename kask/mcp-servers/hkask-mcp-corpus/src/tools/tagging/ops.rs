@@ -8,17 +8,20 @@ use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
 };
 use crate::{
-    Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
-    extract_json_from_response, json, normalize_concept, read_jsonl_stream,
-    render_docproc_template, tool, tool_router,
+    Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool, json,
+    normalize_concept, read_jsonl_stream, tool, tool_router,
 };
 use hkask_bridge_ontology::term_resolution::{
     CanonicalTerms, TERM_RESOLUTION_PROTOCOL, canonicalize_terms,
 };
 use hkask_inference::model_constants::classifier_model;
+use hkask_inference::passage_tagging::{
+    ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
+    render_deployed_tagging_prompt,
+};
 use hkask_types::corpus::{ClassificationOutcome, ExpertiseLevel, TaggedChunk};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 /// Maximum length of a single concept string after normalization.
@@ -39,15 +42,6 @@ struct InputChunk {
     word_count: usize,
 }
 
-/// Non-authoritative content judgments extracted by the classifier.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-struct CandidateTags {
-    /// Exceptional dimensions only; the server always adds what + how.
-    dimensions: Vec<String>,
-    /// Descriptive terms only. The model never assigns namespaces or URIs.
-    candidate_terms: Vec<String>,
-}
-
 /// Validated structural judgments plus server-resolved ontology terms.
 #[derive(Debug, Clone)]
 struct ValidatedTags {
@@ -58,12 +52,23 @@ struct ValidatedTags {
     expertise_level: ExpertiseLevel,
 }
 
-/// Compact wire tuple: [short correlation ID, exceptional dimensions, terms].
-#[derive(Deserialize)]
-struct TagResponse(String, Vec<String>, Vec<String>);
-
 fn correlation_id(index: usize) -> String {
     format!("item-{index}")
+}
+
+fn tagging_request(chunks: &[InputChunk]) -> Result<PassageTaggingRequest, String> {
+    let passages = chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| Passage::new(correlation_id(index), chunk.text.clone()))
+        .collect();
+    PassageTaggingRequest::new(
+        passages,
+        vec!["who", "when", "where", "why"],
+        vec!["what", "how"],
+        ExpertiseMode::ServerDerived,
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Accept a response only when it covers exactly this batch's correlation set.
@@ -73,67 +78,32 @@ fn correlate_tags(
     text: &str,
     chunks: &[InputChunk],
 ) -> Result<(HashMap<String, ValidatedTags>, bool), String> {
-    let cleaned = extract_json_from_response(text);
-    let (value, repaired_outer_array) = parse_tagging_json(&cleaned)?;
-    let entries = match value {
-        serde_json::Value::Array(entries) => entries,
-        _ => return Err("expected outer tagging JSON array".into()),
-    };
-    let expected = chunks
+    let request = tagging_request(chunks)?;
+    let (response, repaired_outer_array) = repair_missing_outer_array(text);
+    let tags = parse_tagging_response(&request, &response).map_err(|error| error.to_string())?;
+    let correlated = chunks
         .iter()
-        .enumerate()
-        .map(|(index, chunk)| (correlation_id(index), chunk.entity_ref.as_str()))
-        .collect::<HashMap<_, _>>();
-    let mut seen = HashSet::new();
-    let mut correlated = HashMap::new();
-    for entry in entries {
-        let TagResponse(correlation_id, dimensions, candidate_terms) =
-            serde_json::from_value(entry)
-                .map_err(|error| format!("invalid tagging JSON entry: {error}"))?;
-        let Some(entity_ref) = expected.get(&correlation_id) else {
-            return Err(format!("unknown correlation_id: {correlation_id}"));
-        };
-        if !seen.insert(correlation_id.clone()) {
-            return Err(format!("duplicate correlation_id: {correlation_id}"));
-        }
-        correlated.insert(
-            (*entity_ref).to_string(),
-            validate_candidate_tags(CandidateTags {
-                dimensions,
-                candidate_terms,
-            })?,
-        );
-    }
-    let omitted = expected
-        .keys()
-        .filter(|id| !seen.contains(*id))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !omitted.is_empty() {
-        return Err(format!("omitted correlation_id(s): {}", omitted.join(", ")));
-    }
+        .zip(tags)
+        .map(|(chunk, tags)| {
+            validate_candidate_tags(tags).map(|validated| (chunk.entity_ref.clone(), validated))
+        })
+        .collect::<Result<HashMap<_, _>, _>>()?;
     Ok((correlated, repaired_outer_array))
 }
 
-/// Repair only the observed complete-tuples/missing-outer-bracket response.
-/// Exact correlation and field validation still run after this parse. Any
-/// semantic truncation remains invalid because one appended bracket cannot
-/// complete an inner tuple, array, or string.
-fn parse_tagging_json(cleaned: &str) -> Result<(serde_json::Value, bool), String> {
-    match serde_json::from_str(cleaned) {
-        Ok(value) => Ok((value, false)),
+/// Preserve the corpus path's one narrow provider repair: complete tuples that
+/// are missing only the outer array's final bracket. The shared parser still
+/// enforces the exact tuple shape, correlation set, and field policy afterward.
+fn repair_missing_outer_array(text: &str) -> (String, bool) {
+    let cleaned = hkask_types::json_extract::extract_json_from_response(text);
+    match serde_json::from_str::<serde_json::Value>(&cleaned) {
+        Ok(_) => (cleaned, false),
         Err(error) if error.is_eof() && cleaned.trim_start().starts_with('[') => {
             let mut repaired = cleaned.trim_end().to_string();
             repaired.push(']');
-            serde_json::from_str(&repaired)
-                .map(|value| (value, true))
-                .map_err(|repair_error| {
-                    format!(
-                        "invalid tagging JSON: {error}; outer-array repair failed: {repair_error}"
-                    )
-                })
+            (repaired, true)
         }
-        Err(error) => Err(format!("invalid tagging JSON: {error}")),
+        Err(_) => (cleaned, false),
     }
 }
 
@@ -213,15 +183,7 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
 /// Validate classifier judgments and resolve descriptive terms through the
 /// shared published-ontology authority. Malformed responses fail visibly;
 /// values are never silently promoted through fallback defaults.
-fn validate_candidate_tags(tags: CandidateTags) -> Result<ValidatedTags, String> {
-    if tags
-        .dimensions
-        .iter()
-        .any(|dimension| !matches!(dimension.as_str(), "who" | "when" | "where" | "why"))
-    {
-        return Err("dimensions must contain only exceptional 5W1H values".to_string());
-    }
-
+fn validate_candidate_tags(tags: PassageTag) -> Result<ValidatedTags, String> {
     let candidate_terms = trim_and_cap_candidate_terms(&tags.candidate_terms);
     if candidate_terms.len() < 3 {
         return Err("candidate_terms must contain 3-5 descriptive terms".to_string());
@@ -350,36 +312,9 @@ impl CorpusServer {
                 let handle = tokio::spawn(async move {
                     let slot = limiter.acquire().await;
 
-                    // Render the batch tagging prompt from the Jinja2 template.
-                    // The template handles the system prompt, passage formatting,
-                    // and output contract — keeping the prompt versioned and
-                    // maintainable rather than inlined as a string literal.
-                    //
-                    // Pre-render the passages block as a plain string because
-                    // render_docproc_template accepts HashMap<&str, String> —
-                    // passing a JSON-serialized array would make the template's
-                    // {% for %} loop iterate over characters, not elements.
-                    let passages_block: String = batch_chunks
-                        .iter()
-                        .enumerate()
-                        .map(|(i, chunk)| {
-                            format!(
-                                "--- Passage {} ({}) ---\n{}\n",
-                                i + 1,
-                                correlation_id(i),
-                                chunk.text
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let mut template_vars: std::collections::HashMap<&str, String> =
-                        std::collections::HashMap::new();
-                    template_vars.insert("passages_block", passages_block);
-                    template_vars.insert("batch_count", batch_len.to_string());
-                    let prompt = render_docproc_template("tag-chunks-batch", &template_vars);
-                    if prompt.is_empty() {
-                        return Err("tag-chunks-batch template missing or failed to render".to_string());
-                    }
+                    let tagging_request = tagging_request(&batch_chunks)?;
+                    let prompt = render_deployed_tagging_prompt(&tagging_request)
+                        .map_err(|error| error.to_string())?;
 
                     let params = LLMParameters {
                         temperature: 0.1,

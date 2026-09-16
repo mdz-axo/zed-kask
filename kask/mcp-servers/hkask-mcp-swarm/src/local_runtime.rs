@@ -398,6 +398,7 @@ impl LocalSwarmRuntime {
             grounding: None,
             completeness: None,
             reliance: None,
+            memory: None,
         }
     }
 
@@ -723,6 +724,10 @@ pub struct LocalDelegateResult {
     /// — can I use this answer? — answered by one field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reliance: Option<serde_json::Value>,
+    /// Durable narrative-memory accounting. Memory is an enhancement: any
+    /// degradation is reported here but never changes delegation success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::local_knowledge::TurnIngestionReport>,
 }
 
 impl LocalDelegateResult {
@@ -765,6 +770,9 @@ impl LocalDelegateResult {
         }
         if let Some(reliance) = &self.reliance {
             entry["reliance"] = reliance.clone();
+        }
+        if let Some(memory) = &self.memory {
+            entry["memory"] = serde_json::to_value(memory).unwrap_or(serde_json::Value::Null);
         }
         entry
     }
@@ -923,5 +931,43 @@ mod contract_check_tests {
         let input = input.unwrap();
         assert_eq!(input["status"], "unverified_unsupported");
         assert!(input["unsupported"].as_array().unwrap().len() > 0);
+    }
+}
+
+#[cfg(test)]
+mod local_knowledge_result_tests {
+    use super::LocalDelegateResult;
+    use crate::local_knowledge::{MemoryDegradation, TaggingOutcome, TurnIngestionReport};
+
+    /// expect: A successful delegation exposes narrative-memory degradation in every shared result shape.
+    #[test]
+    fn local_knowledge_degradation_is_exposed_on_delegation_result() {
+        let mut result: LocalDelegateResult = serde_json::from_value(serde_json::json!({
+            "agent_id": "writer",
+            "response": "answer",
+            "model": "model",
+            "tokens_used": 10,
+            "latency_ms": 5,
+            "tool_calls": [],
+        }))
+        .expect("minimal delegation result deserializes");
+        result.memory = Some(TurnIngestionReport {
+            attempted: 1,
+            stored: 1,
+            embedded: 0,
+            failed: 1,
+            tagging: TaggingOutcome::Degraded("classifier unavailable".to_string()),
+            degradations: vec![MemoryDegradation::EmbeddingModelUnconfigured],
+        });
+
+        let entry = result.to_result_json(false);
+        assert_eq!(entry["ok"], true);
+        assert_eq!(entry["memory"]["attempted"], 1);
+        assert_eq!(entry["memory"]["failed"], 1);
+        assert_eq!(entry["memory"]["tagging"]["status"], "degraded");
+        assert_eq!(
+            entry["memory"]["degradations"][0]["kind"],
+            "embedding_model_unconfigured"
+        );
     }
 }

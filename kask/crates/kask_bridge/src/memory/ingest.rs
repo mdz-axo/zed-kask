@@ -22,6 +22,10 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
+use hkask_inference::passage_tagging::{
+    ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
+    render_deployed_tagging_prompt,
+};
 use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
 use hkask_types::template::LLMParameters;
@@ -572,39 +576,39 @@ fn structural_ontology(thread_id: &str, turn_ms: u128, chunk_index: usize) -> HM
     }
 }
 
-/// Content tags for one chunk, as parsed from the classifier model's JSON.
-#[derive(Debug, Default, PartialEq)]
-struct ChunkContentTags {
-    dimensions: Vec<String>,
-    candidate_terms: Vec<String>,
-    expertise_level: hkask_types::corpus::ExpertiseLevel,
-}
-
-/// The content dimensions the LLM may add. The structural four (who/when/
-/// where/how) are already applied; `what` and `why` are the content-derived
-/// pair. Anything else the model emits is dropped.
-const CONTENT_DIMENSION_ALLOWLIST: [&str; 2] = ["what", "why"];
-
-const TAGGING_SYSTEM_PROMPT: &str = "You are a semantic candidate extractor for a memory system. For each numbered passage, return one JSON object with these fields:\n\
-- \"dimensions\": array, subset of [\"what\", \"why\"] — what the passage is about, why it matters\n\
-- \"candidate_terms\": 3-5 descriptive terms supported by the passage; these also become Dublin Core subjects\n\
-- \"expertise_level\": one of \"practitioner\", \"analyst\", \"researcher\"\n\
-Never choose an ontology namespace, prefix, URI, or fallback tier; the server resolves published anchors deterministically. Respond with ONLY a JSON array containing exactly one object per passage, in passage order. No prose, no code fences.";
-
-/// Tag the turn's chunks with the classifier model via the app-wide
-/// inference port. One batched call per turn. Returns `None` on any
-/// degradation (port not wired, model not configured, call failed,
-/// unparseable or length-mismatched response) — the caller falls back to
-/// structural-only tags. A length mismatch distrusts the whole batch:
-/// index-mapping ambiguity makes partial tags worse than none (the corpus
-/// tag_batch_size trap was silent partial tagging).
+/// Tag the turn's chunks with the classifier model via the app-wide inference
+/// port. Rendering and correlation are shared; structural ontology,
+/// degradation, and persistence remain bridge-owned.
 async fn tag_chunks_with_llm(
     ctx: &WriteContext<'_>,
     chunk_texts: &[String],
-) -> Option<Vec<ChunkContentTags>> {
+) -> Option<Vec<PassageTag>> {
     let classifier_model = ctx.classifier_model?;
     let port = crate::inference_chat::global_inference_port()?;
-    let prompt = build_tag_prompt(chunk_texts);
+    let passages = chunk_texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| Passage::new(format!("item-{index}"), text.clone()))
+        .collect();
+    let request = match PassageTaggingRequest::new(
+        passages,
+        vec!["what", "why"],
+        vec!["who", "when", "where", "how"],
+        ExpertiseMode::ModelAssigned,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            tracing::warn!(target: "reg.memory", error = %error, "Invalid chunk tagging request — structural tags only");
+            return None;
+        }
+    };
+    let prompt = match render_deployed_tagging_prompt(&request) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            tracing::warn!(target: "reg.memory", error = %error, "Required chunk tagging template unavailable — structural tags only");
+            return None;
+        }
+    };
     let parameters = LLMParameters {
         temperature: 0.1,
         top_p: 0.9,
@@ -614,31 +618,31 @@ async fn tag_chunks_with_llm(
         min_p: 0.0,
         typical_p: 0.0,
         seed: None,
-        // Tagging needs output tokens, not reasoning tokens.
         thinking_allowed: false,
         adapter: None,
         system_prompt: None,
     };
-    let result = port
+    match port
         .generate_with_model(&prompt, &parameters, Some(classifier_model), None)
-        .await;
-    match result {
-        Ok(result) => {
-            let tags = parse_chunk_tags(&result.text, chunk_texts.len());
-            if tags.is_none() {
+        .await
+    {
+        Ok(result) => match parse_tagging_response(&request, &result.text) {
+            Ok(tags) => Some(tags),
+            Err(error) => {
                 tracing::warn!(
                     target: "reg.memory",
                     model = %result.model,
                     expected = chunk_texts.len(),
-                    "Chunk tagging response unparseable or length-mismatched — structural tags only"
+                    error = %error,
+                    "Chunk tagging response rejected — structural tags only"
                 );
+                None
             }
-            tags
-        }
-        Err(e) => {
+        },
+        Err(error) => {
             tracing::warn!(
                 target: "reg.memory",
-                error = %e,
+                error = %error,
                 "Chunk tagging call failed — structural tags only"
             );
             None
@@ -646,103 +650,10 @@ async fn tag_chunks_with_llm(
     }
 }
 
-fn build_tag_prompt(chunk_texts: &[String]) -> String {
-    let mut prompt = String::from(TAGGING_SYSTEM_PROMPT);
-    prompt.push_str("\n\n");
-    for (index, text) in chunk_texts.iter().enumerate() {
-        prompt.push_str(&format!("--- Passage {} ---\n{}\n\n", index + 1, text));
-    }
-    prompt.push_str(&format!(
-        "Return the JSON array of {} objects now.",
-        chunk_texts.len()
-    ));
-    prompt
-}
-
-/// Parse the tagging response. `extract_json_from_response` handles fenced
-/// and embedded JSON; a single object (the model returning one object for
-/// one passage) is wrapped into an array. Returns `None` when the response
-/// is unparseable or the object count doesn't match the passage count.
-fn parse_chunk_tags(response: &str, expected: usize) -> Option<Vec<ChunkContentTags>> {
-    let raw = hkask_types::json_extract::extract_json_from_response(response);
-    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let items = match parsed {
-        serde_json::Value::Array(items) => items,
-        single @ serde_json::Value::Object(_) => vec![single],
-        _ => return None,
-    };
-    if items.len() != expected {
-        return None;
-    }
-    items.iter().map(ChunkContentTags::from_value).collect()
-}
-
-impl ChunkContentTags {
-    /// Parse the classifier's closed structural contract and raw candidate
-    /// terms. Any malformed field distrusts the batch rather than silently
-    /// manufacturing a classified record.
-    fn from_value(value: &serde_json::Value) -> Option<Self> {
-        let dimensions = string_array_field(value, "dimensions");
-        if dimensions
-            .iter()
-            .any(|dimension| !CONTENT_DIMENSION_ALLOWLIST.contains(&dimension.as_str()))
-        {
-            return None;
-        }
-        let candidate_terms: Vec<String> = string_array_field(value, "candidate_terms")
-            .into_iter()
-            .take(5)
-            .collect();
-        if candidate_terms.is_empty() {
-            return None;
-        }
-        let expertise_level = match value
-            .get("expertise_level")
-            .and_then(|field| field.as_str())
-            .map(str::trim)
-        {
-            Some("practitioner") => hkask_types::corpus::ExpertiseLevel::Practitioner,
-            Some("analyst") => hkask_types::corpus::ExpertiseLevel::Analyst,
-            Some("researcher") => hkask_types::corpus::ExpertiseLevel::Researcher,
-            _ => return None,
-        };
-        Some(Self {
-            dimensions,
-            candidate_terms,
-            expertise_level,
-        })
-    }
-}
-
-/// Extract a field as a list of trimmed, non-empty strings, accepting either
-/// a JSON array of strings or a single string.
-fn string_array_field(value: &serde_json::Value, field: &str) -> Vec<String> {
-    value
-        .get(field)
-        .map(string_or_array)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-fn string_or_array(value: &serde_json::Value) -> Vec<String> {
-    match value {
-        serde_json::Value::String(s) => vec![s.trim().to_string()],
-        serde_json::Value::Array(items) => items
-            .iter()
-            .filter_map(|item| item.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// Merge classifier judgments onto structural provenance. Candidate terms are
 /// preserved, while namespaces and canonical concepts come only from the
 /// shared published-ontology resolver.
-fn merge_content_tags(mut ontology: HMemOntology, tags: &ChunkContentTags) -> HMemOntology {
+fn merge_content_tags(mut ontology: HMemOntology, tags: &PassageTag) -> HMemOntology {
     for dimension in &tags.dimensions {
         if !ontology.dimensions.contains(dimension) {
             ontology.dimensions.push(dimension.clone());
@@ -753,7 +664,7 @@ fn merge_content_tags(mut ontology: HMemOntology, tags: &ChunkContentTags) -> HM
     ontology.candidate_terms = canonical.candidate_terms;
     ontology.ontology_tags = canonical.ontology_tags;
     ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
-    ontology.expertise_level = Some(tags.expertise_level);
+    ontology.expertise_level = tags.expertise;
     ontology
 }
 
@@ -811,60 +722,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_chunk_tags_accepts_array_and_single_object() {
-        let array = r#"[{"dimensions":["what"],"candidate_terms":["corporation"],"expertise_level":"researcher"}]"#;
-        let tags = parse_chunk_tags(array, 1).expect("array parses");
-        assert_eq!(tags[0].candidate_terms, vec!["corporation"]);
-        assert_eq!(
-            tags[0].expertise_level,
-            hkask_types::corpus::ExpertiseLevel::Researcher
-        );
-
-        let single =
-            r#"{"dimensions":["what"],"candidate_terms":["memory"],"expertise_level":"analyst"}"#;
-        assert!(parse_chunk_tags(single, 1).is_some(), "single object wraps");
-    }
-
-    #[test]
-    fn parse_chunk_tags_rejects_length_mismatch_and_garbage() {
-        let short = r#"[{"dimensions":["what"]}]"#;
-        assert!(
-            parse_chunk_tags(short, 2).is_none(),
-            "count mismatch distrusts mapping"
-        );
-        assert!(parse_chunk_tags("no json here", 1).is_none());
-        assert!(
-            parse_chunk_tags("[]", 1).is_none(),
-            "empty array is a mismatch"
-        );
-    }
-
-    #[test]
-    fn parse_chunk_tags_rejects_old_or_malformed_classifier_contracts() {
-        for raw in [
-            r#"[{"dimensions":["what"],"dc_subject":["memory"],"ontology_tags":{"fibo":["corporation"]},"expertise_level":"analyst"}]"#,
-            r#"[{"dimensions":["what","spurious"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"analyst"}]"#,
-            r#"[{"dimensions":["what"],"dc_subject":["memory"],"candidate_terms":["corporation"],"expertise_level":"wizard"}]"#,
-        ] {
-            assert!(parse_chunk_tags(raw, 1).is_none(), "must reject {raw}");
-        }
-    }
-
-    #[test]
     fn merge_content_tags_uses_shared_resolution_and_separate_expertise() {
         let base = structural_ontology("t1", 1, 0);
-        let tags = ChunkContentTags {
+        let tags = PassageTag {
+            correlation_id: "item-0".to_string(),
             dimensions: vec!["what".to_string(), "why".to_string()],
-            candidate_terms: vec!["corporation".to_string(), "unknown idea".to_string()],
-            expertise_level: hkask_types::corpus::ExpertiseLevel::Researcher,
+            candidate_terms: vec![
+                "corporation".to_string(),
+                "unknown idea".to_string(),
+                "memory".to_string(),
+            ],
+            expertise: Some(hkask_types::corpus::ExpertiseLevel::Researcher),
         };
         let merged = merge_content_tags(base, &tags);
         assert_eq!(
             merged.dimensions,
             vec!["how", "when", "who", "where", "what", "why"]
         );
-        assert_eq!(merged.dc_subject, ["corporation", "unknown idea"]);
-        assert_eq!(merged.candidate_terms, ["corporation", "unknown idea"]);
+        assert_eq!(merged.dc_subject, ["corporation", "unknown idea", "memory"]);
+        assert_eq!(
+            merged.candidate_terms,
+            ["corporation", "unknown idea", "memory"]
+        );
         assert_eq!(
             merged.ontology_tags["fibo"],
             [hkask_bridge_ontology::fibo::CORPORATION]

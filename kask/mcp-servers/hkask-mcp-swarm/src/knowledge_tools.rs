@@ -57,15 +57,12 @@ impl SwarmServer {
         .await
     }
 
-    /// Recall prior swarm turns from the shared knowledgebase by semantic
-    /// similarity (the episodic-memory complement to `swarm_search_knowledge_local`,
-    /// which searches the EAV graph). By default spans ALL agents and ALL
-    /// swarms — a turn any agent produced is retrievable. Pass `agent_name`
-    /// to scope the recall to one agent (fermi parity: its per-agent KG is
-    /// searched per-agent). Degrades to a `memory_unconfigured`
-    /// note when the store cannot be opened or the query cannot be embedded.
+    /// Recall prior response passages from the shared knowledgebase by semantic
+    /// similarity. By default this spans all producing agents; `agent_name`
+    /// scopes the results exactly. Each hit carries the matched passage plus its
+    /// producer, task, model, turn, and chunk provenance.
     #[tool(
-        description = "Recall prior swarm turns from the shared swarm memory by semantic similarity to a query. Spans all agents and all swarms by default (one shared knowledgebase); pass agent_name to scope the recall to one agent's turns (the per-agent analog of fermi's per-agent KG search). Returns the most similar past turns (task + response + model + producing agent). The episodic-memory complement to swarm_search_knowledge_local (which searches the EAV graph). Degrades to an empty result with a memory_unconfigured note when the store cannot be opened or the query cannot be embedded."
+        description = "Recall prior response passages from shared local swarm memory by semantic similarity. Spans all producing agents by default; pass agent_name for exact producer scope. Returns each matched passage with producer, task, model, turn, and chunk provenance. Degrades visibly when storage or query embedding is unavailable."
     )]
     pub(crate) async fn swarm_recall_local(
         &self,
@@ -100,16 +97,16 @@ impl SwarmServer {
             )
             .await
             {
-                Ok(turns) => Ok(serde_json::json!({
-                    "turns": turns,
-                    "source": "local_episodic_memory",
+                Ok(passages) => Ok(serde_json::json!({
+                    "passages": passages,
+                    "source": "local_response_passage_memory",
                     "scope": agent_scope.unwrap_or("all_agents"),
-                    "count": turns.len(),
+                    "count": passages.len(),
                     "note": "",
                 })),
                 Err(reason) => Ok(serde_json::json!({
-                    "turns": [],
-                    "source": "local_episodic_memory",
+                    "passages": [],
+                    "source": "local_response_passage_memory",
                     "scope": agent_scope.unwrap_or("all_agents"),
                     "count": 0,
                     "note": format!("memory_unconfigured: {reason}"),

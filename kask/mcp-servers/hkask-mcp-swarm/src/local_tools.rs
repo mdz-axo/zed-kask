@@ -131,6 +131,27 @@ fn record_delegation_edge(
     }
 }
 
+async fn attach_narrative_memory(
+    memory: &crate::local_knowledge::LazyLocalMemory,
+    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    task: &str,
+    result: &mut LocalDelegateResult,
+) {
+    result.memory = Some(
+        local_knowledge::ingest_turn(
+            memory,
+            inference,
+            &result.agent_id,
+            task,
+            &result.response,
+            &result.model,
+            hkask_inference::model_constants::classifier_model().as_deref(),
+            hkask_inference::model_constants::embedding_model().as_deref(),
+        )
+        .await,
+    );
+}
+
 /// Build the per-task report for one `swarm_eval_agent_local` task. Pure —
 /// takes the counted outcomes, returns the JSON entry. Extracted so the
 /// pass-rate and standard-error math is unit-testable without inference.
@@ -304,21 +325,15 @@ impl SwarmServer {
                 &result.response,
             )
             .await;
-            // Episodic turn memory (the shared knowledgebase): store the FULL
-            // turn (task + response + model) as one h_mem plus an embedding of
-            // the task, so the turn is retrievable by `swarm_recall_local` via
-            // semantic similarity across all swarms. `record_delegation` above
-            // is the stigmergy trail (fitness); this is the experience record
-            // (knowledge). Failures are logged (non-fatal) — the delegation
-            // result is returned regardless.
-            local_knowledge::ingest_turn(
+            // Narrative memory: persist bounded response passages with exact
+            // text embeddings and producer/task/model provenance. Any tagging,
+            // storage, or embedding degradation is attached to the successful
+            // delegation result rather than failing the delegation.
+            attach_narrative_memory(
                 &self.local_memory,
                 &runtime.inference(),
-                &req.agent_name,
                 &req.task,
-                &result.response,
-                &result.model,
-                hkask_inference::model_constants::embedding_model().as_deref(),
+                &mut result,
             )
             .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
@@ -395,7 +410,7 @@ impl SwarmServer {
                 }
                 for (result, (entry, agent)) in raw_results.into_iter().zip(found_context.iter()) {
                     match result {
-                        Ok(r) => {
+                        Ok(mut r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             // Stigmergy (ACO pheromone trail) — mirrors
                             // swarm_delegate_local so parallel fan-out
@@ -409,17 +424,13 @@ impl SwarmServer {
                                 &r.response,
                             )
                             .await;
-                            // Episodic turn memory (shared knowledgebase) — mirrors
-                            // the sequential path so parallel fan-out delegations
-                            // build the KB too. Non-fatal.
-                            local_knowledge::ingest_turn(
+                            // Narrative response passages build shared recall;
+                            // degradation is attached to the successful result.
+                            attach_narrative_memory(
                                 &self.local_memory,
                                 &runtime.inference(),
-                                &entry.agent_name,
                                 &entry.task,
-                                &r.response,
-                                &r.model,
-                                hkask_inference::model_constants::embedding_model().as_deref(),
+                                &mut r,
                             )
                             .await;
                             total_tokens += r.tokens_used;
@@ -460,7 +471,7 @@ impl SwarmServer {
                     continue;
                 };
                 match runtime.delegate(&agent, &entry.task).await {
-                    Ok(r) => {
+                    Ok(mut r) => {
                         self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                         // Stigmergy (ACO pheromone trail) — mirrors
                         // swarm_delegate_local so fan-out delegations
@@ -473,17 +484,13 @@ impl SwarmServer {
                             &r.response,
                         )
                         .await;
-                        // Episodic turn memory (shared knowledgebase) — mirrors
-                        // swarm_delegate_local so fan-out delegations build
-                        // the KB too. Non-fatal.
-                        local_knowledge::ingest_turn(
+                        // Narrative response passages build shared recall;
+                        // degradation is attached to the successful result.
+                        attach_narrative_memory(
                             &self.local_memory,
                             &runtime.inference(),
-                            &entry.agent_name,
                             &entry.task,
-                            &r.response,
-                            &r.model,
-                            hkask_inference::model_constants::embedding_model().as_deref(),
+                            &mut r,
                         )
                         .await;
                         total_tokens += r.tokens_used;
@@ -583,22 +590,16 @@ impl SwarmServer {
                     }
                 }
                 match runtime.delegate(&agent, &task).await {
-                    Ok(r) => {
+                    Ok(mut r) => {
                         self.validate_produces(&step.agent_name, &agent.produces, &r.response);
-                        // Episodic turn memory (shared knowledgebase) —
-                        // mirrors swarm_delegate_local so pipeline steps
-                        // build the KB too. `task` carries the
-                        // {prev_output}-substituted prompt the agent actually
-                        // received, so the recorded turn is the real input.
-                        // Non-fatal.
-                        local_knowledge::ingest_turn(
+                        // Narrative response memory uses the substituted task
+                        // as provenance and exposes any non-fatal degradation
+                        // on this pipeline result.
+                        attach_narrative_memory(
                             &self.local_memory,
                             &runtime.inference(),
-                            &step.agent_name,
                             &task,
-                            &r.response,
-                            &r.model,
-                            hkask_inference::model_constants::embedding_model().as_deref(),
+                            &mut r,
                         )
                         .await;
                         prev_output = r.response.clone();
@@ -2708,17 +2709,11 @@ impl SwarmServer {
                             &r.response,
                         )
                         .await;
-                        // Episodic turn memory (shared knowledgebase) —
-                        // mirrors swarm_delegate_local so plan-executed
-                        // delegations build the KB too. Non-fatal.
-                        local_knowledge::ingest_turn(
+                        attach_narrative_memory(
                             &self.local_memory,
                             &runtime.inference(),
-                            &entry.agent_name,
                             &entry.task,
-                            &r.response,
-                            &r.model,
-                            hkask_inference::model_constants::embedding_model().as_deref(),
+                            &mut r,
                         )
                         .await;
                         // Record on the task board.
@@ -2945,14 +2940,11 @@ impl SwarmServer {
                                 &r.response,
                             )
                             .await;
-                            local_knowledge::ingest_turn(
+                            attach_narrative_memory(
                                 &self.local_memory,
                                 &runtime.inference(),
-                                &entry.agent_name,
                                 &entry.task,
-                                &r.response,
-                                &r.model,
-                                hkask_inference::model_constants::embedding_model().as_deref(),
+                                &mut r,
                             )
                             .await;
                             // Record on the task board when a swarm_id is set.
@@ -2982,6 +2974,7 @@ impl SwarmServer {
                                 "pass": r.task_success.as_ref().map(|t| t.pass).unwrap_or(true),
                                 "response_len": r.response.len(),
                                 "tokens_used": r.tokens_used,
+                                "memory": r.memory,
                             }));
                         }
                         Err(e) => {

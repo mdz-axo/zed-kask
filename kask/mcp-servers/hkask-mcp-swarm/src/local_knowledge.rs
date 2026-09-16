@@ -19,9 +19,14 @@
 //! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
 //! unseeded (memory is an enhancement, not a dependency).
 
+use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
+use hkask_inference::passage_tagging::{
+    ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
+    render_deployed_tagging_prompt,
+};
 use hkask_memory::MemoryStore;
 use hkask_storage::HMem;
-use hkask_types::{HMemOntology, Visibility, WebID};
+use hkask_types::{Dimension, HMemOntology, Visibility, WebID};
 use std::sync::Arc;
 
 use crate::error::LocalSwarmError;
@@ -296,192 +301,348 @@ pub(crate) async fn record_delegation(
     }
 }
 
-// ── Episodic turn memory (the shared knowledgebase) ───────────────────────
-//
-// `record_delegation` above is the stigmergy trail — the ACO pheromone signals
-// (latency, task-success, response) stored as separate triples under the
-// agent's namespace root (`agent:<agent_id>`) for fitness assessment. The
-// functions below are the episodic complement: the FULL turn (task + response
-// + model) stored as one coherent h_mem per turn, plus an embedding of the
-// task so the turn is retrievable by semantic similarity. There is ONE
-// `swarm_memory.db` for all swarms and all agents — `search_similar` has no
-// entity filter, so a turn any agent produced is retrievable by any other.
-// That is the shared knowledgebase: swarms build on each other's experience.
+// ── Narrative response passage memory ─────────────────────────────────────
 
-/// Ingest a completed local-swarm delegation as an episodic h_mem into the
-/// shared `swarm_memory.db`, plus an embedding of the task for semantic recall.
-///
-/// The turn is stored under a unique per-turn entity
-/// (`agent:<agent_id>:turn:<uuid>`) so each turn is individually retrievable by
-/// embedding KNN. The h_mem value is the full turn JSON (`agent_id`, `task`,
-/// `response`, `model`), so recall returns the complete provenance — not just
-/// the response (which is what the stigmergy trail already stores). The
-/// embedding is stored under the same entity, so `search_similar` →
-/// `query_deduped_untouched(entity_ref)` recovers the turn text.
-///
-/// Graceful degradation mirrors `record_delegation`: a failed store open,
-/// h_mem write, or embedding is logged with `tracing::warn!` and never fails
-/// the delegation (memory is an enhancement, not a dependency). A turn
-/// stored without an embedding is still in the KB but not the KNN index —
-/// entity-reachable, not similarity-reachable. An unconfigured embedding
-/// model (`None`) degrades the same way — the turn lands in the KB without a
-/// KNN embedding, and the warn names the setting (no hidden default).
+const MIN_RESPONSE_CHUNK_WORDS: usize = 30;
+const MAX_RESPONSE_CHUNK_WORDS: usize = 400;
+const RESPONSE_SENTENCE_BOUNDARY: &str = ".!?";
+
+/// Model-facing tagging outcome for one narrative-turn ingestion.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "status", content = "reason", rename_all = "snake_case")]
+pub enum TaggingOutcome {
+    Tagged,
+    Degraded(String),
+    NotAttempted,
+}
+
+/// A visible, typed failure that reduced the durable memory produced for a turn.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
+pub enum MemoryDegradation {
+    StoreUnavailable(String),
+    HMemStoreFailed(String),
+    EmbeddingModelUnconfigured,
+    EmbeddingFailed(String),
+    EmbeddingCountMismatch { expected: usize, actual: usize },
+    EmbeddingStoreFailed(String),
+}
+
+/// Exact durable accounting for one narrative-turn ingestion attempt.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct TurnIngestionReport {
+    pub attempted: usize,
+    pub stored: usize,
+    pub embedded: usize,
+    pub failed: usize,
+    pub tagging: TaggingOutcome,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradations: Vec<MemoryDegradation>,
+}
+
+impl Default for TurnIngestionReport {
+    fn default() -> Self {
+        Self {
+            attempted: 0,
+            stored: 0,
+            embedded: 0,
+            failed: 0,
+            tagging: TaggingOutcome::NotAttempted,
+            degradations: Vec::new(),
+        }
+    }
+}
+
+impl TurnIngestionReport {
+    pub fn degraded(&self) -> bool {
+        self.failed > 0 || matches!(self.tagging, TaggingOutcome::Degraded(_))
+    }
+}
+
+async fn tag_response_chunks(
+    inference: &Arc<dyn hkask_types::InferencePort>,
+    chunk_texts: &[String],
+    classifier_model: Option<&str>,
+) -> (Option<Vec<PassageTag>>, TaggingOutcome) {
+    let Some(classifier_model) = classifier_model else {
+        return (
+            None,
+            TaggingOutcome::Degraded(
+                "classifier model unconfigured (HKASK_CLASSIFIER_MODEL)".to_string(),
+            ),
+        );
+    };
+    let passages = chunk_texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| Passage::new(format!("chunk-{index}"), text.clone()))
+        .collect();
+    let request = match PassageTaggingRequest::new(
+        passages,
+        vec!["what", "why"],
+        vec!["who", "when", "where", "how"],
+        ExpertiseMode::ModelAssigned,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            return (
+                None,
+                TaggingOutcome::Degraded(format!("tagging request rejected: {error}")),
+            );
+        }
+    };
+    let prompt = match render_deployed_tagging_prompt(&request) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            return (
+                None,
+                TaggingOutcome::Degraded(format!("tagging template unavailable: {error}")),
+            );
+        }
+    };
+    let parameters = hkask_types::LLMParameters {
+        temperature: 0.1,
+        thinking_allowed: false,
+        ..Default::default()
+    };
+    let result = match inference
+        .generate_with_model(&prompt, &parameters, Some(classifier_model), None)
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            return (
+                None,
+                TaggingOutcome::Degraded(format!("tagging inference failed: {error}")),
+            );
+        }
+    };
+    match parse_tagging_response(&request, &result.text) {
+        Ok(tags) => (Some(tags), TaggingOutcome::Tagged),
+        Err(error) => (
+            None,
+            TaggingOutcome::Degraded(format!("tagging response rejected: {error}")),
+        ),
+    }
+}
+
+fn response_chunk_ontology(
+    agent_id: &str,
+    turn_id: &str,
+    chunk_index: usize,
+    tags: Option<&PassageTag>,
+) -> HMemOntology {
+    let mut ontology = HMemOntology {
+        dimensions: vec![
+            Dimension::Who.as_str().to_string(),
+            Dimension::When.as_str().to_string(),
+            Dimension::Where.as_str().to_string(),
+            Dimension::How.as_str().to_string(),
+        ],
+        dc_source: format!("swarm:{agent_id}:turn:{turn_id}"),
+        pko_procedure: Some("swarm_delegate".to_string()),
+        pko_step: Some(format!("response_chunk:{chunk_index}")),
+        ..HMemOntology::default()
+    };
+    if let Some(tags) = tags {
+        for dimension in &tags.dimensions {
+            if !ontology.dimensions.contains(dimension) {
+                ontology.dimensions.push(dimension.clone());
+            }
+        }
+        let canonical = canonicalize_terms(&tags.candidate_terms);
+        ontology.dc_subject = canonical.candidate_terms.clone();
+        ontology.candidate_terms = canonical.candidate_terms;
+        ontology.ontology_tags = canonical.ontology_tags;
+        ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
+        ontology.expertise_level = tags.expertise;
+    }
+    ontology
+}
+
+/// Ingest a completed delegation response as bounded, response-bearing passages.
+/// Every chunk has one provenance-rich h_mem and, when available, one embedding
+/// under the exact same entity ref with `passage_text` equal to the chunk text.
 pub(crate) async fn ingest_turn(
     memory: &LazyLocalMemory,
-    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    inference: &Arc<dyn hkask_types::InferencePort>,
     agent_id: &str,
     task: &str,
     response: &str,
     model: &str,
+    classifier_model: Option<&str>,
     embedding_model: Option<&str>,
-) {
+) -> TurnIngestionReport {
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    let entity_prefix = format!("{AGENT_PREFIX}{agent_id}:turn:{turn_id}:chunk");
+    let chunk_config = match hkask_memory::text_chunking::ChunkConfig::new(
+        MIN_RESPONSE_CHUNK_WORDS,
+        MAX_RESPONSE_CHUNK_WORDS,
+        0,
+        RESPONSE_SENTENCE_BOUNDARY,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(target: "hkask.mcp.swarm", %error, "invalid response chunk contract");
+            return TurnIngestionReport::default();
+        }
+    };
+    let chunking =
+        hkask_memory::text_chunking::chunk_text_with_config(response, &entity_prefix, chunk_config);
+    if chunking.chunks.is_empty() {
+        return TurnIngestionReport::default();
+    }
+    let chunk_texts: Vec<String> = chunking
+        .chunks
+        .iter()
+        .map(|chunk| chunk.text.clone())
+        .collect();
+    let attempted = chunking.chunks.len();
+    let (tags, tagging) = tag_response_chunks(inference, &chunk_texts, classifier_model).await;
+    if let TaggingOutcome::Degraded(reason) = &tagging {
+        tracing::warn!(target: "hkask.mcp.swarm", agent = %agent_id, %reason, "response passage tagging degraded (non-fatal)");
+    }
+
     let store = match memory.get().await {
         Ok(store) => store,
-        Err(reason) => {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                error = %reason,
-                agent = %agent_id,
-                "episodic turn ingest skipped — swarm memory unavailable (non-fatal)"
-            );
-            return;
+        Err(error) => {
+            tracing::warn!(target: "hkask.mcp.swarm", agent = %agent_id, %error, "response passage store unavailable (non-fatal)");
+            return TurnIngestionReport {
+                attempted,
+                failed: attempted,
+                tagging,
+                degradations: vec![MemoryDegradation::StoreUnavailable(error.to_string())],
+                ..TurnIngestionReport::default()
+            };
         }
     };
-    let owner = WebID::for_agent_name("swarm_delegate_local");
-    let turn_id = uuid::Uuid::new_v4();
-    let entity = format!("{AGENT_PREFIX}{agent_id}:turn:{turn_id}");
 
-    // Cap the response to prevent unbounded memory growth — mirrors the cap
-    // in `record_delegation` and `AgentExecutor::run`'s tool-result handling.
-    let capped_response: String = if response.len() > 64 * 1024 {
-        response.chars().take(64 * 1024).collect()
-    } else {
-        response.to_string()
-    };
-    let turn_value = serde_json::json!({
-        "agent_id": agent_id,
-        "task": task,
-        "response": capped_response,
-        "model": model,
-    });
-    // Store the turn as a JSON *string* (not an object) so the recall path's
-    // `h_mem.value.as_str()` recovers the full text — mirrors the bridge's
-    // `RealMemoryPort::ingest_turn`, which stringifies the turn JSON for the
-    // same reason.
-    let turn_record = serde_json::Value::String(turn_value.to_string());
-
-    // Process-axis anchoring (P5.4): a swarm delegation is a PKO step
-    // execution of the delegate procedure, anchored to the agent so recall
-    // can distinguish turns by producer.
-    let ontology = HMemOntology::process("swarm_delegate", "turn", agent_id);
-    let mut h_mem = HMem::new(&entity, "chatted", turn_record, owner).with_ontology(ontology);
-    // Shared visibility so the turn is part of the shared knowledgebase —
-    // recallable across all agents/swarms, not just the producing agent.
-    h_mem.access.visibility = Visibility::Shared;
-    if let Err(error) = store.store(h_mem) {
-        tracing::warn!(
-            target: "hkask.mcp.swarm",
-            error = %error,
-            agent = %agent_id,
-            "episodic turn h_mem write failed (non-fatal)"
-        );
-        // An embedding without its h_mem is an orphan the recall path cannot
-        // resolve, so do not store one if the turn itself did not land.
-        return;
-    }
-
-    // Embed the task so the turn is retrievable by semantic similarity. The
-    // embedding is stored under the same entity as the h_mem, so
-    // `search_similar` → `query_deduped_untouched(entity_ref)` recovers the
-    // full turn text. A failed embed degrades the turn to entity-only recall.
-    let embedding_model = match embedding_model {
-        Some(model) => model,
-        None => {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                agent = %agent_id,
-                "no embedding model configured — set kask.models.embedding_model (injected as \
-                 HKASK_EMBEDDING_MODEL); turn is in the KB but not the KNN index (non-fatal)"
-            );
-            return;
-        }
-    };
-    match inference.embed(embedding_model, &[task.to_string()]).await {
-        Ok(vectors) => match vectors.into_iter().next() {
-            Some(vector) => {
-                if let Err(error) = store.store_embedding(&entity, &vector, embedding_model, None) {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        error = %error,
-                        agent = %agent_id,
-                        "episodic turn embedding store failed — turn is in the KB but not the KNN index (non-fatal)"
-                    );
-                }
+    let mut degradations = Vec::new();
+    let vectors = match embedding_model {
+        Some(embedding_model) => match inference.embed(embedding_model, &chunk_texts).await {
+            Ok(vectors) if vectors.len() == attempted => Some(vectors),
+            Ok(vectors) => {
+                degradations.push(MemoryDegradation::EmbeddingCountMismatch {
+                    expected: attempted,
+                    actual: vectors.len(),
+                });
+                None
             }
-            None => {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    agent = %agent_id,
-                    "embedding model returned no vector for the task — turn is in the KB but not the KNN index (non-fatal)"
-                );
+            Err(error) => {
+                degradations.push(MemoryDegradation::EmbeddingFailed(error.to_string()));
+                None
             }
         },
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                error = %error,
-                agent = %agent_id,
-                "episodic turn embedding failed — turn is in the KB but not the KNN index (non-fatal)"
-            );
+        None => {
+            degradations.push(MemoryDegradation::EmbeddingModelUnconfigured);
+            None
+        }
+    };
+
+    let owner = WebID::for_agent_name("swarm_delegate_local");
+    let mut report = TurnIngestionReport {
+        attempted,
+        tagging,
+        degradations,
+        ..TurnIngestionReport::default()
+    };
+    for (index, chunk) in chunking.chunks.iter().enumerate() {
+        let value = serde_json::json!({
+            "agent_id": agent_id,
+            "task": task,
+            "model": model,
+            "turn_id": turn_id,
+            "chunk_index": index,
+            "text": chunk.text,
+        });
+        let mut h_mem = HMem::new(&chunk.entity_ref, "delegation:response_chunk", value, owner)
+            .with_ontology(response_chunk_ontology(
+                agent_id,
+                &turn_id,
+                index,
+                tags.as_ref().and_then(|all| all.get(index)),
+            ));
+        h_mem.access.visibility = Visibility::Shared;
+        let stored = match store.store(h_mem) {
+            Ok(()) => {
+                report.stored += 1;
+                true
+            }
+            Err(error) => {
+                report
+                    .degradations
+                    .push(MemoryDegradation::HMemStoreFailed(error.to_string()));
+                false
+            }
+        };
+        let embedded = if stored {
+            match (
+                vectors.as_ref().and_then(|all| all.get(index)),
+                embedding_model,
+            ) {
+                (Some(vector), Some(embedding_model)) => match store.store_embedding(
+                    &chunk.entity_ref,
+                    vector,
+                    embedding_model,
+                    Some(&chunk.text),
+                ) {
+                    Ok(_) => {
+                        report.embedded += 1;
+                        true
+                    }
+                    Err(error) => {
+                        report
+                            .degradations
+                            .push(MemoryDegradation::EmbeddingStoreFailed(error.to_string()));
+                        false
+                    }
+                },
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if !stored || !embedded {
+            report.failed += 1;
         }
     }
+    if report.degraded() {
+        tracing::warn!(target: "hkask.mcp.swarm", agent = %agent_id, attempted = report.attempted, stored = report.stored, embedded = report.embedded, failed = report.failed, "response passage ingestion completed with degradation");
+    }
+    report
 }
 
-/// A prior swarm turn recalled from the shared knowledgebase by semantic
-/// similarity. `text` is the full turn JSON stored by `ingest_turn`.
+/// One response passage recalled from the shared local-swarm knowledgebase.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct RecalledTurn {
-    /// The producing agent's id (which agent ran the turn).
+pub struct RecalledPassage {
     pub agent_id: String,
-    /// The full turn JSON (`agent_id`, `task`, `response`, `model`).
-    pub text: String,
-    /// Cosine distance to the query (lower = more similar).
+    pub task: String,
+    pub model: String,
+    pub turn_id: String,
+    pub chunk_index: usize,
+    pub passage: String,
     pub distance: f64,
 }
 
-/// Recall prior swarm turns from the shared `swarm_memory.db` by semantic
-/// similarity to the query. `search_similar` has no entity filter, so this
-/// spans ALL agents and ALL swarms — the shared knowledgebase. A turn any
-/// agent produced is retrievable here.
-///
-/// `agent_filter` scopes the recall to one agent (fermi parity: its
-/// per-agent KG is searched per-agent). The filter matches the turn's
-/// entity prefix (`agent:<agent_id>:turn:`) — the delimiter after the id
-/// makes the match exact (`agent:foo:` never matches `agent:foobar:`).
-/// KNN still runs over the whole index (the store has no entity-filtered
-/// search); the filter is applied to the results, so a scoped recall may
-/// return fewer than `limit` turns when other agents' turns rank higher.
-///
-/// Returns turns ranked by similarity (most similar first). Only episodic
-/// turns carry embeddings (the stigmergy triples from `record_delegation`
-/// have none), so every KNN hit resolves to a turn. Degrades to an error when
-/// the store is unavailable, no embedding model is configured, or the query
-/// cannot be embedded — callers
-/// surface a `memory_unconfigured` note rather than fabricating empty hits
-/// (the `.rules` unwrap_or(0) trap: a failed recall is not "no memory").
+/// Recall response passages across all agents, or only one producing agent.
 pub(crate) async fn recall_turns(
     memory: &LazyLocalMemory,
-    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    inference: &Arc<dyn hkask_types::InferencePort>,
     query: &str,
     limit: usize,
     agent_filter: Option<&str>,
     embedding_model: Option<&str>,
-) -> Result<Vec<RecalledTurn>, LocalSwarmError> {
+) -> Result<Vec<RecalledPassage>, LocalSwarmError> {
     let store = memory.get().await?;
     let embedding_model = embedding_model.ok_or_else(|| {
         LocalSwarmError::Unavailable(
-            "no embedding model configured — set kask.models.embedding_model (injected as \
-             HKASK_EMBEDDING_MODEL); kask never falls back to a hidden code constant"
+            "no embedding model configured — set kask.models.embedding_model (injected as HKASK_EMBEDDING_MODEL)"
                 .to_string(),
         )
     })?;
@@ -491,15 +652,17 @@ pub(crate) async fn recall_turns(
         .map_err(|error| {
             LocalSwarmError::Unavailable(format!("embedding the recall query failed: {error}"))
         })?;
+    if vectors.len() != 1 {
+        return Err(LocalSwarmError::Unavailable(format!(
+            "embedding the recall query returned {} vectors; expected exactly 1",
+            vectors.len()
+        )));
+    }
     let query_vector = vectors.into_iter().next().ok_or_else(|| {
         LocalSwarmError::Unavailable(
             "embedding model returned no vector for the recall query".to_string(),
         )
     })?;
-    // A scoped recall still ranks over the whole index, then keeps only the
-    // scoped agent's turns — so the KNN limit is widened to keep the
-    // scoped result meaningful (without this, a scope over a 10-hit window
-    // could return 0 turns even when the agent has matching history).
     let knn_limit = if agent_filter.is_some() {
         limit.saturating_mul(5).max(50)
     } else {
@@ -511,58 +674,91 @@ pub(crate) async fn recall_turns(
             LocalSwarmError::Database(format!("semantic search over swarm memory failed: {error}"))
         })?;
     let scope_prefix = agent_filter.map(|agent_id| format!("{AGENT_PREFIX}{agent_id}:turn:"));
-    let mut turns = Vec::with_capacity(results.len());
+    let mut passages = Vec::with_capacity(results.len());
     for result in results {
-        let entity_ref = result.embedding.entity_ref.clone();
-        // Per-agent scope: keep only this agent's turns (the entity prefix
-        // carries the producing agent id).
+        let entity_ref = &result.embedding.entity_ref;
         if let Some(prefix) = &scope_prefix
             && !entity_ref.starts_with(prefix)
         {
             continue;
         }
-        match store.query_deduped_untouched(&entity_ref) {
-            Ok(h_mems) => {
-                for h_mem in h_mems {
-                    let text = h_mem.value.as_str().unwrap_or("").to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    // Recover the producing agent from the turn JSON so the
-                    // caller knows which agent produced the recalled turn.
-                    let agent_id = serde_json::from_str::<serde_json::Value>(&text)
-                        .ok()
-                        .and_then(|value| {
-                            value
-                                .get("agent_id")
-                                .and_then(|agent| agent.as_str())
-                                .map(String::from)
-                        })
-                        .unwrap_or_default();
-                    turns.push(RecalledTurn {
-                        agent_id,
-                        text,
-                        distance: result.distance,
-                    });
-                }
-            }
+        let Some(passage) = result.embedding.passage_text.clone() else {
+            tracing::warn!(target: "hkask.mcp.swarm", %entity_ref, "KNN hit has no passage_text — skipping (non-fatal)");
+            continue;
+        };
+        let h_mems = match store.query_deduped_untouched(entity_ref) {
+            Ok(h_mems) => h_mems,
             Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    error = %error,
-                    entity_ref = %entity_ref,
-                    "failed to resolve KNN hit to its turn h_mem — skipping (non-fatal)"
-                );
+                tracing::warn!(target: "hkask.mcp.swarm", %error, %entity_ref, "failed to resolve KNN hit provenance — skipping (non-fatal)");
+                continue;
             }
+        };
+        let Some(h_mem) = h_mems
+            .into_iter()
+            .find(|h_mem| h_mem.attribute == "delegation:response_chunk")
+        else {
+            tracing::warn!(target: "hkask.mcp.swarm", %entity_ref, "KNN hit has no response chunk h_mem — skipping (non-fatal)");
+            continue;
+        };
+        let text = h_mem.value.get("text").and_then(serde_json::Value::as_str);
+        if text != Some(passage.as_str()) {
+            tracing::warn!(target: "hkask.mcp.swarm", %entity_ref, "KNN passage_text does not match h_mem chunk text — skipping (non-fatal)");
+            continue;
         }
+        let Some(agent_id) = h_mem
+            .value
+            .get("agent_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(task) = h_mem
+            .value
+            .get("task")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(model) = h_mem
+            .value
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(turn_id) = h_mem
+            .value
+            .get("turn_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(chunk_index) = h_mem
+            .value
+            .get("chunk_index")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+        else {
+            continue;
+        };
+        passages.push(RecalledPassage {
+            agent_id,
+            task,
+            model,
+            turn_id,
+            chunk_index,
+            passage,
+            distance: result.distance,
+        });
     }
-    // The scoped path widened the KNN window — bring the result back down
-    // to the caller's limit after filtering.
-    turns.truncate(limit);
-    Ok(turns)
+    passages.truncate(limit);
+    Ok(passages)
 }
 
-/// A one-shot LLM generate over the local inference port.
 ///
 /// `inference` is the resolved local `InferencePort` (from `LocalSwarmRuntime`).
 /// Returns the generated text.
@@ -589,26 +785,25 @@ mod tests {
     use super::*;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::Arc;
 
-    /// Embedding dimension used by the test stubs. Must match the store's
-    /// `vec0` table dim, which `Database::open` creates from
-    /// `hkask_storage::embedding_dim()` (the schema's `$DIM`). Reading the
-    /// same resolver keeps the stub in sync with the store regardless of
-    /// `HKASK_EMBEDDING_DIM`.
     fn test_dim() -> usize {
         hkask_storage::embedding_dim()
     }
+
     const TEST_PASSPHRASE: &str = "test-passphrase";
 
-    /// A stub `InferencePort` whose `embed` returns a deterministic unit
-    /// vector of length `dim`, so ingest and recall round-trip through the
-    /// real sqlite-vec KNN index. `generate` is unused by the memory path.
-    struct EmbedStubInference {
-        dim: usize,
+    #[derive(Clone, Copy)]
+    enum EmbedMode {
+        Exact,
+        OneShort,
     }
 
-    impl hkask_types::InferencePort for EmbedStubInference {
+    struct StubInference {
+        dim: usize,
+        mode: EmbedMode,
+    }
+
+    impl hkask_types::InferencePort for StubInference {
         fn generate(
             &self,
             _prompt: &str,
@@ -624,7 +819,7 @@ mod tests {
         > {
             Box::pin(async {
                 Ok(hkask_types::InferenceResult {
-                    text: "stub".into(),
+                    text: "[]".into(),
                     model: "stub-model".into(),
                     usage: hkask_types::InferenceUsage {
                         prompt_tokens: 1,
@@ -640,17 +835,17 @@ mod tests {
         }
 
         fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
-            // Capture only the count (owned, `Copy`) so the future borrows
-            // nothing — the trait ties the returned future's lifetime to
-            // `&self`, and `texts` carries an unrelated lifetime.
-            let count = texts.len();
+            let count = match self.mode {
+                EmbedMode::Exact => texts.len(),
+                EmbedMode::OneShort => texts.len().saturating_sub(1),
+            };
             let dim = self.dim;
             Box::pin(async move {
                 Ok((0..count)
                     .map(|_| {
                         let mut vector = vec![0.0f32; dim];
-                        if dim > 0 {
-                            vector[0] = 1.0;
+                        if let Some(first) = vector.first_mut() {
+                            *first = 1.0;
                         }
                         vector
                     })
@@ -659,10 +854,13 @@ mod tests {
         }
     }
 
-    /// A `LazyLocalMemory` backed by a unique temp SQLCipher file. Each test
-    /// gets its own DB so ingest/recall round-trips never collide. The files
-    /// leak in the temp dir (the path is owned by `LazyLocalMemory`); this
-    /// mirrors the production open path exactly, including sqlite-vec.
+    fn inference(mode: EmbedMode) -> Arc<dyn hkask_types::InferencePort> {
+        Arc::new(StubInference {
+            dim: test_dim(),
+            mode,
+        })
+    }
+
     fn temp_memory() -> LazyLocalMemory {
         let path =
             std::env::temp_dir().join(format!("kask-swarm-mem-test-{}.db", uuid::Uuid::new_v4()));
@@ -673,394 +871,255 @@ mod tests {
         )
     }
 
-    /// `ingest_turn` stores the full turn (task + response + model) as an h_mem
-    /// AND an embedding of the task, so `recall_turns` retrieves it by
-    /// semantic similarity. Pins the round-trip end-to-end through sqlite-vec.
-    #[tokio::test]
-    async fn ingest_turn_stores_full_turn_retrievable_by_recall() {
-        let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-        ingest_turn(
-            &memory,
-            &inference,
-            "market_analyst",
-            "analyze the market",
-            "the market is up",
-            "test-model",
-            Some("test-embed-model"),
-        )
-        .await;
-
-        let turns = recall_turns(
-            &memory,
-            &inference,
-            "market",
-            10,
-            None,
-            Some("test-embed-model"),
-        )
-        .await
-        .expect("recall succeeds on a configured store");
-        assert_eq!(turns.len(), 1, "the ingested turn is the only KNN hit");
-        assert_eq!(turns[0].agent_id, "market_analyst");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&turns[0].text).expect("turn text is the turn JSON");
-        assert_eq!(parsed["agent_id"], "market_analyst");
-        assert_eq!(parsed["task"], "analyze the market");
-        assert_eq!(parsed["response"], "the market is up");
-        assert_eq!(parsed["model"], "test-model");
+    fn long_response(words: usize) -> String {
+        (0..words)
+            .map(|index| format!("response_word_{index}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
-    /// The knowledgebase is SHARED: `search_similar` has no agent filter, so a
-    /// turn one agent produced is retrievable by any other. This pins that
-    /// cross-agent/cross-swarm property — the whole point of one DB for all
-    /// swarms.
+    /// expect: A long response produces one HMem and one exact-text embedding per bounded chunk.
     #[tokio::test]
-    async fn recall_spans_all_agents_shared_knowledgebase() {
+    async fn long_response_reconciles_chunk_hmem_and_embedding_counts() {
         let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-        // A turn produced by `agent_alpha`.
-        ingest_turn(
+        let report = ingest_turn(
             &memory,
-            &inference,
-            "agent_alpha",
-            "shared research task",
-            "shared finding",
-            "m",
-            Some("test-embed-model"),
+            &inference(EmbedMode::Exact),
+            "writer",
+            "produce a long answer",
+            &long_response(900),
+            "answer-model",
+            None,
+            Some("embedding-model"),
         )
         .await;
 
-        // `recall_turns` takes no agent argument — it spans the whole KB. A
-        // turn `agent_alpha` produced is retrievable here ("by" any agent).
-        let turns = recall_turns(
+        assert_eq!(report.attempted, 3);
+        assert_eq!(report.stored, report.attempted);
+        assert_eq!(report.embedded, report.attempted);
+        assert_eq!(report.failed, 0);
+        assert!(matches!(report.tagging, TaggingOutcome::Degraded(_)));
+
+        let store = memory.get().await.expect("store opens");
+        let h_mems = store
+            .h_mems_by_entity_prefix("agent:writer:turn:")
+            .expect("h_mems query succeeds");
+        let embeddings = store
+            .all_embeddings_with_text()
+            .expect("embeddings query succeeds");
+        assert_eq!(h_mems.len(), report.attempted);
+        assert_eq!(embeddings.len(), report.attempted);
+        for h_mem in h_mems {
+            let chunk_text = h_mem.value["text"]
+                .as_str()
+                .expect("chunk h_mem carries text");
+            let embedding = embeddings
+                .iter()
+                .find(|(entity_ref, _, _)| entity_ref == &h_mem.entity)
+                .expect("embedding uses the exact h_mem entity");
+            assert_eq!(embedding.2.as_deref(), Some(chunk_text));
+            assert_eq!(h_mem.value["agent_id"], "writer");
+            assert_eq!(h_mem.value["task"], "produce a long answer");
+            assert_eq!(h_mem.value["model"], "answer-model");
+        }
+    }
+
+    /// expect: Recall returns the matched response passage and producer provenance, never whole-turn JSON.
+    #[tokio::test]
+    async fn recall_returns_response_content_and_producer_provenance() {
+        let memory = temp_memory();
+        let inference = inference(EmbedMode::Exact);
+        let response = "A response-only fact says the launch window is October.";
+        let report = ingest_turn(
             &memory,
             &inference,
-            "anything",
+            "planner",
+            "identify the launch window",
+            response,
+            "planner-model",
+            None,
+            Some("embedding-model"),
+        )
+        .await;
+        assert_eq!(report.embedded, 1);
+
+        let passages = recall_turns(
+            &memory,
+            &inference,
+            "October launch",
             10,
             None,
-            Some("test-embed-model"),
+            Some("embedding-model"),
         )
         .await
         .expect("recall succeeds");
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].agent_id, "agent_alpha");
+        assert_eq!(passages.len(), 1);
+        assert_eq!(passages[0].passage, response);
+        assert_eq!(passages[0].agent_id, "planner");
+        assert_eq!(passages[0].task, "identify the launch window");
+        assert_eq!(passages[0].model, "planner-model");
+        assert!(!passages[0].passage.starts_with('{'));
     }
 
-    /// `ingest_turn` degrades gracefully when the store cannot be opened (short
-    /// passphrase): it must not panic and must write nothing. `recall_turns`
-    /// surfaces the unavailability as an error (callers show a
-    /// `memory_unconfigured` note, never fabricated empty hits — the `.rules`
-    /// unwrap_or(0) trap).
+    /// expect: Producing-agent filtering is exact while unscoped recall remains shared across agents.
     #[tokio::test]
-    async fn ingest_turn_skips_and_recall_errors_when_store_unavailable() {
+    async fn recall_preserves_agent_filtering_and_shared_scope() {
+        let memory = temp_memory();
+        let inference = inference(EmbedMode::Exact);
+        for (agent, response) in [
+            ("alpha", "alpha response passage"),
+            ("beta", "beta response passage"),
+            ("alpha_fan", "alpha fan response passage"),
+        ] {
+            ingest_turn(
+                &memory,
+                &inference,
+                agent,
+                "shared task",
+                response,
+                "model",
+                None,
+                Some("embedding-model"),
+            )
+            .await;
+        }
+
+        let scoped = recall_turns(
+            &memory,
+            &inference,
+            "response",
+            10,
+            Some("alpha"),
+            Some("embedding-model"),
+        )
+        .await
+        .expect("scoped recall succeeds");
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].agent_id, "alpha");
+
+        let shared = recall_turns(
+            &memory,
+            &inference,
+            "response",
+            10,
+            None,
+            Some("embedding-model"),
+        )
+        .await
+        .expect("shared recall succeeds");
+        assert_eq!(shared.len(), 3);
+    }
+
+    /// expect: Missing embedding configuration is visible and stores no partial semantic index.
+    #[tokio::test]
+    async fn missing_embedding_model_is_reported_without_failing_ingest() {
+        let memory = temp_memory();
+        let report = ingest_turn(
+            &memory,
+            &inference(EmbedMode::Exact),
+            "agent",
+            "task",
+            "response passage",
+            "model",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(report.attempted, 1);
+        assert_eq!(report.stored, 1);
+        assert_eq!(report.embedded, 0);
+        assert_eq!(report.failed, 1);
+        assert!(
+            report
+                .degradations
+                .contains(&MemoryDegradation::EmbeddingModelUnconfigured)
+        );
+    }
+
+    /// expect: An unavailable store returns exact failed accounting instead of failing the delegation path.
+    #[tokio::test]
+    async fn unavailable_store_is_reported_non_fatally() {
         let path =
             std::env::temp_dir().join(format!("kask-swarm-mem-test-{}.db", uuid::Uuid::new_v4()));
-        // A passphrase shorter than 8 chars makes `get` error every
-        // time, so the store never opens.
         let memory = LazyLocalMemory::lazy(
             path.to_string_lossy().to_string(),
             "short".to_string(),
             test_dim(),
         );
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-
-        // Must not panic and must not fail the call (memory is non-fatal).
-        ingest_turn(
+        let report = ingest_turn(
             &memory,
-            &inference,
+            &inference(EmbedMode::Exact),
             "agent",
             "task",
-            "response",
-            "m",
-            Some("test-embed-model"),
+            "response passage",
+            "model",
+            None,
+            Some("embedding-model"),
         )
         .await;
-
-        let recall_error =
-            recall_turns(&memory, &inference, "q", 10, None, Some("test-embed-model")).await;
-        assert!(
-            recall_error.is_err(),
-            "recall surfaces unavailability, not empty hits"
-        );
+        assert_eq!(report.attempted, 1);
+        assert_eq!(report.stored, 0);
+        assert_eq!(report.embedded, 0);
+        assert_eq!(report.failed, 1);
+        assert!(matches!(
+            report.degradations.as_slice(),
+            [MemoryDegradation::StoreUnavailable(_)]
+        ));
     }
 
-    /// No embedding model configured (`None`): `ingest_turn` still stores the
-    /// turn h_mem (KB-reachable) but skips the KNN embedding, and
-    /// `recall_turns` errors naming the setting — fail-visible, never a
-    /// hidden default (the no-hidden-models spec).
+    /// expect: A short embedding batch is rejected wholesale; chunks are never positionally mispaired.
     #[tokio::test]
-    async fn unconfigured_embedding_model_degrades_ingest_and_fails_recall() {
+    async fn embedding_count_mismatch_stores_zero_embeddings() {
         let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-
-        // Ingest without a model: the turn must still land in the KB.
-        ingest_turn(&memory, &inference, "agent", "task", "response", "m", None).await;
-
-        // The turn is entity-reachable but not similarity-reachable: a
-        // model-configured recall succeeds and finds no KNN hits.
-        let turns = recall_turns(
+        let report = ingest_turn(
             &memory,
-            &inference,
+            &inference(EmbedMode::OneShort),
+            "agent",
             "task",
-            10,
+            &long_response(500),
+            "model",
             None,
-            Some("test-embed-model"),
+            Some("embedding-model"),
         )
-        .await
-        .expect("recall succeeds with a model configured");
-        assert_eq!(
-            turns.len(),
-            0,
-            "no embedding was stored, so semantic recall finds nothing"
-        );
-
-        // Recall without a model errors naming the setting (surfaced, not
-        // fabricated empty hits).
-        let recall_error = recall_turns(&memory, &inference, "q", 10, None, None).await;
+        .await;
+        assert_eq!(report.attempted, 2);
+        assert_eq!(report.stored, 2);
+        assert_eq!(report.embedded, 0);
+        assert_eq!(report.failed, 2);
         assert!(
-            recall_error.is_err(),
-            "recall without an embedding model must error, not return empty hits"
+            report
+                .degradations
+                .contains(&MemoryDegradation::EmbeddingCountMismatch {
+                    expected: 2,
+                    actual: 1,
+                })
         );
-        let message = recall_error.unwrap_err().to_string();
-        assert!(
-            message.contains("no embedding model configured"),
-            "the error names the missing setting: {message}"
-        );
-        assert!(
-            message.contains("HKASK_EMBEDDING_MODEL"),
-            "the error names the env var: {message}"
-        );
+        let store = memory.get().await.expect("store opens");
+        assert_eq!(store.embedding_count().expect("count succeeds"), 0);
     }
 
-    /// Multiple turns from multiple agents accumulate in the shared KB and are
-    /// all retrievable — the knowledgebase grows across delegations.
+    /// expect: Atomic delegation metrics remain the same three task-level records and gain no embeddings.
     #[tokio::test]
-    async fn multiple_turns_accumulate_in_shared_knowledgebase() {
+    async fn record_delegation_atomic_records_are_unchanged() {
         let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-        ingest_turn(
-            &memory,
-            &inference,
-            "agent_a",
-            "task one",
-            "response one",
-            "m",
-            Some("test-embed-model"),
-        )
-        .await;
-        ingest_turn(
-            &memory,
-            &inference,
-            "agent_b",
-            "task two",
-            "response two",
-            "m",
-            Some("test-embed-model"),
-        )
-        .await;
-        ingest_turn(
-            &memory,
-            &inference,
-            "agent_a",
-            "task three",
-            "response three",
-            "m",
-            Some("test-embed-model"),
-        )
-        .await;
-
-        let turns = recall_turns(
-            &memory,
-            &inference,
-            "query",
-            50,
-            None,
-            Some("test-embed-model"),
-        )
-        .await
-        .expect("recall succeeds");
-        assert_eq!(
-            turns.len(),
-            3,
-            "all three turns accumulated and are retrievable"
-        );
-        let agent_ids: std::collections::HashSet<String> =
-            turns.into_iter().map(|turn| turn.agent_id).collect();
-        assert!(agent_ids.contains("agent_a"));
-        assert!(agent_ids.contains("agent_b"));
-    }
-
-    /// `record_delegation` writes stigmergy annotations (latency, task_success,
-    /// response) to the agent's entity prefix. This test pins that the
-    /// stigmergy path produces retrievable h_mems — the parallel fan-out path
-    /// now calls `record_delegation` alongside `ingest_turn`, and this test
-    /// verifies the stigmergy write is not a no-op.
-    #[tokio::test]
-    async fn record_delegation_writes_stigmergy_annotations() {
-        let memory = temp_memory();
-
-        record_delegation(&memory, "test_agent", 42, Some(true), "the agent succeeded").await;
-
-        // The stigmergy annotations are stored under the agent's entity prefix.
-        // We verify by recalling — the embedding stub returns a unit vector,
-        // so recall returns all entries (KNN with dim>0 matches everything).
-        // Instead, query the store directly for the agent's entity.
+        record_delegation(&memory, "test_agent", 42, Some(true), "succeeded").await;
         let store = memory.get().await.expect("store opens");
         let h_mems = store
             .h_mems_by_entity_prefix("agent:test_agent")
             .expect("query succeeds");
-        assert!(
-            !h_mems.is_empty(),
-            "record_delegation must write stigmergy h_mems under the agent prefix"
-        );
-        // Verify the latency annotation is present.
-        let has_latency = h_mems
+        let attributes: std::collections::HashSet<&str> = h_mems
             .iter()
-            .any(|h| h.attribute == "delegation:latency_ms");
-        assert!(
-            has_latency,
-            "record_delegation must write the latency annotation"
+            .map(|h_mem| h_mem.attribute.as_str())
+            .collect();
+        assert_eq!(h_mems.len(), 3);
+        assert_eq!(
+            attributes,
+            std::collections::HashSet::from([
+                "delegation:latency_ms",
+                "delegation:task_success",
+                "delegation:response",
+            ])
         );
-        // Verify the task_success annotation is present (only when a verdict
-        // was supplied).
-        let has_success = h_mems
-            .iter()
-            .any(|h| h.attribute == "delegation:task_success");
-        assert!(
-            has_success,
-            "record_delegation must write the task_success annotation when a verdict is supplied"
-        );
-    }
-
-    /// `ingest_turn` + `record_delegation` together produce both episodic
-    /// turn memory (retrievable by semantic recall) and stigmergy annotations
-    /// (retrievable by entity prefix). This pins that the parallel fan-out
-    /// path's side effects are not silent no-ops — both writes land in the
-    /// shared KB.
-    #[tokio::test]
-    async fn ingest_turn_and_record_delegation_both_write_to_shared_kb() {
-        let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-
-        // Simulate what the parallel fan-out path does after delegate_batch
-        // returns a successful result.
-        ingest_turn(
-            &memory,
-            &inference,
-            "parallel_agent",
-            "analyze market trends",
-            "market is bullish",
-            "test-model",
-            Some("test-embed-model"),
-        )
-        .await;
-        record_delegation(
-            &memory,
-            "parallel_agent",
-            100,
-            None, // no evaluator in fan-out
-            "market is bullish",
-        )
-        .await;
-
-        // Episodic turn memory: retrievable by semantic recall.
-        let turns = recall_turns(
-            &memory,
-            &inference,
-            "market",
-            10,
-            None,
-            Some("test-embed-model"),
-        )
-        .await
-        .expect("recall succeeds");
-        assert_eq!(turns.len(), 1, "ingest_turn wrote a retrievable turn");
-        assert_eq!(turns[0].agent_id, "parallel_agent");
-
-        // Stigmergy: retrievable by entity prefix.
-        let store = memory.get().await.expect("store opens");
-        let h_mems = store
-            .h_mems_by_entity_prefix("agent:parallel_agent")
-            .expect("query succeeds");
-        assert!(
-            !h_mems.is_empty(),
-            "record_delegation wrote stigmergy annotations"
-        );
-    }
-
-    /// The per-agent recall scope (fermi parity: its per-agent KG is
-    /// searched per-agent). A scoped recall returns ONLY the named agent's
-    /// turns — and the delimiter after the id makes the prefix exact
-    /// (`agent:foo:` never matches `agent:foobar:`).
-    #[tokio::test]
-    async fn scoped_recall_returns_only_the_named_agents_turns() {
-        let memory = temp_memory();
-        let inference: Arc<dyn hkask_types::InferencePort> =
-            Arc::new(EmbedStubInference { dim: test_dim() });
-        ingest_turn(
-            &memory,
-            &inference,
-            "alpha_agent",
-            "market analysis task",
-            "market is bullish",
-            "test-model",
-            Some("test-embed-model"),
-        )
-        .await;
-        ingest_turn(
-            &memory,
-            &inference,
-            "beta_agent",
-            "market analysis task",
-            "market is bearish",
-            "test-model",
-            Some("test-embed-model"),
-        )
-        .await;
-        ingest_turn(
-            &memory,
-            &inference,
-            "alpha_agent_fan",
-            "market analysis task",
-            "market is sideways",
-            "test-model",
-            Some("test-embed-model"),
-        )
-        .await;
-
-        // Scoped to alpha_agent: only its turn — not beta_agent's, and not
-        // alpha_agent_fan's (the delimiter makes the prefix exact).
-        let turns = recall_turns(
-            &memory,
-            &inference,
-            "market",
-            10,
-            Some("alpha_agent"),
-            Some("test-embed-model"),
-        )
-        .await
-        .expect("scoped recall succeeds");
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].agent_id, "alpha_agent");
-
-        // Unscoped: the shared knowledgebase spans all agents.
-        let turns = recall_turns(
-            &memory,
-            &inference,
-            "market",
-            10,
-            None,
-            Some("test-embed-model"),
-        )
-        .await
-        .expect("unscoped recall succeeds");
-        assert_eq!(turns.len(), 3);
+        assert_eq!(store.embedding_count().expect("count succeeds"), 0);
     }
 }

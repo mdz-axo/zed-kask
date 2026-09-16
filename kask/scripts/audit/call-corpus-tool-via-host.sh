@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <tool-name> <arguments-json> <response-json> <server-log>" >&2
+    echo "usage: $0 <corpus_build_chunk_representations|corpus_embed|corpus_query> <arguments-json> <response-json> <server-log>" >&2
     exit 64
 fi
 
@@ -12,6 +12,27 @@ response_file=$3
 log_file=$4
 binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
 
+case "$tool_name" in
+    corpus_build_chunk_representations)
+        needs_inference=false
+        default_timeout=120
+        ;;
+    corpus_embed|corpus_query)
+        needs_inference=true
+        default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
+        ;;
+    *)
+        echo "unsupported calibration corpus operation: $tool_name" >&2
+        exit 64
+        ;;
+esac
+
+for command in jq; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "required command not found: $command" >&2
+        exit 69
+    fi
+done
 for path in "$arguments_file" "$binary"; do
     if [[ ! -f "$path" ]]; then
         echo "required file does not exist: $path" >&2
@@ -27,60 +48,72 @@ for path in "$response_file" "$log_file"; do
 done
 jq -e 'type == "object"' "$arguments_file" >/dev/null
 
-host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
-if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
-    echo "running host-managed hkask-mcp-corpus process not found" >&2
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ) ]]; then
+    host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
+    if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
+        echo "running host-managed hkask-mcp-corpus process not found" >&2
+        exit 69
+    fi
+    read_host_env() {
+        local name=$1
+        tr '\0' '\n' < "/proc/$host_pid/environ" | sed -n "s/^${name}=//p"
+    }
+    HKASK_INFERENCE_SOCKET=$(read_host_env HKASK_INFERENCE_SOCKET)
+    HKASK_INFERENCE_TIMEOUT_SECS=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
+    HKASK_EMBEDDING_MODEL=$(read_host_env HKASK_EMBEDDING_MODEL)
+    DEEPINFRA_TOKEN=$(read_host_env DEEPINFRA_TOKEN)
+    export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL DEEPINFRA_TOKEN
+fi
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z ${HKASK_EMBEDDING_MODEL:-} ) ]]; then
+    echo "$tool_name requires HKASK_INFERENCE_SOCKET and HKASK_EMBEDDING_MODEL" >&2
     exit 69
 fi
 
-read_host_env() {
-    local name=$1
-    tr '\0' '\n' < "/proc/$host_pid/environ" | sed -n "s/^${name}=//p"
-}
-
-HKASK_INFERENCE_SOCKET=$(read_host_env HKASK_INFERENCE_SOCKET)
-HKASK_INFERENCE_TIMEOUT_SECS=$(read_host_env HKASK_INFERENCE_TIMEOUT_SECS)
-HKASK_EMBEDDING_MODEL=$(read_host_env HKASK_EMBEDDING_MODEL)
-HKASK_CLASSIFIER_MODEL=$(read_host_env HKASK_CLASSIFIER_MODEL)
-HKASK_TEMPLATE_ROOT=$(read_host_env HKASK_TEMPLATE_ROOT)
-DEEPINFRA_TOKEN=$(read_host_env DEEPINFRA_TOKEN)
-export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL
-export HKASK_CLASSIFIER_MODEL HKASK_TEMPLATE_ROOT DEEPINFRA_TOKEN
-if [[ -z "$HKASK_INFERENCE_SOCKET" || -z "$HKASK_EMBEDDING_MODEL" ]]; then
-    echo "host corpus inference configuration is incomplete" >&2
-    exit 69
-fi
-if [[ "$tool_name" == corpus_tag_chunks && ( -z "$HKASK_CLASSIFIER_MODEL" || -z "$HKASK_TEMPLATE_ROOT" ) ]]; then
-    echo "host corpus classifier configuration is incomplete" >&2
-    exit 69
+response_timeout=${HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS:-$default_timeout}
+if [[ ! "$response_timeout" =~ ^[1-9][0-9]*$ ]] || (( response_timeout > 3600 )); then
+    echo "HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS must be an integer from 1 through 3600" >&2
+    exit 64
 fi
 
 coproc CORPUS_MCP { "$binary" 2>"$log_file"; }
 out_fd=${CORPUS_MCP[0]}
 in_fd=${CORPUS_MCP[1]}
+corpus_pid=$CORPUS_MCP_PID
+cleanup() {
+    if [[ -n ${in_fd:-} ]]; then
+        eval "exec ${in_fd}>&-" 2>/dev/null || true
+        in_fd=
+    fi
+    if [[ -n ${corpus_pid:-} ]]; then
+        wait "$corpus_pid" 2>/dev/null || true
+        corpus_pid=
+    fi
+}
+trap cleanup EXIT
+
+read_response() {
+    local expected_id=$1
+    local line
+    while IFS= read -r -t "$response_timeout" line <&"$out_fd"; do
+        if jq -e --argjson id "$expected_id" '.id == $id' <<<"$line" >/dev/null 2>&1; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done
+    echo "corpus MCP ended or timed out before response id $expected_id" >&2
+    return 70
+}
 
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"chunk-calibration","version":"1"}}}' >&"$in_fd"
-IFS= read -r initialize_response <&"$out_fd"
-jq -e '.id == 1 and .result.protocolVersion == "2025-06-18"' <<<"$initialize_response" >/dev/null
+initialize_response=$(read_response 1)
+jq -e '.result.protocolVersion == "2025-06-18" and .error == null' <<<"$initialize_response" >/dev/null
 printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' >&"$in_fd"
 jq -cn --arg name "$tool_name" --slurpfile arguments "$arguments_file" \
     '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:$name,arguments:$arguments[0]}}' >&"$in_fd"
+read_response 2 > "$response_file"
 
-found=false
-while IFS= read -r line <&"$out_fd"; do
-    if jq -e '.id == 2' <<<"$line" >/dev/null 2>&1; then
-        printf '%s\n' "$line" > "$response_file"
-        found=true
-        break
-    fi
-done
-
-eval "exec ${in_fd}>&-"
-wait "$CORPUS_MCP_PID" || true
-if [[ "$found" != true ]]; then
-    echo "corpus MCP ended without the tool response" >&2
-    exit 70
-fi
+cleanup
+trap - EXIT
 if jq -e '.result.isError == true or .error != null' "$response_file" >/dev/null; then
     echo "corpus tool returned an error; inspect $response_file and $log_file" >&2
     exit 1

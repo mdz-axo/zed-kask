@@ -34,6 +34,13 @@ flowchart TD
     I --> J["Return result"]
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-CAP-002
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs
+status: VERIFIED
+-->
+
 The call meter is fail-open on an *unregistered* agent: it auto-registers at
 `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and logs the wiring gap rather than
 refusing — a missing seed is a wiring omission, not an authorization
@@ -49,13 +56,6 @@ Where authority is enforced instead:
   (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`)
 - the per-server MCP env/credential allowlists
   (`kask/crates/kask_bridge/src/mcp_servers.rs`, RR-0038)
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-CAP-002
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs
-status: VERIFIED
--->
 
 ## MCP Tool Call — enabled_tools to McpRuntime::invoke to unwrap_tool_envelope
 
@@ -111,6 +111,13 @@ sequenceDiagram
     Unwrap-->>Agent: unwrapped result
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-SEQ-MCP-TOOL-CALL-001
+verified_date: 2026-09-15
+verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, count_hidden_mcp_tools, D44 removal comment); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool, enumerate_tool_listing); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
+status: VERIFIED
+-->
+
 `apply_router_bypassing_built_ins` (in the removed
 `crates/agent/src/tool_router.rs`) was the seam that once pruned the MCP
 surface per turn; the LazyToolRouter was removed entirely (D44, 2026-08-30)
@@ -124,13 +131,6 @@ Every MCP tool response is a `{"content": <value>}` envelope.
 seam that extracts the inner value; the property
 `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads `P` is
 pinned by proptest in `hkask-types/src/tool_response.rs`.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-08-30
-verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, count_hidden_mcp_tools, D44 removal comment); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool, enumerate_tool_listing); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
-status: VERIFIED
--->
 
 ## CMP Tool Call Flow
 

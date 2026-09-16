@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-04
+last_updated: 2026-09-15
 version: "0.38.0"
 status: "Active"
 domain: "Composition"
@@ -20,24 +20,26 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` (settings.rs:36-85) has 16 subsections plus two top-level
-storage-root fields:
+`KaskSettings` has 14 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-96`):
 
 | Field | Type | Default source |
 |-------|------|---------------|
 | `data_dir` | `String` | `""` → runtime resolves `~/.local/share/zed-kask/` (hidden infrastructure tree: databases, agents/, mcp/, skills/, threads/); emitted as `HKASK_DATA_DIR` |
 | `artifacts_dir` | `String` | `""` → runtime resolves `~/Documents/zk-data/` (visible artifacts tree: ALL artifact files and outputs at `{server}-mcp/{artifact-type}/`); emitted as `HKASK_ARTIFACTS_DIR` |
+| `general` | `KaskGeneralSettings` | `Default` |
 | `mcp` | `KaskMcpSettings` | `Default` |
 | `curator` | `KaskCuratorSettings` | `Default` |
 | `memory` | `KaskMemorySettings` | `Default` |
 | `condenser` | `KaskCondenserSettings` | `Default` |
-| `companies` | `KaskCompaniesSettings` | derived `Default` |
+| `research` | `KaskResearchSettings` | derived `Default` |
+| `companies` | `KaskCompaniesSettings` | `Default` |
 | `corpus` | `KaskCorpusSettings` | `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `swarm` | `KaskSwarmSettings` | `Default` |
 | `training` | `KaskTrainingSettings` | derived `Default` |
-| `models` | `KaskModelsSettings` | derived `Default` |
+| `media` | `KaskMediaSettings` | `Default` |
+| `models` | `KaskModelsSettings` | `Default` |
 
 ## Inference admission and resilience (`KaskGeneralSettings`)
 
@@ -55,13 +57,7 @@ capacity returns `Overloaded` before provider dispatch; full active utilization
 alone is healthy. Expiry returns `Timeout`. Caller/channel closure cancels local
 queued or running work and releases capacity.
 
-`general.inference_circuit_failure_threshold` (default 3) consecutive transient
-failures opens the local inference circuit. While open, requests return
-`CircuitOpen` before dispatch. After `general.inference_circuit_open_secs`
-(default 30), one half-open probe is admitted; success closes and transient
-failure reopens the circuit. Permanent authorization, configuration, model, and
-provider failures do not open the transient circuit; Regulation escalates them
-with typed evidence. Unknown-effect requests are not automatically replayed.
+`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:98-137`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
 
 ## MCP Servers (`KaskMcpSettings`)
 
@@ -222,6 +218,12 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 | `persona_keywords` | `Vec<String>` | `[]` | Saliency scoring keywords |
 | `saliency_window` | `u32` | `5` | Max tokens budget: `saliency_window * 100`, clamped [150, 2000] |
 
+## Research (`KaskResearchSettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:322-329`) |
+
 ## Companies (`KaskCompaniesSettings`)
 
 | Field | Type | Default | Notes |
@@ -237,13 +239,10 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `embedding_dim` | `u32` | `1024` | Must match embedding model output |
-| `embedding_model` | `String` | `""` (empty) | Empty = not configured — embedding-dependent calls fail visibly naming the setting (no constant fallback; the operator's no-hidden-models spec) |
-| `ocr_concurrency` | `u32` | `4` | Pages sent to vision model in parallel |
-| `ocr_simple_max` | `f64` | `0.05` | Pages below this processed simply |
-| `ocr_moderate_max` | `f64` | `0.15` | Pages above simple but below this = moderate pipeline |
-| `ocr_sample_rate` | `f64` | `0.10` | Fraction of moderate pages sampled |
-| `ocr_tuneable` | `bool` | `true` | OCR tuneable mode enabled |
-| `template_root` | `String` | `"registry"` | Jinja2 template root directory |
+| `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` | Corpus-layer default; `models.embedding_model` overrides it |
+| `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; runtime environment resolution publishes the effective template root |
+
+These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:355-386`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
 
 ## Scenarios (`KaskScenariosSettings`)
 
@@ -251,11 +250,10 @@ No fields — the scenarios data dir is derived from the global `data_dir` as `m
 
 ## Prediction Markets (`KaskPredictionMarketsSettings`)
 
-Prediction-markets data-service configuration (settings.rs:451-458).
+Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:388-399`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
-| `data_dir` | `String` | `""` | `HKASK_PREDICTION_MARKETS_DATA` | Calibration journal directory; empty = in-memory |
 | `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
 | `base_events` | `String` | `""` | `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | Base-event registry: `"domain:series,..."` pairs for CMP construction |
 
@@ -269,14 +267,18 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/s
 | `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
 | `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
+| `skills_dir` | `String` | `""` | `HKASK_SKILLS_DIR` | Empty disables local-agent skill awareness |
+| `default_agent_model` | `String` | `""` | server configuration | Empty uses the server's own default agent model |
+| `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
+| `embedding_dim` | `usize` | `1024` | `HKASK_EMBEDDING_DIM` | Shared semantic-memory vector dimension |
+
+The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs:416-517`.
 
 No `local_agents_dir`, `local_swarms_dir`, or `memory_db_path` fields — these paths are derived from the global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and `HKASK_SWARM_MEMORY_DB`.
 
 The ABW API key is a secret — it lives in the keychain under
 `kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY` by
-`mcp_env_with_credentials`, not by `mcp_env()`. The bridge `Default` impl
-(settings.rs:536-557) MUST stay in sync with `SwarmConfig::default()` in
-`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs` — the two impls are
+`mcp_env_with_credentials`, not by `mcp_env()`. The bridge `Default` impl (`kask/crates/kask_bridge/src/settings.rs:497-517`) MUST stay in sync with `SwarmConfig::default()` in `kask/mcp-servers/hkask-mcp-swarm/src/config.rs:137-158` — the two impls are
 deliberately duplicated across the crate boundary to avoid a circular
 dependency.
 
@@ -286,6 +288,18 @@ dependency.
 |-------|------|---------|-------|
 | `host` | `String` | `""` | `"nebius"` or `"runpod"`; empty = auto-detect from API keys |
 | `cache_dir` | `String` | `""` | Dataset pipeline cache; empty = agent adapters directory |
+
+## Media (`KaskMediaSettings`)
+
+| Field | Type | Default | Env var |
+|-------|------|---------|---------|
+| `tts_model` | `String` | `""` | `HKASK_MEDIA_TTS_MODEL` |
+| `stt_model` | `String` | `"OpenRouter/openai/whisper-large-v3-turbo"` | `HKASK_MEDIA_STT_MODEL` |
+| `vision_model` | `String` | `"OpenRouter/openai/gpt-4o-mini"` | `HKASK_MEDIA_VISION_MODEL` |
+| `image_gen_model` | `String` | `""` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
+| `video_model` | `String` | `""` | `HKASK_MEDIA_VIDEO_MODEL` |
+
+Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:533-569`, `kask/crates/hkask-inference/src/model_constants.rs:173-203`).
 
 ## Models (`KaskModelsSettings`)
 
@@ -302,7 +316,7 @@ operator's configured models, verbatim.[^ousterhout-models-settings]
 | `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
 | `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never chat, classifier, or training base model |
 | `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
-| `rerank_model` | `String` | `""` | No configured default — the research server's rerank stage fails visibly naming the setting until one is named |
+| `rerank_model` | `String` | `"deepinfra/Qwen/Qwen3-Reranker-8B"` | Shared `DEFAULT_RERANK_MODEL`; injected as `HKASK_RERANK_MODEL` |
 
 QA generation is configured under **Settings → Kask → Models → QA Generation Model**.
 The input writes `kask.models.qa_generation_model`; the host settings writer reloads it,
@@ -331,14 +345,7 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The former `DEFAULT_*_MODEL` constants
-(`DEFAULT_INFERENCE_MODEL`, `DEFAULT_FALLBACK_MODEL`,
-`DEFAULT_EMBEDDING_MODEL`, `DEFAULT_CLASSIFIER_MODEL`, `DEFAULT_OCR_MODEL`,
-`DEFAULT_AGENT_MODEL`) are deleted — the defaults now live in the settings
-`Default` impls (`kask_bridge/src/settings.rs`,
-`hkask-services-core/src/standalone_settings.rs`), overridable via the
-settings UI. Vision, TTS, STT, video, and image-gen models are
-env-var-configured per media server (`HKASK_MEDIA_*_MODEL`).
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:599-676`; `kask/crates/hkask-services-core/src/standalone_settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
 
 ## Keychain Architecture
 
@@ -388,15 +395,7 @@ keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 
-`provision_agent` writes the passphrase to the hKask keychain entry
-`hkask-db-passphrase`. `kask_bridge::identity::provision_db_passphrase`
-(`kask/crates/kask_bridge/src/identity.rs:145-147`) writes it directly to the
-unified `kask://credentials/hkask_db_passphrase` namespace via
-`CredentialsProvider::write_credentials` — no mirror step is needed
-(`identity.rs:200-201`). It is called at governed MCP server launch
-(`kask/crates/kask_bridge/src/mcp_servers.rs:684-688`), so the primary
-`ctx.credentials` tier works on first run (no reliance on the env/keychain
-fallback). The ordering dependency is explicit.
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:838-861`). There is no separate swarm-memory passphrase.
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
 passphrase for every SQLCipher database (curator, swarm memory, kata-kanban,
@@ -407,8 +406,7 @@ before saving the new passphrase.
 ### Passphrase rotation
 
 Changing a SQLCipher passphrase requires re-encrypting the entire database —
-there is no in-place `PRAGMA rekey` that survives a crash. The rotation is
-handled by `hkask_storage::rotate_passphrase` (`rotation.rs:121`), which:
+there is no in-place `PRAGMA rekey` that survives a crash. The rotation is handled by `hkask_storage::rotate_passphrase` (`kask/crates/hkask-storage/src/rotation.rs:108-204`), which:
 
 1. Opens the source DB with the old passphrase (verifies it).
 2. Creates `<db>.new` encrypted with the new passphrase.
@@ -420,8 +418,7 @@ If any step fails, the original DB is untouched — the old passphrase remains
 in effect. The caller writes the new passphrase to the keychain ONLY after
 rotation returns `Ok(())`.
 
-The bridge layer wraps this in one function
-(`kask_bridge/src/identity.rs`):
+The bridge layer wraps this in one function (`kask/crates/kask_bridge/src/identity.rs:210-283`):
 
 - `rotate_all_kask_db_passphrases(new_passphrase)` — rotates EVERY kask
   SQLCipher DB that exists at its resolved path (curator, swarm memory,
@@ -434,65 +431,13 @@ env/data-dir. The settings UI calls it on a background spawn before
 writing the new passphrase to the keychain and nudging MCP servers to
 restart.
 
-**From the settings UI**:
-- **Security page**: change the DB passphrase (curator/corpus/kata-kanban).
-- **Swarm page**: change the swarm memory passphrase.
+**From the settings UI:** the Security page changes the one DB passphrase. Rotation completes before the new keychain value is written; on failure, a warning is emitted and the old passphrase remains (`crates/settings_ui/src/pages/kask_page/security.rs`).
 
-Both pages show a "Configured" card if the passphrase exists, or an input
-field to set one. On confirm, rotation runs on the background executor; on
-failure, a `log::warn!` is emitted and the old passphrase remains.
-
-## Storage Backend
-
-hKask supports two storage backends, selected at startup via environment
-variables. The `DatabaseDriver` trait abstracts the backend so all stores
-(consent, goals, embeddings, wallet, kata, regulation, etc.) work with
-either provider without code changes.[^sqlcipher-settings][^pgvector-settings]
-
-### SQLite (default)
-
-Per-agent SQLCipher-encrypted databases at `~/.local/share/hkask/agents/{name}/`.
-Zero configuration — the default for local, single-user deployments. Uses
-`sqlite-vec` for vector similarity search.
-
-### PostgreSQL
-
-Connects to a PostgreSQL database with `pgvector` for vector similarity
-search. Use when memory or embedding collections outgrow SQLite's
-single-writer model, or for multi-user / remote deployments.
-
-```bash
-# SQLite (default)
-HKASK_DB_PROVIDER=sqlite
-
-# PostgreSQL
-HKASK_DB_PROVIDER=postgres \
-  HKASK_DATABASE_URL=postgres://user:pass@localhost/hkask
-```
-
-The `PostgresDriver` uses a dedicated worker thread to bridge async `sqlx`
-to the sync `DatabaseDriver` trait — safe from any calling context
-including the GPUI foreground thread. Encryption at rest is the operator's
-responsibility (TLS to a remote Postgres + disk encryption).
-
-### `ServiceConfig::open_driver()`
-
-The canonical entry point for driver construction. Dispatches on
-`db_provider`:
-
-- `Sqlite` → opens a SQLCipher database at `db_path` with `db_passphrase`.
-- `Postgres` → connects to `HKASK_DATABASE_URL` and initializes the
-  pgvector schema (`schema_pg.sql`).
-
-Returns `Arc<dyn DatabaseDriver>` ready for any store's `from_driver()`
-constructor.
 
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
-environment. Shell env vars take precedence over keychain values. The
-`mcp_env()` method (settings.rs:668-970) translates settings into env vars for
-MCP server child processes; only non-empty/non-default values are emitted.
+environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:740-742` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
 `mcp_env()` also unconditionally injects `HKASK_MCP_SERVER_IDS` (the
 comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 `config_env` allowlist) and passes through `HKASK_DATA_DIR` and
@@ -502,8 +447,7 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 
 | Env Var | Service | Notes |
 |---------|--------|-------|
-| `HKASK_DB_PROVIDER` | Storage backend | `sqlite` (default) or `postgres` |
-| `HKASK_DATABASE_URL` | PostgreSQL URL | Required when `HKASK_DB_PROVIDER=postgres` |
+
 | `HKASK_DB_PATH` | SQLite path | |
 | `HKASK_DB_PASSPHRASE` | SQLite passphrase | SQLCipher encryption |
 | `HKASK_EMBEDDING_DIM` | Embedding dimension | Default 1024 (from `KaskCorpusSettings::default()`) |
@@ -637,9 +581,3 @@ The skill-span history cap (`max_skill_span_history`) is configurable via the
 
 [^owasp-keychain-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
     Cited for the dual-namespace keychain design that separates settings-UI credentials from MCP-server credentials.
-
-[^sqlcipher-settings]: Zetetic LLC. (2024). *SQLCipher: Full Database Encryption for SQLite*. https://www.zetetic.net/sqlcipher/
-    Cited for the SQLCipher-encrypted SQLite backend the default storage uses.
-
-[^pgvector-settings]: pgvector. (2024). *pgvector: Open-source vector similarity search for PostgreSQL*. GitHub. https://github.com/pgvector/pgvector
-    Cited for the pgvector extension the PostgreSQL storage backend uses for vector similarity search.

@@ -437,6 +437,13 @@ architecture-beta
     mcp_runtime --> unwrap: result is {"content": value}
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-SKILL-MCP-LISP-001
+verified_date: 2026-09-15
+verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 11 servers incl. media)
+status: VERIFIED
+-->
+
 The two dispatch paths into `ToolPort::invoke`:
 
 | Caller | Entry point | Action | Resolves to |
@@ -454,13 +461,6 @@ The 11 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
 `kask/crates/kask_bridge/src/mcp_servers.rs`: `portfolio`, `companies`,
 `corpus`, `curator`, `kata-kanban`, `research`, `scenarios`,
 `prediction-markets`, `swarm`, `training`, `media`.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-08-28
-verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 11 servers incl. media)
-status: VERIFIED
--->
 
 ## Credential Resolution Chain
 
@@ -546,6 +546,13 @@ erDiagram
     }
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:677 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
+status: VERIFIED
+-->
+
 The 2-tier chain: `hkask_mcp_server::server::resolve_db_passphrase(&credentials)`
 returns `McpToolError::permission_denied` naming the env var and keychain URL
 when both tiers are empty — a missing credential is an authorization failure,
@@ -555,13 +562,6 @@ existing keychain entry → default `"allostery"`) and runs at governed MCP
 server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:677`); a failed
 provision logs a `tracing::warn!` naming the env var and the server fails
 with `permission_denied` at tool time.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:677 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
-status: VERIFIED
--->
 
 ## hKask Tool Port
 
@@ -623,17 +623,17 @@ classDiagram
     CallCapManager ..> CallMeterOutcome : returns
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-CAP-001
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPortError variants L12-51, is_retryable L50-52); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
+status: VERIFIED
+-->
+
 Authority lives outside this crate: the per-request `tool_allowlist` on the
 inference IPC dispatch, each swarm card's `mcp_tools` allowlist, and the
 per-server MCP env/credential allowlists. `invoke`'s `agent: WebID` is an
 accounting identity, not a credential.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-CAP-001
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPortError variants L12-51, is_retryable L50-52); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
-status: VERIFIED
--->
 
 ## hKask Event Store
 
@@ -714,17 +714,17 @@ classDiagram
     VerdictSource --|> "trusted for task_success" : DeterministicEvaluator, Operator
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ES-001
+verified_date: 2026-09-15
+verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs; kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
+status: VERIFIED
+-->
+
 `VerdictSource` trust classification: `DeterministicEvaluator` and `Operator`
 are trusted for task success; `LlmJudged` is not (the determinism constraint
 forbids an LLM judging `task_success`); `RegulationImpact` is a before/after
 measurement, not a task-success check.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ES-001
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs; kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
-status: VERIFIED
--->
 
 ## hKask Viz-Core
 
@@ -797,6 +797,13 @@ classDiagram
     VizWidget <|.. SwarmWidget : viz swarm_delegate_results
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-CORE
+verified_date: 2026-09-15
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-101, impls for GraphWidget/KanbanWidget/PortfolioWidget/ScenariosWidget/SwarmWidget L103-176, CachedWidget L186-204, try_create L209-224, viz_factories L233-241, MAX_CACHE_SIZE L243, VizCache L251-281, cache_key L285-289, block_renderer L299-330); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L48); crates/agent_ui/src/conversation_view.rs (media_block_renderer L3539)
+status: VERIFIED
+-->
+
 **Selection order** (intentional): media (`kind`) first, then graph
 (`viz: "event_tree"`), kanban (`viz: "kanban"`), portfolio
 (`viz: "portfolio"`), scenarios (`viz: "scenarios"`), swarm
@@ -806,13 +813,6 @@ to the default code-block renderer.
 
 **Wiring seam:** `crates/agent_ui/src/conversation_view.rs` —
 `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`.
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-CORE
-verified_date: 2026-08-28
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-101, impls for GraphWidget/KanbanWidget/PortfolioWidget/ScenariosWidget/SwarmWidget L103-176, CachedWidget L186-204, try_create L209-224, viz_factories L233-241, MAX_CACHE_SIZE L243, VizCache L251-281, cache_key L285-289, block_renderer L299-330); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L48); crates/agent_ui/src/conversation_view.rs (media_block_renderer L3539)
-status: VERIFIED
--->
 
 ## See also
 

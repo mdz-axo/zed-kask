@@ -1,7 +1,7 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-09-09
+last_updated: 2026-09-15
 version: "1.3.0"
 status: "Active"
 domain: "Lifecycle"
@@ -31,11 +31,7 @@ hygiene, recovery) on top of the 8 steps below. Note: the skill's "Process
 Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
 is this file, `kask/docs/reference/upstream-rebase-process.md`.
 
-**D-seam surface:** the `DIVERGENCE.md` table is the authority and currently
-runs **D1–D52, with D4, D10, D17, D19, and D30 retired** (numbers are never
-reused; the retired-seams list is at `DIVERGENCE.md:121` and the section
-header at `:62` states the D1–D52 range). Some range labels quoted inside
-`DIVERGENCE.md` itself lag the table — trust the table, not range labels.
+**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority and runs **D1–D56** (`DIVERGENCE.md:125`). Retired numbers are never reused: D4, D10, D17, D19, D30, D38, D49, D50, and D53 are recorded in the retired-seams ledger (`DIVERGENCE.md:185`). Trust the table and retired ledger rather than copied range labels in secondary documents.
 
 **Removal principles:** what may be removed from upstream Zed (and why) is
 governed by the principle set in §9 — folded here 2026-09-09 from the former
@@ -153,7 +149,7 @@ D7/D16 (icons, `.desktop` templates, bundle scripts, release workflows).
 `kask/scripts/build/check-zed-isolation.sh` is the enforcement point — it
 enumerates every forbidden path (from `kask/scripts/build/check-zed-isolation.sh:25`)
 and names the offending path on failure. `check-desktop-no-collision.sh` is a
-one-line `exec` alias for the same script (`check-desktop-no-collision.sh:6`) —
+one-line `exec` alias for the same script (`kask/scripts/build/check-desktop-no-collision.sh:6`) —
 running either is sufficient; do not run both.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh`
@@ -392,8 +388,8 @@ process + case-study companion.
 > Folded 2026-09-09 from `upstream-removal-principles.md` (v1.2.0,
 > consolidated 2026-08-28). A testable principle set governing **what to
 > remove from upstream Zed** (everything outside `kask/` and outside the
-> named D-seams in `DIVERGENCE.md` — the table currently runs D1–D52, with
-> D4, D10, D17, D19, and D30 retired) and **why**.
+> named D-seams in `DIVERGENCE.md` — the current authority runs D1–D56, with
+> retired numbers preserved in its ledger (`DIVERGENCE.md:125-185`)) and **why**.
 
 **Meta-constraint (inviolable):** the D-seam discipline is a *boundary on
 the mechanism*, not a removal *reason*. Never edit upstream files outside

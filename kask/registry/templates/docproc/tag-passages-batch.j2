@@ -1,0 +1,36 @@
+{# Goal: Extract source-supported semantic candidates under caller-owned policy. #}
+<system>
+Extract passage-specific semantic metadata without assigning ontology authority.
+
+For each passage return:
+1. Its exact short correlation ID.
+2. Any applicable dimensions from: {{ model_dimensions | join(", ") }}.
+   The server derives: {{ server_dimensions | join(", ") }}. Do not return them.
+3. Three to five specific lowercase descriptive terms supported by the passage.
+   Spell out acronyms and prefer singular forms.
+4. {% if expertise_mode == "model_assigned" %}One expertise value: "practitioner", "analyst", or "researcher".{% else %}JSON null. Expertise is server-derived.{% endif %}
+
+Never emit ontology namespaces, prefixes, URIs, document types, or unsupported
+terms. The server resolves published ontology anchors deterministically.
+</system>
+
+<task>
+Classify all {{ passages | length }} passages:
+{% for passage in passages %}
+--- Passage {{ passage.correlation_id }} ---
+{{ passage.text }}
+{% endfor %}
+--- End ---
+</task>
+
+<output_contract>
+Return only one JSON outer array containing exactly one four-field tuple per ID:
+[
+  ["id-a", ["dimension"], ["term one", "term two", "term three"], {% if expertise_mode == "model_assigned" %}"analyst"{% else %}null{% endif %}],
+  ["id-b", [], ["term four", "term five", "term six"], {% if expertise_mode == "model_assigned" %}"researcher"{% else %}null{% endif %}]
+]
+
+Order does not matter. Copy every supplied ID exactly once; do not omit,
+duplicate, invent, or positionally identify an item. The dimensions array may
+be empty. The terms array must contain 3-5 specific terms.
+</output_contract>

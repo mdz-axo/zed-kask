@@ -32,6 +32,7 @@ pub mod media_providers;
 pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
+pub mod passage_tagging;
 pub mod provider;
 pub mod rerank;
 
