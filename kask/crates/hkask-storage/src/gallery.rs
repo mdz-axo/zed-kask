@@ -2313,7 +2313,7 @@ mod tests {
             task_id
         );
 
-        let mut failed = publication.clone();
+        let mut failed = publication;
         failed.asset_id = "asset-publication-rollback".to_string();
         failed.observation.absolute_path = root
             .path()
