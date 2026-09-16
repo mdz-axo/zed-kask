@@ -17,39 +17,24 @@ use tokio::process::Command;
 /// `/usr/local/bin` outrank `/usr/bin` because pip installs are typically
 /// newer than the distro package.
 fn candidate_paths() -> Vec<String> {
-    let mut candidates = vec!["yt-dlp".to_string()];
+    let mut candidates = vec![hkask_types::ytdlp::PATH_CANDIDATE.to_string()];
     if let Ok(home) = std::env::var("HOME") {
-        candidates.push(format!("{home}/.local/bin/yt-dlp"));
+        candidates.push(format!(
+            "{home}/{}",
+            hkask_types::ytdlp::USER_CANDIDATE_SUFFIX
+        ));
     }
-    candidates.push("/usr/local/bin/yt-dlp".to_string());
-    candidates.push("/usr/bin/yt-dlp".to_string());
+    candidates.extend(
+        hkask_types::ytdlp::SYSTEM_CANDIDATES
+            .iter()
+            .map(|candidate| (*candidate).to_string()),
+    );
     candidates
 }
 
-/// Parse a `--version` output line ("2026.08.19", "2026.3.17-1~ubuntu")
-/// into comparable components. Each dot-segment contributes its leading
-/// numeric run; suffixes ("-1~ubuntu", "+git") are ignored so distro
-/// packages compare against their upstream version.
-fn parse_version(output: &str) -> Vec<u64> {
-    output
-        .trim()
-        .split('.')
-        .map(|part| {
-            let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
-            digits.parse::<u64>().unwrap_or(0)
-        })
-        .collect()
-}
-
-/// Compare two dotted versions component-wise; longer wins on prefix-equal
-/// (2026.8.19.1 > 2026.8.19).
-fn version_at_least(newer: &[u64], current: &[u64]) -> bool {
-    for (n, c) in newer.iter().zip(current.iter()) {
-        if n != c {
-            return n > c;
-        }
-    }
-    newer.len() >= current.len()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YtDlpFetchOutcome {
+    pub warning: Option<String>,
 }
 
 /// yt-dlp runner with availability detection.
@@ -86,10 +71,17 @@ impl YtDlpRunner {
                 continue;
             }
             let version_text = String::from_utf8_lossy(&output.stdout).to_string();
-            let version = parse_version(&version_text);
+            let Some(version) = hkask_types::ytdlp::parse_version(&version_text) else {
+                tracing::warn!(
+                    target: "hkask.mcp.media.ytdlp",
+                    path = %candidate,
+                    "yt-dlp candidate returned an invalid version"
+                );
+                continue;
+            };
             let is_newer = best
                 .as_ref()
-                .map(|(_, current)| version_at_least(&version, current))
+                .map(|(_, current)| hkask_types::ytdlp::candidate_is_preferred(&version, current))
                 .unwrap_or(true);
             if is_newer {
                 tracing::info!(
@@ -141,7 +133,7 @@ impl YtDlpRunner {
         &self,
         url: &str,
         output_path: &std::path::Path,
-    ) -> Result<(), crate::MediaError> {
+    ) -> Result<YtDlpFetchOutcome, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::YtDlpUnavailable);
         }
@@ -178,23 +170,42 @@ impl YtDlpRunner {
                 .into_iter()
                 .rev()
                 .collect();
-            return Err(crate::MediaError::YtDlpFailed(format!(
-                "exit {}: {}",
-                output
-                    .status
-                    .code()
-                    .map_or_else(|| "signal".to_string(), |c| c.to_string()),
-                tail.trim()
-            )));
+            let issue = hkask_types::ytdlp::classify_stderr(tail.trim())
+                .unwrap_or(hkask_types::ytdlp::YtDlpIssue::Other);
+            return Err(match issue {
+                hkask_types::ytdlp::YtDlpIssue::AuthorizationFailure => {
+                    crate::MediaError::YtDlpAuthorization(issue.actionable_message().to_string())
+                }
+                hkask_types::ytdlp::YtDlpIssue::UnavailableVideo => {
+                    crate::MediaError::YtDlpVideoUnavailable(issue.actionable_message().to_string())
+                }
+                hkask_types::ytdlp::YtDlpIssue::ExtractorFailure => {
+                    crate::MediaError::YtDlpExtractor(issue.actionable_message().to_string())
+                }
+                hkask_types::ytdlp::YtDlpIssue::MissingJavascriptRuntime
+                | hkask_types::ytdlp::YtDlpIssue::Other => {
+                    crate::MediaError::YtDlpFailed(issue.actionable_message().to_string())
+                }
+            });
         }
 
+        let warning =
+            hkask_types::ytdlp::classify_stderr(String::from_utf8_lossy(&output.stderr).as_ref())
+                .filter(|issue| *issue != hkask_types::ytdlp::YtDlpIssue::Other)
+                .map(|issue| issue.actionable_message().to_string());
+        if let Some(warning) = warning.as_deref() {
+            tracing::warn!(
+                target: "hkask.mcp.media.ytdlp",
+                warning,
+                "yt-dlp completed with degraded extraction"
+            );
+        }
         tracing::info!(
             target: "hkask.mcp.media.ytdlp",
-            url = %url,
             output = %output_path.display(),
             "Video downloaded"
         );
-        Ok(())
+        Ok(YtDlpFetchOutcome { warning })
     }
 }
 
@@ -216,17 +227,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_components_parse_numerically() {
-        assert_eq!(parse_version("2026.08.19\n"), vec![2026, 8, 19]);
-        assert_eq!(parse_version("2026.3.17-1~ubuntu"), vec![2026, 3, 17]);
-    }
-
-    #[test]
-    fn newer_version_outranks_older() {
-        assert!(version_at_least(&[2026, 8, 19], &[2026, 3, 17]));
-        assert!(!version_at_least(&[2026, 3, 17], &[2026, 8, 19]));
-        // Prefix-equal: the longer (more specific) version wins.
-        assert!(version_at_least(&[2026, 8, 19, 1], &[2026, 8, 19]));
-        assert!(version_at_least(&[2026, 8, 19], &[2026, 8, 19]));
+    fn server_uses_shared_version_and_tie_policy() {
+        let current = hkask_types::ytdlp::parse_version("2026.08.19\n").expect("version parses");
+        let equal = hkask_types::ytdlp::parse_version("2026.8.19").expect("equal version parses");
+        assert!(!hkask_types::ytdlp::candidate_is_preferred(
+            &equal, &current
+        ));
+        assert!(hkask_types::ytdlp::candidate_is_preferred(
+            &[2026, 8, 19, 1],
+            &current
+        ));
     }
 }

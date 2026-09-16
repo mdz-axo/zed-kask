@@ -259,6 +259,7 @@ impl StagedJobPublication {
                 "gallery_asset_id".to_string(),
                 serde_json::Value::String(asset_id.to_string()),
             );
+            slim.insert("gallery_changed".to_string(), serde_json::Value::Bool(true));
         }
         if let Some(task_id) = self.assets.first().map(|asset| asset.task_id.as_str()) {
             slim.insert(

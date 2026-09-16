@@ -174,6 +174,7 @@ pub struct MediaViewer {
     jobs_limit: usize,
     jobs_has_more: bool,
     jobs_request: RequestLifecycle,
+    processed_job_results: HashSet<String>,
     queue_poll_task: Option<Task<()>>,
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
     detail: Option<Value>,
@@ -212,6 +213,7 @@ impl MediaViewer {
             jobs_limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
             jobs_has_more: false,
             jobs_request: RequestLifecycle::new(),
+            processed_job_results: HashSet::new(),
             queue_poll_task: None,
             detail: None,
             detail_request: RequestLifecycle::new(),
@@ -298,10 +300,10 @@ impl MediaViewer {
                     continue; // still running — no result to ingest yet
                 };
                 let tool: SharedString = call.tool_name.clone().unwrap_or_else(|| "tool".into());
-                // First sight of this call's result: a gallery-mutating
-                // tool just completed in the conversation.
+                // First sight of a completed result carrying the server's
+                // gallery-change contract makes the cached Library stale.
                 if self.processed_tool_results.insert(call.id.clone())
-                    && tool_mutates_gallery(&tool)
+                    && tool_result_changed_gallery(output)
                 {
                     gallery_mutated = true;
                 }
@@ -317,7 +319,7 @@ impl MediaViewer {
         // reloads it (`tab_button`), so reloading from other tabs would be
         // wasted dispatches.
         if gallery_mutated && self.active_tab == ViewerTab::Library {
-            self.load_gallery(cx);
+            self.reload_gallery(cx);
         }
     }
 
@@ -333,6 +335,7 @@ impl MediaViewer {
     /// post: new valid assets are selected and notify GPUI observers;
     /// repeated bodies neither duplicate nor request a redraw.
     pub fn ingest_tool_result(&mut self, output: &Value, tool: &str, cx: &mut Context<Self>) {
+        let gallery_changed = tool_result_changed_gallery(output);
         let hints = match output {
             Value::String(text) => hkask_types::tool_response::display_hints_from_output_text(text),
             value => hkask_types::tool_response::display_hints_from_output_value(value),
@@ -343,6 +346,13 @@ impl MediaViewer {
             let Some(asset) = asset_from_hint(&hint, &tool) else {
                 continue;
             };
+            if gallery_changed
+                && asset.gallery_asset_id.is_some()
+                && let Err(error) =
+                    hkask_media_widget::approve_gallery_media_path(std::path::Path::new(&asset.src))
+            {
+                log::warn!("failed to approve published gallery media path: {error}");
+            }
             if self
                 .assets
                 .iter()
@@ -369,8 +379,13 @@ impl MediaViewer {
         describe: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(epoch) = self.edit_request.begin(RequestOwner::Edit(tool)) else {
-            return;
+        let epoch = match self.begin_edit(tool) {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
         };
         self.status = None;
         self.edit_progress = Some(format!("{tool}: {describe}…"));
@@ -395,7 +410,17 @@ impl MediaViewer {
         .detach();
     }
 
-    /// expect: Only the latest edit request may surface an artifact or failure.
+    /// Admit exactly one direct side-effecting edit at a time.
+    fn begin_edit(&mut self, tool: &'static str) -> Result<u64, String> {
+        if self.edit_request.state == ResourceState::Loading {
+            return Err("Another media edit is already in progress; wait for it to finish.".into());
+        }
+        self.edit_request
+            .begin(RequestOwner::Edit(tool))
+            .ok_or_else(|| "This media edit is already in progress.".to_string())
+    }
+
+    /// expect: The admitted edit remains visible until its result or failure arrives.
     /// [P1] Motivating: superseded edits cannot overwrite the current operation state.
     /// pre: epoch was returned by edit_request.begin.
     /// post: stale outcomes are ignored; the owned outcome commits exactly once.
@@ -527,7 +552,7 @@ impl MediaViewer {
                         Some("No conversation thread to re-ingest — open a thread first.".into());
                 }
             }
-            ViewerTab::Library => self.load_gallery(cx),
+            ViewerTab::Library => self.reload_gallery(cx),
             ViewerTab::Queue => self.load_jobs(cx),
             ViewerTab::Detail => self.load_detail(cx),
         }
@@ -538,6 +563,11 @@ impl MediaViewer {
     /// after a complete response parses, so a failed page request preserves
     /// the entire last-good snapshot.
     fn load_gallery(&mut self, cx: &mut Context<Self>) {
+        self.request_gallery_page(self.gallery_offset, cx);
+    }
+
+    fn reload_gallery(&mut self, cx: &mut Context<Self>) {
+        self.gallery_request.invalidate();
         self.request_gallery_page(self.gallery_offset, cx);
     }
 
@@ -615,6 +645,14 @@ impl MediaViewer {
             .confirm_delete
             .and_then(|ix| self.assets.get(ix))
             .map(|asset| asset.src.clone());
+        for record in &listing.assets {
+            if let Some(path) = record.get("path").and_then(Value::as_str)
+                && let Err(error) =
+                    hkask_media_widget::approve_gallery_media_path(std::path::Path::new(path))
+            {
+                log::warn!("failed to approve listed gallery media path: {error}");
+            }
+        }
         let mut next_assets = self.assets.clone();
         if gallery_changed {
             next_assets.retain(|asset| asset.gallery_index.is_none());
@@ -737,11 +775,26 @@ impl MediaViewer {
         }
         match result {
             Ok(listing) => {
+                let completed_results = listing
+                    .jobs
+                    .iter()
+                    .filter(|job| job.status == "completed")
+                    .filter_map(|job| {
+                        job.result
+                            .clone()
+                            .map(|result| (job.id.clone(), job.op.clone(), result))
+                    })
+                    .collect::<Vec<_>>();
                 self.jobs = listing.jobs;
                 self.jobs_total = Some(listing.total);
                 self.jobs_limit = listing.limit;
                 self.jobs_has_more = listing.has_more;
                 self.jobs_request.complete(epoch, Ok(()));
+                for (job_id, op, result) in completed_results {
+                    if self.processed_job_results.insert(job_id) {
+                        self.ingest_tool_result(&result, &op, cx);
+                    }
+                }
                 if self.should_poll_jobs() {
                     self.schedule_queue_poll(cx);
                 } else {
@@ -881,16 +934,21 @@ impl MediaViewer {
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_delete_image",
-            serde_json::json!({ "image_id": asset_id, "delete_file": false }),
+            serde_json::json!({ "image_id": asset_id.clone(), "delete_file": false }),
         );
         cx.spawn(async move |this, cx| {
-            match task.await {
-                Ok(_) => {
+            match task.await.and_then(|response| {
+                parse_delete_acknowledgement(&response, &asset_id)
+                    .map_err(hkask_tool_invoker::InvokeError::Failed)
+            }) {
+                Ok(transcripts_detached) => {
                     this.update(cx, |this, cx| {
                         this.confirm_delete = None;
-                        this.status = Some("Asset removed from the gallery index.".into());
-                        // Reload the gallery — the listing is now stale.
-                        this.load_gallery(cx);
+                        this.status = Some(format!(
+                            "Asset removed from the gallery index; {transcripts_detached} transcript link(s) detached."
+                        ));
+                        // Supersede any listing admitted before deletion.
+                        this.reload_gallery(cx);
                     })
                     .log_err();
                 }
@@ -1094,6 +1152,7 @@ impl MediaViewer {
         // stays reachable at ~320px panes; min_w_0 keeps the row's
         // min-content from inflating the pane; the readout labels truncate.
         let (position_label, marks_label, trim_ready) = widget.read(cx).edit_state_labels();
+        let edit_active = self.edit_request.state == ResourceState::Loading;
         let concat_count = self.concat_queue.len();
         let queued_current = self.concat_queue.contains(&asset.src);
         let toolbar = h_flex()
@@ -1149,7 +1208,7 @@ impl MediaViewer {
             .child(
                 ui::Button::new("trim", "Trim to Marks")
                     .label_size(LabelSize::XSmall)
-                    .disabled(!trim_ready)
+                    .disabled(!trim_ready || edit_active)
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.dispatch_trim(cx);
                     })),
@@ -1175,7 +1234,7 @@ impl MediaViewer {
             .child(
                 ui::Button::new("concat", format!("Concat ({concat_count})"))
                     .label_size(LabelSize::XSmall)
-                    .disabled(concat_count < 2)
+                    .disabled(concat_count < 2 || edit_active)
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.dispatch_concat(cx);
                     })),
@@ -1739,6 +1798,23 @@ fn parse_gallery_listing(
     })
 }
 
+fn parse_delete_acknowledgement(output: &str, expected_id: &str) -> Result<usize, String> {
+    let payload = hkask_types::tool_response::parse_tool_response(output)
+        .ok_or_else(|| "gallery_delete_image returned malformed data".to_string())?;
+    if payload.get("deleted").and_then(Value::as_bool) != Some(true)
+        || payload.get("image_id").and_then(Value::as_str) != Some(expected_id)
+        || payload.get("file_deleted").and_then(Value::as_bool) != Some(false)
+        || payload.get("gallery_changed").and_then(Value::as_bool) != Some(true)
+    {
+        return Err("gallery_delete_image returned an invalid acknowledgement".into());
+    }
+    payload
+        .get("transcripts_detached")
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or_else(|| "gallery_delete_image returned no valid transcript count".to_string())
+}
+
 fn parse_job_listing(output: &str) -> Result<JobListing, String> {
     parse_job_list_response(output).map_err(|error| error.to_string())
 }
@@ -1921,15 +1997,25 @@ fn merge_gallery_records(
     });
 }
 
-/// Tools whose completion can change the gallery's asset listing — the
-/// signal that the Library's cached listing is stale. Deliberately
-/// over-inclusive on the `gallery_` prefix: a reload is idempotent, a
-/// missed mutation is the stale-list bug. The importers index new assets
-/// into the gallery directly (per their tool docs); generation tools do
-/// not touch the index — their output surfaces via display hints.
-fn tool_mutates_gallery(tool_name: &str) -> bool {
-    const IMPORTERS: &[&str] = &["video_fetch", "video_extract_frames"];
-    tool_name.starts_with("gallery_") || IMPORTERS.contains(&tool_name)
+/// Read the producer-authored gallery mutation fact from a completed tool
+/// result. Tool names are routing labels, not evidence that state changed.
+fn tool_result_changed_gallery(output: &Value) -> bool {
+    let payload = match output {
+        Value::String(text) => hkask_types::tool_response::parse_tool_response(text),
+        value => {
+            let payload = hkask_types::tool_response::unwrap_tool_envelope(value.clone());
+            if hkask_types::tool_response::parse_tool_error_value(&payload).is_some() {
+                None
+            } else {
+                Some(payload)
+            }
+        }
+    };
+    payload
+        .as_ref()
+        .and_then(|payload| payload.get("gallery_changed"))
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 #[cfg(test)]
@@ -2491,22 +2577,40 @@ mod tests {
         });
     }
 
-    /// The chat-driven reload trigger: gallery mutations and direct
-    /// importers reload the Library listing; generation tools don't touch
-    /// the index (their output surfaces via display hints) and neither do
-    /// unrelated tools.
+    /// dcterms:identifier: `tool_result_changed_gallery`
+    /// expect: Every publisher family reports mutation from its completed result, while reads do not.
+    /// [P7] Motivating: Library freshness follows observed state changes rather than tool-name guesses.
     #[test]
-    fn gallery_mutation_classification() {
-        assert!(tool_mutates_gallery("gallery_delete_image"));
-        assert!(tool_mutates_gallery("gallery_organize"));
-        assert!(tool_mutates_gallery("gallery_refresh"));
-        assert!(tool_mutates_gallery("gallery_add_media"));
-        assert!(tool_mutates_gallery("video_fetch"));
-        assert!(tool_mutates_gallery("video_extract_frames"));
-        assert!(!tool_mutates_gallery("generate_image"));
-        assert!(!tool_mutates_gallery("video_clip"));
-        assert!(!tool_mutates_gallery("transcribe"));
-        assert!(!tool_mutates_gallery("job_list"));
+    fn gallery_freshness_is_result_derived_across_publisher_families() {
+        for tool in [
+            "generate_image",
+            "video_clip",
+            "audio_capture",
+            "educt_render_edl",
+            "video_fetch",
+            "gallery_add_media",
+            "gallery_delete_image",
+        ] {
+            let output = serde_json::json!({
+                "content": {
+                    "gallery_changed": true,
+                    "gallery_asset_id": format!("asset-{tool}")
+                }
+            });
+            assert!(
+                tool_result_changed_gallery(&output),
+                "publisher missed: {tool}"
+            );
+        }
+
+        for output in [
+            serde_json::json!({"content":{"gallery_changed":false}}),
+            serde_json::json!({"content":{"jobs":[],"total":0}}),
+            serde_json::json!({"content":{"display_hints":["```media\n{\"kind\":\"image\",\"src\":\"/existing.png\",\"gallery_asset_id\":\"existing\"}\n```"]}}),
+            serde_json::json!({"error":{"code":"unavailable","message":"read failed"}}),
+        ] {
+            assert!(!tool_result_changed_gallery(&output));
+        }
     }
 
     /// Selection and delete-confirmation repair across a reconciling
@@ -2665,6 +2769,8 @@ mod tests {
                     total: 1,
                     limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
                     has_more: false,
+                    history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                    restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
                 }),
                 cx,
             );
@@ -2691,6 +2797,8 @@ mod tests {
                     total: 1,
                     limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
                     has_more: false,
+                    history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                    restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
                 }),
                 cx,
             );
@@ -2710,6 +2818,8 @@ mod tests {
                     total: 1,
                     limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
                     has_more: false,
+                    history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                    restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
                 }),
                 cx,
             );
@@ -2724,11 +2834,56 @@ mod tests {
         });
     }
 
-    /// dcterms:identifier: `MediaViewer::apply_detail_result`
-    /// expect: A newer asset detail and edit own the view even if older failures arrive later.
-    /// [P1] Motivating: overlapping inspector and edit work cannot regress visible state.
+    /// dcterms:identifier: `MediaViewer::apply_jobs_listing`
+    /// expect: A completed background publisher becomes one visible asset exactly once.
+    /// [P7] Motivating: job completion and foreground publication share one result ingress.
     #[gpui::test]
-    fn overlapping_detail_and_edit_drop_stale_errors(cx: &mut gpui::TestAppContext) {
+    fn completed_job_result_is_ingested_once(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.active_tab = ViewerTab::Queue;
+            let result = serde_json::json!({
+                "gallery_changed": true,
+                "gallery_asset_id": "job-asset",
+                "display_hint": "```media\n{\"kind\":\"image\",\"src\":\"/missing-job.png\",\"gallery_asset_id\":\"job-asset\"}\n```"
+            });
+            let mut completed = job("completed");
+            completed.id = "job-1".into();
+            completed.result = Some(result);
+            for _ in 0..2 {
+                let epoch = viewer
+                    .jobs_request
+                    .begin(RequestOwner::Jobs)
+                    .expect("listing starts");
+                viewer.apply_jobs_listing(
+                    epoch,
+                    Ok(JobListing {
+                        jobs: vec![completed.clone()],
+                        total: 1,
+                        limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                        has_more: false,
+                        history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                        restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
+                    }),
+                    cx,
+                );
+            }
+            assert_eq!(
+                viewer
+                    .assets
+                    .iter()
+                    .filter(|asset| asset.gallery_asset_id.as_deref() == Some("job-asset"))
+                    .count(),
+                1
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::apply_detail_result`
+    /// expect: A newer asset detail owns the view even if an older failure arrives later.
+    /// [P1] Motivating: overlapping inspector work cannot regress visible state.
+    #[gpui::test]
+    fn overlapping_detail_requests_drop_stale_errors(cx: &mut gpui::TestAppContext) {
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
             let old_detail = viewer
@@ -2746,25 +2901,31 @@ mod tests {
             );
             viewer.apply_detail_result(old_detail, Err("stale detail error".into()), cx);
             assert_eq!(viewer.detail_request.state, ResourceState::Ready);
-            assert_eq!(viewer.detail.as_ref().and_then(|d| d.pointer("/image/id")).and_then(Value::as_str), Some("asset-new"));
-
-            let old_edit = viewer
-                .edit_request
-                .begin(RequestOwner::Edit("video_clip"))
-                .expect("old edit starts");
-            let new_edit = viewer
-                .edit_request
-                .begin(RequestOwner::Edit("video_concat"))
-                .expect("new edit supersedes");
-            let output = serde_json::json!({
-                "content": {"display_hint": "```media\n{\"kind\":\"video\",\"src\":\"/new.mp4\"}\n```"}
-            })
-            .to_string();
-            viewer.apply_edit_result(new_edit, "video_concat", Ok(output), cx);
-            viewer.apply_edit_result(old_edit, "video_clip", Err("stale edit error".into()), cx);
-            assert_eq!(viewer.edit_request.state, ResourceState::Ready);
-            assert!(viewer.assets.iter().any(|asset| asset.src == "/new.mp4"));
+            assert_eq!(
+                viewer
+                    .detail
+                    .as_ref()
+                    .and_then(|d| d.pointer("/image/id"))
+                    .and_then(Value::as_str),
+                Some("asset-new")
+            );
         });
+    }
+
+    /// dcterms:identifier: `MediaViewer::begin_edit`
+    /// expect: Trim and concat cannot overlap and hide an admitted side effect.
+    /// [P1] Motivating: every direct edit remains visible until completion or failure.
+    #[test]
+    fn direct_edits_are_serialized_until_terminal() {
+        let mut viewer = MediaViewer::new();
+        let trim_epoch = viewer.begin_edit("video_clip").expect("trim admitted");
+        let error = viewer
+            .begin_edit("video_concat")
+            .expect_err("concat must wait for trim");
+        assert!(error.contains("already in progress"));
+        assert!(viewer.edit_request.owns(trim_epoch));
+        assert!(viewer.edit_request.complete(trim_epoch, Ok(())));
+        assert!(viewer.begin_edit("video_concat").is_ok());
     }
 
     /// dcterms:identifier: `MediaViewer::queue_selected_for_concat`
@@ -2796,11 +2957,34 @@ mod tests {
         assert_eq!(viewer.concat_queue, before);
     }
 
-    /// dcterms:identifier: `parse_job_listing`
-    /// expect: Queue count metadata is preserved while legacy and scoped empty responses stay valid.
-    /// [P7] Motivating: the panel presents truncation instead of hiding a subset.
+    /// dcterms:identifier: `parse_delete_acknowledgement`
+    /// expect: Deletion refreshes the Library only after an exact successful acknowledgement.
+    /// [P1] Motivating: malformed deletion responses cannot falsely remove visible work.
     #[test]
-    fn job_listing_preserves_counts_and_compatible_empty_shapes() {
+    fn delete_acknowledgement_is_strict() {
+        let valid = serde_json::json!({"content": {
+            "deleted": true,
+            "image_id": "asset-1",
+            "file_deleted": false,
+            "transcripts_detached": 2,
+            "gallery_changed": true
+        }})
+        .to_string();
+        assert_eq!(parse_delete_acknowledgement(&valid, "asset-1"), Ok(2));
+        for invalid in [
+            r#"{"content":{"deleted":false,"image_id":"asset-1","file_deleted":false,"transcripts_detached":0,"gallery_changed":true}}"#,
+            r#"{"content":{"deleted":true,"image_id":"other","file_deleted":false,"transcripts_detached":0,"gallery_changed":true}}"#,
+            r#"{"content":{"deleted":true,"image_id":"asset-1","file_deleted":false,"transcripts_detached":0}}"#,
+        ] {
+            assert!(parse_delete_acknowledgement(invalid, "asset-1").is_err());
+        }
+    }
+
+    /// dcterms:identifier: `parse_job_listing`
+    /// expect: The panel preserves every current queue field and rejects compatibility shapes.
+    /// [P7] Motivating: the producer and consumer share one strict contract.
+    #[test]
+    fn job_listing_preserves_strict_contract_and_rejects_legacy_shapes() {
         let record = job("running");
         let listing = parse_job_listing(
             &serde_json::json!({
@@ -2808,24 +2992,31 @@ mod tests {
                     "jobs": [record],
                     "total": 3,
                     "limit": 1,
-                    "has_more": true
+                    "has_more": true,
+                    "history_scope": hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE,
+                    "restart_behavior": hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR
                 }
             })
             .to_string(),
-            hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
         )
-        .expect("new response parses");
+        .expect("current response parses");
         assert_eq!(listing.jobs.len(), 1);
         assert_eq!(listing.total, 3);
         assert_eq!(listing.limit, 1);
         assert!(listing.has_more);
-        for response in [r#"{"content":[]}"#, r#"{"content":{"jobs":[]}}"#] {
-            let listing =
-                parse_job_listing(response, hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT)
-                    .expect("compatible empty response parses");
-            assert!(listing.jobs.is_empty());
-            assert_eq!(listing.total, 0);
-            assert!(!listing.has_more);
+        assert_eq!(
+            listing.history_scope,
+            hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE
+        );
+        for response in [
+            r#"{"content":[]}"#,
+            r#"{"content":{"jobs":[]}}"#,
+            r#"{"content":{"jobs":[],"total":0,"limit":20,"has_more":false,"history_scope":"ephemeral_process_local"}}"#,
+        ] {
+            assert!(
+                parse_job_listing(response).is_err(),
+                "legacy/incomplete shape decoded"
+            );
         }
     }
 

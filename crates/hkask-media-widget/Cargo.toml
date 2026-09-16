@@ -30,6 +30,8 @@ gpui_util.workspace = true
 tracing.workspace = true
 ui.workspace = true
 smol.workspace = true
+futures.workspace = true
+http_client.workspace = true
 
 # Video decode — gated behind cargo features to keep dev builds fast.
 # - `video`: uses system FFmpeg via pkg-config
@@ -61,3 +63,4 @@ gpui = { workspace = true, features = ["test-support"] }
 settings.workspace = true
 theme_settings.workspace = true
 tempfile.workspace = true
+http_client = { workspace = true, features = ["test-support"] }

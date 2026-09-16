@@ -2019,7 +2019,7 @@ mod tool_behavior_tests {
         let gallery_id = gallery.id.clone();
         let runner = fake_ytdlp(
             artifacts.path(),
-            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf fetched-video > \"$output\"",
+            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf fetched-video > \"$output\"; echo 'WARNING: No supported JavaScript runtime could be found; some formats may be missing' >&2",
         )?;
         let server =
             server_with_ytdlp(store.clone(), Some(gallery.id), gallery_root.path(), runner);
@@ -2050,6 +2050,11 @@ mod tool_behavior_tests {
         assert_eq!(hint["gallery_asset_id"], asset_id);
         assert_eq!(hint["provenance"]["tool"], "video_fetch");
         assert_eq!(hint["provenance"]["args"], expected);
+        assert!(
+            content["warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("JavaScript runtime"))
+        );
         let asset = store.get_by_id(&gallery_id, asset_id)?;
         assert_eq!(asset.absolute_path, output.to_string_lossy());
         assert_eq!(asset.format, "mp4");
@@ -2088,6 +2093,44 @@ mod tool_behavior_tests {
             .expect_err("missing gallery must fail");
         assert!(error.to_string().contains("gallery"));
         assert!(!marker.exists());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_fetch`
+    /// expect: Unsafe source destinations fail before yt-dlp starts.
+    /// [P1] Motivating: a fetch request cannot reach private-network services or embedded credentials.
+    #[tokio::test]
+    async fn video_fetch_rejects_unsafe_sources_before_downloader()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let marker = artifacts.path().join("downloader-started");
+        let script = format!("touch '{}'; exit 0", marker.display());
+        let runner = fake_ytdlp(artifacts.path(), &script)?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let server = server_with_ytdlp(store, Some(gallery.id), gallery_root.path(), runner);
+
+        for url in [
+            "http://127.0.0.1/video",
+            "http://10.0.0.1/video",
+            "http://169.254.1.1/video",
+            "http://[::ffff:192.168.1.1]/video",
+            "https://user:secret@example.com/video",
+            "http://localhost/video",
+        ] {
+            let error = server
+                .video_fetch(Parameters(VideoFetchRequest { url: url.into() }))
+                .await
+                .expect_err("unsafe source must fail");
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+            assert!(!marker.exists(), "downloader started for {url}");
+        }
         Ok(())
     }
 

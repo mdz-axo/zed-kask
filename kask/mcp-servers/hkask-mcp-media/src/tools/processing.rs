@@ -1339,7 +1339,7 @@ impl MediaServer {
             let output_path = crate::assets::generated_assets_dir()
                 .join(format!(".{}.fetch.mp4", uuid::Uuid::new_v4()));
 
-            ytdlp
+            let fetch = ytdlp
                 .fetch(&url, &output_path)
                 .await
                 .map_err(map_media_error)?;
@@ -1362,7 +1362,7 @@ impl MediaServer {
                 )));
             }
 
-            crate::assets::publish_local_media(
+            let mut result = crate::assets::publish_local_media(
                 &gallery,
                 &self.gallery_store,
                 &output_path,
@@ -1370,7 +1370,13 @@ impl MediaServer {
                 "fetched",
                 crate::assets::LocalMediaFormat::Mp4,
                 &serde_json::json!({ "source_url": url }),
-            )
+            )?;
+            if let Some(warning) = fetch.warning
+                && let Some(object) = result.as_object_mut()
+            {
+                object.insert("warning".to_string(), serde_json::Value::String(warning));
+            }
+            Ok(result)
         })
         .await
     }

@@ -23,6 +23,7 @@
 //! separately so the playback worker can open both inputs.
 
 use smol::process::Command;
+use std::net::ToSocketAddrs as _;
 
 /// File extensions that FFmpeg can stream directly over http/https.
 /// If a URL ends with one of these, no yt-dlp resolution is needed.
@@ -39,6 +40,7 @@ const DIRECT_VIDEO_EXTENSIONS: &[&str] = &[
 pub struct StreamUrls {
     pub video: String,
     pub audio: Option<String>,
+    pub warning: Option<String>,
 }
 
 /// Resolve a video URL to streamable URL(s).
@@ -54,14 +56,43 @@ pub struct StreamUrls {
 /// - If yt-dlp is not installed or fails → the resolution error is returned;
 ///   platform HTML must not be mislabeled as a direct media stream.
 pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, String> {
+    validate_network_url(url).await?;
     if is_direct_video_url(url) {
         return Ok(StreamUrls {
             video: url.to_string(),
             audio: None,
+            warning: None,
         });
     }
 
-    resolve_with_yt_dlp(url).await
+    let resolved = resolve_with_yt_dlp(url).await?;
+    validate_network_url(&resolved.video).await?;
+    if let Some(audio) = resolved.audio.as_deref() {
+        validate_network_url(audio).await?;
+    }
+    Ok(resolved)
+}
+
+pub(crate) async fn validate_network_url(url: &str) -> Result<(), String> {
+    let parsed = crate::media_ref::validate_remote_url_with_addresses(url, &[])
+        .map_err(|error| format!("unsafe media URL: {error}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "unsafe media URL: missing host".to_string())?
+        .to_string();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "unsafe media URL: unknown port".to_string())?;
+    let addresses = smol::unblock(move || {
+        (host.as_str(), port)
+            .to_socket_addrs()
+            .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|error| format!("media URL DNS resolution failed: {error}"))?;
+    crate::media_ref::validate_remote_url_with_addresses(url, &addresses)
+        .map(|_| ())
+        .map_err(|error| format!("unsafe media URL: {error}"))
 }
 
 /// Check whether a URL points directly to a video file (has a known video
@@ -85,12 +116,18 @@ fn is_direct_video_url(url: &str) -> bool {
 /// Probe candidate yt-dlp binaries and return the newest by `--version`.
 /// Mirrors the media server's `YtDlpRunner::detect` — keep the two in sync.
 async fn newest_yt_dlp_binary() -> Option<String> {
-    let mut candidates = vec!["yt-dlp".to_string()];
+    let mut candidates = vec![hkask_types::ytdlp::PATH_CANDIDATE.to_string()];
     if let Ok(home) = std::env::var("HOME") {
-        candidates.push(format!("{home}/.local/bin/yt-dlp"));
+        candidates.push(format!(
+            "{home}/{}",
+            hkask_types::ytdlp::USER_CANDIDATE_SUFFIX
+        ));
     }
-    candidates.push("/usr/local/bin/yt-dlp".to_string());
-    candidates.push("/usr/bin/yt-dlp".to_string());
+    candidates.extend(
+        hkask_types::ytdlp::SYSTEM_CANDIDATES
+            .iter()
+            .map(|candidate| (*candidate).to_string()),
+    );
 
     let mut best: Option<(String, Vec<u64>)> = None;
     for candidate in candidates {
@@ -100,30 +137,18 @@ async fn newest_yt_dlp_binary() -> Option<String> {
             continue;
         }
         let version_text = String::from_utf8_lossy(&output.stdout).to_string();
-        let version: Vec<u64> = version_text
-            .trim()
-            .split('.')
-            .map(|part| {
-                part.chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>()
-                    .parse::<u64>()
-                    .unwrap_or(0)
-            })
-            .collect();
+        let Some(version) = hkask_types::ytdlp::parse_version(&version_text) else {
+            continue;
+        };
         let is_newer = best
             .as_ref()
-            .map(|(_, current)| version_is_newer(&version, current))
+            .map(|(_, current)| hkask_types::ytdlp::candidate_is_preferred(&version, current))
             .unwrap_or(true);
         if is_newer {
             best = Some((candidate, version));
         }
     }
     best.map(|(path, _)| path)
-}
-
-fn version_is_newer(candidate: &[u64], current: &[u64]) -> bool {
-    candidate > current
 }
 
 /// Run `yt-dlp -g` to resolve the direct stream URL(s) for a video page.
@@ -141,14 +166,16 @@ async fn resolve_with_yt_dlp(url: &str) -> Result<StreamUrls, String> {
          stream from video platforms (YouTube, Vimeo, etc.)"
             .to_string()
     })?;
+    resolve_with_yt_dlp_binary(url, &ytdlp).await
+}
 
-    let output = Command::new(&ytdlp)
+async fn resolve_with_yt_dlp_binary(url: &str, ytdlp: &str) -> Result<StreamUrls, String> {
+    let output = Command::new(ytdlp)
         .args([
             "-g",
             "-f",
             "bv*[height<=720]+ba/b[height<=720]/b",
             "--no-playlist",
-            "--no-warnings",
             "--no-update",
             url,
         ])
@@ -156,15 +183,15 @@ async fn resolve_with_yt_dlp(url: &str) -> Result<StreamUrls, String> {
         .await
         .map_err(|error| format!("failed to run yt-dlp: {error}"))?;
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        return Err(if stderr.is_empty() {
-            format!("yt-dlp exited with status {}", output.status)
-        } else {
-            format!("yt-dlp: {stderr}")
-        });
+        let issue = hkask_types::ytdlp::classify_stderr(&stderr)
+            .unwrap_or(hkask_types::ytdlp::YtDlpIssue::Other);
+        return Err(issue.actionable_message().to_string());
     }
+    let warning = hkask_types::ytdlp::classify_stderr(&stderr)
+        .filter(|issue| *issue != hkask_types::ytdlp::YtDlpIssue::Other)
+        .map(|issue| issue.actionable_message().to_string());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let urls: Vec<String> = stdout
@@ -178,11 +205,13 @@ async fn resolve_with_yt_dlp(url: &str) -> Result<StreamUrls, String> {
         [video] => Ok(StreamUrls {
             video: video.clone(),
             audio: None,
+            warning,
         }),
         // DASH: yt-dlp prints the video URL first, then the audio URL.
         [video, audio, ..] => Ok(StreamUrls {
             video: video.clone(),
             audio: Some(audio.clone()),
+            warning,
         }),
         [] => Err("yt-dlp produced no output URL".to_string()),
     }
@@ -217,7 +246,7 @@ mod tests {
 
     #[test]
     fn passes_through_direct_video_urls() {
-        let url = "https://example.com/video.mp4";
+        let url = "https://93.184.216.34/video.mp4";
         let resolved =
             smol::block_on(async { resolve_stream_urls(url).await }).expect("direct URL resolves");
         assert_eq!(
@@ -225,43 +254,73 @@ mod tests {
             StreamUrls {
                 video: url.to_string(),
                 audio: None,
+                warning: None,
             }
         );
     }
 
-    /// expect: A platform-resolution failure remains the surfaced cause.
-    /// [P1] Motivating: users see why a stream cannot open, not a secondary
-    /// FFmpeg error from attempting to decode an HTML page.
-    /// pre: the platform URL cannot resolve to a media stream.
-    /// post: resolution returns the yt-dlp failure instead of the input URL.
+    #[cfg(unix)]
+    fn fake_ytdlp(body: &str) -> anyhow::Result<(tempfile::TempDir, String)> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("yt-dlp");
+        std::fs::write(&executable, format!("#!/bin/sh\n{body}\n"))?;
+        let mut permissions = std::fs::metadata(&executable)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions)?;
+        Ok((directory, executable.to_string_lossy().into_owned()))
+    }
+
+    /// expect: A platform-resolution failure remains actionable without leaking stderr.
+    /// [P1] Motivating: users see why a stream cannot open, not a decoder error or signed URL.
+    #[cfg(unix)]
     #[test]
-    fn platform_resolution_failure_is_not_a_silent_direct_url_fallback() {
-        let url = "https://www.youtube.com/watch?v=nonexistent_video_id_xyz";
-        let error = smol::block_on(async { resolve_stream_urls(url).await })
-            .expect_err("an invalid platform page must not become a direct media URL");
+    fn platform_resolution_failure_is_classified_without_host_mutation() -> anyhow::Result<()> {
+        let (_directory, binary) =
+            fake_ytdlp("echo 'ERROR: Sign in to confirm your age' >&2; exit 1")?;
+        let error = smol::block_on(resolve_with_yt_dlp_binary(
+            "https://www.youtube.com/watch?v=example",
+            &binary,
+        ))
+        .expect_err("authorization must fail");
+        assert!(error.contains("denied access"));
+        assert!(!error.contains("Sign in to confirm"));
+        Ok(())
+    }
+
+    /// expect: Successful degraded extraction remains visible and playback-capable.
+    /// [P1] Motivating: missing runtime support must not disappear on exit status zero.
+    #[cfg(unix)]
+    #[test]
+    fn successful_javascript_degradation_is_returned_as_warning() -> anyhow::Result<()> {
+        let (_directory, binary) = fake_ytdlp(
+            "echo 'WARNING: No supported JavaScript runtime could be found; some formats may be missing' >&2; echo 'https://93.184.216.34/video.mp4'",
+        )?;
+        let resolved = smol::block_on(resolve_with_yt_dlp_binary(
+            "https://www.youtube.com/watch?v=example",
+            &binary,
+        ))
+        .map_err(anyhow::Error::msg)?;
+        assert_eq!(resolved.video, "https://93.184.216.34/video.mp4");
         assert!(
-            error.contains("yt-dlp"),
-            "resolution cause is preserved: {error}"
+            resolved
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("JavaScript runtime"))
         );
+        Ok(())
     }
 
     #[test]
-    fn version_comparison_is_lexicographic() {
-        assert!(version_is_newer(&[2026, 1, 1], &[2025, 12, 31]));
-        assert!(version_is_newer(&[2025, 10, 1], &[2025, 9, 30]));
-        assert!(!version_is_newer(&[2025, 9], &[2025, 9, 1]));
-        assert!(!version_is_newer(&[2025, 9], &[2025, 9]));
-    }
-
-    /// The binary probe must find a yt-dlp on this machine (the environment
-    /// that runs this test suite has one) and must not return the stale
-    /// distro copy when a newer one exists.
-    #[test]
-    fn newest_yt_dlp_binary_finds_a_candidate() {
-        let found = smol::block_on(async { newest_yt_dlp_binary().await });
-        assert!(
-            found.is_some(),
-            "yt-dlp should be discoverable in this environment"
-        );
+    fn widget_uses_shared_version_and_tie_policy() {
+        let current = hkask_types::ytdlp::parse_version("2026.08.19").expect("version parses");
+        assert!(!hkask_types::ytdlp::candidate_is_preferred(
+            &current, &current
+        ));
+        assert!(hkask_types::ytdlp::candidate_is_preferred(
+            &[2026, 8, 20],
+            &current
+        ));
     }
 }

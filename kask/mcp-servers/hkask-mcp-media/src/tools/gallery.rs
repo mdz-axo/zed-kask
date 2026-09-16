@@ -1428,6 +1428,7 @@ impl MediaServer {
                 "image_id": image.id,
                 "file_deleted": delete_file,
                 "transcripts_detached": transcripts_detached,
+                "gallery_changed": true,
             }))
         })
         .await
@@ -1500,6 +1501,7 @@ impl MediaServer {
             // Render the imported media inline in the media widget —
             // without a display_hint the caller has no way to view it.
             if let Some(object) = value.as_object_mut() {
+                object.insert("gallery_changed".into(), serde_json::Value::Bool(true));
                 object.insert(
                     "display_hint".into(),
                     serde_json::Value::String(

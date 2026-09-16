@@ -20,6 +20,7 @@ pub(crate) mod kanban_status;
 pub mod kanban_wire;
 pub mod media_limits;
 pub mod ocr_health;
+pub mod ytdlp;
 
 pub mod regulation;
 pub mod secret;

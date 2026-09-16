@@ -14,6 +14,7 @@
 //!   (D21 widget→agent seam). Falls back to a copyable draft when no injector
 //!   is active (repo `.rules`).
 
+use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, ImageSource, InteractiveElement,
     IntoElement, ObjectFit, ParentElement, RenderImage, SharedString, Styled, StyledImage,
@@ -22,6 +23,7 @@ use gpui::{
 use gpui_util::ResultExt as _;
 use hkask_bridge_ontology::omc::explain_tool_for;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt as _, RedirectPolicy, Request};
 use smallvec::SmallVec;
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -76,11 +78,14 @@ pub struct PlaybackBenchmarkSnapshot {
 pub struct MediaWidget {
     reference: MediaRef,
     storage: Arc<dyn MediaStorage>,
+    http_client: Arc<dyn HttpClient>,
     focus_handle: FocusHandle,
     audio_player: Option<Arc<AudioPlayer>>,
     video_player: Option<WidgetVideoPlayer>,
     transport: Option<Entity<TransportBar>>,
     current_frame: Option<Arc<RenderImage>>,
+    image_data: Option<Arc<gpui::Image>>,
+    image_load_task: Option<Task<()>>,
     playback_task: Option<Task<()>>,
     playback_loop_active: bool,
     /// True when an embedding surface hid this shared player. Suspension is
@@ -120,6 +125,7 @@ pub struct MediaWidget {
     // hidden polling.
     video_load_generation: u64,
     error: Option<SharedString>,
+    warning: Option<SharedString>,
     /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`,
     /// `fibo:Corporation`). Drives the "Explain" affordance's tool selection
     /// (the "I" pattern). `None` on older blocks → the widget falls back to
@@ -148,6 +154,76 @@ pub struct MediaWidget {
 // Stat + read an audio file with the 256 MiB size guard. Pure (no `self`), so it
 // is safe to move into a background task; the bytes are handed back to the
 // foreground thread where `load_bytes_paused` initializes rodio. See SF-1.
+async fn fetch_remote_media(
+    client: Arc<dyn HttpClient>,
+    url: String,
+) -> Result<Vec<u8>, SharedString> {
+    crate::streaming::validate_network_url(&url)
+        .await
+        .map_err(SharedString::from)?;
+    let request = Request::get(&url)
+        .follow_redirects(RedirectPolicy::NoFollow)
+        .body(AsyncBody::default())
+        .map_err(|error| SharedString::from(format!("invalid media request: {error}")))?;
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| SharedString::from(format!("public media request failed: {error}")))?;
+    if response.status().is_redirection() {
+        return Err(
+            "public media redirects are rejected because the destination was not validated".into(),
+        );
+    }
+    if !response.status().is_success() {
+        return Err(SharedString::from(format!(
+            "public media request failed with HTTP {}",
+            response.status()
+        )));
+    }
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .take(crate::media_ref::MAX_INLINE_MEDIA_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| SharedString::from(format!("public media body read failed: {error}")))?;
+    if bytes.len() > crate::media_ref::MAX_INLINE_MEDIA_BYTES {
+        return Err(SharedString::from(format!(
+            "public media exceeds {} bytes",
+            crate::media_ref::MAX_INLINE_MEDIA_BYTES
+        )));
+    }
+    Ok(bytes)
+}
+
+fn image_from_bytes(kind: MediaKind, bytes: Vec<u8>) -> Result<Arc<gpui::Image>, SharedString> {
+    let format = if kind == MediaKind::Svg {
+        gpui::ImageFormat::Svg
+    } else {
+        match image::guess_format(&bytes) {
+            Ok(image::ImageFormat::Png) => gpui::ImageFormat::Png,
+            Ok(image::ImageFormat::Jpeg) => gpui::ImageFormat::Jpeg,
+            Ok(image::ImageFormat::WebP) => gpui::ImageFormat::Webp,
+            Ok(image::ImageFormat::Gif) => gpui::ImageFormat::Gif,
+            Ok(image::ImageFormat::Bmp) => gpui::ImageFormat::Bmp,
+            Ok(image::ImageFormat::Tiff) => gpui::ImageFormat::Tiff,
+            Ok(image::ImageFormat::Ico) => gpui::ImageFormat::Ico,
+            Ok(image::ImageFormat::Pnm) => gpui::ImageFormat::Pnm,
+            Ok(other) => {
+                return Err(SharedString::from(format!(
+                    "unsupported public image format: {other:?}"
+                )));
+            }
+            Err(error) => {
+                return Err(SharedString::from(format!(
+                    "public image format detection failed: {error}"
+                )));
+            }
+        }
+    };
+    Ok(Arc::new(gpui::Image::from_bytes(format, bytes)))
+}
+
 fn read_audio_file(path: &std::path::Path) -> Result<Vec<u8>, SharedString> {
     const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
     let metadata = match std::fs::metadata(path) {
@@ -214,11 +290,14 @@ impl MediaWidget {
         let mut widget = Self {
             reference,
             storage,
+            http_client: cx.http_client(),
             focus_handle,
             audio_player: None,
             video_player: None,
             transport: None,
             current_frame: None,
+            image_data: None,
+            image_load_task: None,
             playback_task: None,
             playback_loop_active: false,
             suspended: false,
@@ -233,6 +312,7 @@ impl MediaWidget {
             video_load_task: None,
             video_load_generation: 0,
             error: None,
+            warning: None,
             ontology: None,
             provenance: BlockProvenance::default(),
             disagree_draft: None,
@@ -293,6 +373,7 @@ impl MediaWidget {
 
     pub fn load(&mut self, cx: &mut Context<Self>) {
         self.error = None;
+        self.warning = None;
         match self.storage.resolve(&self.reference) {
             Ok(resolved) => self.load_resolved(resolved, cx),
             Err(error) => {
@@ -304,6 +385,16 @@ impl MediaWidget {
 
     fn load_resolved(&mut self, resolved: ResolvedMedia, cx: &mut Context<Self>) {
         match resolved.kind {
+            MediaKind::Image | MediaKind::Svg => {
+                if let Some(bytes) = resolved.bytes {
+                    match image_from_bytes(resolved.kind, bytes) {
+                        Ok(image) => self.image_data = Some(image),
+                        Err(error) => self.error = Some(error),
+                    }
+                } else if let Some(url) = resolved.url {
+                    self.load_remote_image(url.to_string(), resolved.kind, cx);
+                }
+            }
             MediaKind::Audio => {
                 if let Some(bytes) = resolved.bytes {
                     if let Some(player) = &self.audio_player {
@@ -314,11 +405,8 @@ impl MediaWidget {
                     }
                 } else if let Some(path) = resolved.path {
                     self.load_audio_file_async(path, cx);
-                } else if let Some(url) = &resolved.url {
-                    if let Some(player) = &self.audio_player {
-                        let player = player.clone();
-                        self.load_audio_data_uri(&player, url.as_str());
-                    }
+                } else if let Some(url) = resolved.url {
+                    self.load_remote_audio(url.to_string(), cx);
                 }
             }
             MediaKind::Video => {
@@ -349,8 +437,48 @@ impl MediaWidget {
                     self.error = Some(SharedString::from("resolved video has no path or URL"));
                 }
             }
-            _ => {}
         }
+    }
+
+    fn load_remote_image(&mut self, url: String, kind: MediaKind, cx: &mut Context<Self>) {
+        let client = self.http_client.clone();
+        self.image_load_task = Some(cx.spawn(async move |this, cx| {
+            let result = fetch_remote_media(client, url)
+                .await
+                .and_then(|bytes| image_from_bytes(kind, bytes));
+            this.update(cx, |widget, cx| {
+                match result {
+                    Ok(image) => widget.image_data = Some(image),
+                    Err(error) => widget.error = Some(error),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn load_remote_audio(&mut self, url: String, cx: &mut Context<Self>) {
+        let client = self.http_client.clone();
+        self.audio_loading = true;
+        self.sync_transport_state(cx);
+        self.audio_load_task = Some(cx.spawn(async move |this, cx| {
+            let result = fetch_remote_media(client, url).await;
+            this.update(cx, |widget, cx| {
+                widget.audio_loading = false;
+                match result {
+                    Ok(bytes) => {
+                        if let Some(player) = &widget.audio_player
+                            && let Err(error) = player.load_bytes_paused(bytes)
+                        {
+                            widget.error = Some(SharedString::from(error.to_string()));
+                        }
+                    }
+                    Err(error) => widget.error = Some(error),
+                }
+                widget.sync_transport_state(cx);
+            })
+            .ok();
+        }));
     }
 
     // Read + stat an audio file off the foreground thread. The blocking I/O
@@ -409,6 +537,7 @@ impl MediaWidget {
                 match result {
                     Ok(stream_urls) => {
                         widget.error = None;
+                        widget.warning = stream_urls.warning.map(SharedString::from);
                         if let Some(player) = &mut widget.video_player {
                             player.open_stream(&stream_urls.video, stream_urls.audio.as_deref());
                             widget.start_playback_loop(cx);
@@ -423,24 +552,6 @@ impl MediaWidget {
             })
             .ok();
         }));
-    }
-
-    fn load_audio_data_uri(&mut self, player: &Arc<AudioPlayer>, url: &str) {
-        if let Some(encoded) = url.strip_prefix("data:audio/")
-            && let Some((_, data)) = encoded.split_once(',')
-        {
-            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data) {
-                Ok(bytes) => {
-                    // No unsolicited audio: load paused.
-                    if let Err(error) = player.load_bytes_paused(bytes) {
-                        self.error = Some(SharedString::from(error.to_string()));
-                    }
-                }
-                Err(error) => {
-                    self.error = Some(SharedString::from(format!("base64 decode failed: {error}")));
-                }
-            }
-        }
     }
 
     fn current_transport_state(&self) -> TransportState {
@@ -913,35 +1024,21 @@ impl gpui::Render for MediaWidget {
                 let src = SharedString::from(self.reference.src());
                 match self.reference.kind() {
                     MediaKind::Image | MediaKind::Svg => {
-                        // The media server emits filesystem paths for
-                        // generated/persisted assets. `ImageSource::from(&str)`
-                        // maps any non-URL string to `Resource::Embedded` — an
-                        // embedded-asset lookup that fails with "Embedded
-                        // resource not found" for absolute paths (observed live:
-                        // every generated image errored in the asset cache and
-                        // rendered as a broken image). Route non-URI sources
-                        // through the `Path` resource so the image cache reads
-                        // the file from disk; URI sources keep the string form.
-                        let source: ImageSource = if src.starts_with("data:")
-                            || src.starts_with("http://")
-                            || src.starts_with("https://")
-                        {
-                            src.as_str().into()
-                        } else if let Some(path) = src.strip_prefix("file://") {
-                            ImageSource::from(std::path::PathBuf::from(path))
+                        let mut container = div().flex_1().min_h(px(100.0));
+                        if let Some(image) = self.image_data.clone() {
+                            container = container.child(
+                                img(ImageSource::from(image))
+                                    .size_full()
+                                    .object_fit(ObjectFit::Contain),
+                            );
                         } else {
-                            ImageSource::from(std::path::PathBuf::from(src.as_str()))
-                        };
-                        // flex_1 (not size_full): the parent is a flex column with
-                        // definite height, so flex_1 gives this box — and the
-                        // Contain-fit img inside it — a definite height to scale
-                        // against. size_full against a content-driven parent
-                        // collapses.
-                        div()
-                            .flex_1()
-                            .min_h(px(100.0))
-                            .child(img(source).size_full().object_fit(ObjectFit::Contain))
-                            .into_any_element()
+                            container = container
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(SharedString::from("Loading public media…"));
+                        }
+                        container.into_any_element()
                     }
                     MediaKind::Audio => {
                         let transport = self.transport.clone();
@@ -1040,6 +1137,16 @@ impl gpui::Render for MediaWidget {
             .flex()
             .flex_col()
             .child(main_content)
+            .when_some(self.warning.clone(), |element, warning| {
+                element.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(SharedString::from(format!("Media warning: {warning}"))),
+                )
+            })
             .children(self.render_affordances(cx))
     }
 }
@@ -1213,6 +1320,26 @@ mod tests {
     use crate::media_ref::MediaBlockBody;
     use gpui::{AppContext, TestAppContext, Window};
     use std::sync::{Arc, Mutex};
+
+    /// expect: Remote media redirects are rejected before an unvalidated destination is loaded.
+    /// [P1] Motivating: a public URL cannot redirect the widget into a private network.
+    #[test]
+    fn remote_media_redirect_is_visible_and_not_followed() -> anyhow::Result<()> {
+        let client = http_client::FakeHttpClient::create(|request| async move {
+            assert_eq!(request.uri().host(), Some("93.184.216.34"));
+            Ok(http_client::Response::builder()
+                .status(http_client::StatusCode::FOUND)
+                .header("location", "http://127.0.0.1/private.png")
+                .body(AsyncBody::default())?)
+        });
+        let error = futures::executor::block_on(fetch_remote_media(
+            client,
+            "https://93.184.216.34/public.png".to_string(),
+        ))
+        .expect_err("redirect must be rejected");
+        assert!(error.contains("redirects are rejected"));
+        Ok(())
+    }
 
     /// Serializes tests that mutate the process-global `ToolInvoker`
     /// (the `ConversationInjector` is now per-app — it drops with each
@@ -1525,7 +1652,7 @@ mod tests {
     /// expect: A missing image or SVG reports the original path-resolution cause in the widget.
     /// [P1] Motivating: a broken visual asset is diagnosable where the empty widget would appear.
     /// pre: PathMediaStorage receives a nonexistent local image or SVG path.
-    /// post: the visible widget error preserves PathMediaStorage's exact cause.
+    /// post: the visible widget error preserves the requested path and filesystem cause.
     #[gpui::test]
     async fn missing_image_and_svg_surface_path_storage_cause(cx: &mut TestAppContext) {
         for (kind, path) in [
@@ -1535,13 +1662,13 @@ mod tests {
             let reference = MediaRef::new(SharedString::from(path), kind);
             let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
             cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
-            assert_eq!(
-                widget.read_with(cx, |widget, _cx| widget
-                    .error
-                    .as_ref()
-                    .map(ToString::to_string)),
-                Some(format!("media file not found: {path}"))
-            );
+            let error = widget
+                .read_with(cx, |widget, _cx| {
+                    widget.error.as_ref().map(ToString::to_string)
+                })
+                .expect("missing path must be visible");
+            assert!(error.contains(&format!("media file not found: {path}")));
+            assert!(error.contains("No such file or directory"));
         }
     }
 
@@ -1571,7 +1698,7 @@ mod tests {
             cx.run_until_parked();
         }
         cx.run_until_parked();
-        let (has_frame, is_playing, has_task) = widget.read_with(cx, |widget, _cx| {
+        let (has_frame, is_playing, has_task, error) = widget.read_with(cx, |widget, _cx| {
             (
                 widget.current_frame.is_some(),
                 widget
@@ -1579,9 +1706,10 @@ mod tests {
                     .as_ref()
                     .is_some_and(WidgetVideoPlayer::is_playing),
                 widget.playback_loop_active,
+                widget.error.clone(),
             )
         });
-        assert!(has_frame, "load installs the poster frame");
+        assert!(has_frame, "load installs the poster frame; error={error:?}");
         assert!(!is_playing, "load remains paused");
         assert!(!has_task, "paused media has no polling task");
 

@@ -18,6 +18,13 @@ struct SerpApiSearchResponse {
     #[serde(default)]
     video_results: Vec<SerpApiVideoResult>,
     error: Option<String>,
+    serpapi_pagination: Option<SerpApiPagination>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SerpApiPagination {
+    next: Option<String>,
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +84,8 @@ fn serpapi_error(message: String) -> McpToolError {
         McpToolError::permission_denied(format!(
             "SerpApi YouTube search authorization failed; check HKASK_SERPAPI_API_KEY: {message}"
         ))
+    } else if normalized.contains("rate limit") || normalized.contains("quota") {
+        McpToolError::rate_limited(format!("SerpApi YouTube search quota exhausted: {message}"))
     } else {
         McpToolError::unavailable(format!("SerpApi YouTube search failed: {message}"))
     }
@@ -95,6 +104,17 @@ fn parse_search_response(
         return Err(serpapi_error(error));
     }
 
+    let provider_result_count = response.video_results.len();
+    let continuation_available = response.serpapi_pagination.is_some_and(|pagination| {
+        pagination
+            .next
+            .as_deref()
+            .is_some_and(|next| !next.trim().is_empty())
+            || pagination
+                .next_page_token
+                .as_deref()
+                .is_some_and(|token| !token.trim().is_empty())
+    });
     let videos = response
         .video_results
         .into_iter()
@@ -125,7 +145,12 @@ fn parse_search_response(
 
     Ok(serde_json::json!({
         "provider": "serpapi",
+        "result_scope": "single_provider_page",
+        "requested_max_results": max_results,
         "count": videos.len(),
+        "more_results_available": continuation_available || provider_result_count > videos.len(),
+        "provider_pages_fetched": 1,
+        "provider_request_limit": 1,
         "videos": videos,
     }))
 }
@@ -137,7 +162,7 @@ impl MediaServer {
     /// This path deliberately does not invoke `yt-dlp`. Use `video_fetch` only
     /// after selecting a result when a durable local media Asset is required.
     #[tool(
-        description = "Search YouTube through SerpApi and return structured video metadata including views, duration, channel, publication date, provider extensions such as 4K or CC, and URL. Does not download video media; use video_fetch for that."
+        description = "Search one YouTube provider page through one paid SerpApi request and return structured video metadata including views, duration, channel, publication date, provider extensions, and URL. max_results caps that one page; the response discloses count, more_results_available, provider_pages_fetched, and provider_request_limit. Does not download media; use video_fetch for that."
     )]
     pub async fn youtube_search(
         &self,
@@ -185,6 +210,11 @@ impl MediaServer {
                         "SerpApi YouTube search authorization failed; check HKASK_SERPAPI_API_KEY: {message}"
                     )));
                 }
+                if status.as_u16() == 429 {
+                    return Err(McpToolError::rate_limited(format!(
+                        "SerpApi YouTube search rate limit reached: {message}"
+                    )));
+                }
                 return Err(McpToolError::unavailable(format!(
                     "SerpApi YouTube search failed: {message}"
                 )));
@@ -221,6 +251,11 @@ mod tests {
 
         let parsed = parse_search_response(body, 20)?;
         assert_eq!(parsed["provider"], "serpapi");
+        assert_eq!(parsed["result_scope"], "single_provider_page");
+        assert_eq!(parsed["requested_max_results"], 20);
+        assert_eq!(parsed["provider_pages_fetched"], 1);
+        assert_eq!(parsed["provider_request_limit"], 1);
+        assert_eq!(parsed["more_results_available"], false);
         assert_eq!(parsed["videos"][0]["views"], 2_199_896);
         assert_eq!(parsed["videos"][0]["duration_seconds"], 469);
         assert_eq!(parsed["videos"][0]["channel_verified"], true);
@@ -234,6 +269,51 @@ mod tests {
             .expect_err("provider error must surface");
         assert!(error.to_string().contains("permission_denied"));
         assert!(error.to_string().contains("HKASK_SERPAPI_API_KEY"));
+    }
+
+    /// expect: One paid provider page reconciles requested, returned, and remaining cardinality.
+    /// [P7] Motivating: users can predict both result scope and search cost.
+    #[test]
+    fn one_page_contract_discloses_truncation_continuation_and_cost()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let body = r#"{
+            "video_results": [
+                {"title":"first","link":"https://youtube.com/watch?v=1"},
+                {"title":"second","link":"https://youtube.com/watch?v=2"}
+            ],
+            "serpapi_pagination": {
+                "next": "https://serpapi.com/search?next_page_token=secret",
+                "next_page_token": "secret"
+            }
+        }"#;
+        let parsed = parse_search_response(body, 1)?;
+        assert_eq!(parsed["requested_max_results"], 1);
+        assert_eq!(parsed["count"], 1);
+        assert_eq!(parsed["more_results_available"], true);
+        assert_eq!(parsed["provider_pages_fetched"], 1);
+        assert_eq!(parsed["provider_request_limit"], 1);
+        assert!(
+            parsed.get("next").is_none(),
+            "continuation secret must not leak"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_continuation_is_not_treated_as_exhausted_results() {
+        let error = parse_search_response(
+            r#"{"video_results":[],"serpapi_pagination":{"next":42}}"#,
+            20,
+        )
+        .expect_err("malformed continuation must surface");
+        assert!(error.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn provider_quota_error_is_rate_limited() {
+        let error = parse_search_response(r#"{"error":"Rate limit quota exceeded"}"#, 20)
+            .expect_err("quota exhaustion must surface");
+        assert!(error.to_string().contains("rate_limited"));
     }
 
     #[test]

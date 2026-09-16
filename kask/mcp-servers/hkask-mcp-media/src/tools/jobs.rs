@@ -291,7 +291,14 @@ impl MediaServer {
                     }
                 };
 
-                match lease.finish_published(slim, &mut publication) {
+                let completed = crate::media_block::enrich_with_omc_and_provenance(
+                    slim,
+                    &op_for_task,
+                    kind_for_task,
+                    effective_params,
+                    None,
+                );
+                match lease.finish_published(completed, &mut publication) {
                     Ok(true) => {}
                     Ok(false) => {
                         let outcome = match publication.rollback() {

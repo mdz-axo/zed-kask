@@ -5,8 +5,10 @@ use gpui::SharedString;
 use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 use url::{Host, Url};
 
@@ -78,13 +80,45 @@ pub const MAX_INLINE_MEDIA_BYTES: usize = 32 * 1024 * 1024;
 /// before a decoder or subprocess receives them.
 pub struct PathMediaStorage {
     allowed_roots: Vec<PathBuf>,
+    allowed_files: HashSet<PathBuf>,
+}
+
+static APPROVED_GALLERY_FILES: OnceLock<parking_lot::RwLock<HashSet<PathBuf>>> = OnceLock::new();
+
+/// Register one exact path observed through a successful gallery tool result.
+/// Assistant-authored media-block fields never call this authority boundary.
+pub fn approve_gallery_media_path(path: &Path) -> anyhow::Result<()> {
+    let path = path.canonicalize().map_err(|error| {
+        anyhow::anyhow!(
+            "canonicalize approved gallery media {}: {error}",
+            path.display()
+        )
+    })?;
+    if !path.is_file() {
+        return Err(anyhow::anyhow!(
+            "approved gallery media is not a file: {}",
+            path.display()
+        ));
+    }
+    APPROVED_GALLERY_FILES
+        .get_or_init(Default::default)
+        .write()
+        .insert(path);
+    Ok(())
 }
 
 impl Default for PathMediaStorage {
     fn default() -> Self {
         let artifacts = hkask_types::agent_paths::resolve_artifacts_dir();
         let allowed_roots = artifacts.canonicalize().into_iter().collect();
-        Self { allowed_roots }
+        let allowed_files = APPROVED_GALLERY_FILES
+            .get_or_init(Default::default)
+            .read()
+            .clone();
+        Self {
+            allowed_roots,
+            allowed_files,
+        }
     }
 }
 
@@ -103,7 +137,10 @@ impl PathMediaStorage {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(Self { allowed_roots })
+        Ok(Self {
+            allowed_roots,
+            allowed_files: HashSet::new(),
+        })
     }
 
     fn resolve_local(&self, source: &str, kind: MediaKind) -> anyhow::Result<ResolvedMedia> {
@@ -124,11 +161,27 @@ impl PathMediaStorage {
                 path.display()
             ));
         }
-        if !self.allowed_roots.iter().any(|root| path.starts_with(root)) {
+        if !self.allowed_files.contains(&path)
+            && !self.allowed_roots.iter().any(|root| path.starts_with(root))
+        {
             return Err(anyhow::anyhow!(
                 "media path is outside approved media roots: {}",
                 path.display()
             ));
+        }
+        if matches!(kind, MediaKind::Image | MediaKind::Svg) {
+            let metadata = std::fs::metadata(&path)?;
+            if metadata.len() > MAX_INLINE_MEDIA_BYTES as u64 {
+                return Err(anyhow::anyhow!(
+                    "media image exceeds {MAX_INLINE_MEDIA_BYTES} bytes"
+                ));
+            }
+            return Ok(ResolvedMedia {
+                kind,
+                path: None,
+                bytes: Some(std::fs::read(&path)?),
+                url: None,
+            });
         }
         Ok(ResolvedMedia {
             kind,
@@ -372,6 +425,18 @@ mod locator_policy_tests {
             .resolve(&image_ref(&outside_path.to_string_lossy()))
             .expect_err("outside path must be rejected");
         assert!(error.to_string().contains("approved media roots"));
+        Ok(())
+    }
+
+    #[test]
+    fn gallery_result_can_approve_one_exact_external_media_path() -> anyhow::Result<()> {
+        let gallery = tempfile::tempdir()?;
+        let path = gallery.path().join("gallery.png");
+        std::fs::write(&path, b"gallery")?;
+        let reference = image_ref(&path.to_string_lossy());
+        assert!(PathMediaStorage::default().resolve(&reference).is_err());
+        approve_gallery_media_path(&path)?;
+        assert!(PathMediaStorage::default().resolve(&reference).is_ok());
         Ok(())
     }
 

@@ -34,7 +34,8 @@ pub mod transport;
 pub mod video_decoder;
 
 pub use media_ref::{
-    MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, is_truncated_json,
+    MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, approve_gallery_media_path,
+    is_truncated_json,
 };
 pub use media_widget::MediaWidget;
 #[cfg(feature = "bench-support")]
