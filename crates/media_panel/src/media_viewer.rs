@@ -934,7 +934,7 @@ impl MediaViewer {
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "gallery_delete_image",
-            serde_json::json!({ "image_id": asset_id.clone(), "delete_file": false }),
+            serde_json::json!({ "image_id": asset_id, "delete_file": false }),
         );
         cx.spawn(async move |this, cx| {
             match task.await.and_then(|response| {
