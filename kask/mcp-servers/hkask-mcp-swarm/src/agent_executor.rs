@@ -239,12 +239,7 @@ impl AgentExecutor {
             match crate::model_compatibility::registry() {
                 Ok(registry) => {
                     let as_of = registry.as_of.clone();
-                    let entries = registry
-                        .entries
-                        .into_iter()
-                        .filter(|entry| entry.supports_thinking_disabled)
-                        .take(MAX_MODEL_SUGGESTIONS)
-                        .collect::<Vec<_>>();
+                    let entries = registry.recommendations(MAX_MODEL_SUGGESTIONS);
                     (entries, "available".to_string(), Some(as_of))
                 }
                 Err(registry_error) => (Vec::new(), format!("unavailable: {registry_error}"), None),
@@ -1001,6 +996,7 @@ mod tests {
 
     struct MandatoryReasoningInference {
         calls: std::sync::atomic::AtomicUsize,
+        suggestions: Vec<String>,
     }
 
     impl hkask_types::InferencePort for MandatoryReasoningInference {
@@ -1030,12 +1026,8 @@ mod tests {
         ) -> Pin<
             Box<dyn Future<Output = Result<Vec<String>, hkask_types::InferenceError>> + Send + 'a>,
         > {
-            Box::pin(async {
-                Ok(vec![
-                    "OpenAI/frontier-compatible".to_string(),
-                    "Other/near-frontier-compatible".to_string(),
-                ])
-            })
+            let suggestions = self.suggestions.clone();
+            Box::pin(async move { Ok(suggestions) })
         }
     }
 
@@ -1044,6 +1036,10 @@ mod tests {
     async fn mandatory_reasoning_failure_preserves_explicit_disable_and_suggests_models() {
         let inference = Arc::new(MandatoryReasoningInference {
             calls: std::sync::atomic::AtomicUsize::new(0),
+            suggestions: vec![
+                "OpenAI/frontier-compatible".to_string(),
+                "Other/near-frontier-compatible".to_string(),
+            ],
         });
         let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
         let card = crate::local_registry::LocalAgentCard {
@@ -1071,7 +1067,40 @@ mod tests {
         assert!(message.contains("model_params.thinking_allowed=false"));
         assert!(message.contains("OpenAI/frontier-compatible"));
         assert!(message.contains("Other/near-frontier-compatible"));
+        assert!(message.contains("\"failure_kind\":\"mandatory_reasoning_incompatible\""));
+        assert!(message.contains("\"requested_thinking_allowed\":false"));
         assert!(!message.contains("retry"));
+    }
+
+    /// expect: An empty configured set falls back to sourced direct-provider catalogue recommendations.
+    #[tokio::test]
+    async fn mandatory_reasoning_failure_offers_evidence_backed_catalogue_fallback() {
+        let inference = Arc::new(MandatoryReasoningInference {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            suggestions: Vec::new(),
+        });
+        let executor = AgentExecutor::new(inference, Arc::new(StubDispatch));
+        let card = crate::local_registry::LocalAgentCard {
+            agent_id: "catalogue-fallback".to_string(),
+            agent_type: "critic".to_string(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                system_prompt: Some("Review the task.".to_string()),
+                model_params: Some(serde_json::json!({"thinking_allowed": false})),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = match executor.run(&card, "review this").await {
+            Ok(_) => panic!("mandatory-reasoning endpoint must fail visibly"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("OpenAI/GPT-5.6 Sol (frontier)"));
+        assert!(message.contains("OpenAI/GPT-5.6 Terra (near_frontier)"));
+        assert!(message.contains("developers.openai.com/api/docs/models/gpt-5.6-sol"));
+        assert!(message.contains("\"catalogue_as_of\":\"2026-09-16\""));
+        assert!(message.contains("\"selected_model\":\"host_session_default\""));
     }
 
     /// A stub that records the `model_override` it was called with, so tests

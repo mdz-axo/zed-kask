@@ -56,13 +56,14 @@ pub(crate) fn registry() -> Result<ModelCompatibilityRegistry, String> {
     Ok(registry)
 }
 
-pub(crate) fn recommendations(limit: usize) -> Result<Vec<ModelCompatibilityEntry>, String> {
-    Ok(registry()?
-        .entries
-        .into_iter()
-        .filter(|entry| entry.supports_thinking_disabled)
-        .take(limit)
-        .collect())
+impl ModelCompatibilityRegistry {
+    pub(crate) fn recommendations(self, limit: usize) -> Vec<ModelCompatibilityEntry> {
+        self.entries
+            .into_iter()
+            .filter(|entry| entry.supports_thinking_disabled)
+            .take(limit)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -90,9 +91,11 @@ mod tests {
 
     #[test]
     fn recommendations_preserve_quality_order_and_limit() {
-        let recommendations = recommendations(2).expect("recommendations resolve");
-        assert_eq!(recommendations.len(), 2);
-        assert_eq!(recommendations[0].quality_tier, "frontier");
-        assert_eq!(recommendations[1].quality_tier, "near_frontier");
+        let recommendations = registry().expect("registry validates").recommendations(2);
+        let tiers = recommendations
+            .iter()
+            .map(|entry| entry.quality_tier.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tiers, vec!["frontier", "near_frontier"]);
     }
 }

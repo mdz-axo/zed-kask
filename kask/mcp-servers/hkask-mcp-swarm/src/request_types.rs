@@ -629,7 +629,7 @@ pub struct FanoutEntry {
 
 /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm Plan
 /// C6 — the Modify-Block / MASS prompt axis). Updates ONLY the `system_prompt`
-/// (and optionally `model`/`mcp_tools`/`skills`); preserves `agent_id`,
+/// (and optionally `model`/`mcp_tools`/`skills`/`model_params`); preserves `agent_id`,
 /// `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and the
 /// `cloud_swarm_id` sync link. The DECIDE `reconfigure_agent` action seeds
 /// `swarm_generate_prompt` with the blamed agent's failure log to produce the

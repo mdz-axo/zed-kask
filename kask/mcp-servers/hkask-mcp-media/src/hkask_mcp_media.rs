@@ -1140,7 +1140,7 @@ mod integration_tests {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
-    use crate::types::GalleryRefreshRequest;
+    use crate::types::{GalleryRefreshRequest, YoutubeSearchRequest};
     use rmcp::handler::server::wrapper::Parameters;
     use std::sync::Arc;
 
@@ -1159,6 +1159,21 @@ mod tool_behavior_tests {
             jobs::new_job_store(),
             None,
         )
+    }
+
+    #[tokio::test]
+    async fn youtube_search_surfaces_missing_serpapi_credential()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let error = make_server()
+            .youtube_search(Parameters(YoutubeSearchRequest {
+                query: "Kurt Vonnegut story shapes".to_string(),
+                max_results: Some(10),
+            }))
+            .await
+            .expect_err("missing SerpApi credential must fail before network access");
+        assert!(error.to_string().contains("permission_denied"));
+        assert!(error.to_string().contains("HKASK_SERPAPI_API_KEY"));
+        Ok(())
     }
 
     /// dcterms:identifier: `MediaServer` bounded batch tool admissions

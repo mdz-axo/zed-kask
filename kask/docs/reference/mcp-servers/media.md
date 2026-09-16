@@ -341,7 +341,7 @@ No routing or layout change is part of this repair.
 
 | Tool | Description |
 |------|-------------|
-| `youtube_search` | Search YouTube through SerpApi and return structured ranking metadata: views, duration, channel verification, publication date, provider quality labels, thumbnail, and URL. It does not download media. |
+| `youtube_search` | Search YouTube through SerpApi and return structured ranking metadata: views, duration, channel verification, publication date, provider extensions such as `4K` or `CC`, thumbnail, and URL. It does not download media. |
 
 ### Image and video processing (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs`, 15 tools)
 

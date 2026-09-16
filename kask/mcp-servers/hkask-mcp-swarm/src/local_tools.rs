@@ -1756,7 +1756,7 @@ impl SwarmServer {
     /// card creation is free, and local execution is not gated on funds either (no
     /// local budget exists).
     #[tool(
-        description = "Create a new local agent card programmatically. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
+        description = "Create a new local agent card programmatically, including validated model_params sampling overrides. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
     )]
     pub(crate) async fn swarm_create_local_agent(
         &self,
@@ -1855,7 +1855,7 @@ impl SwarmServer {
 
     /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm
     /// Plan C6). Updates ONLY the `system_prompt` (and optionally
-    /// `model`/`mcp_tools`/`skills` when supplied non-empty); preserves
+    /// `model`/`mcp_tools`/`skills`/`model_params` when supplied); preserves
     /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
     /// `dependencies`, and the `cloud_swarm_id` sync link. The DECIDE
     /// `reconfigure_agent` action seeds `swarm_generate_prompt` with the
@@ -1863,7 +1863,7 @@ impl SwarmServer {
     /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
     /// token — local mode.
     #[tool(
-        description = "Reconfigure an existing local agent's system_prompt in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies, and cloud_id. No consent token — local mode."
+        description = "Reconfigure an existing local agent's system_prompt and optional validated model_params in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies, and cloud_id. No consent token — local mode."
     )]
     pub(crate) async fn swarm_reconfigure_local_agent(
         &self,
@@ -3415,6 +3415,30 @@ mod tests {
                 spec: spec.to_string(),
             },
         }
+    }
+
+    #[test]
+    fn model_params_validation_accepts_partial_explicit_thinking_disable() {
+        let validated = validate_model_params(Some(hkask_mcp_server::AnyJsonValue(
+            serde_json::json!({"thinking_allowed": false}),
+        )))
+        .expect("partial parameters validate")
+        .expect("parameters remain present");
+        assert_eq!(validated, serde_json::json!({"thinking_allowed": false}));
+    }
+
+    #[test]
+    fn model_params_validation_rejects_wrong_shape_and_known_field_type() {
+        let wrong_shape =
+            validate_model_params(Some(hkask_mcp_server::AnyJsonValue(serde_json::json!([
+                "not", "an", "object"
+            ]))));
+        assert!(wrong_shape.is_err());
+
+        let wrong_type = validate_model_params(Some(hkask_mcp_server::AnyJsonValue(
+            serde_json::json!({"thinking_allowed": "false"}),
+        )));
+        assert!(wrong_type.is_err());
     }
 
     #[test]

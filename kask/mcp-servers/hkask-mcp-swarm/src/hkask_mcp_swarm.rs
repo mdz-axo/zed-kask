@@ -709,6 +709,9 @@ mod smoke_tests {
                 output_contract: None,
                 input_contract: None,
                 temperature: None,
+                model_params: Some(hkask_mcp_server::AnyJsonValue(
+                    serde_json::json!({"thinking_allowed": false}),
+                )),
                 evaluators: None,
                 reasoning: None,
             }))
@@ -723,8 +726,12 @@ mod smoke_tests {
                 .expect("card is json");
         assert_eq!(
             card["capabilities"]["model"], "",
-            "no model supplied — the card must carry an EMPTY model (host session default at \\
+            "no model supplied — the card must carry an EMPTY model (host session default at \
              run time), never a stamped config default"
+        );
+        assert_eq!(
+            card["capabilities"]["model_params"]["thinking_allowed"], false,
+            "create must persist validated model_params without a manual card edit"
         );
     }
 }
