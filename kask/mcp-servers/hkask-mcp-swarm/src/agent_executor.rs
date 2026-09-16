@@ -481,7 +481,8 @@ impl AgentExecutor {
 /// Resolve the sampling parameters for one agent run — the local analog of
 /// fermi's card-driven sampling (`agents.temperature` + `agents.model_params`,
 /// merged by `apply_tier_resolution`). Precedence mirrors fermi's:
-/// 1. Start from the executor's default preset (`LLMParameters::default()`).
+/// 1. Start from the executor's preset: global defaults with model-internal
+///    reasoning allowed.
 /// 2. The card's `temperature` field overrides the default temperature.
 /// 3. The card's `model_params` keys override BOTH — fermi's doc: "Keys
 ///    override the legacy `temperature` field and add provider-specific
