@@ -688,16 +688,27 @@ pub struct JobRecord {
     pub id: String,
     /// The media operation (e.g. "generate_image", "generate_video").
     pub op: String,
-    /// Job status: "queued", "running", "completed", "failed", "cancelled".
+    /// Job status: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
     pub status: String,
     /// ISO 8601 timestamp when the job was created.
     pub created_at: String,
     /// ISO 8601 timestamp when the job completed (set when status is completed/failed/cancelled).
     pub completed_at: Option<String>,
-    /// The generation result (provider response JSON) on success.
+    /// The slim durable publication result on success; provider payload bytes are excluded.
     pub result: Option<serde_json::Value>,
     /// Error message on failure.
     pub error: Option<String>,
+}
+
+/// Strict `job_list` response consumed by the media panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobListPayload {
+    pub jobs: Vec<JobRecord>,
+    pub total: usize,
+    pub limit: usize,
+    pub has_more: bool,
+    pub history_scope: String,
+    pub restart_behavior: String,
 }
 
 /// Request to submit a new async generation job.
@@ -713,7 +724,7 @@ pub struct JobSubmitRequest {
 /// Request to list generation jobs.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct JobListRequest {
-    /// Optional status filter: "queued", "running", "completed", "failed", "cancelled".
+    /// Optional status filter: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
     pub status: Option<String>,
     /// Maximum number of jobs to return (default: 20).
     pub limit: Option<usize>,

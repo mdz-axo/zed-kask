@@ -60,6 +60,14 @@ pub struct YtDlpRunner {
 }
 
 impl YtDlpRunner {
+    #[cfg(test)]
+    pub(crate) fn with_binary(ytdlp_path: String) -> Self {
+        Self {
+            available: true,
+            ytdlp_path,
+        }
+    }
+
     /// Detect the newest yt-dlp across PATH and common install locations.
     /// Returns a runner with `available` set accordingly.
     pub fn detect() -> Self {
@@ -152,9 +160,13 @@ impl YtDlpRunner {
             .arg(url)
             .output()
             .await
-            .map_err(|e| crate::MediaError::Io(format!("yt-dlp fetch failed: {e}")))?;
+            .map_err(|error| {
+                remove_partial_output(output_path);
+                crate::MediaError::Io(format!("yt-dlp fetch failed: {error}"))
+            })?;
 
         if !output.status.success() {
+            remove_partial_output(output_path);
             // Keep the tail of stderr — the head is usually warnings;
             // the ERROR line the operator needs is at the end.
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -183,6 +195,19 @@ impl YtDlpRunner {
             "Video downloaded"
         );
         Ok(())
+    }
+}
+
+fn remove_partial_output(output_path: &std::path::Path) {
+    match std::fs::remove_file(output_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(
+            target: "hkask.mcp.media.ytdlp",
+            path = %output_path.display(),
+            %error,
+            "Failed to remove partial yt-dlp output"
+        ),
     }
 }
 

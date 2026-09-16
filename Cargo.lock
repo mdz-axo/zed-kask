@@ -9138,6 +9138,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-conversation-injector",
  "hkask-tool-invoker",
+ "hkask-types",
  "image",
  "log",
  "parking_lot",
@@ -9147,10 +9148,12 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
+ "tempfile",
  "theme",
  "theme_settings",
  "tracing",
  "ui",
+ "url",
 ]
 
 [[package]]

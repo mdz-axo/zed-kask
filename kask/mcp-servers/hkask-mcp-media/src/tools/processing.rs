@@ -1332,76 +1332,45 @@ impl MediaServer {
             if url.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("url must not be empty"));
             }
-            let ytdlp = self.require_yt_dlp()?;
 
-            // Download to {artifacts_dir}/media-mcp/generated/{uuid}.mp4
-            let asset_dir = crate::assets::generated_assets_dir();
-            let id = uuid::Uuid::new_v4();
-            let filename = format!("{id}.mp4");
-            let output_path = asset_dir.join(&filename);
+            let gallery = self.capture_required_gallery()?;
+            validate_tool_url_with_dns(&url).await?;
+            let ytdlp = self.require_yt_dlp()?;
+            let output_path = crate::assets::generated_assets_dir()
+                .join(format!(".{}.fetch.mp4", uuid::Uuid::new_v4()));
 
             ytdlp
                 .fetch(&url, &output_path)
                 .await
                 .map_err(map_media_error)?;
-
-            if !output_path.exists() {
-                return Err(McpToolError::internal(format!(
-                    // rr0044-ok: ytdlp-succeeded-no-output
-                    "yt-dlp completed but output file not found: {}",
+            let metadata = std::fs::metadata(&output_path).map_err(|error| {
+                McpToolError::internal(format!(
+                    "yt-dlp completed without a readable output file {}: {error}",
                     output_path.display()
+                ))
+            })?;
+            if !metadata.is_file() || metadata.len() == 0 {
+                let cleanup = std::fs::remove_file(&output_path);
+                let detail = match cleanup {
+                    Ok(()) => String::new(),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(error) => format!("; cleanup failed: {error}"),
+                };
+                return Err(McpToolError::internal(format!(
+                    "yt-dlp produced no complete media file{}",
+                    detail
                 )));
             }
 
-            let bytes = std::fs::read(&output_path)
-                .map_err(|e| McpToolError::internal(format!("read downloaded file: {e}")))?; // rr0044-ok: own pipeline output read
-            let hash = {
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&bytes);
-                format!("{:x}", hasher.finalize())
-            };
-
-            // Index in the gallery (best-effort — gallery may not be initialized).
-            let local_path = output_path.to_string_lossy().to_string();
-            if let Ok(ga) = self.access_gallery() {
-                if let Err(e) = self.gallery_store.add_media(
-                    &ga.gallery_id,
-                    &local_path,
-                    &hash,
-                    0,
-                    0,
-                    "mp4",
-                    bytes.len() as u64,
-                    "video",
-                ) {
-                    tracing::warn!(
-                        target: "hkask.mcp.media",
-                        error = %e,
-                        "Failed to add fetched video to gallery"
-                    );
-                }
-            }
-
-            // Return a media block for immediate viewing in the widget.
-            let block = crate::media_block::media_block_with_omc(
-                "video",
-                &local_path,
-                crate::omc::tool_to_omc("video_fetch"),
-                Some(&crate::media_block::Provenance::for_tool(
-                    "video_fetch",
-                    serde_json::json!({"url": url}),
-                    None,
-                )),
-            );
-            Ok(serde_json::json!({
-                "status": "fetched",
-                "source_url": url,
-                "local_path": local_path,
-                "size_bytes": bytes.len(),
-                "hash": hash,
-                "display_hint": block,
-            }))
+            crate::assets::publish_local_media(
+                &gallery,
+                &self.gallery_store,
+                &output_path,
+                "video_fetch",
+                "fetched",
+                crate::assets::LocalMediaFormat::Mp4,
+                &serde_json::json!({ "source_url": url }),
+            )
         })
         .await
     }

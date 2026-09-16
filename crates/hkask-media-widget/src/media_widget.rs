@@ -175,7 +175,7 @@ fn read_audio_file(path: &std::path::Path) -> Result<Vec<u8>, SharedString> {
 
 impl MediaWidget {
     pub fn new(reference: MediaRef, cx: &mut Context<Self>) -> Self {
-        Self::with_storage(reference, Arc::new(PathMediaStorage), cx)
+        Self::with_storage(reference, Arc::new(PathMediaStorage::default()), cx)
     }
 
     /// Construct a widget from a parsed block body, carrying OMC + provenance
@@ -199,7 +199,7 @@ impl MediaWidget {
             ontology = block.ontology.as_deref().unwrap_or(""),
             "REG",
         );
-        let mut widget = Self::with_storage(reference, Arc::new(PathMediaStorage), cx);
+        let mut widget = Self::with_storage(reference, Arc::new(PathMediaStorage::default()), cx);
         widget.ontology = block.ontology;
         widget.provenance = block.provenance;
         widget
@@ -254,13 +254,7 @@ impl MediaWidget {
                 // theme sync needed now that gpui-component is removed.
             }));
 
-        let kind = match &self.reference {
-            MediaRef::Asset { kind, .. } => *kind,
-            MediaRef::Error(message) => {
-                self.error = Some(message.clone());
-                return;
-            }
-        };
+        let kind = self.reference.kind();
 
         match kind {
             MediaKind::Image | MediaKind::Svg => {}
@@ -301,17 +295,9 @@ impl MediaWidget {
         self.error = None;
         match self.storage.resolve(&self.reference) {
             Ok(resolved) => self.load_resolved(resolved, cx),
-            Err(error) => match self.reference.kind() {
-                Some(MediaKind::Image | MediaKind::Svg) => {
-                    self.error = Some(SharedString::from(error.to_string()));
-                }
-                _ => {
-                    log::warn!(
-                        "hkask-media-widget: media resolution failed: {error}, falling back to direct src"
-                    );
-                    self.load_direct(cx);
-                }
-            },
+            Err(error) => {
+                self.error = Some(SharedString::from(error.to_string()));
+            }
         }
         self.sync_transport_state(cx);
     }
@@ -454,49 +440,6 @@ impl MediaWidget {
                     self.error = Some(SharedString::from(format!("base64 decode failed: {error}")));
                 }
             }
-        }
-    }
-
-    fn load_direct(&mut self, cx: &mut Context<Self>) {
-        let src = self.reference.src().to_string();
-
-        match self.reference.kind() {
-            Some(MediaKind::Audio) => {
-                if let Some(encoded) = src.strip_prefix("data:audio/") {
-                    // Data URI — in-memory base64 + decode on the foreground thread.
-                    if let Some((_, data)) = encoded.split_once(',') {
-                        if let Some(player) = &self.audio_player {
-                            match base64::Engine::decode(
-                                &base64::engine::general_purpose::STANDARD,
-                                data,
-                            ) {
-                                Ok(bytes) => {
-                                    // No unsolicited audio: load paused.
-                                    if let Err(error) = player.load_bytes_paused(bytes) {
-                                        self.error = Some(SharedString::from(error.to_string()));
-                                    }
-                                }
-                                Err(error) => {
-                                    self.error = Some(SharedString::from(format!(
-                                        "base64 decode failed: {error}"
-                                    )));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Filesystem path — offload the read off the foreground thread.
-                    self.load_audio_file_async(std::path::PathBuf::from(&src), cx);
-                }
-            }
-            Some(MediaKind::Video) => {
-                if let Some(player) = &mut self.video_player {
-                    self.video_loading = true;
-                    player.open(std::path::Path::new(&src));
-                    self.start_playback_loop(cx);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -677,15 +620,9 @@ impl MediaWidget {
             return;
         }
         self.suspended = false;
-        let needs_reload = match &self.reference {
-            MediaRef::Asset {
-                kind: MediaKind::Video,
-                ..
-            } => self.current_frame.is_none() && self.error.is_none(),
-            MediaRef::Asset {
-                kind: MediaKind::Audio,
-                ..
-            } => {
+        let needs_reload = match self.reference.kind() {
+            MediaKind::Video => self.current_frame.is_none() && self.error.is_none(),
+            MediaKind::Audio => {
                 self.audio_player
                     .as_ref()
                     .is_some_and(|player| player.duration().is_zero())
@@ -972,16 +909,9 @@ impl gpui::Render for MediaWidget {
                 .child(SharedString::from(format!("Media error: {message}")))
                 .into_any_element()
         } else {
-            match &self.reference {
-                MediaRef::Error(message) => div()
-                    .p_4()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(theme.colors().text_muted)
-                    .child(SharedString::from(format!("Media error: {message}")))
-                    .into_any_element(),
-
-                MediaRef::Asset { src, kind } => match kind {
+            {
+                let src = SharedString::from(self.reference.src());
+                match self.reference.kind() {
                     MediaKind::Image | MediaKind::Svg => {
                         // The media server emits filesystem paths for
                         // generated/persisted assets. `ImageSource::from(&str)`
@@ -1088,7 +1018,7 @@ impl gpui::Render for MediaWidget {
                         }
                         container.into_any_element()
                     }
-                },
+                }
             }
         };
 
@@ -2137,8 +2067,11 @@ mod layout_tests {
             // loading from disk — no error state — and the synthetic frame
             // below stands in for the decoder's output.
             let widget = cx.new(|cx| {
-                let mut widget =
-                    MediaWidget::with_storage(media_ref.clone(), Arc::new(PathMediaStorage), cx);
+                let mut widget = MediaWidget::with_storage(
+                    media_ref.clone(),
+                    Arc::new(PathMediaStorage::default()),
+                    cx,
+                );
                 let buffer =
                     image::ImageBuffer::from_pixel(2560, 1080, image::Rgba([16, 16, 16, 255]));
                 let frame = image::Frame::new(buffer);

@@ -5,33 +5,52 @@
 //! returning a job ID immediately. `job_list` / `job_status` / `job_cancel`
 //! read from the in-memory job store.
 use crate::types::{
-    JobCancelRequest, JobListRequest, JobRecord, JobStatusRequest, JobSubmitRequest,
+    JobCancelRequest, JobListPayload, JobListRequest, JobRecord, JobStatusRequest, JobSubmitRequest,
 };
 use crate::*;
 
-const JOB_HISTORY_SCOPE: &str = "ephemeral_process_local";
-const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; records are lost when the media server restarts and older terminal records may be removed by bounded retention.";
+pub const JOB_HISTORY_SCOPE: &str = "ephemeral_process_local";
+pub const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; records are lost when the media server restarts and older terminal records may be removed by bounded retention.";
 
-/// Decode the `job_list` wire contract at a client boundary. New responses
-/// carry explicit history scope; legacy arrays remain readable by existing clients.
+const JOB_STATUSES: &[&str] = &[
+    "queued",
+    "running",
+    "cancelling",
+    "completed",
+    "failed",
+    "cancelled",
+];
+
+/// Decode and validate the one current `job_list` wire contract.
 ///
 /// expect: A broken queue response must not look like an empty queue.
-/// [P7] Motivating: server and panel share one response contract.
+/// [P7] Motivating: server and panel share one strict response contract.
 /// pre: output is the tool's serialized response.
-/// post: scoped job objects and legacy arrays decode; malformed data and tool errors fail.
-pub fn parse_job_list_response(output: &str) -> Result<Vec<JobRecord>, JobListParseError> {
+/// post: every count, history field, and status is present and coherent or decoding fails.
+pub fn parse_job_list_response(output: &str) -> Result<JobListPayload, JobListParseError> {
     let value: serde_json::Value =
         serde_json::from_str(output).map_err(JobListParseError::InvalidJson)?;
     let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
     if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
         return Err(JobListParseError::ToolError(error.message));
     }
-    let jobs = payload
-        .as_object()
-        .and_then(|object| object.get("jobs"))
-        .cloned()
-        .unwrap_or(payload);
-    serde_json::from_value(jobs).map_err(JobListParseError::ShapeMismatch)
+    let payload: JobListPayload =
+        serde_json::from_value(payload).map_err(JobListParseError::ShapeMismatch)?;
+    if payload.limit == 0
+        || payload.limit > hkask_types::media_limits::MAX_JOB_LIST_LIMIT
+        || payload.jobs.len() > payload.limit
+        || payload.total < payload.jobs.len()
+        || payload.has_more != (payload.total > payload.jobs.len())
+        || payload.history_scope != JOB_HISTORY_SCOPE
+        || payload.restart_behavior != JOB_RESTART_BEHAVIOR
+        || payload
+            .jobs
+            .iter()
+            .any(|job| !JOB_STATUSES.contains(&job.status.as_str()))
+    {
+        return Err(JobListParseError::InvalidContract);
+    }
+    Ok(payload)
 }
 
 /// `job_list` wire-contract decode failures. Shared by the server tests and
@@ -42,8 +61,10 @@ pub enum JobListParseError {
     InvalidJson(#[source] serde_json::Error),
     #[error("{0}")]
     ToolError(String),
-    #[error("invalid job_list response (expected scoped jobs or a legacy job array): {0}")]
+    #[error("invalid job_list response (expected the strict current object contract): {0}")]
     ShapeMismatch(#[source] serde_json::Error),
+    #[error("invalid job_list response (incoherent count, scope, or status metadata)")]
+    InvalidContract,
 }
 
 fn map_job_store_error(error: crate::jobs::JobStoreError) -> McpToolError {
@@ -335,13 +356,15 @@ impl MediaServer {
             let total = matching_jobs.len();
             let jobs = matching_jobs.into_iter().take(limit).collect::<Vec<_>>();
 
-            Ok(serde_json::json!({
-                "jobs": jobs,
-                "total": total,
-                "has_more": total > limit,
-                "history_scope": JOB_HISTORY_SCOPE,
-                "restart_behavior": JOB_RESTART_BEHAVIOR,
-            }))
+            serde_json::to_value(JobListPayload {
+                jobs,
+                total,
+                limit,
+                has_more: total > limit,
+                history_scope: JOB_HISTORY_SCOPE.to_string(),
+                restart_behavior: JOB_RESTART_BEHAVIOR.to_string(),
+            })
+            .map_err(|error| McpToolError::internal(format!("encode job_list: {error}")))
         })
         .await
     }
@@ -908,7 +931,15 @@ mod tests {
                 limit: None,
             }))
             .await?;
-        assert!(parse_job_list_response(&response)?.is_empty());
+        let empty = parse_job_list_response(&response)?;
+        assert!(empty.jobs.is_empty());
+        assert_eq!(empty.total, 0);
+        assert_eq!(
+            empty.limit,
+            hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT
+        );
+        assert!(!empty.has_more);
+        assert_eq!(empty.history_scope, JOB_HISTORY_SCOPE);
         for (id, status, created_at) in [
             ("older", "completed", "2026-09-04T00:00:00Z"),
             ("newer", "running", "2026-09-05T00:00:00Z"),
@@ -929,12 +960,20 @@ mod tests {
                 limit: None,
             }))
             .await?;
-        let jobs = parse_job_list_response(&response)?;
-        assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[0].id, "newer");
-        assert_eq!(jobs[1].id, "older");
+        let page = parse_job_list_response(&response)?;
+        assert_eq!(page.jobs.len(), 2);
+        assert_eq!(page.jobs[0].id, "newer");
+        assert_eq!(page.jobs[1].id, "older");
+        assert_eq!(page.total, 2);
         assert_eq!(
-            jobs[0].result,
+            page.limit,
+            hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT
+        );
+        assert!(!page.has_more);
+        assert_eq!(page.history_scope, JOB_HISTORY_SCOPE);
+        assert_eq!(page.restart_behavior, JOB_RESTART_BEHAVIOR);
+        assert_eq!(
+            page.jobs[0].result,
             Some(serde_json::json!({"output": "/tmp/雪.png"}))
         );
         let response = server
@@ -947,9 +986,12 @@ mod tests {
         let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
         assert_eq!(payload["total"], 2);
         assert_eq!(payload["has_more"], true);
-        let jobs = parse_job_list_response(&response)?;
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].id, "newer");
+        let page = parse_job_list_response(&response)?;
+        assert_eq!(page.jobs.len(), 1);
+        assert_eq!(page.jobs[0].id, "newer");
+        assert_eq!(page.total, 2);
+        assert_eq!(page.limit, 1);
+        assert!(page.has_more);
 
         let response = server
             .job_status(Parameters(JobStatusRequest {
@@ -962,17 +1004,22 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Legacy job arrays and scoped job objects remain decodable after pagination
-    /// metadata is added.
+    /// expect: Legacy or incomplete queue responses fail instead of looking empty.
+    /// [P7] Motivating: producer and panel consume one strict current contract.
+    /// pre: the response is an array or omits required scope/count fields.
+    /// post: decoding reports a shape mismatch.
     #[test]
-    fn job_list_decoder_preserves_legacy_and_scoped_empty_shapes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        assert!(parse_job_list_response(r#"{"content":[]}"#)?.is_empty());
-        assert!(
-            parse_job_list_response(r#"{"content":{"jobs":[],"total":0,"has_more":false}}"#,)?
-                .is_empty()
-        );
-        Ok(())
+    fn job_list_decoder_rejects_legacy_and_incomplete_shapes() {
+        for response in [
+            r#"{"content":[]}"#,
+            r#"{"content":{"jobs":[],"total":0,"has_more":false}}"#,
+            r#"{"content":{"jobs":[],"total":0,"limit":20,"has_more":false,"history_scope":"wrong","restart_behavior":"unknown"}}"#,
+        ] {
+            assert!(
+                parse_job_list_response(response).is_err(),
+                "malformed current contract decoded: {response}"
+            );
+        }
     }
 
     /// expect: Invalid job page sizes are rejected rather than clamped or treated as an empty

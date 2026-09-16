@@ -19,7 +19,10 @@ use std::{collections::HashSet, time::Duration};
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v1::ToolCallId;
 use gpui::{Context, Entity, Render, SharedString, Task, Window};
-use hkask_mcp_media::types::JobRecord;
+use hkask_mcp_media::{
+    tools::jobs::parse_job_list_response,
+    types::{JobListPayload, JobRecord},
+};
 use serde_json::Value;
 use ui::{Icon, IconName, Label, LabelSize, prelude::*};
 use util::ResultExt as _;
@@ -108,13 +111,7 @@ struct GalleryListing {
     assets: Vec<Value>,
 }
 
-#[derive(Clone, Debug)]
-struct JobListing {
-    jobs: Vec<JobRecord>,
-    total: usize,
-    limit: usize,
-    has_more: bool,
-}
+type JobListing = JobListPayload;
 
 /// One media asset — from the gallery listing or surfaced by a tool result.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -716,7 +713,7 @@ impl MediaViewer {
         );
         cx.spawn(async move |this, cx| {
             let result = match task.await {
-                Ok(text) => parse_job_listing(&text, limit),
+                Ok(text) => parse_job_listing(&text),
                 Err(error) => Err(format!("job_list failed: {}", error.message())),
             };
             this.update(cx, |this, cx| this.apply_jobs_listing(epoch, result, cx))
@@ -1742,71 +1739,8 @@ fn parse_gallery_listing(
     })
 }
 
-fn parse_job_listing(output: &str, requested_limit: usize) -> Result<JobListing, String> {
-    let value: Value = serde_json::from_str(output)
-        .map_err(|error| format!("job_list returned invalid JSON: {error}"))?;
-    let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
-    if let Some(error) = hkask_types::tool_response::parse_tool_error_value(&payload) {
-        return Err(format!("job_list failed: {}", error.message));
-    }
-    if payload.is_array() {
-        let jobs: Vec<JobRecord> = serde_json::from_value(payload)
-            .map_err(|error| format!("job_list returned invalid legacy rows: {error}"))?;
-        return Ok(JobListing {
-            total: jobs.len(),
-            limit: requested_limit,
-            has_more: false,
-            jobs,
-        });
-    }
-    let object = payload
-        .as_object()
-        .ok_or_else(|| "job_list returned neither an object nor a legacy array.".to_string())?;
-    let jobs_value = object
-        .get("jobs")
-        .cloned()
-        .ok_or_else(|| "job_list returned no jobs array.".to_string())?;
-    let jobs: Vec<JobRecord> = serde_json::from_value(jobs_value)
-        .map_err(|error| format!("job_list returned invalid rows: {error}"))?;
-    let total = object
-        .get("total")
-        .map(|total| {
-            total
-                .as_u64()
-                .and_then(|total| usize::try_from(total).ok())
-                .ok_or_else(|| "job_list returned an invalid total.".to_string())
-        })
-        .transpose()?
-        .unwrap_or(jobs.len());
-    let limit = object
-        .get("limit")
-        .map(|limit| {
-            limit
-                .as_u64()
-                .and_then(|limit| usize::try_from(limit).ok())
-                .filter(|limit| *limit > 0)
-                .ok_or_else(|| "job_list returned an invalid limit.".to_string())
-        })
-        .transpose()?
-        .unwrap_or(requested_limit);
-    let has_more = object
-        .get("has_more")
-        .map(|has_more| {
-            has_more
-                .as_bool()
-                .ok_or_else(|| "job_list returned an invalid has_more flag.".to_string())
-        })
-        .transpose()?
-        .unwrap_or(total > jobs.len());
-    if jobs.len() > limit || total < jobs.len() || has_more != (total > jobs.len()) {
-        return Err("job_list returned inconsistent count metadata.".into());
-    }
-    Ok(JobListing {
-        jobs,
-        total,
-        limit,
-        has_more,
-    })
+fn parse_job_listing(output: &str) -> Result<JobListing, String> {
+    parse_job_list_response(output).map_err(|error| error.to_string())
 }
 
 fn job_is_nonterminal(job: &JobRecord) -> bool {

@@ -1,9 +1,14 @@
 //! Media reference types — how assets are identified and resolved.
 
+use base64::Engine as _;
 use gpui::SharedString;
 use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    path::{Path, PathBuf},
+};
+use url::{Host, Url};
 
 /// The type of media asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,38 +26,25 @@ pub enum MediaKind {
 /// How a media asset is referenced — mirrors what the hkask media MCP server
 /// actually emits in tool responses (filesystem paths, data URIs, remote URLs).
 #[derive(Debug, Clone)]
-pub enum MediaRef {
-    /// A reference to a media asset.
-    Asset { src: SharedString, kind: MediaKind },
-    /// An error placeholder — displayed when parsing fails.
-    Error(SharedString),
+pub struct MediaRef {
+    src: SharedString,
+    kind: MediaKind,
 }
 
 impl MediaRef {
     /// Create a new media reference.
     pub fn new(src: SharedString, kind: MediaKind) -> Self {
-        Self::Asset { src, kind }
+        Self { src, kind }
     }
 
     /// The source URL/path/data-URI.
     pub fn src(&self) -> &str {
-        match self {
-            Self::Asset { src, .. } => src.as_ref(),
-            Self::Error(_) => "",
-        }
+        self.src.as_ref()
     }
 
     /// The media kind.
-    pub fn kind(&self) -> Option<MediaKind> {
-        match self {
-            Self::Asset { kind, .. } => Some(*kind),
-            Self::Error(_) => None,
-        }
-    }
-
-    /// Whether this is an error placeholder.
-    pub fn is_error(&self) -> bool {
-        matches!(self, Self::Error(_))
+    pub fn kind(&self) -> MediaKind {
+        self.kind
     }
 }
 
@@ -78,61 +70,200 @@ pub trait MediaStorage: Send + Sync {
     fn resolve(&self, reference: &MediaRef) -> anyhow::Result<ResolvedMedia>;
 }
 
-/// The widget's `MediaStorage`: resolves filesystem paths, data URIs, and
-/// URLs directly. Gallery images reach the widget as filesystem paths
-/// (`absolute_path`) in server-emitted `display_hint` media blocks.
-pub struct PathMediaStorage;
+/// Maximum decoded inline payload admitted from an assistant-authored media block.
+pub const MAX_INLINE_MEDIA_BYTES: usize = 32 * 1024 * 1024;
+
+/// The widget's locator-validation boundary. Local reads are confined to
+/// canonical approved roots; inline payloads and remote URL syntax are checked
+/// before a decoder or subprocess receives them.
+pub struct PathMediaStorage {
+    allowed_roots: Vec<PathBuf>,
+}
+
+impl Default for PathMediaStorage {
+    fn default() -> Self {
+        let artifacts = hkask_types::agent_paths::resolve_artifacts_dir();
+        let allowed_roots = artifacts.canonicalize().into_iter().collect();
+        Self { allowed_roots }
+    }
+}
+
+impl PathMediaStorage {
+    pub fn with_allowed_roots<'a>(
+        roots: impl IntoIterator<Item = &'a Path>,
+    ) -> anyhow::Result<Self> {
+        let allowed_roots = roots
+            .into_iter()
+            .map(|root| {
+                root.canonicalize().map_err(|error| {
+                    anyhow::anyhow!(
+                        "canonicalize approved media root {}: {error}",
+                        root.display()
+                    )
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(Self { allowed_roots })
+    }
+
+    fn resolve_local(&self, source: &str, kind: MediaKind) -> anyhow::Result<ResolvedMedia> {
+        let path = if source.starts_with("file:") {
+            let url = Url::parse(source)
+                .map_err(|error| anyhow::anyhow!("invalid media file URL: {error}"))?;
+            url.to_file_path()
+                .map_err(|()| anyhow::anyhow!("media file URL must identify a local path"))?
+        } else {
+            PathBuf::from(source)
+        };
+        let path = path
+            .canonicalize()
+            .map_err(|error| anyhow::anyhow!("media file not found: {source}: {error}"))?;
+        if !path.is_file() {
+            return Err(anyhow::anyhow!(
+                "media path is not a regular file: {}",
+                path.display()
+            ));
+        }
+        if !self.allowed_roots.iter().any(|root| path.starts_with(root)) {
+            return Err(anyhow::anyhow!(
+                "media path is outside approved media roots: {}",
+                path.display()
+            ));
+        }
+        Ok(ResolvedMedia {
+            kind,
+            path: Some(path),
+            bytes: None,
+            url: None,
+        })
+    }
+}
 
 impl MediaStorage for PathMediaStorage {
     fn resolve(&self, reference: &MediaRef) -> anyhow::Result<ResolvedMedia> {
         let src = reference.src();
-        let kind = reference.kind().unwrap_or(MediaKind::Image);
+        let kind = reference.kind();
 
         if src.starts_with("data:") {
-            // Data URI — the bytes are inline. The widget handles decoding.
+            let bytes = decode_data_uri(src, kind)?;
             Ok(ResolvedMedia {
                 kind,
                 path: None,
-                bytes: None,
-                url: Some(SharedString::from(src)),
-            })
-        } else if src.starts_with("http://") || src.starts_with("https://") {
-            // Remote URL — the widget loads via the image resolver.
-            Ok(ResolvedMedia {
-                kind,
-                path: None,
-                bytes: None,
-                url: Some(SharedString::from(src)),
-            })
-        } else if let Some(path_str) = src.strip_prefix("file://") {
-            // file:// URL — resolve to the underlying filesystem path so the
-            // widget's local-file branches (image read, VideoPlayer::open)
-            // handle it. Without this, `file://` falls into the plain-path
-            // branch where `PathBuf::from("file://...").exists()` fails.
-            let path = PathBuf::from(path_str);
-            if !path.exists() {
-                return Err(anyhow::anyhow!("media file not found: {src}"));
-            }
-            Ok(ResolvedMedia {
-                kind,
-                path: Some(path),
-                bytes: None,
+                bytes: Some(bytes),
                 url: None,
+            })
+        } else if src.starts_with("http:") || src.starts_with("https:") {
+            validate_remote_url_with_addresses(src, &[])?;
+            Ok(ResolvedMedia {
+                kind,
+                path: None,
+                bytes: None,
+                url: Some(SharedString::from(src)),
             })
         } else {
-            // Filesystem path — check it exists.
-            let path = PathBuf::from(src);
-            if !path.exists() {
-                return Err(anyhow::anyhow!("media file not found: {src}"));
-            }
-            Ok(ResolvedMedia {
-                kind,
-                path: Some(path),
-                bytes: None,
-                url: None,
-            })
+            self.resolve_local(src, kind)
         }
     }
+}
+
+fn decode_data_uri(source: &str, kind: MediaKind) -> anyhow::Result<Vec<u8>> {
+    let (metadata, encoded) = source
+        .strip_prefix("data:")
+        .and_then(|body| body.split_once(','))
+        .ok_or_else(|| anyhow::anyhow!("invalid media data URI"))?;
+    let (mime, encoding) = metadata
+        .split_once(';')
+        .ok_or_else(|| anyhow::anyhow!("media data URI must declare base64 encoding"))?;
+    if encoding != "base64" {
+        return Err(anyhow::anyhow!("media data URI must use base64 encoding"));
+    }
+    let mime_matches = match kind {
+        MediaKind::Image => mime.starts_with("image/") && mime != "image/svg+xml",
+        MediaKind::Svg => mime == "image/svg+xml",
+        MediaKind::Audio => mime.starts_with("audio/"),
+        MediaKind::Video => mime.starts_with("video/"),
+    };
+    if !mime_matches {
+        return Err(anyhow::anyhow!(
+            "media data URI MIME type does not match its kind"
+        ));
+    }
+    let decoded_upper_bound = encoded.len().saturating_add(3) / 4 * 3;
+    if decoded_upper_bound > MAX_INLINE_MEDIA_BYTES {
+        return Err(anyhow::anyhow!(
+            "media data URI decoded size exceeds {MAX_INLINE_MEDIA_BYTES} bytes"
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| anyhow::anyhow!("invalid media data URI base64: {error}"))?;
+    if bytes.len() > MAX_INLINE_MEDIA_BYTES {
+        return Err(anyhow::anyhow!(
+            "media data URI decoded size exceeds {MAX_INLINE_MEDIA_BYTES} bytes"
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn validate_remote_url_with_addresses(
+    source: &str,
+    resolved_addresses: &[IpAddr],
+) -> anyhow::Result<Url> {
+    let url = Url::parse(source).map_err(|error| anyhow::anyhow!("invalid media URL: {error}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(anyhow::anyhow!("media URL scheme must be http or https"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(anyhow::anyhow!(
+            "media URL must not contain embedded credentials"
+        ));
+    }
+    let host = url
+        .host()
+        .ok_or_else(|| anyhow::anyhow!("media URL must include a host"))?;
+    match host {
+        Host::Ipv4(address) if !ipv4_is_public(address) => {
+            return Err(anyhow::anyhow!(
+                "media URL targets a non-public IPv4 address"
+            ));
+        }
+        Host::Ipv6(address) if !ipv6_is_public(address) => {
+            return Err(anyhow::anyhow!(
+                "media URL targets a non-public IPv6 address"
+            ));
+        }
+        _ => {}
+    }
+    if resolved_addresses.iter().any(|address| match address {
+        IpAddr::V4(address) => !ipv4_is_public(*address),
+        IpAddr::V6(address) => !ipv6_is_public(*address),
+    }) {
+        return Err(anyhow::anyhow!(
+            "media URL DNS resolved to a non-public address"
+        ));
+    }
+    Ok(url)
+}
+
+fn ipv4_is_public(address: Ipv4Addr) -> bool {
+    !(address.is_private()
+        || address.is_loopback()
+        || address.is_link_local()
+        || address.is_unspecified()
+        || address.is_multicast()
+        || address == Ipv4Addr::BROADCAST)
+}
+
+fn ipv6_is_public(address: Ipv6Addr) -> bool {
+    if let Some(mapped) = address.to_ipv4_mapped() {
+        return ipv4_is_public(mapped);
+    }
+    let segments = address.segments();
+    !(address.is_loopback()
+        || address.is_unspecified()
+        || address.is_multicast()
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80)
 }
 
 /// The parsed body of a ```` ```media ```` block. Carries the media reference
@@ -209,6 +340,121 @@ mod truncate_tests {
     }
 }
 
+#[cfg(test)]
+mod locator_policy_tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    fn image_ref(src: &str) -> MediaRef {
+        MediaRef::new(SharedString::from(src), MediaKind::Image)
+    }
+
+    /// expect: Local media is readable only from an explicitly approved root.
+    /// [P1] Motivating: assistant-authored media blocks cannot read arbitrary local files.
+    /// pre: one file is inside an approved root and one is outside it.
+    /// post: the contained file resolves and the outside file is rejected.
+    #[test]
+    fn local_paths_are_contained_by_approved_roots() -> anyhow::Result<()> {
+        let approved = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let inside_path = approved.path().join("inside.png");
+        let outside_path = outside.path().join("outside.png");
+        std::fs::write(&inside_path, b"inside")?;
+        std::fs::write(&outside_path, b"outside")?;
+        let storage = PathMediaStorage::with_allowed_roots([approved.path()])?;
+
+        assert!(
+            storage
+                .resolve(&image_ref(&inside_path.to_string_lossy()))
+                .is_ok()
+        );
+        let error = storage
+            .resolve(&image_ref(&outside_path.to_string_lossy()))
+            .expect_err("outside path must be rejected");
+        assert!(error.to_string().contains("approved media roots"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_symlink_escape_is_rejected() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let approved = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let outside_path = outside.path().join("outside.png");
+        std::fs::write(&outside_path, b"outside")?;
+        let link = approved.path().join("escape.png");
+        symlink(&outside_path, &link)?;
+        let storage = PathMediaStorage::with_allowed_roots([approved.path()])?;
+
+        assert!(
+            storage
+                .resolve(&image_ref(&link.to_string_lossy()))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// expect: Inline media has a decoded-size ceiling before allocation reaches a loader.
+    /// [P1] Motivating: assistant-authored blocks cannot force unbounded inline decoding.
+    /// pre: the data URI decodes beyond MAX_INLINE_MEDIA_BYTES.
+    /// post: resolution rejects it with a size error.
+    #[test]
+    fn oversized_data_uri_is_rejected() -> anyhow::Result<()> {
+        use base64::Engine as _;
+
+        let bytes = vec![0_u8; MAX_INLINE_MEDIA_BYTES + 1];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let storage = PathMediaStorage::with_allowed_roots(std::iter::empty::<&std::path::Path>())?;
+        let error = storage
+            .resolve(&image_ref(&format!("data:image/png;base64,{encoded}")))
+            .expect_err("oversized data URI must be rejected");
+        assert!(error.to_string().contains("decoded size"));
+        Ok(())
+    }
+
+    #[test]
+    fn public_remote_urls_are_admitted_and_private_literals_are_rejected() {
+        let public = "https://example.com/media/video.mp4";
+        assert!(
+            validate_remote_url_with_addresses(public, &[IpAddr::from([93, 184, 216, 34])]).is_ok()
+        );
+
+        for url in [
+            "http://127.0.0.1/media.mp4",
+            "http://10.0.0.1/media.mp4",
+            "http://169.254.1.1/media.mp4",
+            "http://[::1]/media.mp4",
+            "http://[::ffff:192.168.1.1]/media.mp4",
+            "https://user:secret@example.com/media.mp4",
+        ] {
+            assert!(
+                validate_remote_url_with_addresses(url, &[]).is_err(),
+                "unsafe URL admitted: {url}"
+            );
+        }
+    }
+
+    /// expect: A public hostname that DNS maps to a private address is rejected.
+    /// [P1] Motivating: hostname spelling cannot bypass private-network isolation.
+    /// pre: the parsed public URL has a private resolved address.
+    /// post: validation rejects the resolved destination.
+    #[test]
+    fn dns_resolving_to_private_addresses_is_rejected() {
+        let private = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+        let link_local = IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
+        assert!(
+            validate_remote_url_with_addresses("https://media.example/video.mp4", &[private])
+                .is_err()
+        );
+        assert!(
+            validate_remote_url_with_addresses("https://media.example/video.mp4", &[link_local])
+                .is_err()
+        );
+    }
+}
+
 impl MediaBlockBody {
     /// Parse a ```` ```media ```` block body. Tolerant: missing `kind` defaults
     /// to `"image"`; missing `ontology`/`provenance` default to `None`/empty so
@@ -268,7 +514,7 @@ mod block_body_tests {
         let body = MediaBlockBody::parse(r##"{"kind":"video","src":"/c.mp4"}"##).unwrap();
         let reference = body.to_media_ref().expect("resolves");
         assert_eq!(reference.src(), "/c.mp4");
-        assert_eq!(reference.kind(), Some(MediaKind::Video));
+        assert_eq!(reference.kind(), MediaKind::Video);
     }
 
     #[test]

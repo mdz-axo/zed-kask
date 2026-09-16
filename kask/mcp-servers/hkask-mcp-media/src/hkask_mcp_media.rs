@@ -1956,6 +1956,182 @@ mod tool_behavior_tests {
         ))
     }
 
+    #[cfg(unix)]
+    fn fake_ytdlp(
+        root: &std::path::Path,
+        body: &str,
+    ) -> Result<video::ytdlp::YtDlpRunner, Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = root.join("fake-yt-dlp.sh");
+        std::fs::write(&executable, format!("#!/bin/sh\n{body}\n"))?;
+        let mut permissions = std::fs::metadata(&executable)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions)?;
+        Ok(video::ytdlp::YtDlpRunner::with_binary(
+            executable.to_string_lossy().into_owned(),
+        ))
+    }
+
+    #[cfg(unix)]
+    fn server_with_ytdlp(
+        store: Arc<GalleryStore>,
+        gallery_id: Option<String>,
+        gallery_root: &std::path::Path,
+        ytdlp: video::ytdlp::YtDlpRunner,
+    ) -> MediaServer {
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            Arc::new(std::sync::Mutex::new(gallery_id.map(|gallery_id| {
+                GalleryState {
+                    path: gallery_root.to_path_buf(),
+                    mode: GalleryMode::ReadOnly,
+                    gallery_id: Some(gallery_id),
+                }
+            }))),
+            store,
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            ytdlp,
+            jobs::new_job_store(),
+            None,
+        )
+    }
+
+    /// dcterms:identifier: `MediaServer::video_fetch`
+    /// expect: A fetched platform video publishes once under one durable gallery identity.
+    /// [P1] Motivating: download success and indexed durable publication are the same outcome.
+    /// pre: an active gallery and successful downloader exist.
+    /// post: file, row, lineage, graph, result id, and display-hint id agree.
+    /// [P1] Constraining: no unindexed file-only success is permitted.
+    #[tokio::test]
+    async fn video_fetch_publishes_one_canonical_asset() -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_id = gallery.id.clone();
+        let runner = fake_ytdlp(
+            artifacts.path(),
+            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf fetched-video > \"$output\"",
+        )?;
+        let server =
+            server_with_ytdlp(store.clone(), Some(gallery.id), gallery_root.path(), runner);
+
+        let result = server
+            .video_fetch(Parameters(VideoFetchRequest {
+                url: "https://93.184.216.34/video".into(),
+            }))
+            .await?;
+        let content = content_of(&result);
+        let expected = serde_json::json!({
+            "source_url": "https://93.184.216.34/video",
+            "format": "mp4",
+        });
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery asset id")?;
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing display hint")?,
+        )?;
+        assert!(output.is_file());
+        assert_eq!(content["effective_params"], expected);
+        assert_eq!(hint["src"], content["output"]);
+        assert_eq!(hint["gallery_asset_id"], asset_id);
+        assert_eq!(hint["provenance"]["tool"], "video_fetch");
+        assert_eq!(hint["provenance"]["args"], expected);
+        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        assert_eq!(asset.absolute_path, output.to_string_lossy());
+        assert_eq!(asset.format, "mp4");
+        assert_eq!(asset.media_type, "video");
+        let lineage = store
+            .get_generation(asset_id)?
+            .ok_or("video_fetch lineage missing")?;
+        assert_eq!(lineage.op, "video_fetch");
+        assert!(store.get_omc_creation_graph(asset_id)?.is_some());
+        assert_eq!(store.count_assets(&gallery_id)?, 1);
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_fetch`
+    /// expect: A fetch without an active gallery fails before the downloader starts.
+    /// [P1] Motivating: video_fetch never degrades into an unindexed local file.
+    /// pre: yt-dlp is available but no gallery is active.
+    /// post: the typed precondition failure is visible and no output is created.
+    #[tokio::test]
+    async fn video_fetch_requires_gallery_before_external_work()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let marker = artifacts.path().join("downloader-started");
+        let script = format!("touch '{}'; exit 0", marker.display());
+        let runner = fake_ytdlp(artifacts.path(), &script)?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let server = server_with_ytdlp(store, None, artifacts.path(), runner);
+
+        let error = server
+            .video_fetch(Parameters(VideoFetchRequest {
+                url: "https://93.184.216.34/video".into(),
+            }))
+            .await
+            .expect_err("missing gallery must fail");
+        assert!(error.to_string().contains("gallery"));
+        assert!(!marker.exists());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::video_fetch`
+    /// expect: Downloader failure or missing output leaves no file or database residue.
+    /// [P1] Motivating: a failed fetch cannot masquerade as published user work.
+    /// pre: yt-dlp either writes a partial file then fails or exits successfully without output.
+    /// post: both cases fail visibly with zero generated files and zero gallery rows.
+    #[tokio::test]
+    async fn video_fetch_cleans_download_failure_and_missing_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for body in [
+            "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf partial > \"$output\"; echo 'ERROR: video unavailable' >&2; exit 1",
+            "exit 0",
+        ] {
+            let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+            let artifacts = tempfile::tempdir()?;
+            let _env = ArtifactsEnvGuard::set(artifacts.path());
+            let gallery_root = tempfile::tempdir()?;
+            let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+            let gallery = store.open(
+                gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+                GalleryMode::ReadOnly,
+            )?;
+            let gallery_id = gallery.id.clone();
+            let runner = fake_ytdlp(artifacts.path(), body)?;
+            let server =
+                server_with_ytdlp(store.clone(), Some(gallery.id), gallery_root.path(), runner);
+
+            server
+                .video_fetch(Parameters(VideoFetchRequest {
+                    url: "https://93.184.216.34/video".into(),
+                }))
+                .await
+                .expect_err("incomplete download must fail");
+            assert_eq!(store.count_assets(&gallery_id)?, 0);
+            let generated = crate::assets::generated_assets_dir();
+            if generated.exists() {
+                assert_eq!(std::fs::read_dir(generated)?.count(), 0);
+            }
+        }
+        Ok(())
+    }
+
     async fn create_real_audio(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         let output = tokio::process::Command::new("ffmpeg")
             .args([
