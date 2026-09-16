@@ -796,6 +796,7 @@ mod tests {
     enum EmbedMode {
         Exact,
         OneShort,
+        SemanticRanking,
     }
 
     struct StubInference {
@@ -835,23 +836,42 @@ mod tests {
         }
 
         fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
-            let count = match self.mode {
-                EmbedMode::Exact => texts.len(),
-                EmbedMode::OneShort => texts.len().saturating_sub(1),
-            };
             let dim = self.dim;
-            Box::pin(async move {
-                Ok((0..count)
-                    .map(|_| {
+            let vectors = match self.mode {
+                EmbedMode::Exact => constant_vectors(texts.len(), dim),
+                EmbedMode::OneShort => constant_vectors(texts.len().saturating_sub(1), dim),
+                EmbedMode::SemanticRanking => texts
+                    .iter()
+                    .map(|text| {
                         let mut vector = vec![0.0f32; dim];
-                        if let Some(first) = vector.first_mut() {
-                            *first = 1.0;
+                        let axis = if text.contains("crimson compass")
+                            || text.contains("future navigation")
+                        {
+                            0
+                        } else {
+                            1
+                        };
+                        if let Some(value) = vector.get_mut(axis) {
+                            *value = 1.0;
                         }
                         vector
                     })
-                    .collect())
-            })
+                    .collect(),
+            };
+            Box::pin(async move { Ok(vectors) })
         }
+    }
+
+    fn constant_vectors(count: usize, dim: usize) -> Vec<Vec<f32>> {
+        (0..count)
+            .map(|_| {
+                let mut vector = vec![0.0f32; dim];
+                if let Some(first) = vector.first_mut() {
+                    *first = 1.0;
+                }
+                vector
+            })
+            .collect()
     }
 
     fn inference(mode: EmbedMode) -> Arc<dyn hkask_types::InferencePort> {
@@ -959,6 +979,56 @@ mod tests {
         assert_eq!(passages[0].task, "identify the launch window");
         assert_eq!(passages[0].model, "planner-model");
         assert!(!passages[0].passage.starts_with('{'));
+    }
+
+    /// expect: A held-out future task ranks the relevant response passage and producer ahead of a competing passage.
+    #[tokio::test]
+    async fn future_task_ranks_expected_response_and_producer_first() {
+        let memory = temp_memory();
+        let inference = inference(EmbedMode::SemanticRanking);
+        for (agent, task, response) in [
+            (
+                "navigator",
+                "prepare a route decision",
+                "The crimson compass marks the safe route through the northern pass.",
+            ),
+            (
+                "caterer",
+                "prepare a lunch decision",
+                "The silver kettle is reserved for the afternoon tea service.",
+            ),
+        ] {
+            let report = ingest_turn(
+                &memory,
+                &inference,
+                agent,
+                task,
+                response,
+                "test-model",
+                None,
+                Some("embedding-model"),
+            )
+            .await;
+            assert_eq!(report.embedded, 1);
+        }
+
+        let passages = recall_turns(
+            &memory,
+            &inference,
+            "Which prior answer helps with future navigation?",
+            2,
+            None,
+            Some("embedding-model"),
+        )
+        .await
+        .expect("recall succeeds");
+
+        assert_eq!(passages.len(), 2, "fixture must retain a competing passage");
+        assert_eq!(passages[0].agent_id, "navigator");
+        assert_eq!(passages[0].task, "prepare a route decision");
+        assert_eq!(passages[0].chunk_index, 0);
+        assert!(passages[0].passage.contains("crimson compass"));
+        assert!(passages[0].distance < passages[1].distance);
     }
 
     /// expect: Producing-agent filtering is exact while unscoped recall remains shared across agents.

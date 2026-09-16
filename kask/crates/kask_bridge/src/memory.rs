@@ -2239,6 +2239,59 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: A held-out follow-up question ranks its relevant thread chunk ahead of a competing passage.
+    #[tokio::test]
+    async fn follow_up_question_ranks_expected_thread_chunk_first() {
+        let embed_fn = Arc::new(|text: &str| -> Vec<f32> {
+            let mut vector = vec![0.0f32; 1024];
+            let axis = if text.contains("azure semaphore") || text.contains("zephyr readiness") {
+                0
+            } else {
+                1
+            };
+            if let Some(value) = vector.get_mut(axis) {
+                *value = 1.0;
+            }
+            vector
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+
+        for (thread_id, user_input, agent_response) in [
+            (
+                "bridge-target-thread",
+                "Record the release dependency.",
+                "The azure semaphore must clear before deployment begins.",
+            ),
+            (
+                "bridge-distractor-thread",
+                "Record the catering preference.",
+                "The green ledger lists tea and sandwiches for the workshop.",
+            ),
+        ] {
+            port.ingest_turn(TurnRecord {
+                thread_id: thread_id.to_string(),
+                user_input: user_input.to_string(),
+                agent_response: agent_response.to_string(),
+                model: "test-model".to_string(),
+                thread_title: None,
+                agent_id: Some("Zed Agent".to_string()),
+                goal_events: Vec::new(),
+            })
+            .await
+            .expect("ingest succeeds");
+        }
+
+        let snippets = port
+            .recall_context_curator("Which contingency governs zephyr readiness?", 2)
+            .await
+            .expect("recall succeeds");
+
+        assert_eq!(snippets.len(), 2, "fixture must retain a competing passage");
+        assert_eq!(snippets[0].entity, "curator:thread:bridge-target-thread");
+        assert!(snippets[0].text.contains("azure semaphore"));
+        assert!(snippets[0].relevance_score > snippets[1].relevance_score);
+    }
+
     /// Confidence-weighted ranking test (Priority 1): when two memories
     /// have similar embedding relevance but different confidence scores,
     /// the higher-confidence memory should rank first. Before the fix,
