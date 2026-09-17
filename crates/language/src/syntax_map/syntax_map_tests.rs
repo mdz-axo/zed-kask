@@ -996,6 +996,63 @@ fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_equal_start_combined_and_pending_injections_are_ordered_by_end(cx: &mut App) {
+    // The HTML combined injection spans the full Markdown-Inline layer, while the
+    // unavailable LaTeX injection starts at the same offset and ends earlier.
+    // Reparse must preserve the syntax-layer ordering invariant instead of panicking.
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    let markdown_inline = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Markdown-Inline".into(),
+                hidden: true,
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_injection_query(
+            r#"
+            ((html_tag) @injection.content
+             (#set! injection.language "html")
+             (#set! injection.combined))
+            ((latex_block) @injection.content
+             (#set! injection.language "latex"))
+            "#,
+        )
+        .unwrap(),
+    );
+    registry.add(markdown.clone());
+    registry.add(markdown_inline);
+    registry.add(Arc::new(html_lang()));
+
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+
+    buffer.edit_via_marked_text("$$x$$ <b>y</b>");
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown, &buffer);
+
+    let injected_layers = syntax_map
+        .layers
+        .iter()
+        .filter(|layer| layer.depth == 2)
+        .map(|layer| {
+            (
+                layer.range.to_offset(&buffer),
+                layer.content.language_name().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        injected_layers,
+        vec![(0..5, "latex".to_string()), (0..14, "HTML".to_string())]
+    );
+}
+
+#[gpui::test]
 fn test_comment_triggered_injection_toggle(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 

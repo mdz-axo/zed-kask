@@ -523,11 +523,11 @@ mod tests {
                     ])
                     .to_string()
                 } else if matches!(mode, Mode::SkipConceptual) {
-                    json!([["factual", "What is grounded?", "Grounded answer one."]]).to_string()
+                    json!([{"level":"factual","question":"What is grounded?","answer":"Grounded answer one."}]).to_string()
                 } else {
                     json!([
-                        ["factual", "What is grounded?", "Grounded answer one."],
-                        ["conceptual", "Why is it grounded?", "Grounded answer two."]
+                        {"level":"factual","question":"What is grounded?","answer":"Grounded answer one."},
+                        {"level":"conceptual","question":"Why is it grounded?","answer":"Grounded answer two."}
                     ])
                     .to_string()
                 };

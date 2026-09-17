@@ -62,7 +62,7 @@ impl TransportBar {
         cx: &mut Context<Self>,
     ) {
         match event {
-            SimpleSliderEvent::Change(_) => {
+            SimpleSliderEvent::Change => {
                 self.is_dragging_seek = true;
             }
             SimpleSliderEvent::Release(value) => {

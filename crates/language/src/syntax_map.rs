@@ -2069,7 +2069,8 @@ impl Ord for ParseStep {
         let range_b = other.range();
         Ord::cmp(&other.depth, &self.depth)
             .then_with(|| Ord::cmp(&range_b.start, &range_a.start))
-            .then_with(|| Ord::cmp(&range_a.end, &range_b.end))
+            // zed-kask: D66 — BinaryHeap must pop equal-start layers by ascending end.
+            .then_with(|| Ord::cmp(&range_b.end, &range_a.end))
             .then_with(|| other.language.id().cmp(&self.language.id()))
     }
 }

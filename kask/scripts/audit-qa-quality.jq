@@ -10,6 +10,7 @@ def expected_skip_reason($type):
   elif $type == "evaluate" then "evaluate_support_absent"
   elif $type == "create" then "create_support_absent"
   else null end;
+
 def score($m):
   if $m.claims_checked == 0 or ([$m.sar,$m.cvr,$m.hfr,$m.nlr] | any(. == null))
   then null else 0.30*$m.sar + 0.25*$m.cvr + 0.20*$m.hfr + 0.25*$m.nlr end;

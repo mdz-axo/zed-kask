@@ -239,7 +239,7 @@ kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpos
 
 The writer receives only the merged generated levels and their selected source
 spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
-select new evidence. It writes compact `["level","question","answer"]` triples.
+select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}` objects.
 The server recombines those drafts with planned skips, restores immutable
 `QaEvidence {chunk_ref, source, quote}` from `p0`, and validates the existing final
 row contract.

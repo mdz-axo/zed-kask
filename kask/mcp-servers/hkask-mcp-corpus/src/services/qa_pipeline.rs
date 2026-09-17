@@ -524,7 +524,7 @@ pub(crate) fn render_planned_qa_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render planned QA: {error}")))?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA triples for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every triple; never emit separate arrays or any prose before, between, or after them. Each triple is [\"level\",\"question\",\"answer\"]. The question premise and every answer claim must be entailed by the supplied evidence alone. A factual level asks only what, which, who, when, or how many is directly stated; never turn sequence or timing into causation, reverse a condition, or imply that an action already happened. A statement that it is time to act when X does not mean X occurs when or because the action is taken. Do not ask for a complete list unless the supplied evidence contains the complete list. Preserve negation and modality exactly: hope, may, likely, and possibility are not facts or purposes. Use a why-question only when the evidence explicitly states the cause or purpose. Do not remove not, cannot, or another qualification. Do not replace a source term with a broader consequence such as viability. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. For an exemplification relationship, synthesize how the supplied examples support the passage's stated general claim; do not ask how one example's label relates to its own stated implication. Return compact JSON only.",
+        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA objects for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every object; never emit separate arrays or any prose before, between, or after them. Each object has exactly level, question, and answer, for example {{\"level\":\"factual\",\"question\":\"What is stated?\",\"answer\":\"The stated fact.\"}}. The question premise and every answer claim must be entailed by the supplied evidence alone. A factual level asks only what, which, who, when, or how many is directly stated; never turn sequence or timing into causation, reverse a condition, or imply that an action already happened. A statement that it is time to act when X does not mean X occurs when or because the action is taken. Do not ask for a complete list unless the supplied evidence contains the complete list. Preserve negation and modality exactly: hope, may, likely, and possibility are not facts or purposes. Use a why-question only when the evidence explicitly states the cause or purpose. Do not remove not, cannot, or another qualification. Do not replace a source term with a broader consequence such as viability. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. For an exemplification relationship, synthesize how the supplied examples support the passage's stated general claim; do not ask how one example's label relates to its own stated implication. Return compact JSON only.",
         planned_levels.len(),
     );
     Ok(Some([
@@ -540,7 +540,12 @@ pub(crate) fn render_planned_qa_messages(
 }
 
 #[derive(Deserialize)]
-struct PreparedQaDraft(String, String, String);
+#[serde(deny_unknown_fields)]
+struct PreparedQaDraft {
+    level: String,
+    question: String,
+    answer: String,
+}
 
 pub(crate) fn complete_disposition_plan(
     plan: &QaDispositionPlan,
@@ -561,7 +566,11 @@ pub(crate) fn complete_disposition_plan(
                 evidence_ids,
                 ..
             } => {
-                let PreparedQaDraft(level, question, answer) = drafts
+                let PreparedQaDraft {
+                    level,
+                    question,
+                    answer,
+                } = drafts
                     .next()
                     .ok_or_else(|| format!("writer omitted planned generated level {index}"))?;
                 if level != *bloom_level {

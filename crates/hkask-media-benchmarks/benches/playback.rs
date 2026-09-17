@@ -7,7 +7,8 @@ use ui::prelude::*;
 
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(5);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(8);
-const MIN_PRESENTED_FRAMES_AT_30_FPS: u64 = 85;
+const MIN_PRESENTED_FRAMES_AT_30_FPS: u64 = 89;
+const SOURCE_FRAME_COUNT: u64 = 90;
 
 #[derive(Clone, Copy, Debug)]
 enum PlaybackMode {
@@ -165,8 +166,7 @@ impl PlaybackFixture {
                     if let Some(snapshots) = snapshots {
                         let reached_terminal = match mode {
                             PlaybackMode::Visible => snapshots.iter().all(|snapshot| {
-                                snapshot.state
-                                    == hkask_media_widget::video_decoder::PlaybackState::Finished
+                                snapshot.state == hkask_media_widget::PlaybackState::Finished
                             }),
                             PlaybackMode::Cached => snapshots
                                 .iter()
@@ -271,12 +271,22 @@ fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot], player_count: us
             "the final source frame must reach GPUI: {snapshot:?}"
         );
         if player_count == 1 {
+            static REPORT_ONCE: std::sync::Once = std::sync::Once::new();
+            REPORT_ONCE.call_once(|| {
+                eprintln!(
+                    "30fps delivery: presented={}/{} published={} replaced={}",
+                    snapshot.delivery.consumed_frames,
+                    SOURCE_FRAME_COUNT,
+                    snapshot.delivery.published_frames,
+                    snapshot.delivery.replaced_frames,
+                );
+            });
             assert!(
                 snapshot.delivery.consumed_frames >= MIN_PRESENTED_FRAMES_AT_30_FPS,
-                "single visible 30fps playback must present nearly every source frame: {snapshot:?}"
+                "single visible 30fps playback must present at least 89/90 source frames: {snapshot:?}"
             );
         }
-        assert!(snapshot.delivery.consumed_frames <= 90);
+        assert!(snapshot.delivery.consumed_frames <= SOURCE_FRAME_COUNT);
         assert!(snapshot.position >= snapshot.duration);
     }
     std::hint::black_box(snapshots);
@@ -293,7 +303,7 @@ fn validate_suspension(snapshots: &[PlaybackBenchmarkSnapshot]) {
         assert!(!snapshot.polling, "hidden media must own no polling task");
         assert_ne!(
             snapshot.state,
-            hkask_media_widget::video_decoder::PlaybackState::Playing,
+            hkask_media_widget::PlaybackState::Playing,
             "hidden media must not continue decode/audio playback"
         );
         assert_eq!(snapshot.delivery.max_pending_frames, 1);

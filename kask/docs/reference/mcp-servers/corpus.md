@@ -223,7 +223,7 @@ A conceptual generated level instead names one closed relation kind. The writer
 receives only planned generated levels and fixed evidence, then returns:
 
 ```json
-[["factual","What is the delay?","72 hours"]]
+[{"level":"factual","question":"What is the delay?","answer":"72 hours"}]
 ```
 
 The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,

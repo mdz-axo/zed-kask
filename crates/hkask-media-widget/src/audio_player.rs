@@ -82,13 +82,6 @@ impl AudioPlayer {
         }
     }
 
-    pub fn resume(&self) {
-        let inner = self.inner.lock();
-        if let Some(player) = &inner.player {
-            player.play();
-        }
-    }
-
     pub fn toggle(&self) {
         let inner = self.inner.lock();
         if let Some(player) = &inner.player {

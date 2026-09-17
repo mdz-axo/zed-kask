@@ -124,9 +124,8 @@ impl Default for PathMediaStorage {
 }
 
 impl PathMediaStorage {
-    pub fn with_allowed_roots<'a>(
-        roots: impl IntoIterator<Item = &'a Path>,
-    ) -> anyhow::Result<Self> {
+    #[cfg(test)]
+    fn with_allowed_roots<'a>(roots: impl IntoIterator<Item = &'a Path>) -> anyhow::Result<Self> {
         let allowed_roots = roots
             .into_iter()
             .map(|root| {

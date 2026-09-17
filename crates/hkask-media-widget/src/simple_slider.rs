@@ -32,7 +32,7 @@ impl Render for SliderDragGhost {
 
 #[derive(Debug, Clone)]
 pub enum SimpleSliderEvent {
-    Change(f32),
+    Change,
     Release(f32),
 }
 
@@ -120,7 +120,7 @@ impl Render for SimpleSlider {
                     let fraction = ((click_x - track_left) / track_width).clamp(0.0, 1.0);
                     let value = slider.value_from_fraction(fraction);
                     slider.value = value;
-                    cx.emit(SimpleSliderEvent::Change(value));
+                    cx.emit(SimpleSliderEvent::Change);
                     cx.notify();
                 });
             })
@@ -235,7 +235,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|event| matches!(event, SimpleSliderEvent::Change(_))),
+                .any(|event| matches!(event, SimpleSliderEvent::Change)),
             "drag emits a value change"
         );
         assert_eq!(

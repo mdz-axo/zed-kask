@@ -387,12 +387,8 @@ impl InferencePort for CitationGeneration {
         } else {
             assert!(rendered.contains("planned_levels"));
             json!([
-                ["factual", "What is the measured count?", "Thirty"],
-                [
-                    "conceptual",
-                    "Why does the duration constrain timing?",
-                    "It determines when the next step can begin."
-                ]
+                {"level":"factual","question":"What is the measured count?","answer":"Thirty"},
+                {"level":"conceptual","question":"Why does the duration constrain timing?","answer":"It determines when the next step can begin."}
             ])
         };
         Box::pin(async move {

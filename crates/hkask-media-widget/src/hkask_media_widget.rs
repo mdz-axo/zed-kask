@@ -25,13 +25,13 @@
 //! ```
 #![warn(clippy::let_underscore_future)]
 
-pub mod audio_player;
-pub mod media_ref;
-pub mod media_widget;
-pub mod simple_slider;
-pub mod streaming;
-pub mod transport;
-pub mod video_decoder;
+mod audio_player;
+mod media_ref;
+mod media_widget;
+mod simple_slider;
+mod streaming;
+mod transport;
+mod video_decoder;
 
 pub use media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, approve_gallery_media_path,
@@ -40,6 +40,8 @@ pub use media_ref::{
 pub use media_widget::MediaWidget;
 #[cfg(feature = "bench-support")]
 pub use media_widget::PlaybackBenchmarkSnapshot;
+#[cfg(feature = "bench-support")]
+pub use video_decoder::PlaybackState;
 
 use gpui::{App, AppContext, Entity, Window};
 

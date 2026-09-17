@@ -33,7 +33,9 @@ use crate::media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, PathMediaStorage, ResolvedMedia,
 };
 use crate::transport::{TransportBar, TransportEvent, TransportState};
-use crate::video_decoder::{DecodedFrame, VideoPlaybackEvent, WidgetVideoPlayer};
+use crate::video_decoder::{
+    DISPLAY_POLL_INTERVAL, DecodedFrame, VideoPlaybackEvent, WidgetVideoPlayer,
+};
 #[cfg(feature = "bench-support")]
 use crate::video_decoder::{PlaybackState, VideoDeliveryStats};
 
@@ -49,9 +51,6 @@ const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
 /// A playing/loading shared widget that has not been requested by a renderer
 /// within this interval is offscreen and must suspend its active work.
 const VISIBILITY_GRACE: Duration = Duration::from_millis(250);
-/// Poll the worker near GPUI's 120 Hz frame cadence. Rendering still occurs
-/// only when a new source frame or transport state arrives.
-const PLAYBACK_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 /// Convert a decoder-owned BGRA frame into GPUI's render-image container.
 /// GPUI uploads this byte buffer as BGRA; the image crate supplies storage,
@@ -596,7 +595,7 @@ impl MediaWidget {
         self.playback_task = Some(cx.spawn(async move |_this, cx| {
             let mut last_tick = Instant::now();
             loop {
-                cx.background_executor().timer(PLAYBACK_POLL_INTERVAL).await;
+                cx.background_executor().timer(DISPLAY_POLL_INTERVAL).await;
 
                 let keep_going = match entity.update(cx, |widget, cx| {
                     let keep_going = widget.tick_playback(last_tick.elapsed(), cx);

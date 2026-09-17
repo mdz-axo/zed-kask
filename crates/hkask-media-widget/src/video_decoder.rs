@@ -46,10 +46,12 @@ enum DecodeOutcome {
 /// How far ahead of the playback clock audio is queued. Rodio consumes at
 /// real time; a small lead absorbs demux jitter without growing unbounded.
 const AUDIO_LEAD: Duration = Duration::from_millis(300);
-/// Wake often enough to present 30/60 fps source frames without adding decode
-/// work to a full-frame sleep. Source PTS, not this cadence, decides when a
-/// frame is due.
-const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(8);
+/// Decode polling needs headroom beneath both 30/60 fps source deadlines and
+/// decoder work. Source PTS, not this cadence, decides when a frame is due.
+const DECODE_POLL_INTERVAL: Duration = Duration::from_millis(4);
+/// Foreground observation follows GPUI's 120 Hz frame cadence; rendering still
+/// occurs only when the worker publishes a new source frame or state change.
+pub(crate) const DISPLAY_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 pub struct VideoPlayer {
     state: PlaybackState,
@@ -169,8 +171,9 @@ impl VideoPlayer {
     }
 
     /// Whether the opened source carries an audio pipeline.
+    #[cfg(test)]
     #[must_use]
-    pub fn has_audio(&self) -> bool {
+    fn has_audio(&self) -> bool {
         #[cfg(feature = "video")]
         {
             self.decoder
@@ -341,11 +344,10 @@ impl VideoPlayer {
     /// Decode the video frame for the current master-clock position and
     /// queue audio ahead of it.
     ///
-    /// Called by the dedicated playback worker at ~30fps while playing.
-    /// The `delta` argument is unused for the clock because position is
-    /// audio-consumption-derived when audio exists and wall-time-derived
-    /// otherwise. Returns a decoded BGRA frame for the widget.
-    pub fn advance_and_decode(&mut self, _delta: Duration) -> anyhow::Result<Option<DecodedFrame>> {
+    /// Called by the dedicated playback worker while playing. Source PTS and
+    /// the audio-master clock decide when a frame is due; polling cadence does
+    /// not advance media time.
+    pub fn advance_and_decode(&mut self) -> anyhow::Result<Option<DecodedFrame>> {
         if self.state != PlaybackState::Playing {
             return Ok(None);
         }
@@ -843,7 +845,7 @@ fn run_video_worker(
     let mut sequence = 0_u64;
     loop {
         let command = if player.is_playing() {
-            match commands.recv_timeout(WORKER_POLL_INTERVAL) {
+            match commands.recv_timeout(DECODE_POLL_INTERVAL) {
                 Ok(command) => Some(command),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -977,7 +979,7 @@ fn run_video_worker(
                 }
             }
             Some(VideoCommand::Shutdown) => break,
-            None => match player.advance_and_decode(WORKER_POLL_INTERVAL) {
+            None => match player.advance_and_decode() {
                 Ok(frame) => {
                     sequence = sequence.saturating_add(1);
                     let snapshot = VideoSnapshot::from_player(&player);
@@ -1198,8 +1200,9 @@ mod ffmpeg_impl {
             })
         }
 
+        #[cfg(test)]
         #[must_use]
-        pub fn has_audio(&self) -> bool {
+        fn has_audio(&self) -> bool {
             self.audio.is_some()
         }
 
@@ -1723,7 +1726,7 @@ mod tests {
         // how tests and callers land on a specific timestamp.
         player.seek(Duration::from_millis(500));
         let frame = player
-            .advance_and_decode(Duration::from_millis(33))
+            .advance_and_decode()
             .expect("advance")
             .expect("frame decoded");
         let reference = std::fs::read(&reference_path).expect("read reference");
@@ -1783,7 +1786,7 @@ mod tests {
         player.play();
 
         let frame = player
-            .advance_and_decode(Duration::ZERO)
+            .advance_and_decode()
             .expect("early playback tick is not a decode failure");
 
         assert!(
@@ -2158,9 +2161,7 @@ mod tests {
         player.play();
         // Pump normally for a moment — audio flowing, clock advancing.
         for _ in 0..10 {
-            player
-                .advance_and_decode(Duration::from_millis(33))
-                .expect("advance");
+            player.advance_and_decode().expect("advance");
         }
         // The audio-master clock advances only when the output device consumes
         // real samples; immediate decode calls alone do not advance time.
@@ -2210,9 +2211,7 @@ mod tests {
         // sub-100ms wall time), never target + pre-seek elapsed.
         assert!(player.position() < Duration::from_millis(1_100));
         for _ in 0..30 {
-            player
-                .advance_and_decode(Duration::from_millis(33))
-                .expect("advance");
+            player.advance_and_decode().expect("advance");
         }
         let position_after_ticks = player.position();
         assert!(position_after_ticks >= Duration::from_secs(1));
@@ -2267,7 +2266,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while player.state() != PlaybackState::Finished && std::time::Instant::now() < deadline {
             player
-                .advance_and_decode(Duration::from_millis(10))
+                .advance_and_decode()
                 .expect("normal end-of-stream is not a decode failure");
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -2282,7 +2281,7 @@ mod tests {
         for _ in 0..3 {
             assert!(
                 player
-                    .advance_and_decode(Duration::from_millis(10))
+                    .advance_and_decode()
                     .expect("finished playback stays quiet")
                     .is_none()
             );
@@ -2298,7 +2297,7 @@ mod tests {
         assert!(player.position() >= Duration::from_millis(500));
         assert!(
             player
-                .advance_and_decode(Duration::from_millis(10))
+                .advance_and_decode()
                 .expect("decode after terminal seek")
                 .is_some(),
             "seeking after EOF makes frames decodable again"
@@ -2329,7 +2328,7 @@ mod tests {
         assert!(player.has_audio(), "audio pipeline must be live");
         player.play();
         let frame = player
-            .advance_and_decode(Duration::from_millis(33))
+            .advance_and_decode()
             .expect("advance")
             .expect("first frame decodes from the stream");
         assert!(frame.width > 0 && frame.height > 0);
@@ -2338,9 +2337,7 @@ mod tests {
         // Give rodio real time to consume, then pump and assert.
         std::thread::sleep(Duration::from_millis(300));
         for _ in 0..3 {
-            player
-                .advance_and_decode(Duration::from_millis(33))
-                .expect("advance");
+            player.advance_and_decode().expect("advance");
         }
         // position is consumed-audio-derived under the audio-master clock —
         // advancing position IS the proof that streamed audio flowed to the
