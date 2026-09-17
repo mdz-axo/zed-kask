@@ -3010,6 +3010,46 @@ pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
     MEMORY_PORT.get()
 }
 
+#[cfg(test)]
+pub(crate) struct ScopedTestOverride<T: 'static> {
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+    previous: Option<T>,
+}
+
+#[cfg(test)]
+impl<T> ScopedTestOverride<T> {
+    pub(crate) fn replace(&mut self, value: T) {
+        self.slot.with(|slot| {
+            slot.replace(Some(value));
+        });
+    }
+}
+
+#[cfg(test)]
+impl<T> Drop for ScopedTestOverride<T> {
+    fn drop(&mut self) {
+        self.slot.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+#[cfg(test)]
+fn scoped_test_override<T>(
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+    value: T,
+) -> ScopedTestOverride<T> {
+    let previous = slot.with(|slot| slot.replace(Some(value)));
+    ScopedTestOverride { slot, previous }
+}
+
+#[cfg(test)]
+fn test_override<T: Clone>(
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+) -> Option<T> {
+    slot.with(|slot| slot.borrow().clone())
+}
+
 /// Global override for the archived threads DB path (D28 — Standardized
 /// Artifact Storage).
 ///
@@ -3025,6 +3065,12 @@ pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
 /// need the `Err`-branch warn.
 static THREADS_DB_PATH_OVERRIDE: ProcessGlobal<std::path::PathBuf> = ProcessGlobal::new();
 
+#[cfg(test)]
+thread_local! {
+    static TEST_THREADS_DB_PATH_OVERRIDE: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Set the global archived-threads DB path override (D28 composition root).
 ///
 /// Called by zed-kask's app startup to wire the canonical kask data-root
@@ -3035,8 +3081,21 @@ pub fn set_threads_db_path_override(path: Option<std::path::PathBuf>) {
     THREADS_DB_PATH_OVERRIDE.set(path);
 }
 
-/// Get the global archived-threads DB path override, if set.
+/// Install an archived-threads path override for the current test thread.
+#[cfg(test)]
+pub(crate) fn scoped_threads_db_path_override_for_test(
+    path: std::path::PathBuf,
+) -> ScopedTestOverride<std::path::PathBuf> {
+    scoped_test_override(&TEST_THREADS_DB_PATH_OVERRIDE, path)
+}
+
+/// Get the archived-threads DB path override, if set.
 pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = test_override(&TEST_THREADS_DB_PATH_OVERRIDE) {
+        return Some(path);
+    }
+
     THREADS_DB_PATH_OVERRIDE.get()
 }
 
@@ -4515,11 +4574,24 @@ pub type McpToolOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + S
 /// and the curator never saw agent-initiated MCP failures.
 static MCP_TOOL_OUTCOME_RECORDER: ProcessGlobal<McpToolOutcomeRecorder> = ProcessGlobal::new();
 
+#[cfg(test)]
+thread_local! {
+    static TEST_MCP_TOOL_OUTCOME_RECORDER: std::cell::RefCell<Option<McpToolOutcomeRecorder>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Set the global MCP tool outcome recorder. Re-settable (replaces any
 /// previous recorder) — production wires once at startup; tests replace
 /// freely.
 pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
     MCP_TOOL_OUTCOME_RECORDER.set(Some(recorder));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_mcp_tool_outcome_recorder_for_test(
+    recorder: McpToolOutcomeRecorder,
+) -> ScopedTestOverride<McpToolOutcomeRecorder> {
+    scoped_test_override(&TEST_MCP_TOOL_OUTCOME_RECORDER, recorder)
 }
 
 /// Record an agent-path MCP tool outcome. Best-effort by design: when no
@@ -4534,6 +4606,10 @@ pub fn record_mcp_tool_outcome(
     // `ProcessGlobal::get` clones out of the lock so the callback runs
     // unlocked — the wired closure spawns a tokio task and must not run
     // under the hook's own mutex.
+    #[cfg(test)]
+    let recorder =
+        test_override(&TEST_MCP_TOOL_OUTCOME_RECORDER).or_else(|| MCP_TOOL_OUTCOME_RECORDER.get());
+    #[cfg(not(test))]
     let recorder = MCP_TOOL_OUTCOME_RECORDER.get();
     match recorder {
         Some(record) => record(server_name, tool_name, success, error_kind),
@@ -4563,10 +4639,23 @@ pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, bool, Option<&str>) + Send + Sy
 /// can replace it freely.
 static SKILL_OUTCOME_RECORDER: ProcessGlobal<SkillOutcomeRecorder> = ProcessGlobal::new();
 
+#[cfg(test)]
+thread_local! {
+    static TEST_SKILL_OUTCOME_RECORDER: std::cell::RefCell<Option<SkillOutcomeRecorder>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Set the global skill outcome recorder. Re-settable (replaces any
 /// previous recorder) — production wires once at startup.
 pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
     SKILL_OUTCOME_RECORDER.set(Some(recorder));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_skill_outcome_recorder_for_test(
+    recorder: SkillOutcomeRecorder,
+) -> ScopedTestOverride<SkillOutcomeRecorder> {
+    scoped_test_override(&TEST_SKILL_OUTCOME_RECORDER, recorder)
 }
 
 /// Record a skill execution outcome. Best-effort by design: when no recorder
@@ -4574,6 +4663,10 @@ pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
 /// log — telemetry must never fail a tool call.
 pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) {
     // Same unlocked-dispatch pattern as `record_mcp_tool_outcome` above.
+    #[cfg(test)]
+    let recorder =
+        test_override(&TEST_SKILL_OUTCOME_RECORDER).or_else(|| SKILL_OUTCOME_RECORDER.get());
+    #[cfg(not(test))]
     let recorder = SKILL_OUTCOME_RECORDER.get();
     match recorder {
         Some(record) => record(skill_id, success, error),
@@ -4600,15 +4693,28 @@ pub type OperatorFeedbackRecorder =
     Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
 
 /// Global hook for operator skill feedback. Wired in `main.rs` to a closure
-/// that stores each reaction as a `reg.skill.<id>.operator_feedback` span
-/// payload in the shared `RegulationLedger`. Re-settable (`Mutex`, not
-/// `OnceLock`) so tests can replace it freely.
+/// that persists each reaction to `RegulationArchive` before updating the
+/// shared `RegulationLedger` working view. Re-settable (`Mutex`, not
+/// `OnceLock`) so the composition root can replace it as context resolves.
 static OPERATOR_FEEDBACK_RECORDER: ProcessGlobal<OperatorFeedbackRecorder> = ProcessGlobal::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_OPERATOR_FEEDBACK_RECORDER: std::cell::RefCell<Option<OperatorFeedbackRecorder>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Set the global operator feedback recorder. Re-settable (replaces any
 /// previous recorder) — production wires once at startup.
 pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
     OPERATOR_FEEDBACK_RECORDER.set(Some(recorder));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_operator_feedback_recorder_for_test(
+    recorder: OperatorFeedbackRecorder,
+) -> ScopedTestOverride<OperatorFeedbackRecorder> {
+    scoped_test_override(&TEST_OPERATOR_FEEDBACK_RECORDER, recorder)
 }
 
 /// Record the operator's reaction to a skill's output.
@@ -4623,7 +4729,12 @@ pub fn record_operator_feedback(
     accepted: bool,
     note: Option<&str>,
 ) -> Result<(), String> {
-    let recorder = OPERATOR_FEEDBACK_RECORDER.get().ok_or_else(|| {
+    #[cfg(test)]
+    let recorder = test_override(&TEST_OPERATOR_FEEDBACK_RECORDER)
+        .or_else(|| OPERATOR_FEEDBACK_RECORDER.get());
+    #[cfg(not(test))]
+    let recorder = OPERATOR_FEEDBACK_RECORDER.get();
+    let recorder = recorder.ok_or_else(|| {
         format!("operator feedback persistence is not available for skill {skill_id}")
     })?;
     recorder(skill_id, accepted, note)
@@ -4949,6 +5060,33 @@ mod internal_tests {
             2,
             "the replaced recorder must no longer receive calls"
         );
+    }
+
+    /// expect: "Parallel agent tests observe only their own recorder doubles"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: one test installs a scoped skill-outcome recorder
+    /// post: a concurrent thread cannot call it, and panic unwinding removes it
+    #[test]
+    fn scoped_skill_outcome_recorder_is_thread_local_and_panic_safe() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captured = calls.clone();
+        let recorder: SkillOutcomeRecorder = Arc::new(move |_, _, _| {
+            captured.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = scoped_skill_outcome_recorder_for_test(recorder);
+            record_skill_outcome("owner", true, None);
+            std::thread::spawn(|| record_skill_outcome("concurrent", true, None))
+                .join()
+                .expect("concurrent recorder call");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            panic!("exercise scoped cleanup");
+        }));
+
+        assert!(unwind.is_err());
+        record_skill_outcome("after-unwind", true, None);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

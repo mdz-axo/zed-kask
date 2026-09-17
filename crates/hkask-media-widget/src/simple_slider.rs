@@ -166,3 +166,76 @@ impl Render for SimpleSlider {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext, point, size};
+    use std::sync::{Arc, Mutex};
+
+    struct SliderHost {
+        slider: gpui::Entity<SimpleSlider>,
+    }
+
+    impl Render for SliderHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .w_full()
+                .h(px(40.0))
+                .items_center()
+                .child(self.slider.clone())
+        }
+    }
+
+    /// expect: Releasing a seek drag outside the narrow track still commits the seek.
+    /// [P1] Motivating: users can scrub without keeping the pointer inside a six-pixel target.
+    /// pre: a left-button drag starts on the track, changes value, and ends below the track.
+    /// post: the slider emits Change followed by exactly one Release.
+    #[gpui::test]
+    fn drag_release_outside_track_emits_release(cx: &mut TestAppContext) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = events.clone();
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            let slider = cx.new(|cx| SimpleSlider::new(cx, 0.0, 1.0, 0.001));
+            cx.subscribe(&slider, move |_, _, event, _| {
+                observed
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(event.clone());
+            })
+            .detach();
+            SliderHost { slider }
+        });
+        cx.simulate_resize(size(px(300.0), px(80.0)));
+        cx.run_until_parked();
+
+        let bounds = cx
+            .debug_bounds("simple-slider-track")
+            .expect("slider track has laid-out bounds");
+        let start = point(bounds.left() + px(5.0), bounds.center().y);
+        let inside = point(bounds.right() - px(5.0), bounds.center().y);
+        let outside = point(inside.x, bounds.bottom() + px(20.0));
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(inside, Some(MouseButton::Left), Modifiers::none());
+        cx.simulate_mouse_move(outside, Some(MouseButton::Left), Modifiers::none());
+        cx.simulate_mouse_up(outside, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let events = events.lock().unwrap_or_else(|error| error.into_inner());
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SimpleSliderEvent::Change(_))),
+            "drag emits a value change"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SimpleSliderEvent::Release(_)))
+                .count(),
+            1,
+            "mouse-up outside commits exactly one release"
+        );
+    }
+}

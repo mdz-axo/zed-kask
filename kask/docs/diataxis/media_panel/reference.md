@@ -170,16 +170,19 @@ panel remains a vertically split viewer/director surface with a draggable split
 The viewer pane must retain `min_h_0` and `min_w_0` so media and toolbars shrink
 inside the dock instead of propagating intrinsic dimensions. The selected media
 uses the shared media widget, preserving aspect ratio through the widget's
-contain fit. Playback speed, mute, zoom, and fullscreen controls are not
-implemented in `media_panel` as of this edit.
+contain fit. Volume and mute are intentionally delegated to the operating
+system's default output device; the widget keeps unity application gain and
+provides no competing mixer. Playback speed, zoom, and fullscreen controls are
+not implemented in `media_panel` as of this edit.
 
 ## Capability summary
 
 | Capability | State |
 | --- | --- |
-| Play/pause, seek, stop, volume, trim marks | supplied |
+| Play/pause, seek, stop, trim marks | supplied |
+| Volume and mute | operating-system controlled |
 | Paginated gallery selection and refresh | supplied |
 | Stable-ID detail and delete operations | supplied |
 | Bounded video concatenation | supplied |
 | Job list, polling, status, and cancellation | supplied |
-| Playback speed, mute, zoom, fullscreen | absent |
+| Playback speed, zoom, fullscreen | absent |

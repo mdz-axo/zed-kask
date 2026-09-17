@@ -559,20 +559,17 @@ impl MediaWidget {
             is_playing: false,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             is_loading: self.audio_loading || self.video_loading,
         };
         if let Some(player) = &self.audio_player {
             state.is_playing = player.is_playing();
             state.position = player.position();
             state.duration = player.duration();
-            state.volume = player.volume();
         }
         if let Some(player) = &self.video_player {
             state.is_playing = player.is_playing();
             state.position = player.position();
             state.duration = player.duration();
-            state.volume = player.volume();
         }
         state
     }
@@ -633,7 +630,6 @@ impl MediaWidget {
             is_playing: false,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             is_loading: self.audio_loading || self.video_loading,
         };
         let mut frame_decoded = false;
@@ -642,7 +638,6 @@ impl MediaWidget {
             transport_state.is_playing = player.is_playing();
             transport_state.position = player.position();
             transport_state.duration = player.duration();
-            transport_state.volume = player.volume();
         }
 
         if let Some(player) = &mut self.video_player {
@@ -670,7 +665,6 @@ impl MediaWidget {
             transport_state.is_playing = player.is_playing();
             transport_state.position = player.position();
             transport_state.duration = player.duration();
-            transport_state.volume = player.volume();
         }
 
         // No loaded player → nothing to play or poll; stop the loop.
@@ -679,7 +673,7 @@ impl MediaWidget {
         }
 
         // Re-render only when something visible changed: a new video frame,
-        // or a transport state transition (play/pause/seek/finish/volume).
+        // or a transport state transition (play/pause/seek/finish).
         let changed = frame_decoded || self.last_transport.as_ref() != Some(&transport_state);
         self.last_transport = Some(transport_state);
         if changed {
@@ -799,14 +793,7 @@ impl MediaWidget {
                     self.start_playback_loop(cx);
                 }
             }
-            TransportEvent::VolumeChange(volume) => {
-                if let Some(player) = &self.audio_player {
-                    player.set_volume(*volume);
-                }
-                if let Some(player) = &mut self.video_player {
-                    player.set_volume(*volume);
-                }
-            }
+
             TransportEvent::Stop => {
                 self.suspended = false;
                 if let Some(player) = &self.audio_player {

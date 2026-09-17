@@ -220,7 +220,6 @@ mod tests {
             is_playing: false,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             is_loading: true,
         };
         assert_eq!(play_label(&state), "Loading…");
