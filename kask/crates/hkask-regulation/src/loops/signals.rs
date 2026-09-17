@@ -202,10 +202,11 @@ mod tests {
         let mut trigger = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.3, 0.8);
         trigger.timestamp = applied;
         let mut current = trigger.clone();
-        let now = applied + chrono::Duration::days(7);
+        let due = applied + chrono::Duration::days(7);
+        let now = due;
         current.timestamp = now;
         assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), None, now),
+            trigger.advice_review(Some(&trigger), Some(&current), None, None, now),
             "awaiting_action"
         );
         assert_eq!(
@@ -213,31 +214,60 @@ mod tests {
                 Some(&trigger),
                 Some(&current),
                 Some(applied),
+                Some(due),
                 applied + chrono::Duration::days(6)
             ),
             "observation_window"
         );
         assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), None, now),
+            "insufficient_evidence"
+        );
+        assert_eq!(
+            trigger.advice_review(
+                Some(&trigger),
+                Some(&current),
+                Some(applied),
+                Some(due),
+                now
+            ),
             "no_improvement"
         );
         current.value = 0.4;
         assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            trigger.advice_review(
+                Some(&trigger),
+                Some(&current),
+                Some(applied),
+                Some(due),
+                now
+            ),
             "improved"
         );
         current.value = 0.8;
         assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            trigger.advice_review(
+                Some(&trigger),
+                Some(&current),
+                Some(applied),
+                Some(due),
+                now
+            ),
             "recovered"
         );
         assert_eq!(
-            trigger.advice_review(Some(&trigger), None, Some(applied), now),
+            trigger.advice_review(Some(&trigger), None, Some(applied), Some(due), now),
             "insufficient_evidence"
         );
         current.timestamp = applied;
         assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), now),
+            trigger.advice_review(
+                Some(&trigger),
+                Some(&current),
+                Some(applied),
+                Some(due),
+                now
+            ),
             "insufficient_evidence"
         );
     }
@@ -348,18 +378,22 @@ impl Signal {
         Deviation::from_signal(self).is_some()
     }
 
-    /// Seven-day post-application review, not a causal-effect estimate.
+    /// Post-application review at the persisted due time, not a causal-effect estimate.
     pub fn advice_review(
         &self,
         baseline: Option<&Signal>,
         current: Option<&Signal>,
         applied_at: Option<chrono::DateTime<chrono::Utc>>,
+        review_due_at: Option<chrono::DateTime<chrono::Utc>>,
         now: chrono::DateTime<chrono::Utc>,
     ) -> &'static str {
         let Some(applied_at) = applied_at else {
             return "awaiting_action";
         };
-        if now < applied_at + chrono::Duration::days(7) {
+        let Some(review_due_at) = review_due_at else {
+            return "insufficient_evidence";
+        };
+        if now < review_due_at {
             return "observation_window";
         }
         let (Some(baseline), Some(current)) = (baseline, current) else {

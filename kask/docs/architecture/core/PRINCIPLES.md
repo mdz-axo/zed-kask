@@ -192,6 +192,12 @@ Skill outcomes and operator feedback both have live writers. `SkillTool::run` re
 | Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:966-989`) | Metacognition senses per-skill activation reliability |
 | Operator skill feedback | Direct rating and advice-apply bridge use the process-global feedback recorder; its production implementation persists to `RegulationArchive` before acknowledging the write (`crates/zed/src/main.rs:1634-1692`; `kask/crates/kask_bridge/src/memory/curator_stores.rs:45-69`) | Startup hydration rebuilds the bounded ledger view from valid chronological archive records; metacognition trends operator acceptance (`curator_stores.rs:71-120`) |
 
+**§9.3 — Operator-applied advice review (2026-09-17)**
+
+A confirmed advice application is an intervention record, not proof that the advice worked. `curator_advice_mark_applied` persists the fresh baseline, `applied_at`, and the authoritative `review_due_at` in the originating `EscalationQueue` row. Reconciliation before that persisted due time remains `observation_window`; at or after it, fresh comparable readings distinguish `recovered`, `improved`, and `no_improvement`, while missing or stale readings become `insufficient_evidence`. Every finalized review retains `causal_attribution: "unverified"`.
+
+The queue remains authoritative across early alert resolution and reconstructed server/sink instances. A failed context write produces no durable final review; a compare-and-set conflict retries on a later reconciliation; finalized reviews are idempotent and remain queryable through `curator_advice_reviews`. These observational reviews are deliberately separate from evidence-bearing rollout `ImpactReport`s. At this lifecycle stage they remain visible in escalation context and the curator read tool but are not yet an input to `LoopMetrics`; the separate Regulation self-observation channel is the next wiring slice.
+
 > **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 11 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
 **§9.2 — Event emission pattern**

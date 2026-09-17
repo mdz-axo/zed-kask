@@ -46,6 +46,10 @@ enum DecodeOutcome {
 /// How far ahead of the playback clock audio is queued. Rodio consumes at
 /// real time; a small lead absorbs demux jitter without growing unbounded.
 const AUDIO_LEAD: Duration = Duration::from_millis(300);
+/// Wake often enough to present 30/60 fps source frames without adding decode
+/// work to a full-frame sleep. Source PTS, not this cadence, decides when a
+/// frame is due.
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 pub struct VideoPlayer {
     state: PlaybackState,
@@ -301,7 +305,8 @@ impl VideoPlayer {
     #[must_use]
     pub fn position(&self) -> Duration {
         #[cfg(feature = "video")]
-        if let Some(consumed_at_play) = self.audio_consumed_at_play
+        if self.state == PlaybackState::Playing
+            && let Some(consumed_at_play) = self.audio_consumed_at_play
             && let Some(consumed) = self
                 .decoder
                 .as_ref()
@@ -838,7 +843,7 @@ fn run_video_worker(
     let mut sequence = 0_u64;
     loop {
         let command = if player.is_playing() {
-            match commands.recv_timeout(Duration::from_millis(33)) {
+            match commands.recv_timeout(WORKER_POLL_INTERVAL) {
                 Ok(command) => Some(command),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -972,7 +977,7 @@ fn run_video_worker(
                 }
             }
             Some(VideoCommand::Shutdown) => break,
-            None => match player.advance_and_decode(Duration::from_millis(33)) {
+            None => match player.advance_and_decode(WORKER_POLL_INTERVAL) {
                 Ok(frame) => {
                     sequence = sequence.saturating_add(1);
                     let snapshot = VideoSnapshot::from_player(&player);
@@ -1909,6 +1914,11 @@ mod tests {
         assert_eq!(
             completed_count, 1,
             "completed event remains observable exactly once"
+        );
+        assert_eq!(
+            player.position(),
+            player.duration(),
+            "completed audio-master playback reports its media duration exactly"
         );
         let final_poll = player.poll();
         assert!(!final_poll.has_opened(), "opened is not repeated");

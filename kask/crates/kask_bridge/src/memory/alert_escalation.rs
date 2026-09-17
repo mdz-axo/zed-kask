@@ -125,16 +125,31 @@ impl BridgeAlertEscalationSink {
                         serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone())
                     })
                     .transpose();
+                let review_due_at = context
+                    .get("review_due_at")
+                    .filter(|value| !value.is_null())
+                    .map(|value| {
+                        serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone())
+                    })
+                    .transpose();
                 let baseline = context
                     .get("applied_baseline")
                     .filter(|value| !value.is_null())
                     .map(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone()))
                     .transpose();
-                let (Ok(applied_at), Ok(baseline)) = (applied_at, baseline) else {
+                let (Ok(applied_at), Ok(review_due_at), Ok(baseline)) =
+                    (applied_at, review_due_at, baseline)
+                else {
                     tracing::warn!(target: "reg.alert", "Invalid advice application metadata; review not performed");
                     continue;
                 };
-                let status = trigger.advice_review(baseline.as_ref(), current, applied_at, now);
+                let status = trigger.advice_review(
+                    baseline.as_ref(),
+                    current,
+                    applied_at,
+                    review_due_at,
+                    now,
+                );
                 context["latest_observation"] = serde_json::json!(current);
                 context["advice_review"] = serde_json::json!({
                     "status": status, "observed_at": now, "causal_attribution": "unverified",
@@ -345,7 +360,7 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
 mod tests {
     use super::*;
     use hkask_regulation::AlertEscalationSink as _;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
     fn in_memory_queue() -> Arc<hkask_storage::EscalationQueue> {
         Arc::new(
@@ -354,6 +369,78 @@ mod tests {
             )
             .expect("queue"),
         )
+    }
+
+    struct ScriptedAdviceDriver {
+        inner: Arc<dyn hkask_storage::DatabaseDriver>,
+        next_advice_update: Arc<AtomicU8>,
+    }
+
+    impl hkask_storage::DatabaseDriver for ScriptedAdviceDriver {
+        fn execute(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<usize, hkask_types::DbError> {
+            if sql.starts_with("UPDATE escalations SET error_context") {
+                match self.next_advice_update.swap(0, Ordering::SeqCst) {
+                    1 => {
+                        return Err(hkask_types::DbError::Database(
+                            "scripted advice persistence failure".to_string(),
+                        ));
+                    }
+                    2 => return Ok(0),
+                    _ => {}
+                }
+            }
+            self.inner.execute(sql, params)
+        }
+
+        fn execute_batch(&self, sql: &str) -> Result<(), hkask_types::DbError> {
+            self.inner.execute_batch(sql)
+        }
+
+        fn query(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<Vec<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
+            self.inner.query(sql, params)
+        }
+
+        fn query_optional(
+            &self,
+            sql: &str,
+            params: &[hkask_storage::database::value::DbValue],
+        ) -> Result<Option<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
+            self.inner.query_optional(sql, params)
+        }
+
+        fn commit_tx(&self) -> Result<(), hkask_types::DbError> {
+            self.inner.commit_tx()
+        }
+
+        fn rollback_tx(&self) -> Result<(), hkask_types::DbError> {
+            self.inner.rollback_tx()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn is_durable(&self) -> bool {
+            self.inner.is_durable()
+        }
+    }
+
+    fn scripted_queue() -> (Arc<hkask_storage::EscalationQueue>, Arc<AtomicU8>) {
+        let next_advice_update = Arc::new(AtomicU8::new(0));
+        let driver = ScriptedAdviceDriver {
+            inner: hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+            next_advice_update: next_advice_update.clone(),
+        };
+        let queue = hkask_storage::EscalationQueue::from_driver(Arc::new(driver)).expect("queue");
+        (Arc::new(queue), next_advice_update)
     }
 
     /// T08: `try_persist_alert` reports the durable-write truth against a
@@ -530,7 +617,7 @@ mod tests {
         let applied = chrono::Utc::now();
         let trigger = reliability(0.2, applied);
         let id = queue.add(hkask_types::TemplateID::new(), hkask_types::BotID::new(), "reliability — first".into(), 1.0, 0,
-            serde_json::json!({"recovery_signal":trigger, "applied_at":applied, "applied_baseline":trigger, "action_note":"fixed"}).to_string()).expect("add").to_string();
+            serde_json::json!({"recovery_signal":trigger, "applied_at":applied, "review_due_at":applied + chrono::Duration::days(7), "applied_baseline":trigger, "action_note":"fixed"}).to_string()).expect("add").to_string();
         let context = || -> serde_json::Value {
             serde_json::from_str(&queue.get(&id).expect("get").expect("entry").error_context)
                 .expect("context")
@@ -630,7 +717,7 @@ mod tests {
                 .expect("queue"),
             );
             let id = queue.add(hkask_types::TemplateID::new(), hkask_types::BotID::new(), "reliability".into(), 1.0, 0,
-                serde_json::json!({"recovery_signal":reliability(0.2, applied), "applied_at":applied, "applied_baseline":baseline}).to_string()).expect("add");
+                serde_json::json!({"recovery_signal":reliability(0.2, applied), "applied_at":applied, "review_due_at":due, "applied_baseline":baseline}).to_string()).expect("add");
             let sink = BridgeAlertEscalationSink::new(queue.clone());
             sink.reconcile_conditions_at(&current.into_iter().collect::<Vec<_>>(), due);
             let entry = queue.get(&id.to_string()).expect("get").expect("entry");
@@ -640,6 +727,195 @@ mod tests {
             assert_eq!(context["advice_review"]["causal_attribution"], "unverified");
             assert_eq!(entry.status, hkask_storage::EscalationStatus::Pending);
         }
+    }
+
+    /// expect: "A failed or conflicting final-review write emits no durable final state and remains retryable" [P9]
+    #[test]
+    fn advice_review_finalization_retries_after_persistence_failure_or_conflict() {
+        let applied = chrono::Utc::now();
+        let due = applied + chrono::Duration::days(7);
+        for scripted_outcome in [1, 2] {
+            let (queue, next_advice_update) = scripted_queue();
+            let trigger = reliability(0.2, applied);
+            let id = queue
+                .add(
+                    hkask_types::TemplateID::new(),
+                    hkask_types::BotID::new(),
+                    "tool reliability advice".into(),
+                    1.0,
+                    0,
+                    serde_json::json!({
+                        "recovery_signal": trigger,
+                        "applied_at": applied,
+                        "review_due_at": due,
+                        "applied_baseline": trigger,
+                        "advice_review": {
+                            "status": "observation_window",
+                            "finalized": false,
+                            "causal_attribution": "unverified"
+                        }
+                    })
+                    .to_string(),
+                )
+                .expect("add escalation")
+                .to_string();
+            let sink = BridgeAlertEscalationSink::new(queue.clone());
+
+            next_advice_update.store(scripted_outcome, Ordering::SeqCst);
+            sink.reconcile_conditions_at(&[reliability(1.0, due)], due);
+            let unchanged = queue.get(&id).expect("get").expect("entry");
+            let unchanged: serde_json::Value =
+                serde_json::from_str(&unchanged.error_context).expect("context");
+            assert_eq!(unchanged["advice_review"]["finalized"], false);
+            assert_eq!(unchanged["advice_review"]["status"], "observation_window");
+
+            sink.reconcile_conditions_at(&[reliability(1.0, due)], due);
+            let retried = queue.get(&id).expect("get").expect("entry");
+            let retried: serde_json::Value =
+                serde_json::from_str(&retried.error_context).expect("context");
+            assert_eq!(retried["advice_review"]["finalized"], true);
+            assert_eq!(retried["advice_review"]["status"], "recovered");
+            assert_eq!(retried["advice_review"]["causal_attribution"], "unverified");
+        }
+    }
+
+    struct FailingInferencePort;
+
+    impl hkask_types::InferencePort for FailingInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "test inference disabled".to_string(),
+                ))
+            })
+        }
+    }
+
+    /// expect: "The persisted due time governs a restart-durable advice review from confirmed application through visible final outcome" [P9]
+    #[tokio::test]
+    async fn advice_review_crosses_tool_queue_sink_and_read_tool_at_persisted_due_time() {
+        use hkask_mcp_curator::types::{AdviceAppliedRequest, PingRequest};
+        use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
+        use hkask_types::WebID;
+        use rmcp::handler::server::wrapper::Parameters;
+
+        let queue = in_memory_queue();
+        let build_server = || {
+            CuratorServer::new(
+                WebID::new(),
+                Arc::new(CuratorDb::from_stores(CuratorStores {
+                    escalation_queue: Some(queue.clone()),
+                    regulation_store: None,
+                    memory: None,
+                })),
+                Arc::new(FailingInferencePort),
+            )
+        };
+        let trigger = reliability(0.2, chrono::Utc::now());
+        let id = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "tool reliability advice".into(),
+                1.0,
+                0,
+                serde_json::json!({"recovery_signal":trigger}).to_string(),
+            )
+            .expect("add escalation")
+            .to_string();
+
+        let server = build_server();
+        let applied = server
+            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
+                id: id.clone(),
+                operator_confirmed: true,
+                action_note: "operator repaired tool service".into(),
+                skill_id: None,
+            }))
+            .await
+            .expect("confirmed application");
+        let applied = hkask_types::tool_response::parse_tool_response(&applied)
+            .expect("application response");
+        let applied_at: chrono::DateTime<chrono::Utc> =
+            serde_json::from_value(applied["applied_at"].clone()).expect("applied_at");
+        let original_due: chrono::DateTime<chrono::Utc> =
+            serde_json::from_value(applied["review_due_at"].clone()).expect("review_due_at");
+        let postponed_due = original_due + chrono::Duration::days(1);
+        let entry = queue.get(&id).expect("get").expect("entry");
+        let mut context: serde_json::Value =
+            serde_json::from_str(&entry.error_context).expect("context");
+        assert!(
+            !context["applied_baseline"].is_null(),
+            "fresh application must persist a baseline"
+        );
+        context["review_due_at"] = serde_json::json!(postponed_due);
+        assert!(
+            queue
+                .update_advice_context(&id, &entry.error_context, &context.to_string())
+                .expect("postpone review"),
+            "controlled due-time update must win its compare-and-set"
+        );
+
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+        sink.reconcile_conditions_at(&[reliability(1.0, original_due)], original_due);
+        let before_due = queue.get(&id).expect("get").expect("entry");
+        let before_due_context: serde_json::Value =
+            serde_json::from_str(&before_due.error_context).expect("context");
+        assert_eq!(
+            before_due_context["advice_review"]["status"], "observation_window",
+            "persisted review_due_at, not applied_at arithmetic, governs finalization"
+        );
+
+        queue.resolve(&id, "operator").expect("early resolution");
+        drop(sink);
+        drop(server);
+
+        let restarted_sink = BridgeAlertEscalationSink::new(queue.clone());
+        let restarted_server = build_server();
+        restarted_sink.reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due);
+        let finalized = queue.get(&id).expect("get").expect("entry").error_context;
+        restarted_sink.reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due);
+        assert_eq!(
+            queue.get(&id).expect("get").expect("entry").error_context,
+            finalized,
+            "repeated reconciliation must not rewrite a finalized review"
+        );
+
+        let reviews = restarted_server
+            .curator_advice_reviews(Parameters(PingRequest {}))
+            .await
+            .expect("review query");
+        let reviews =
+            hkask_types::tool_response::parse_tool_response(&reviews).expect("review response");
+        let review = &reviews["reviews"][0];
+        assert_eq!(review["status"], "resolved");
+        assert_eq!(
+            review["application"]["advice_review"]["status"],
+            "recovered"
+        );
+        assert_eq!(
+            review["application"]["advice_review"]["causal_attribution"],
+            "unverified"
+        );
+        assert_eq!(
+            serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+                review["application"]["applied_at"].clone()
+            )
+            .expect("persisted applied_at"),
+            applied_at
+        );
     }
 
     struct Fleet {

@@ -7,7 +7,7 @@ use ui::prelude::*;
 
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(5);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(8);
-const EXPECTED_FINAL_PTS_MS: u64 = 500;
+const MIN_PRESENTED_FRAMES_AT_30_FPS: u64 = 85;
 
 #[derive(Clone, Copy, Debug)]
 enum PlaybackMode {
@@ -88,11 +88,13 @@ impl PlaybackFixture {
     fn prepare(input: PlaybackInput, cx: &mut BenchAppContext) -> Self {
         hkask_viz_core::clear_widget_cache();
         let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../hkask-media-widget/test_data/playback-lifecycle.mp4");
+            .join("../hkask-media-widget/test_data/playback-30fps.mp4");
         assert!(
             fixture_path.exists(),
             "playback benchmark fixture is missing"
         );
+        hkask_media_widget::approve_gallery_media_path(&fixture_path)
+            .expect("benchmark fixture receives gallery-result path authority");
 
         let mut window = cx.add_empty_window();
         let (root, widgets) = window.update(|window, cx| {
@@ -172,7 +174,9 @@ impl PlaybackFixture {
                         };
                         if reached_terminal {
                             match mode {
-                                PlaybackMode::Visible => validate_completion(&snapshots),
+                                PlaybackMode::Visible => {
+                                    validate_completion(&snapshots, widgets.len())
+                                }
                                 PlaybackMode::Cached => validate_suspension(&snapshots),
                             }
                             return Ok(snapshots);
@@ -244,7 +248,7 @@ fn wait_until_ready(widgets: &[Entity<MediaWidget>], cx: &mut BenchAppContext) {
     }
 }
 
-fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot]) {
+fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot], player_count: usize) {
     for snapshot in snapshots {
         assert!(
             snapshot.error.is_none(),
@@ -258,13 +262,21 @@ fn validate_completion(snapshots: &[PlaybackBenchmarkSnapshot]) {
         assert_eq!(snapshot.delivery.max_pending_frames, 1);
         assert!(snapshot.delivery.pending_frames <= 1);
         assert_eq!(snapshot.delivery.out_of_order_frames, 0);
-        assert_eq!(
-            snapshot.delivery.last_consumed_pts_ms,
-            Some(EXPECTED_FINAL_PTS_MS),
-            "the final source frame must reach GPUI"
+        let final_pts_ms = snapshot
+            .delivery
+            .last_consumed_pts_ms
+            .expect("completed playback presents a final frame");
+        assert!(
+            final_pts_ms.saturating_add(50) >= snapshot.duration.as_millis() as u64,
+            "the final source frame must reach GPUI: {snapshot:?}"
         );
-        assert!(snapshot.delivery.consumed_frames <= 6);
-        assert!(snapshot.delivery.consumed_frames >= 2);
+        if player_count == 1 {
+            assert!(
+                snapshot.delivery.consumed_frames >= MIN_PRESENTED_FRAMES_AT_30_FPS,
+                "single visible 30fps playback must present nearly every source frame: {snapshot:?}"
+            );
+        }
+        assert!(snapshot.delivery.consumed_frames <= 90);
         assert!(snapshot.position >= snapshot.duration);
     }
     std::hint::black_box(snapshots);

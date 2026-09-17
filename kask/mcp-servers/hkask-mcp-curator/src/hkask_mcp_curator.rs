@@ -430,7 +430,7 @@ impl CuratorServer {
             }
             let stores = self.db.get();
             let queue = stores.escalation_queue()?;
-            let entry = queue.get(&req.id).map_err(|error| McpToolError::internal(error.to_string()))?
+            let entry = queue.get(&req.id).map_err(|error| map_escalation_error(error, "Read escalation"))?
                 .ok_or_else(|| McpToolError::not_found("Escalation not found"))?;
             let mut context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid escalation context: {error}")))?;
             let trigger: hkask_regulation::Signal = serde_json::from_value(context.get("recovery_signal").cloned().unwrap_or(serde_json::Value::Null))
@@ -456,7 +456,7 @@ impl CuratorServer {
                     context["skill_id"] = json!(skill_id);
                 }
                 context["advice_review"] = json!({"status":"observation_window", "finalized":false, "causal_attribution":"unverified"});
-                if !queue.update_advice_context(&req.id, &entry.error_context, &context.to_string()).map_err(|error| McpToolError::internal(error.to_string()))? {
+                if !queue.update_advice_context(&req.id, &entry.error_context, &context.to_string()).map_err(|error| map_escalation_error(error, "Persist advice application"))? {
                     return Err(McpToolError::unavailable("Escalation changed concurrently; retry confirmation"));
                 }
             }
@@ -473,7 +473,7 @@ impl CuratorServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_advice_reviews", async {
             let stores = self.db.get();
-            let entries = stores.escalation_queue()?.list_advice_observations().map_err(|error| McpToolError::internal(error.to_string()))?;
+            let entries = stores.escalation_queue()?.list_advice_observations().map_err(|error| map_escalation_error(error, "Read advice reviews"))?;
             let mut reviews = Vec::new();
             for entry in entries {
                 let context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid advice context: {error}")))?;
@@ -1740,6 +1740,16 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
+/// Preserve the queue's recovery category at the MCP boundary.
+fn map_escalation_error(error: hkask_storage::EscalationError, context: &str) -> McpToolError {
+    match error {
+        hkask_storage::EscalationError::Infra(error) => map_infra_error(&error, context),
+        hkask_storage::EscalationError::NotFound(error) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+    }
+}
+
 /// Map a governance `ServiceError` to the structured MCP wire error,
 /// not_found) instead of flattening everything to `internal`.
 fn to_tool_error(e: ServiceError) -> McpToolError {
@@ -2041,6 +2051,36 @@ mod tests {
     // compiles stale.
 
     use super::*;
+
+    /// expect: "Advice queue failures preserve their recovery category at the MCP boundary" [P9]
+    #[test]
+    fn advice_queue_errors_are_classified_per_variant() {
+        let connection = map_escalation_error(
+            hkask_storage::EscalationError::Infra(hkask_types::InfrastructureError::Database {
+                message: "offline".to_string(),
+                kind: hkask_types::DatabaseErrorKind::Connection,
+            }),
+            "Read advice",
+        );
+        assert_eq!(connection.kind, hkask_types::McpErrorKind::Unavailable);
+
+        let malformed = map_escalation_error(
+            hkask_storage::EscalationError::Infra(hkask_types::InfrastructureError::Serialization(
+                "invalid row".to_string(),
+            )),
+            "Read advice",
+        );
+        assert_eq!(malformed.kind, hkask_types::McpErrorKind::Internal);
+
+        let missing = map_escalation_error(
+            hkask_storage::EscalationError::NotFound(hkask_types::NotFound {
+                entity_type: "escalation".to_string(),
+                id: "missing".to_string(),
+            }),
+            "Read advice",
+        );
+        assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
+    }
 
     /// expect: "A malformed memory-life setting warns and falls back to the
     /// default — never a silent fallback." [P1]

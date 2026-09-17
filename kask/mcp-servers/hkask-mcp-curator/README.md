@@ -4,18 +4,30 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 
 **Version:** v0.40.0 | **Crate:** `hkask-mcp-curator`
 
-## Tools (8)
+## Tools (20)
 
-| Tool                         | Description                                                                                                                       |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `curator_ping`               | Liveness check — reports per-store availability                                                                                   |
-| `curator_escalations`        | List all pending escalations requiring review                                                                                     |
-| `curator_escalation_resolve` | Resolve an escalation by ID (records the resolution note in the Regulation audit trail)                                           |
-| `curator_escalation_dismiss` | Dismiss an escalation as not actionable                                                                                           |
-| `curator_semantic_search`    | Query the Curator's semantic memory by entity name                                                                                |
-| `curator_memory_recall`      | Recall the Curator's episodic and semantic memory about an entity, or along an ontology axis (`ontology_axis` + `ontology_value`) |
-| `curator_algedonic_log`      | Read algedonic event log for a time window                                                                                        |
-| `reg_query`                  | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting |
+| Tool | Description |
+| --- | --- |
+| `curator_ping` | Report per-store liveness. |
+| `curator_escalations` | List pending escalations requiring review. |
+| `curator_advice_mark_applied` | Record an explicitly confirmed intervention and start its seven-day observation window without resolving the alert or claiming effectiveness. |
+| `curator_advice_reviews` | Read observational advice reviews, including resolved alerts; outcomes preserve `causal_attribution: "unverified"`. |
+| `curator_escalation_resolve` | Resolve an escalation and retain its Regulation audit note. |
+| `curator_escalation_dismiss` | Dismiss an escalation as not actionable. |
+| `curator_escalation_dismiss_by_pattern` | Dismiss pending escalations with an exact output match. |
+| `curator_semantic_search` | Search Curator memory by semantic similarity. |
+| `curator_memory_recall` | Recall memory about an entity, optionally scoped to an ontology axis. |
+| `curator_consult` | Consult Curator memory with a question. |
+| `curator_algedonic_log` | Read the algedonic event log for a time window. |
+| `reg_query` | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting. |
+| `curator_report_skill_use_issue` | Record a failed or unexpected skill/tool execution. |
+| `memory_insert` | Insert an evidence-cited semantic memory. |
+| `memory_update` | Bayesian-combine new confidence or value evidence into a memory. |
+| `memory_resolve_contradiction` | Resolve contradictory memories by forgetting or lowering confidence. |
+| `curator_memory_prune` | Prune old memories under the requested retention policy. |
+| `curator_memory_dedup` | Deterministically deduplicate normalized string memories. |
+| `curator_memory_backfill_embeddings` | Backfill missing semantic embeddings for knowledge-layer memories. |
+| `curator_memory_extract` | Extract candidate memories from a thread's turn history. |
 
 `reg_query` is the general governance-observability read path. With no
 namespace it includes records from every Regulation namespace and cycle phase;
