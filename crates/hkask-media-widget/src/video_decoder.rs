@@ -1667,11 +1667,9 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// The vonnegut fixture from the media panel session. Skips silently
-    /// when absent (other machines) — the assertions it carries are for the
-    /// machine that has the file.
-    const FIXTURE: &str =
-        "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+    fn opus_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-opus.mp4")
+    }
 
     fn playback_fixture() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-lifecycle.mp4")
@@ -1686,11 +1684,8 @@ mod tests {
     /// RGBA→BGRA fix — feeding GPUI's RenderImage RGBA swaps red and blue.
     #[test]
     fn decoded_frame_matches_ffmpeg_cli_bgra_ground_truth() {
-        let path = std::path::Path::new(FIXTURE);
-        if !path.exists() {
-            return;
-        }
-        let reference_path = std::env::temp_dir().join("vonnegut_bgra_ref.bin");
+        let path = opus_fixture();
+        let reference_path = std::env::temp_dir().join("hkask_playback_opus_bgra_ref.bin");
         // Blocking spawn is acceptable in a test (bounded, no GPUI executor
         // on this thread) — same justification as the ytdlp detect probe.
         #[allow(clippy::disallowed_methods)]
@@ -1699,7 +1694,7 @@ mod tests {
             .arg("-ss")
             .arg("0.5")
             .arg("-i")
-            .arg(path)
+            .arg(&path)
             .arg("-frames:v")
             .arg("1")
             .arg("-f")
@@ -1716,7 +1711,7 @@ mod tests {
         );
 
         let mut player = VideoPlayer::new();
-        player.open(path).expect("open");
+        player.open(&path).expect("open");
         player.play();
         // Position the master clock at the reference extraction point — the
         // clock is wall-time-derived, so `seek` (not accumulated deltas) is
@@ -2130,12 +2125,9 @@ mod tests {
     /// audio pipeline (a video player without audio is not a video player).
     #[test]
     fn opening_video_with_audio_stream_sets_up_audio_pipeline() {
-        let path = std::path::Path::new(FIXTURE);
-        if !path.exists() {
-            return;
-        }
+        let path = opus_fixture();
         let mut player = VideoPlayer::new();
-        player.open(path).expect("open");
+        player.open(&path).expect("open");
         assert!(
             player.has_audio(),
             "fixture has an audio stream — has_audio must be true"
@@ -2150,12 +2142,9 @@ mod tests {
     /// added permanent desync; with audio-master, video waits for audio.
     #[test]
     fn playback_clock_freezes_when_audio_queue_starves() {
-        let path = std::path::Path::new(FIXTURE);
-        if !path.exists() {
-            return;
-        }
+        let path = opus_fixture();
         let mut player = VideoPlayer::new();
-        player.open(path).expect("open");
+        player.open(&path).expect("open");
         player.play();
         // Pump normally for a moment — audio flowing, clock advancing.
         for _ in 0..10 {
@@ -2199,12 +2188,9 @@ mod tests {
     /// queued on the output player — not just a pipeline that exists.
     #[test]
     fn audio_pumps_ahead_of_the_playback_clock() {
-        let path = std::path::Path::new(FIXTURE);
-        if !path.exists() {
-            return;
-        }
+        let path = opus_fixture();
         let mut player = VideoPlayer::new();
-        player.open(path).expect("open");
+        player.open(&path).expect("open");
         player.play();
         // The clock is wall-time-derived: seek to 1s, then tick as the
         // widget loop does. Position must hold >= 1s and advance with wall

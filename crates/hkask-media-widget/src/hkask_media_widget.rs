@@ -63,7 +63,8 @@ pub fn create_media_widget(
         Ok(block_body) => {
             let media_ref = block_body.to_media_ref().map_err(|error| {
                 log::warn!(
-                    "hkask-media-widget: failed to resolve media ref from block: {error}. Body: {body}"
+                    "hkask-media-widget: failed to resolve media ref from block: {error}. Body: {}",
+                    preview_body(body)
                 );
                 error
             }).ok()?;

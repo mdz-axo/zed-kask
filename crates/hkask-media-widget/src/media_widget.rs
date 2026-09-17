@@ -2091,8 +2091,7 @@ mod layout_tests {
     use super::*;
     use gpui::{TestAppContext, px, size};
 
-    const FIXTURE: &str =
-        "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/test_data/playback-opus.mp4");
 
     /// Host view: fills the window so the widget under test gets a definite
     /// size to lay out against (as the viewer pane does in production).
@@ -2114,9 +2113,6 @@ mod layout_tests {
     /// element tree I wrote.
     #[gpui::test]
     fn video_area_scales_with_window_size(cx: &mut TestAppContext) {
-        if !std::path::Path::new(FIXTURE).exists() {
-            return;
-        }
         init_layout_test_globals(cx);
         let body = format!(r#"{{"kind":"video","src":"{FIXTURE}"}}"#);
 

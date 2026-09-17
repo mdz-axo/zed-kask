@@ -98,6 +98,7 @@ impl Render for SimpleSlider {
 
         div()
             .id("simple-slider-track")
+            .debug_selector(|| "simple-slider-track".into())
             .flex_1()
             .h(px(6.0))
             .rounded(px(3.0))
@@ -194,6 +195,14 @@ mod tests {
     /// post: the slider emits Change followed by exactly one Release.
     #[gpui::test]
     fn drag_release_outside_track_emits_release(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
         let events = Arc::new(Mutex::new(Vec::new()));
         let observed = events.clone();
         let (_, cx) = cx.add_window_view(|_window, cx| {
