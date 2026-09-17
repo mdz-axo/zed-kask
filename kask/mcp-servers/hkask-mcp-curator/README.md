@@ -18,7 +18,7 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_semantic_search` | Search Curator memory by semantic similarity. |
 | `curator_memory_recall` | Recall memory about an entity, optionally scoped to an ontology axis. |
 | `curator_consult` | Consult Curator memory with a question. |
-| `curator_algedonic_log` | Read the algedonic event log for a time window. |
+| `curator_algedonic_log` | Read the newest algedonic events in a time window. |
 | `reg_query` | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting. |
 | `curator_report_skill_use_issue` | Record a failed or unexpected skill/tool execution. |
 | `memory_insert` | Insert an evidence-cited semantic memory. |
@@ -34,7 +34,8 @@ namespace it includes records from every Regulation namespace and cycle phase;
 with a namespace such as `reg.skill`, it includes that exact path and
 dot-delimited descendants. The time and namespace predicates are applied in
 SQL before the requested limit. `curator_algedonic_log` remains the separate
-act-phase, algedonic-category view.
+act-phase, algedonic-category view; it returns at most 500 events newest-first
+and declares that ordering in its response.
 
 ## Advice review semantics
 

@@ -362,28 +362,44 @@ impl RegulationArchive {
         since: chrono::DateTime<chrono::Utc>,
         limit: u64,
     ) -> Result<Vec<RegulationRecord>, InfrastructureError> {
+        self.query_algedonic_ordered(since, limit, "ASC")
+    }
+
+    /// Query the newest act-phase algedonic records for operational review.
+    pub fn query_recent_algedonic(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        limit: u64,
+    ) -> Result<Vec<RegulationRecord>, InfrastructureError> {
+        self.query_algedonic_ordered(since, limit, "DESC")
+    }
+
+    fn query_algedonic_ordered(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        limit: u64,
+        ordering: &str,
+    ) -> Result<Vec<RegulationRecord>, InfrastructureError> {
         let since_str = since.to_rfc3339();
-        // Build IN clause for algedonic span categories
         let placeholders: Vec<String> = ALGEDONIC_SPAN_CATEGORIES
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("?{}", i + 2)) // ?2, ?3, ... (since is ?1)
+            .map(|(i, _)| format!("?{}", i + 2))
             .collect();
         let sql = format!(
             "SELECT id, timestamp, observer_webid, span_category, span_path, phase, \
              observation, regulation, outcome, recursion_depth, parent_event, visibility \
              FROM reg_records \
              WHERE timestamp > ?1 AND span_category IN ({}) AND phase = 'act' \
-             ORDER BY timestamp ASC \
+             ORDER BY timestamp {ordering} \
              LIMIT ?{}",
             placeholders.join(", "),
             ALGEDONIC_SPAN_CATEGORIES.len() + 2
         );
-        // Params: since, then each span category, then limit
         let mut params: Vec<DbValue> = Vec::with_capacity(2 + ALGEDONIC_SPAN_CATEGORIES.len());
         params.push(DbValue::Text(since_str));
-        for &cat in ALGEDONIC_SPAN_CATEGORIES {
-            params.push(DbValue::Text(cat.to_string()));
+        for &category in ALGEDONIC_SPAN_CATEGORIES {
+            params.push(DbValue::Text(category.to_string()));
         }
         params.push(DbValue::Integer(limit as i64));
         query_map(&*self.driver, &sql, &params, |row| {

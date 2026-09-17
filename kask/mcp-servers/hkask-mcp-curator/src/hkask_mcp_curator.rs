@@ -1024,7 +1024,7 @@ impl CuratorServer {
 
     // ── Algedonic History ──────────────────────────────────────────────
 
-    #[tool(description = "Read algedonic event log for a time window")]
+    #[tool(description = "Read the newest algedonic events in a time window")]
     pub async fn curator_algedonic_log(
         &self,
         Parameters(req): Parameters<AlgedonicLogRequest>,
@@ -1034,7 +1034,7 @@ impl CuratorServer {
             let store = stores.regulation_store()?;
             let hours = req.hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-            match store.query_algedonic(since, 500) {
+            match store.query_recent_algedonic(since, 500) {
                 Ok(events) => {
                     let s: Vec<serde_json::Value> = events
                         .iter()
@@ -1047,7 +1047,7 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    Ok(json!({"window_hours": hours, "count": s.len(), "events": s}))
+                    Ok(json!({"window_hours": hours, "ordering": "newest_first", "count": s.len(), "events": s}))
                 }
                 Err(e) => Err(map_infra_error(&e, "Algedonic query failed")),
             }

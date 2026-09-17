@@ -83,7 +83,7 @@ The canonical registry currently includes these live roots and selected descenda
 
 ## 5. Query and feedback loop
 
-The live query surface is programmatic. `RegulationLedger` exposes health, alerts, variety, per-domain calibration, outcomes, and skill feedback through `kask/crates/hkask-regulation/src/runtime.rs`. The cycle consumes per-domain outcome rates and emits a tool-domain breakdown via `SpanKind::ToolOutcomeBreakdown` (`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:129-144`).
+The live query surface is programmatic. `RegulationLedger` exposes health, alerts, variety, per-domain calibration, outcomes, and skill feedback through `kask/crates/hkask-regulation/src/runtime.rs`. The cycle consumes per-domain outcome rates and emits a tool-domain breakdown via `SpanKind::ToolOutcomeBreakdown`. `curator_algedonic_log` uses the archive's newest-first operational query and declares `ordering: "newest_first"`; chronological replay keeps the separate oldest-first query.
 
 The default variety window and expected-variety controls are defined in the Regulation runtime and algedonic manager (`kask/crates/hkask-regulation/src/runtime.rs`, `kask/crates/hkask-regulation/src/algedonic.rs`). Settings-dependent thresholds are wired at the composition root rather than inferred from tracing output.
 

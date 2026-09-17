@@ -1911,6 +1911,52 @@ async fn reg_query_surfaces_unavailable_archive_as_typed_error() {
 
 // ── Algedonic log — happy ───────────────────────────────────────────────────
 
+/// expect: "The operational algedonic log returns the newest events within its bounded window" [P9]
+#[tokio::test]
+async fn algedonic_log_returns_newest_events_and_declares_ordering() {
+    let (server, archive) = make_server_with_regulation_archive();
+    let base = chrono::Utc::now() - chrono::Duration::minutes(3);
+    for (offset, label) in [(0, "oldest"), (1, "middle"), (2, "newest")] {
+        let mut event = RegulationRecord::new(
+            WebID::from_persona(b"regulation"),
+            hkask_types::event::Span::from_kind(hkask_types::event::SpanKind::LoopMetricsTelemetry),
+            CyclePhase::Act,
+            serde_json::json!({"label": label}),
+            0,
+        );
+        event.timestamp = base + chrono::Duration::minutes(offset);
+        archive.persist(&event).expect("insert event");
+    }
+
+    let response = parse(
+        &server
+            .curator_algedonic_log(Parameters(AlgedonicLogRequest { hours: Some(1) }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(response["ordering"], "newest_first");
+    let labels = response["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .map(|event| event["observation"]["label"].as_str().expect("label"))
+        .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["newest", "middle", "oldest"]);
+
+    let replay = archive
+        .query_algedonic(base - chrono::Duration::seconds(1), 3)
+        .expect("chronological replay");
+    let replay_labels = replay
+        .iter()
+        .map(|event| event.observation["label"].as_str().expect("label"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replay_labels,
+        vec!["oldest", "middle", "newest"],
+        "operational recency must not change chronological replay order"
+    );
+}
+
 /// `curator_algedonic_log` returns an empty event list for a fresh archive.
 /// The response must carry the window and a (zero-length) events array.
 #[tokio::test]
