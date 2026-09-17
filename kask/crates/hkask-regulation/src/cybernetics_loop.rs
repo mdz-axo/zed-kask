@@ -676,6 +676,90 @@ impl CyberneticsLoop {
 }
 
 impl CyberneticsLoop {
+    fn loop_telemetry_decision(
+        &self,
+        deviations: &[crate::loops::Deviation],
+        actions: &[crate::loops::RegulatoryAction],
+        force_transition: bool,
+        tick_number: usize,
+    ) -> LoopTelemetryDecision {
+        const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
+        let fingerprint = (!deviations.is_empty() || !actions.is_empty()).then(|| {
+            let deviations = deviations
+                .iter()
+                .map(|deviation| {
+                    serde_json::json!({
+                        "metric": deviation.signal.metric,
+                        "value_bits": deviation.signal.value.to_bits(),
+                        "set_point_bits": deviation.signal.set_point.to_bits(),
+                        "magnitude_bits": deviation.magnitude.to_bits(),
+                        "direction": deviation.direction,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"deviations": deviations, "advisories": actions})
+        });
+        let mut state = self
+            .loop_telemetry_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+
+        match fingerprint {
+            Some(fingerprint) if state.steady_fingerprint.as_ref() != Some(&fingerprint) => {
+                let suppressed_cycles = std::mem::take(&mut state.suppressed_cycles);
+                state.steady_fingerprint = Some(fingerprint);
+                LoopTelemetryDecision {
+                    emit: true,
+                    idle_heartbeat: false,
+                    steady_state_heartbeat: false,
+                    condition_cleared: false,
+                    suppressed_cycles,
+                }
+            }
+            Some(_) if force_transition => LoopTelemetryDecision {
+                emit: true,
+                idle_heartbeat: false,
+                steady_state_heartbeat: false,
+                condition_cleared: false,
+                suppressed_cycles: std::mem::take(&mut state.suppressed_cycles),
+            },
+            Some(_) => {
+                state.suppressed_cycles = state.suppressed_cycles.saturating_add(1);
+                if tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS) {
+                    LoopTelemetryDecision {
+                        emit: true,
+                        idle_heartbeat: false,
+                        steady_state_heartbeat: true,
+                        condition_cleared: false,
+                        suppressed_cycles: std::mem::take(&mut state.suppressed_cycles),
+                    }
+                } else {
+                    LoopTelemetryDecision {
+                        emit: false,
+                        idle_heartbeat: false,
+                        steady_state_heartbeat: false,
+                        condition_cleared: false,
+                        suppressed_cycles: 0,
+                    }
+                }
+            }
+            None => {
+                let condition_cleared = state.steady_fingerprint.take().is_some();
+                let suppressed_cycles = std::mem::take(&mut state.suppressed_cycles);
+                let idle_heartbeat = !condition_cleared
+                    && !force_transition
+                    && (tick_number == 1 || tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS));
+                LoopTelemetryDecision {
+                    emit: condition_cleared || force_transition || idle_heartbeat,
+                    idle_heartbeat,
+                    steady_state_heartbeat: false,
+                    condition_cleared,
+                    suppressed_cycles,
+                }
+            }
+        }
+    }
+
     /// Full regulation cycle with loop-quality telemetry.
     ///
     /// Measures elapsed time and computes separate rollout-impact and
@@ -855,26 +939,19 @@ impl CyberneticsLoop {
             "Loop-quality telemetry recorded"
         );
 
-        // Emit LoopMetricsTelemetry on signal-bearing cycles. An empty cycle
-        // (no deviations, advisories, rollout reports, or newly published
-        // advice reviews) is a heartbeat, not a signal — emitting it every 10s floods the regulation archive and
-        // the algedonic log with identical no-op observations that displace
-        // useful signal. But total silence makes a converged loop
-        // indistinguishable from a dead ticker, so idle cycles emit ONE
-        // heartbeat span per hour (plus the first tick, so a freshly
-        // restarted loop immediately announces liveness). The heartbeat
-        // carries zero counts, unknown progress channels, `heartbeat: true`,
-        // `tick_count`, and the alert log's fill state. Tick count lets a
-        // reader confirm the ticker's achieved rate.
-        const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
-        let cycle_had_signal = !deviations.is_empty()
-            || !actions.is_empty()
-            || !impact_reports.is_empty()
-            || !published_advice_reviews.is_empty();
+        // Coalesce only semantically identical persistent deviation/advisory
+        // cycles. Changed values, clearing, rollout measurements, and newly
+        // published advice reviews always emit. Exact repeats accumulate until
+        // the existing hourly tick boundary re-announces liveness and reports
+        // how many records were suppressed.
         let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
-        let is_heartbeat = !cycle_had_signal
-            && (tick_number == 1 || tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS));
-        if cycle_had_signal || is_heartbeat {
+        let decision = self.loop_telemetry_decision(
+            &deviations,
+            &actions,
+            !impact_reports.is_empty() || !published_advice_reviews.is_empty(),
+            tick_number,
+        );
+        if decision.emit {
             let mut observation = serde_json::json!({
                 "delay_ms": quality.delay_ms,
                 "response_coverage": quality.response_coverage,
@@ -893,32 +970,31 @@ impl CyberneticsLoop {
                 "advice_reviews_insufficient_evidence": quality.advice_review.insufficient_evidence,
                 "advice_review_observation_available": advice_observation_available,
                 "advice_review_causal_attribution": (quality.advice_review.finalized > 0).then_some("unverified"),
+                "suppressed_steady_state_cycles": decision.suppressed_cycles,
             });
-            if is_heartbeat {
-                observation["heartbeat"] = serde_json::Value::Bool(true);
+            if decision.idle_heartbeat || decision.steady_state_heartbeat {
                 observation["tick_count"] = serde_json::Value::from(tick_number);
-                // The in-memory alert log's fill state rides the heartbeat so
-                // any session — not just Curator sessions with the
-                // `curator_status` agent tool — can watch the log approach
-                // its cap from the persisted log (`curator_algedonic_log`).
-                // The algedonic log-cap-breach escalation class (0cd398d0)
-                // becomes visible in the hourly trend before the
-                // approaching-cap signal fires.
                 let health = self.ledger.read().await.health().await;
                 observation["alert_log_count"] = serde_json::Value::from(health.alert_log_count);
                 observation["alert_log_cap"] = serde_json::Value::from(health.alert_log_cap);
                 observation["alert_log_approaching_cap"] =
                     serde_json::Value::Bool(health.alert_log_approaching_cap);
             }
+            if decision.idle_heartbeat {
+                observation["heartbeat"] = serde_json::Value::Bool(true);
+            }
+            if decision.steady_state_heartbeat {
+                observation["steady_state_heartbeat"] = serde_json::Value::Bool(true);
+            }
+            if decision.condition_cleared {
+                observation["condition_cleared"] = serde_json::Value::Bool(true);
+            }
             self.emit_regulation_span(SpanKind::LoopMetricsTelemetry, observation)
                 .await;
-            // The hourly heartbeat also carries the per-domain tool-outcome
-            // breakdown when any domain has samples, so the breakdown is
-            // retrievable from the algedonic log even while tool reliability
-            // is healthy and no alert fires. One span per hour — the
-            // alert-time emission is what needs guarding against floods,
-            // and it is latched separately in `verify_impact`.
-            if is_heartbeat {
+            // The idle heartbeat also carries the per-domain tool-outcome
+            // breakdown when any domain has samples. Persistent-condition
+            // summaries stay one record so the coalescer cannot amplify itself.
+            if decision.idle_heartbeat {
                 self.emit_tool_outcome_breakdown().await;
             }
         }

@@ -1459,7 +1459,7 @@ mod tests {
             title.to_string(),
             publisher.to_string(),
             contents.to_string(),
-            body.clone(),
+            body,
         ]
         .join(&FORM_FEED.to_string());
 
@@ -1525,8 +1525,7 @@ mod tests {
         let before = "The algorithm compares candidate solutions by dominance and diversity. This substantive discussion explains the decision process, its assumptions, and the resulting tradeoffs for optimization practice. ".repeat(20);
         let caption = "Fig. 6 The feasible decision variable and objective spaces for the TNK problem. This is a reprint of Fig. 3 from Deb et al. (2001).";
         let after = "The next section evaluates convergence behavior under several benchmark conditions. It reports the observed patterns and explains how those patterns affect interpretation of the method. ".repeat(20);
-        let document =
-            [before.clone(), caption.to_string(), after.clone()].join(&FORM_FEED.to_string());
+        let document = [before, caption.to_string(), after].join(&FORM_FEED.to_string());
 
         let result = filter_boilerplate_pages_with_report(&document);
 

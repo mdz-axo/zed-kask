@@ -2704,17 +2704,78 @@ mod tests {
         });
     }
 
+    /// expect: "Telemetry coalescing suppresses only exact steady state; changes, clearing, and measured transitions emit immediately" [P9]
+    #[test]
+    fn loop_telemetry_coalescer_preserves_transitions_and_reports_suppression() {
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.2, 0.8);
+        let first = Deviation::from_signal(&signal).expect("deviation");
+        let first_decision =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 4);
+        assert!(first_decision.emit);
+        assert!(!first_decision.steady_state_heartbeat);
+
+        let duplicate =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 5);
+        assert!(!duplicate.emit);
+
+        let mut changed_signal = signal.clone();
+        changed_signal.value = 0.3;
+        let changed = Deviation::from_signal(&changed_signal).expect("changed deviation");
+        let changed_decision =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], false, 6);
+        assert!(changed_decision.emit);
+        assert_eq!(changed_decision.suppressed_cycles, 1);
+
+        let forced_measurement =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], true, 7);
+        assert!(
+            forced_measurement.emit,
+            "measured transitions are never suppressed"
+        );
+
+        let cleared = regulation_loop.loop_telemetry_decision(&[], &[], false, 8);
+        assert!(cleared.emit);
+        assert!(cleared.condition_cleared);
+        assert!(
+            !regulation_loop
+                .loop_telemetry_decision(&[], &[], false, 9)
+                .emit
+        );
+
+        assert!(
+            regulation_loop
+                .loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 10)
+                .emit
+        );
+        let steady = regulation_loop.loop_telemetry_decision(&[first], &[], false, 360);
+        assert!(steady.emit);
+        assert!(steady.steady_state_heartbeat);
+        assert_eq!(steady.suppressed_cycles, 1);
+    }
+
     /// expect: "Identical persistent signal cycles cannot consume the algedonic read budget and hide a later novel event" [P9]
     #[tokio::test(start_paused = true)]
     async fn unchanged_signal_telemetry_does_not_displace_later_novel_events() {
+        struct PendingConditionSink;
+        impl crate::AlertEscalationSink for PendingConditionSink {
+            fn persist_alert(&self, _output: &str, _confidence: f64, _error_context: &str) {}
+
+            fn has_pending_alert(&self, _output: &str) -> bool {
+                true
+            }
+        }
+
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let archive = Arc::new(
             hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
         );
         let since = chrono::Utc::now() - chrono::Duration::seconds(1);
-        let regulation_loop =
+        let mut regulation_loop =
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
                 .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.set_alert_escalation_sink(Some(Arc::new(PendingConditionSink)));
 
         // After the three-tick startup grace, the unwired-model deviation is
         // identical on every tick. More than the curator's 500-row read budget
@@ -2737,6 +2798,16 @@ mod tests {
                 .iter()
                 .any(|event| { event.observation["novel_after_persistent_condition"] == true }),
             "steady-state telemetry must leave room for a later novel event within the 500-row read budget"
+        );
+        let steady_heartbeat = visible
+            .iter()
+            .find(|event| event.observation["steady_state_heartbeat"] == true)
+            .expect("persistent-condition heartbeat");
+        assert!(
+            steady_heartbeat.observation["suppressed_steady_state_cycles"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+            "suppression must be observable on the persistent-condition heartbeat"
         );
     }
 }

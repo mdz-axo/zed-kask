@@ -1,8 +1,8 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-16
-version: "0.39.0"
+last_updated: 2026-09-17
+version: "0.40.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -23,16 +23,18 @@ A tracing target is not automatically a persisted Regulation record. The tool pa
 
 `CANONICAL_NAMESPACES` is the source of truth for accepted `reg.*` roots and sub-namespaces (`kask/crates/hkask-types/src/event.rs:75-154`). `SpanNamespace::new` validates a full namespace; `SpanNamespace::parse` accepts short or full forms, and hierarchical validation allows descendants of a registered root (`kask/crates/hkask-types/src/event.rs:156-271`).
 
-`SpanKind` currently has 11 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:446-499`):
+`SpanKind` currently has 12 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:446-499`):
 
 | Group | Typed variants |
 | --- | --- |
 | Tool dispatch | `ToolCompleted` |
 | Curation and variety | `CurationDirectiveAcknowledged`, `VarietyAlgedonicAlert` |
-| Outcome assessment | `ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
+| Outcome assessment | `ImpactVerified`, `AdviceReviewObserved`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
 | Inference resilience | `InferenceCircuitTransition`, `InferenceObservedRecovery` |
 
-`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs:503-529`).
+`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs`). `AdviceReviewObserved` uses the Sense phase because it is an observational receipt, not a causal impact verdict.
+
+`LoopMetricsTelemetry` exposes rollout and advice review as separate channels. `rollout_progress_score` is evidence-bearing and nullable; `advice_review_progress_score` is observational and nullable. The record also carries `advisories_computed`, `interventions_confirmed`, `rollout_impact_reports`, finalized-review outcome counts, and the advice review's unverified causal-attribution state. An unchanged persistent condition is summarized with `steady_state_heartbeat` and `suppressed_steady_state_cycles`; clearing is marked with `condition_cleared`. Idle heartbeat, archive retention, and the ledger alert-log cap remain separate mechanisms.
 
 ## 3. Actual MCP tool outcome paths
 

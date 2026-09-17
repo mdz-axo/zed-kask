@@ -3,6 +3,13 @@
 def nonblank: type == "string" and test("\\S");
 def ratio($n; $d): if $d == 0 then null else $n / $d end;
 def expected_types: ["factual","conceptual","analyze","evaluate","create"];
+def expected_skip_reason($type):
+  if $type == "factual" then "factual_support_absent"
+  elif $type == "conceptual" then "conceptual_support_absent"
+  elif $type == "analyze" then "analyze_support_absent"
+  elif $type == "evaluate" then "evaluate_support_absent"
+  elif $type == "create" then "create_support_absent"
+  else null end;
 def score($m):
   if $m.claims_checked == 0 or ([$m.sar,$m.cvr,$m.hfr,$m.nlr] | any(. == null))
   then null else 0.30*$m.sar + 0.25*$m.cvr + 0.20*$m.hfr + 0.25*$m.nlr end;
@@ -39,6 +46,18 @@ def audit_row($index):
   | identify($index; $ref) as $source_state
   | ($raw.parse_error != null) as $parse_error
   | (($r.error? != null) or ($b.error? != null)) as $generation_error
+  | ($r.status? == "skipped") as $skip_requested
+  | ($skip_requested and ($r | has("response") | not)
+     and ($r.prompt_id | nonblank) and ($r.qa_type | nonblank)
+     and ($r.qa_type as $type | expected_types | index($type) != null)
+     and (($r.reason == "non_substantive_passage")
+       or ($r.reason == "contaminated_or_garbled")
+       or ($r.reason == expected_skip_reason($r.qa_type)))
+     and ($r.provenance | type == "object")
+     and ($r.provenance.prompt_protocol == "prepared-qa-quality-gated-v3")
+     and ($r.provenance.prompt_id == $r.prompt_id)
+     and ($r.provenance.source_chunk_ref == $r.chunk_ref)
+     and ($source_state == "identified")) as $skip_ok
   | (($b.instruction | nonblank) and ($out | nonblank)) as $shape_ok
   | ("row-\($raw.line)") as $id
   | [$quotes | to_entries[] | . as $entry
@@ -76,16 +95,21 @@ def audit_row($index):
       else [] end)) as $claims
   | [if $parse_error then "invalid_json" else empty end,
      if $generation_error then "generation_error" else empty end,
-     if ($shape_ok|not) then "invalid_qa_shape" else empty end,
-     if ($b.evidence_quotes | type) != "array" then "missing_or_invalid_evidence_metadata" else empty end,
-     if $source_state != "identified" then $source_state else empty end,
-     if ($quotes|length) == 0 then "zero_citations" else empty end,
-     if any($quotes[]; citation_ok|not) then "invalid_citation" else empty end,
-     ($citations[] | select(.cross_check.source_state != "identified") | .cross_check.source_state),
-     if ($claims|length) == 0 then "zero_claims" else empty end,
-     if ($r.qa_type | nonblank | not) then "missing_qa_type"
-     elif ($r.qa_type as $type | expected_types | index($type)) == null then "unknown_qa_type" else empty end,
-     if ($citation_only|not) then "declarative_claim_extraction_unperformed", "narrative_check_unperformed" else empty end] as $gaps
+     if $skip_requested then
+       if ($skip_ok|not) then "invalid_skip_shape" else empty end,
+       if $source_state != "identified" then $source_state else empty end
+     else
+       if ($shape_ok|not) then "invalid_qa_shape" else empty end,
+       if ($b.evidence_quotes | type) != "array" then "missing_or_invalid_evidence_metadata" else empty end,
+       if $source_state != "identified" then $source_state else empty end,
+       if ($quotes|length) == 0 then "zero_citations" else empty end,
+       if any($quotes[]; citation_ok|not) then "invalid_citation" else empty end,
+       ($citations[] | select(.cross_check.source_state != "identified") | .cross_check.source_state),
+       if ($claims|length) == 0 then "zero_claims" else empty end,
+       if ($r.qa_type | nonblank | not) then "missing_qa_type"
+       elif ($r.qa_type as $type | expected_types | index($type)) == null then "unknown_qa_type" else empty end,
+       if ($citation_only|not) then "declarative_claim_extraction_unperformed", "narrative_check_unperformed" else empty end
+     end] as $gaps
   | [(if $source_state == "wrong_source" then finding("wrong_source"; $ref) else empty end),
      ($citations[] | select(.provenance == "rejected")
        | finding("citation_rejected"; {claim_id,text,source_reference,cross_check}))] as $findings
@@ -98,21 +122,22 @@ def audit_row($index):
      claims_checked:([$citations[]|select(.cross_check.performed)]|length)} as $metrics
   | (if ($gaps|length)>0 then null else score($metrics) end) as $fact
   | {line:$raw.line, row_kind:(if $parse_error then "parse_error" elif $generation_error then "generation_error"
-                             elif ($shape_ok|not) then "invalid_shape" else "qa" end),
+                             elif $skip_ok then "skipped" elif $skip_requested or ($shape_ok|not) then "invalid_shape" else "qa" end),
      parse_error:$raw.parse_error, generation_error:($r.error // $b.error // null),
      instruction:($b.instruction // null), answer:$out, chunk_ref:$ref.chunk_ref, source:$ref.source,
-     qa_type:($r.qa_type // null), source_state:$source_state,
-     extraction_scope:(if $citation_only then "literal_citation_array" else "whole_answer_candidate_only" end),
+     qa_type:($r.qa_type // null), status:($r.status // null), reason:($r.reason // null), source_state:$source_state,
+     extraction_scope:(if $skip_ok then "not_applicable_skip" elif $citation_only then "literal_citation_array" else "whole_answer_candidate_only" end),
      verified_claims:$claims, citation_count:($citations|length),
      fact_score_breakdown:$metrics, fact_score:$fact,
-     data_gaps:($gaps + if $fact == null then ["fact_score_measurement_failed"] else [] end | unique),
+     data_gaps:($gaps + if $fact == null and ($skip_ok|not) then ["fact_score_measurement_failed"] else [] end | unique),
      hallucination_findings:$findings,
-     narrative_check:{status:(if $citation_only then "not_applicable" else "unperformed" end),
-                      fields:(if $citation_only then 0 else 1 end), leaks:null},
+     narrative_check:{status:(if $skip_ok or $citation_only then "not_applicable" else "unperformed" end),
+                      fields:(if $skip_ok or $citation_only then 0 else 1 end), leaks:null},
      verification_scope_limitations:[
        "No semantic IS/OUGHT classification, entailment, completeness, reasoning quality, plausible fabrication or subject-lens check is performed.",
        "No numeric derivations are verified; platform_derived is never assigned. No cross-source congruence rules were supplied.",
-       (if $citation_only then "no narrative fields — NLR vacuous; only an explicit literal array of structured citations is covered, not a semantic claim inventory."
+       (if $skip_ok then "This terminal skip contains no QA claim; claim, citation and narrative metrics are genuinely inapplicable to this row."
+        elif $citation_only then "no narrative fields — NLR vacuous; only an explicit literal array of structured citations is covered, not a semantic claim inventory."
         else "Ordinary output prose remains narrative even when it equals a source quote; extraction and narrative leak checks require semantic review." end)]};
 
 ([$chunks[] | select(.parse_error == null and (.value | source_ok)) | .value]) as $valid_sources
@@ -128,6 +153,7 @@ def audit_row($index):
     if ($duplicate_refs|length)>0 then "duplicate_source_refs" else empty end] + $row_gaps | unique) as $gaps
 | ([$rows[].hallucination_findings[]]) as $findings
 | ([$rows[] | select(.row_kind=="qa")]) as $qa_rows
+| ([$rows[] | select(.row_kind=="skipped")]) as $skipped_rows
 | ([$qa_rows[] | select(.qa_type | nonblank) | .qa_type]) as $types
 | expected_types as $expected_types
 | ([$expected_types[] | . as $type | {qa_type:$type,count:([$types[]|select(.==$type)]|length)}]) as $type_counts
@@ -142,15 +168,15 @@ def audit_row($index):
   status:(if ($findings|length)>0 then "findings" elif ($gaps|length)>0 then "incomplete" else "mechanical_checks_completed" end),
   launch_authorized:false,
   launch_gate:"Not evaluated by this subset: every applicable grounding-verify report must reach >=0.80, no high/critical findings, all missing checks resolved, structural targets reconciled, and operator semantic judgment recorded. A partial aggregate never authorizes pilot/full runs.",
-  structural_counts:{input_rows:($rows|length),qa_rows:($qa_rows|length),
+  structural_counts:{input_rows:($rows|length),qa_rows:($qa_rows|length),skipped_rows:($skipped_rows|length),
     parse_error_rows:([$rows[]|select(.row_kind=="parse_error")]|length),
     generation_error_rows:([$rows[]|select(.row_kind=="generation_error")]|length),
     invalid_shape_rows:([$rows[]|select(.row_kind=="invalid_shape")]|length),
     source_input_rows:($chunks|length),valid_source_rows:($valid_sources|length),source_error_rows:($source_errors|length),
     duplicate_instruction_rows:($qa_rows|map(.instruction|ascii_downcase)|length - (unique|length))},
   quality_evidence:{
-    fact_score:(if ($rows|length)==0 or ($gaps|length)>0 or any($rows[];.fact_score==null) then null
-                else ([$rows[].fact_score]|add/length) end),
+    fact_score:(if ($qa_rows|length)==0 or ($gaps|length)>0 or any($qa_rows[];.fact_score==null) then null
+                else ([$qa_rows[].fact_score]|add/length) end),
     aggregation:"Mean of fully measurable row scores only when every input row is measurable and no data gaps remain; never a mean of the passing subset.",
     rows_measured:([$rows[]|select(.fact_score!=null)]|length),
     weights:{sar:0.30,cvr:0.25,hfr:0.20,nlr:0.25},

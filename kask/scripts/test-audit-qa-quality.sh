@@ -30,7 +30,7 @@ check() {
     fi
     # Count reconciliation and canonical provenance apply to EVERY control.
     jq -e '.launch_authorized == false and
-      (.structural_counts | .input_rows == (.qa_rows+.parse_error_rows+.generation_error_rows+.invalid_shape_rows)
+      (.structural_counts | .input_rows == (.qa_rows+.skipped_rows+.parse_error_rows+.generation_error_rows+.invalid_shape_rows)
        and .source_input_rows == (.valid_source_rows+.source_error_rows)) and
       all(.rows[].verified_claims[]; (.why|length)>=40 and
         (.provenance as $p | ["tool_verified","platform_derived","model_inference","unavailable","tool_no_match","pending_check","rejected"]|index($p)!=null))' \
@@ -38,6 +38,17 @@ check() {
     passed=$((passed+1))
     echo "ok $passed - $name"
 }
+# expect: A valid quality-gated skip is a terminal non-QA disposition, not an invalid QA shape.
+jq -nc '{prompt_id:"qa-skip",chunk_ref:"chunk:a",source:"book-a",qa_type:"conceptual",
+         status:"skipped",reason:"conceptual_support_absent",
+         provenance:{prompt_protocol:"prepared-qa-quality-gated-v3",prompt_id:"qa-skip",source_chunk_ref:"chunk:a"}}' \
+    > "$WORK/skip.jsonl"
+cat "$WORK/base.jsonl" "$WORK/skip.jsonl" > "$WORK/mixed.jsonl"
+check 'valid quality-gated skip reconciles outside QA metrics' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.input_rows==2 and .structural_counts.qa_rows==1 and .structural_counts.skipped_rows==1 and .structural_counts.parse_error_rows==0 and .structural_counts.generation_error_rows==0 and .structural_counts.invalid_shape_rows==0 and .rows[1].row_kind=="skipped" and .rows[1].data_gaps==[] and (.quality_evidence.fact_score-1|fabs)<1e-12'
+jq -c '.reason="unsupported"' "$WORK/skip.jsonl" > "$WORK/case.jsonl"
+check 'malformed quality skip remains an invalid shape' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
 mutate() { jq -c "$1" "$WORK/base.jsonl" > "$WORK/case.jsonl"; }
 check 'fully covered literal citations score one (1e-12 tolerance)' 0 "$WORK/base.jsonl" "$WORK/chunks.jsonl" \
     '(.quality_evidence.fact_score-1 | fabs)<1e-12 and .rows[0].fact_score_breakdown=={sar:1,cvr:1,hfr:1,nlr:1,claims_checked:1} and .rows[0].narrative_check.status=="not_applicable"'

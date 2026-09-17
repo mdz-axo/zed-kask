@@ -192,11 +192,12 @@ async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()
         Default::default(),
         ocr,
     );
-    let mut request = request(&input, &dir.path().join("text.txt"));
+    let output = dir.path().join("text.txt");
+    let mut request = request(&input, &output);
     request.force_ocr = true;
     let result = server.corpus_convert(Parameters(request)).await?;
     let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
-    let text = result["text"].as_str().expect("text");
+    let text = std::fs::read_to_string(output)?;
     assert_eq!(
         text.split_whitespace().collect::<Vec<_>>().join(" "),
         "The pump runs for seventeen minutes. The gauge reads five bars."
@@ -221,7 +222,15 @@ async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()
         }))
         .await?;
     let second = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&second)?);
-    assert_eq!(second["text"], result["text"]);
+    assert_eq!(
+        second["text"]
+            .as_str()
+            .expect("corpus_ocr returns text")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
     assert_eq!(second["page_reports"], result["page_reports"]);
     Ok(())
 }

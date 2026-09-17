@@ -200,6 +200,12 @@ The queue remains authoritative across early alert resolution and reconstructed 
 
 These observations remain separate from evidence-bearing rollout `ImpactReport`s. Loop telemetry reports `rollout_progress_score` and `advice_review_progress_score` independently, along with computed-advisory, confirmed-intervention, rollout-report, finalized-review, and per-outcome counts. Both progress fields are nullable: no rollout report is unknown, and advice reviews containing only `insufficient_evidence` remain unknown rather than becoming zero. Insufficient evidence is counted but excluded from the observational score denominator. Advice reviews never feed the rollout strategy evaluator, and every receipt keeps `causal_attribution: "unverified"`. Finalized reviews remain queryable through `curator_advice_reviews`.
 
+**§9.4 — Persistent-condition telemetry coalescing (2026-09-17)**
+
+`LoopMetricsTelemetry` is transition-oriented. A timestamp-free semantic fingerprint covers deviation metric, value, set-point, magnitude, direction, and computed advisories. The first condition and every changed fingerprint emit immediately. Semantically identical scheduled cycles are coalesced; the existing 360-tick hourly boundary emits one `steady_state_heartbeat` carrying `suppressed_steady_state_cycles`. Clearing emits immediately with `condition_cleared`. Rollout impact reports and newly published advice-review receipts force emission even when the condition fingerprint is unchanged.
+
+This does not change escalation-queue supersession, archive retention, or the in-memory alert-log cap. `RegulationArchive` remains time-bounded by maintenance, while `curator_algedonic_log` retains its chronological 500-row read budget; coalescing prevents unchanged loop-quality records from consuming that budget before later informative events. Idle heartbeats remain hourly and continue reporting the alert-log fill state.
+
 > **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 11 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
 **§9.2 — Event emission pattern**
