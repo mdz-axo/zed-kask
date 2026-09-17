@@ -16,8 +16,9 @@ use crate::batch::{
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
     PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, QaResponseMetadata,
-    complete_disposition_plan, parse_disposition_plan_response, qa_llm_parameters, read_prompts,
-    render_disposition_plan_messages, render_planned_qa_messages,
+    complete_disposition_plan, merge_disposition_plans, parse_disposition_plan_response,
+    qa_llm_parameters, read_prompts, render_disposition_plan_messages,
+    render_disposition_review_messages, render_planned_qa_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -225,15 +226,47 @@ impl QaBatchService {
                         Ok(response) => response,
                         Err(error) => return (prior_responses, Err(error)),
                     };
+                    let proposed_response =
+                        crate::extract_json_from_response(&planning_response.text);
+                    let proposed_plan =
+                        parse_disposition_plan_response(&proposed_response, &worker_prompt);
+                    let proposal_error = proposed_plan.as_ref().err().map(String::as_str);
+                    let review_messages = match render_disposition_review_messages(
+                        &worker_prompt,
+                        &proposed_response,
+                        proposal_error,
+                    ) {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(planning_response, Err(error.to_string()))),
+                            );
+                        }
+                    };
+                    prior_responses.push(response_metadata(&planning_response));
+                    planning_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &review_messages,
+                        &prompt_id,
+                        "QA disposition review",
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
                     let mut plan = parse_disposition_plan_response(
                         &crate::extract_json_from_response(&planning_response.text),
                         &worker_prompt,
                     );
                     if let Err(error) = &plan {
                         prior_responses.push(response_metadata(&planning_response));
-                        let mut correction_messages = planning_messages.clone();
+                        let mut correction_messages = review_messages.clone();
                         correction_messages[0].content.push_str(&format!(
-                            " Your previous response failed the typed disposition schema: {error}. Return one corrected response only."
+                            " Your reviewed plan failed the typed schema: {error}. Return one corrected plan only."
                         ));
                         planning_response = match infer_with_retry(
                             &router,
@@ -241,7 +274,7 @@ impl QaBatchService {
                             &selected_model,
                             &correction_messages,
                             &prompt_id,
-                            "QA disposition schema correction",
+                            "QA disposition review schema correction",
                         )
                         .await
                         {
@@ -253,18 +286,30 @@ impl QaBatchService {
                             &worker_prompt,
                         );
                     }
-                    let plan = match plan {
+                    let reviewed_plan = match plan {
                         Ok(plan) => plan,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(
-                                    planning_response,
-                                    Err(format!("QA disposition response rejected: {error}")),
-                                )),
-                            );
-                        }
+                        Err(error) => match proposed_plan.as_ref() {
+                            Ok(plan) => {
+                                tracing::warn!(
+                                    target: "hkask.mcp.docproc.qa_batch",
+                                    prompt_id,
+                                    %error,
+                                    "disposition review remained invalid after correction; retaining the valid proposal"
+                                );
+                                plan.clone()
+                            }
+                            Err(_) => {
+                                return (
+                                    prior_responses,
+                                    Ok(qa_completion(
+                                        planning_response,
+                                        Err(format!("QA disposition review rejected: {error}")),
+                                    )),
+                                );
+                            }
+                        },
                     };
+                    let plan = merge_disposition_plans(proposed_plan.ok(), reviewed_plan);
                     let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
                         Ok(messages) => messages,
                         Err(error) => {
@@ -401,6 +446,7 @@ mod tests {
         Malformed,
         WriterMalformed,
         WriterMalformedOnce,
+        ReviewMalformed,
         Pending,
     }
 
@@ -442,7 +488,8 @@ mod tests {
             assert!(tools.is_none());
             let mode = self.mode;
             let is_planning = messages[0].content.contains("disposition plan");
-            if matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 2 {
+            let is_review = messages[0].content.contains("Independently review");
+            if matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 3 {
                 assert!(
                     messages[0]
                         .content
@@ -454,8 +501,9 @@ mod tests {
                     return std::future::pending().await;
                 }
                 let text = if matches!(mode, Mode::Malformed)
+                    || matches!(mode, Mode::ReviewMalformed) && is_review
                     || matches!(mode, Mode::WriterMalformed) && !is_planning
-                    || matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 1
+                    || matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 2
                 {
                     "[".to_string()
                 } else if matches!(mode, Mode::RejectContaminated) {
@@ -564,10 +612,17 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 2);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(summary["tokens_used"], 40);
-        assert_eq!(summary["reported_cost_usd"], 0.04);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 6);
+        assert_eq!(summary["tokens_used"], 60);
+        assert!(
+            (summary["reported_cost_usd"]
+                .as_f64()
+                .expect("reported cost")
+                - 0.06)
+                .abs()
+                < 1e-12
+        );
+        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
@@ -592,9 +647,9 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
         assert_eq!(summary["qa_levels_skipped"], 2);
-        assert_eq!(summary["provider_responses"], 1);
-        assert_eq!(summary["reported_cost_usd"], 0.01);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(summary["reported_cost_usd"], 0.02);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row["status"] == "skipped"));
@@ -618,8 +673,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 1);
         assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["qa_type"], "factual");
@@ -686,6 +741,25 @@ mod tests {
         Ok(())
     }
 
+    /// expect: An invalid review cannot erase an already valid typed proposal.
+    #[tokio::test]
+    async fn invalid_review_retains_valid_proposal_after_one_correction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewMalformed));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 0);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(records(&output)?.len(), 2);
+        Ok(())
+    }
+
     /// expect: One malformed writer payload receives one metered schema correction attempt.
     #[tokio::test]
     async fn writer_schema_correction_recovers_without_partial_rows()
@@ -699,8 +773,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         assert_eq!(records(&output)?.len(), 2);
         Ok(())
     }
@@ -718,8 +792,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 0);
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["prompt_id"], "qa-1");

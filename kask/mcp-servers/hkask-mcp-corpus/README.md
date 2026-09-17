@@ -226,17 +226,19 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. Generation then uses two typed stages. First, the
-disposition planner sees the complete guarded primary passage and evidence
-candidates. It either returns one prompt-wide bad-passage skip or one ordered plan
-per requested level. A generated level fixes one to three evidence IDs before any
+local IDs `e0`, `e1`, etc. Generation then uses proposal, review and writing stages.
+First, the disposition planner sees the complete guarded primary passage and
+evidence candidates. It either returns one prompt-wide bad-passage skip or one
+ordered plan per requested level. A separate focused pass reviews that proposal.
+Prompt-wide bad-passage decisions combine conservatively, while either valid clean
+plan may retain a supported level; an invalid review cannot erase a valid proposal. A generated level fixes one to three evidence IDs before any
 question or answer is written; conceptual generation also fixes one closed relation
 kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
 `framework`, or `transferable_principle`). An unsupported level records its canonical
 `<level>_support_absent` reason.
 
-The second inference receives only planned generated levels and their selected
-source spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
+The writer receives only the merged generated levels and their selected source
+spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
 select new evidence. It writes compact `["level","question","answer"]` triples.
 The server recombines those drafts with planned skips, restores immutable
 `QaEvidence {chunk_ref, source, quote}` from `p0`, and validates the existing final

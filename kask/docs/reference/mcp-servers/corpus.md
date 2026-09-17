@@ -191,8 +191,9 @@ from rendered model messages.
 
 `max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
 pairs. One compact prepared request per chunk carries the selected level rotation.
-Generation first plans passage/level dispositions and then uses a writer call only
-when at least one level is supported. Summary separates `prompts_written` from
+Generation proposes and independently reviews passage/level dispositions, merges
+bad-passage decisions conservatively and supported clean levels for retention, then
+uses a writer call only when at least one level is supported. Summary separates `prompts_written` from
 `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
@@ -210,8 +211,9 @@ and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived fro
 source, chunk ref, ordered level set and ordinal zero, stable across partitions.
 The whole input is validated before inference/output creation.
 
-Generation uses two compact model contracts. The disposition planner returns one
-prompt-wide skip or an ordered clean-passage plan:
+Generation uses typed disposition and writer contracts. The disposition planner
+returns one prompt-wide skip or an ordered clean-passage plan, and a focused review
+pass returns the same schema before deterministic merge:
 
 ```json
 ["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
