@@ -132,6 +132,10 @@ Directory results include `total_documents`, `total_chunks`, resolved
 and removed word counts plus each reason and page/line boundary. Reconcile actual
 source/record identity, exclusion totals and bounds, not just file lines.
 Nonempty `zero_chunk_files` is an explicit coverage failure for the pipeline.
+`corpus_build_chunk_representations` applies this same filter once per accepted
+canonical source before constructing every reference/current/fine/parent policy;
+its schema-v2 manifest seals all source exclusion reports and reconstruction is
+checked against the retained view, not the pre-filter bytes.
 
 ## Classification contract
 

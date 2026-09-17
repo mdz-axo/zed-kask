@@ -1,7 +1,10 @@
 //! Deterministic chunk-retrieval calibration representations.
 
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
-use hkask_memory::text_chunking::{ChunkConfig, TextChunk, chunk_text_with_config, sanitize_text};
+use hkask_memory::text_chunking::{
+    ChunkConfig, TextChunk, chunk_text_with_config, filter_boilerplate_pages_with_report,
+    sanitize_text,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -100,10 +103,27 @@ struct PolicyManifest {
 }
 
 #[derive(Debug, Serialize)]
+struct SourceFilterExclusion {
+    reason: String,
+    boundary_unit: String,
+    start: usize,
+    end: usize,
+    removed_words: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SourceFilterReport {
+    input_words: usize,
+    retained_words: usize,
+    exclusions: Vec<SourceFilterExclusion>,
+}
+
+#[derive(Debug, Serialize)]
 struct RepresentationManifest {
     schema_version: u32,
     entity_ref_prefix: String,
     accepted_sources: Vec<AcceptedSource>,
+    boilerplate_exclusion_reports: BTreeMap<String, SourceFilterReport>,
     policies: BTreeMap<&'static str, PolicyManifest>,
     artifacts: BTreeMap<&'static str, Artifact>,
     validation: ValidationReport,
@@ -112,6 +132,7 @@ struct RepresentationManifest {
 #[derive(Debug, Serialize)]
 struct ValidationReport {
     accepted_source_count: usize,
+    boilerplate_filter_applied: bool,
     unique_entity_refs: bool,
     normalized_source_reconstruction: bool,
     every_child_mapped: bool,
@@ -133,16 +154,16 @@ struct SourceRepresentations {
     child_parent_map: Vec<ChildParentRow>,
 }
 
-/// expect: "I can build all calibration representations without losing or relabeling accepted source text."
+/// expect: "I can compare chunk policies over the same furniture-filtered accepted source view without losing or relabeling retained text."
 /// [P3] Motivating: one deterministic construction publishes comparable retrieval policies.
 /// [P1] Constraining: accepted source identity and provenance remain explicit.
 /// [P4] Constraining: incomplete coverage, reconstruction, or hierarchy fails before publication.
 /// pre: source hashes and complete word-window policies are caller supplied.
-/// post: one atomic manifest names validated reference, current, child, parent, and map artifacts.
+/// post: one atomic manifest names validated source exclusions plus reference, current, child, parent, and map artifacts.
 #[tool_router(router = calibration_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Build one validated calibration manifest containing: the fixed greedy sentence-bounded 100-word/no-overlap reference with a final sub-50-word remainder merged backward; the current hkask-memory shared chunk contract with complete policy parameters; and deterministic fine children, source-faithful parents, and a complete child-to-parent map. Every row carries entity_ref, source, text, word_count, and raw/canonical provenance. Fails before publication on source omission, duplicate IDs, reconstruction failure, incomplete maps, missing parents, or source disagreement."
+        description = "Build one validated calibration manifest over the same canonical boilerplate-filtered source view used by production chunking. It contains source-level exclusion reports; the fixed greedy sentence-bounded 100-word/no-overlap reference with a final sub-50-word remainder merged backward; the current hkask-memory shared chunk contract with complete policy parameters; and deterministic fine children, source-faithful parents, and a complete child-to-parent map. Every row carries entity_ref, source, text, word_count, and raw/canonical provenance. Fails before publication on empty retained sources, source omission, duplicate IDs, reconstruction failure, incomplete maps, missing parents, or source disagreement."
     )]
     pub async fn corpus_build_chunk_representations(
         &self,
@@ -312,10 +333,13 @@ fn build_representations(
     let mut children = Vec::new();
     let mut parents = Vec::new();
     let mut child_parent_map = Vec::new();
+    let mut boilerplate_exclusion_reports = BTreeMap::new();
     let mut reconstructed = true;
 
     for accepted in &request.accepted_sources {
         let source = load_source(accepted)?;
+        let (source, filter_report) = filter_source(accepted, &source)?;
+        boilerplate_exclusion_reports.insert(accepted.source.clone(), filter_report);
         let built = build_source(&request, accepted, &source)?;
         reconstructed &= reconstructs(&built.reference, 0, &source)
             && reconstructs(
@@ -443,13 +467,15 @@ fn build_representations(
     artifacts.insert("parents", parents_artifact);
     artifacts.insert("child_parent_map", map_artifact);
     let manifest = RepresentationManifest {
-        schema_version: 1,
+        schema_version: 2,
         entity_ref_prefix: request.entity_ref_prefix,
         accepted_sources: request.accepted_sources,
+        boilerplate_exclusion_reports,
         policies,
         artifacts,
         validation: ValidationReport {
             accepted_source_count: accepted_names.len(),
+            boilerplate_filter_applied: true,
             unique_entity_refs: true,
             normalized_source_reconstruction: true,
             every_child_mapped: true,
@@ -583,6 +609,35 @@ fn load_source(accepted: &AcceptedSource) -> Result<String, McpToolError> {
         )));
     }
     Ok(text)
+}
+
+fn filter_source(
+    accepted: &AcceptedSource,
+    source: &str,
+) -> Result<(String, SourceFilterReport), McpToolError> {
+    let filtered = filter_boilerplate_pages_with_report(source);
+    if normalize_words(&filtered.text).is_empty() {
+        return Err(McpToolError::failed_precondition(format!(
+            "canonical source {} has no retained words after boilerplate filtering",
+            accepted.source
+        )));
+    }
+    let report = SourceFilterReport {
+        input_words: filtered.input_words,
+        retained_words: filtered.retained_words,
+        exclusions: filtered
+            .exclusions
+            .into_iter()
+            .map(|exclusion| SourceFilterExclusion {
+                reason: exclusion.reason.to_string(),
+                boundary_unit: exclusion.boundary_unit.to_string(),
+                start: exclusion.start,
+                end: exclusion.end,
+                removed_words: exclusion.removed_words,
+            })
+            .collect(),
+    };
+    Ok((filtered.text, report))
 }
 
 fn build_source(
@@ -818,7 +873,8 @@ fn provenance(source: &AcceptedSource) -> Provenance {
         raw_sha256: source.raw_sha256.to_ascii_lowercase(),
         canonical_path: source.canonical_path.clone(),
         canonical_sha256: source.canonical_sha256.to_ascii_lowercase(),
-        canonical_normalization: "sanitize_c0_split_whitespace_join_single_space".into(),
+        canonical_normalization:
+            "filter_boilerplate_then_sanitize_c0_split_whitespace_join_single_space".into(),
     }
 }
 
@@ -1006,8 +1062,58 @@ mod tests {
         assert!(children.iter().all(|row| {
             row.provenance.raw_sha256 == row.provenance.canonical_sha256
                 && row.provenance.canonical_normalization
-                    == "sanitize_c0_split_whitespace_join_single_space"
+                    == "filter_boilerplate_then_sanitize_c0_split_whitespace_join_single_space"
         }));
+        Ok(())
+    }
+
+    /// expect: calibration compares retrieval policies over the same furniture-filtered source view used by production chunking.
+    /// [P3] Motivating: retrieval calibration selects a policy for substantive source knowledge rather than book furniture.
+    /// [P1] Constraining: every removed source range remains reviewable in the sealed manifest.
+    /// [P4] Constraining: every representation must reconstruct the filtered view before publication.
+    /// pre: accepted canonical text contains bounded page front matter and an inline promotional call to action
+    /// post: all policy artifacts exclude those spans and the manifest reconciles their source-level exclusions
+    #[tokio::test]
+    async fn calibration_filters_source_furniture_before_every_representation() -> anyhow::Result<()>
+    {
+        let (_directory, mut request) = fixture()?;
+        let accepted = request
+            .accepted_sources
+            .first_mut()
+            .ok_or_else(|| anyhow::anyhow!("fixture source missing"))?;
+        let canonical = PathBuf::from(&accepted.canonical_path);
+        let body = "Chapter 1\nSubstantive analysis explains how retrieval evidence supports a decision while preserving its source identity. ".repeat(80);
+        let source = format!(
+            "A USEFUL BOOK\nJANE AUTHOR\u{000c}{body}Thanks for reading Example Research! Subscribe for free to receive new posts and support my work. {body}"
+        );
+        fs::write(&canonical, source)?;
+        let digest = sha256_bytes(&fs::read(&canonical)?);
+        accepted.raw_sha256 = digest.clone();
+        accepted.canonical_sha256 = digest;
+
+        let output_dir = PathBuf::from(&request.output_dir);
+        server()
+            .corpus_build_chunk_representations(Parameters(request))
+            .await?;
+
+        for artifact in [
+            "reference.jsonl",
+            "current.jsonl",
+            "fine-children.jsonl",
+            "parents.jsonl",
+        ] {
+            let text = fs::read_to_string(output_dir.join(artifact))?;
+            assert!(!text.contains("A USEFUL BOOK"), "{artifact}");
+            assert!(!text.contains("Thanks for reading"), "{artifact}");
+            assert!(text.contains("Substantive analysis"), "{artifact}");
+        }
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(output_dir.join("manifest.json"))?)?;
+        let report = &manifest["boilerplate_exclusion_reports"]["source-a.txt"];
+        assert!(report["input_words"].as_u64().is_some());
+        assert!(report["retained_words"].as_u64().is_some());
+        assert_eq!(report["exclusions"].as_array().map(Vec::len), Some(2));
+        assert_eq!(manifest["validation"]["boilerplate_filter_applied"], true);
         Ok(())
     }
 
@@ -1048,7 +1154,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("reference row missing"))?;
         assert_eq!(
             row.provenance.canonical_normalization,
-            "sanitize_c0_split_whitespace_join_single_space"
+            "filter_boilerplate_then_sanitize_c0_split_whitespace_join_single_space"
         );
         Ok(())
     }

@@ -115,7 +115,7 @@ use crate::loops::{ActionDecision, CurationInput, LoopMetrics, TriggerOrigin};
 use hkask_types::CuratorDirective;
 use hkask_types::WebID;
 use hkask_types::event::{RegulationSink, SpanKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::{RwLock, mpsc};
@@ -216,6 +216,8 @@ pub struct CyberneticsLoop {
     loop_quality: RwLock<LoopMetrics>,
     /// Coalesces only semantically identical persistent signal telemetry.
     loop_telemetry_state: Mutex<LoopTelemetryState>,
+    /// Conditions already retained by archive fallback while the queue is absent.
+    fallback_alert_conditions: Mutex<HashSet<String>>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
     /// Fermi-inspired early-stopping pattern for cybernetic regulation.
     stagnation_detector: Arc<StagnationDetector>,
@@ -321,6 +323,7 @@ impl CyberneticsLoop {
             submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
             loop_quality: RwLock::new(LoopMetrics::default()),
             loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
+            fallback_alert_conditions: Mutex::new(HashSet::new()),
             stagnation_detector,
             sensor_registry,
             observations: parking_lot::Mutex::new(HashMap::new()),

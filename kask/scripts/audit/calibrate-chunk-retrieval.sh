@@ -304,12 +304,6 @@ if [[ "$resume" != true ]]; then
             exit 65
         fi
     done
-    jq -e '
-      .validation.unique_entity_refs and .validation.normalized_source_reconstruction and
-      .validation.every_child_mapped and .validation.every_parent_exists and
-      .validation.child_map_parent_sources_agree
-    ' "$representation_manifest" >/dev/null
-
     representation_cost_source=$(mktemp "$output_dir/.representation-cost.XXXXXX")
     jq -n --argjson elapsed_ms "$(elapsed_ms "$build_start" "$build_end")" \
         '{elapsed_ms:$elapsed_ms}' > "$representation_cost_source"
@@ -347,6 +341,21 @@ else
     fi
     rm -f "$preseal_candidate"
 fi
+
+jq -e '
+  (.schema_version == 2) and
+  (.boilerplate_exclusion_reports | type == "object") and
+  ((.boilerplate_exclusion_reports | length) == .validation.accepted_source_count) and
+  all(.boilerplate_exclusion_reports[];
+    (.input_words | type == "number") and
+    (.retained_words | type == "number") and
+    (.retained_words <= .input_words) and
+    (.exclusions | type == "array")) and
+  .validation.boilerplate_filter_applied and
+  .validation.unique_entity_refs and .validation.normalized_source_reconstruction and
+  .validation.every_child_mapped and .validation.every_parent_exists and
+  .validation.child_map_parent_sources_agree
+' "$representation_manifest" >/dev/null
 
 verify_hashed_json "$preseal_identity"
 preseal_run_id=$(jq -er '.run_id' "$preseal_identity")

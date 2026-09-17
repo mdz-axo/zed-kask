@@ -295,7 +295,10 @@ The runner derives candidate-independent queries from accepted canonical sources
 calls `corpus_build_chunk_representations`, embeds reference/current/fine retrieval
 representations into isolated indexes with one actual model, queries all three, and
 records fidelity, Recall@k, MRR, duplicate overlap, retrieved words, index size and
-measured wall/storage costs. nDCG and answer grounding remain explicitly unavailable
+measured wall/storage costs. The representation builder must apply the same canonical
+furniture filter once per source before every policy, publish a schema-v2 manifest with
+all source exclusion reports, and verify reconstruction against that retained view; a
+manifest without those reports is a calibration seam failure, not a historical baseline. nDCG and answer grounding remain explicitly unavailable
 unless separately measured; never encode absence as zero. Selection admits only
 source-fidelity-passing policies, then ranks retrieval quality under the fixed budget.
 The sealed run identity hashes accepted sources, queries, the actual model, full policy
@@ -460,9 +463,13 @@ pair distribution; do not increase pair count without operator approval.
 ## Stage 7 — Generate QA with owned outputs
 
 Start with an operator-authorized bounded pilot, keeping the full source/prompt
-inventory as the target. Run Stage 8 on that pilot before expanding to full
-production; a pilot is evidence for a gate, never a reduced completion scope.
-Call `corpus_generate_qa_batch(prompts_jsonl, output, concurrency, model)`.
+inventory as the target. Build a source-balanced pilot input with
+`kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`;
+it preserves complete classified records and selects deterministic interior quantiles,
+rather than silently treating each source's `:0` chunk as representative. Run Stage 8
+on that pilot before expanding to full production; a pilot is evidence for a gate,
+never a reduced completion scope. Call
+`corpus_generate_qa_batch(prompts_jsonl, output, concurrency, model)`.
 Preflight validates the whole prepared file/model before creating output. Record
 prompt-level tokens, provider responses, reported cost and cost completeness at
 every shard; null/incomplete cost is unknown and blocks paid expansion.
@@ -529,8 +536,11 @@ Use actual discovered paths in execution. Inputs use structured evidence in both
 envelopes and flat QA; source rows carry `entity_ref`, `source`, `text`. Verify
 each quote against its own unique chunk **and** source. Bare string quotes,
 missing metadata, malformed rows, duplicate refs and generation errors are gaps
-or findings, not silently repaired evidence. An empty evidence array is valid
-generation structure but a missing-citation quality gap.
+or findings, not silently repaired evidence. A canonical quality-gated
+`status="skipped"` disposition is a reconciled terminal non-QA row: its claim,
+citation and narrative checks are genuinely inapplicable, while malformed skips
+remain invalid shapes. An empty evidence array on generated QA is valid generation
+structure but a missing-citation quality gap.
 
 The audit reports reconciled physical rows, citation verification, six-gram
 **document frequency** (5% review-candidate threshold), QA-label distribution and

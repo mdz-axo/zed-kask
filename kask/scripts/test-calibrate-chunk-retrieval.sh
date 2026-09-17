@@ -115,15 +115,19 @@ while IFS= read -r line; do
                         jq -cn --arg child "$child" --arg source "$source" --argjson provenance "$provenance" \
                             '{child_ref:$child,source:$source,parent_refs:["calibration:e2e:parent:a:0"],provenance:$provenance}'
                     done > "$output/child-parent-map.jsonl"
-                    jq -n --argjson current "$(jq -c '.current_policy' <<<"$arguments")" \
+                    jq -n --arg source "$source" \
+                        --argjson current "$(jq -c '.current_policy' <<<"$arguments")" \
                         --argjson fine "$(jq -c '.fine_policy' <<<"$arguments")" \
                         --argjson parent "$(jq -c '.parent_policy' <<<"$arguments")" \
-                        '{schema_version:1,policies:{
+                        '{schema_version:2,
+                          boilerplate_exclusion_reports:{($source):{input_words:30,retained_words:30,exclusions:[]}},
+                          policies:{
                             reference:{engine:"hkask_memory::text_chunking::chunk_text_with_config",word_unit:"unicode_whitespace_delimited",boundary_preference:"structural_then_sentence_then_hard_max",final_remainder:"merge_backward_below_50_words",min_words:50,max_words:100,overlap_words:0,sentence_boundary:".!?"},
                             current:($current+{engine:"hkask_memory::text_chunking::chunk_text_with_config",word_unit:"unicode_whitespace_delimited",boundary_preference:"structural_then_sentence_then_hard_max",final_remainder:"retain"}),
                             fine:($fine+{engine:"hkask_memory::text_chunking::chunk_text_with_config",word_unit:"unicode_whitespace_delimited",boundary_preference:"structural_then_sentence_then_hard_max",final_remainder:"retain"}),
                             parent:($parent+{engine:"hkask_memory::text_chunking::chunk_text_with_config",word_unit:"unicode_whitespace_delimited",boundary_preference:"structural_then_sentence_then_hard_max",final_remainder:"retain"})},
-                          validation:{unique_entity_refs:true,normalized_source_reconstruction:true,
+                          validation:{accepted_source_count:1,boilerplate_filter_applied:true,
+                            unique_entity_refs:true,normalized_source_reconstruction:true,
                             every_child_mapped:true,every_parent_exists:true,child_map_parent_sources_agree:true}}' \
                         > "$output/manifest.json"
                     respond "$id" "$(jq -cn --arg manifest "$output/manifest.json" '{manifest:$manifest,accepted_sources:1}')"

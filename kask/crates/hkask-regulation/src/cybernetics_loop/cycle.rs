@@ -475,6 +475,34 @@ impl super::CyberneticsLoop {
     }
 
     pub(super) async fn act(&self, actions: &[RegulatoryAction]) {
+        // Without a queue, successful archive fallback is the condition's
+        // process-local retention authority. Drop latches as soon as their
+        // escalation disposition disappears so a recurrence emits again.
+        let active_fallback_conditions = actions
+            .iter()
+            .filter(|action| {
+                action.action_type == ActionType::Escalate && action.target == LoopId::Curation
+            })
+            .map(|action| {
+                let message = regulation_policy::alert_message(
+                    &action.parameters.data,
+                    &action.parameters.reason,
+                );
+                regulation_policy::alert_condition(&message).to_string()
+            })
+            .collect::<std::collections::HashSet<_>>();
+        {
+            let mut retained = self
+                .fallback_alert_conditions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if self.alert_escalation_sink.is_some() {
+                retained.clear();
+            } else {
+                retained.retain(|condition| active_fallback_conditions.contains(condition));
+            }
+        }
+
         // E04: capture call-cap exhaustion BEFORE the per-tick reset — the
         // reset replenishes every cap (remaining = ceiling), so reading
         // after it would never observe remaining == 0 and the exhaustion
@@ -586,6 +614,17 @@ impl super::CyberneticsLoop {
 
         let message =
             regulation_policy::alert_message(&action.parameters.data, &action.parameters.reason);
+        let condition = regulation_policy::alert_condition(&message).to_string();
+        if self.alert_escalation_sink.is_none()
+            && self
+                .fallback_alert_conditions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains(&condition)
+        {
+            tracing::debug!(target: "reg.cybernetics", %condition, "Suppressing duplicate archive-fallback alert");
+            return true;
+        }
         let (deficit, threshold) =
             extract_deficit_threshold(&action.parameters.data).unwrap_or((1, 1));
         let alert = RuntimeAlert {
@@ -702,6 +741,12 @@ impl super::CyberneticsLoop {
             } else if !archive_persisted {
                 tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel, event_sink, or email sink");
             }
+        }
+        if archive_persisted && self.alert_escalation_sink.is_none() {
+            self.fallback_alert_conditions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(condition);
         }
         queue_confirmed || archive_persisted
     }
@@ -2835,6 +2880,102 @@ mod tests {
         assert!(steady.emit);
         assert!(steady.steady_state_heartbeat);
         assert_eq!(steady.suppressed_cycles, 1);
+    }
+
+    fn fallback_alert_action() -> RegulatoryAction {
+        RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("persistent_fallback_condition"),
+            "inference_model_available".to_string(),
+        )
+    }
+
+    /// expect: "Fallback dedup clears with the condition so a later recurrence emits again" [P9]
+    #[tokio::test]
+    async fn fallback_alert_condition_clearing_allows_recurrence() {
+        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
+        let action = fallback_alert_action();
+
+        regulation_loop.act(std::slice::from_ref(&action)).await;
+        regulation_loop.act(std::slice::from_ref(&action)).await;
+        regulation_loop.act(&[]).await;
+        regulation_loop.act(std::slice::from_ref(&action)).await;
+
+        let alerts = sink
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|(path, _)| path == "reg.variety.algedonic_alert")
+            .count();
+        assert_eq!(alerts, 2, "first occurrence and post-clear recurrence emit");
+    }
+
+    /// expect: "Failed fallback persistence does not arm dedup and retries the same condition" [P9]
+    #[tokio::test]
+    async fn fallback_alert_persistence_failure_remains_retryable() {
+        let sink = Arc::new(FailOnceCapturingSink {
+            fail_next: std::sync::atomic::AtomicBool::new(true),
+            persisted: Mutex::new(Vec::new()),
+        });
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
+        let action = fallback_alert_action();
+
+        assert!(!regulation_loop.route_action_as_alert(&action).await);
+        assert!(regulation_loop.route_action_as_alert(&action).await);
+        assert!(regulation_loop.route_action_as_alert(&action).await);
+        assert_eq!(
+            sink.persisted
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .len(),
+            1,
+            "one successful retention arms dedup; the failed attempt does not"
+        );
+    }
+
+    /// expect: "Queue-unavailable fallback preserves one alert per persistent condition instead of displacing earlier informative events" [P9]
+    #[tokio::test(start_paused = true)]
+    async fn persistent_fallback_alerts_do_not_displace_prior_informative_events() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = Arc::new(
+            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
+        );
+        let since = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let informative = hkask_types::RegulationRecord::new(
+            WebID::from_persona(b"regulation"),
+            hkask_types::event::Span::from_kind(hkask_types::event::SpanKind::ToolOutcomeBreakdown),
+            hkask_types::event::CyclePhase::Act,
+            serde_json::json!({"informative_before_persistent_condition": true}),
+            0,
+        );
+        hkask_types::RegulationSink::persist(&*archive, &informative)
+            .expect("persist informative event");
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+
+        // No escalation queue is wired: this exercises the archive fallback,
+        // not the production queue's pending-condition deduplication.
+        for _ in 0..520 {
+            regulation_loop.tick().await;
+        }
+
+        let visible = archive
+            .query_recent_algedonic(since, 500)
+            .expect("recent algedonic log");
+        assert!(
+            visible.iter().any(|event| {
+                event.observation["informative_before_persistent_condition"] == true
+            }),
+            "one fallback condition must not consume the newest-first read budget"
+        );
     }
 
     /// expect: "Identical persistent signal cycles cannot consume the algedonic read budget and hide a later novel event" [P9]
