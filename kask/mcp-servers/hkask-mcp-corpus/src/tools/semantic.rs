@@ -146,6 +146,7 @@ impl CorpusServer {
         &self,
         Parameters(GenerateQaBatchRequest {
             prompts_jsonl,
+            quality_adjudications_jsonl,
             output,
             concurrency,
             model,
@@ -155,6 +156,7 @@ impl CorpusServer {
             crate::services::qa_batch::QaBatchService::new(Arc::clone(&self.inference_router))
                 .generate_qa_batch(crate::services::qa_batch::QaBatchRequest {
                     prompts_jsonl,
+                    quality_adjudications_jsonl,
                     output,
                     concurrency,
                     model,
@@ -525,6 +527,10 @@ pub(crate) struct GenerateQaBatchRequest {
     /// Canonical JSONL: prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user.
     /// IDs must be unique, 1–64 ASCII letters/digits/hyphens/underscores. No legacy aliases.
     pub prompts_jsonl: String,
+    /// Optional complete Stage-8-reviewed passage decisions. Every prepared prompt
+    /// must appear exactly once with matching prompt_id, chunk_ref and source.
+    #[serde(default)]
+    pub quality_adjudications_jsonl: Option<String>,
     /// Output path for generated QAs JSONL.
     pub output: String,
     /// Max concurrent LLM calls.

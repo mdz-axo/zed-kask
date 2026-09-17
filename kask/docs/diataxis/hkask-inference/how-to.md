@@ -80,7 +80,32 @@ Resolve it with:
 let model = hkask_inference::model_constants::resolve_qa_generation_model(requested_model)?;
 ```
 
-An explicit model wins. With neither source, the resolver returns `InferenceError::NotConfigured`; malformed or unqualified names return `InferenceError::Model`. The resolver never uses the chat default or a training base model (`kask/crates/hkask-inference/src/model_constants.rs:25-75`).
+An explicit model wins. With neither source, the resolver returns `InferenceError::NotConfigured`; malformed or unqualified names return `InferenceError::Model`. The resolver never uses the chat default or a training base model (`kask/crates/hkask-inference/src/model_constants.rs`).
+
+## Configure the independent QA verification model
+
+Set the dedicated verification binding independently of generation:
+
+```sh
+export HKASK_QA_VERIFICATION_MODEL='OpenRouter/vendor/qa-verifier'
+```
+
+Resolve it with:
+
+```rust
+let model = hkask_inference::model_constants::resolve_qa_verification_model(
+    requested_verification_model,
+)?;
+```
+
+With neither an explicit model nor `kask.models.qa_verification_model`, the
+resolver returns `InferenceError::NotConfigured`. It applies the same
+`Provider/model-id` validation as QA generation and never consults the QA
+generator, chat, classifier, or training model. Keeping the check independent
+supports Chain-of-Verification's separate verification step
+([arXiv:2309.11495](https://arxiv.org/abs/2309.11495)) and avoids relying on
+self-enhancement by the answer-producing model, a bias discussed in MT-Bench
+([arXiv:2306.05685](https://arxiv.org/abs/2306.05685)).
 
 ## Add a direct chat or embedding provider
 

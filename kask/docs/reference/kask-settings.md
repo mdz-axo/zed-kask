@@ -315,6 +315,7 @@ operator's configured models, verbatim.[^ousterhout-models-settings]
 | `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"ollama/qwen3-embedding:0.6b"`) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
 | `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
 | `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never chat, classifier, or training base model |
+| `qa_verification_model` | `String` | `""` | Explicit verification model > this setting (`HKASK_QA_VERIFICATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never QA generation, chat, classifier, or training base model |
 | `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
 | `rerank_model` | `String` | `"deepinfra/Qwen/Qwen3-Reranker-8B"` | Shared `DEFAULT_RERANK_MODEL`; injected as `HKASK_RERANK_MODEL` |
 
@@ -331,6 +332,15 @@ availability. Both corpus single and prepared-batch QA pass the selected model e
 The training server currently has no QA-generation caller: its evaluation model and
 training `base_model` remain unchanged, and it does not receive the QA env variable.
 The old `HKASK_QA_MODEL` remains a consolidation input only, not a QA-generation alias.
+
+QA verification is configured separately under **Settings → Kask → Models → QA
+Verification Model**. `resolve_qa_verification_model` applies the same provider-qualified
+validation as generation, but has a separate empty default and no fallback to generation,
+chat, classifier, or training. `HKASK_QA_VERIFICATION_MODEL` is admitted only by the
+corpus MCP config allowlist. This preserves an independent check as motivated by
+Chain-of-Verification ([arXiv:2309.11495](https://arxiv.org/abs/2309.11495)) and avoids
+same-model self-enhancement bias discussed in MT-Bench
+([arXiv:2306.05685](https://arxiv.org/abs/2306.05685)).
 
 All QA transports request non-thinking generation. Synchronous OpenRouter serialization
 and provider-batch JSONL send `reasoning.effort: "none"`; `exclude` alone only hides
@@ -526,6 +536,7 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
 | `HKASK_QA_GENERATION_MODEL` | corpus | `models.qa_generation_model` (no default) |
+| `HKASK_QA_VERIFICATION_MODEL` | corpus | `models.qa_verification_model` (no default or fallback) |
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
 | `HKASK_MCP_SERVER_IDS` | swarm | `BUILT_IN_MCP_SERVERS_IDS` joined (unconditional) |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |

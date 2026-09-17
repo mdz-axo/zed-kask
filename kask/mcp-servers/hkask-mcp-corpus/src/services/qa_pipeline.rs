@@ -584,7 +584,16 @@ pub(crate) fn render_planned_qa_review_messages(
     Ok(messages)
 }
 
-pub(crate) fn complete_disposition_plan(
+pub(crate) fn enforce_reviewed_admit(plan: QaDispositionPlan) -> Result<QaDispositionPlan, String> {
+    if let Some(reason) = plan.global_skip_reason() {
+        return Err(format!(
+            "reviewed admit cannot be replaced by prompt-wide model skip '{reason}'"
+        ));
+    }
+    Ok(plan)
+}
+
+pub(crate) fn merge_disposition_plans(
     plan: &QaDispositionPlan,
     writer_response: Option<&str>,
 ) -> Result<String, String> {
@@ -832,6 +841,9 @@ pub(crate) struct QaOutput<W: Write> {
     provider_responses: usize,
     cost_reports: usize,
     reported_cost_usd: f64,
+    adjudication_protocol: Option<String>,
+    adjudicated_admits: usize,
+    adjudicated_skips: usize,
 }
 
 impl<W: Write> QaOutput<W> {
@@ -853,7 +865,16 @@ impl<W: Write> QaOutput<W> {
             provider_responses: 0,
             cost_reports: 0,
             reported_cost_usd: 0.0,
+            adjudication_protocol: None,
+            adjudicated_admits: 0,
+            adjudicated_skips: 0,
         }
+    }
+
+    pub fn set_reviewed_adjudications(&mut self, protocol: &str, admits: usize, skips: usize) {
+        self.adjudication_protocol = Some(protocol.to_string());
+        self.adjudicated_admits = admits;
+        self.adjudicated_skips = skips;
     }
 
     fn write_record(&mut self, record: &serde_json::Value) -> Result<(), McpToolError> {
@@ -887,6 +908,34 @@ impl<W: Write> QaOutput<W> {
             self.cost_reports += 1;
             self.reported_cost_usd += cost_usd;
         }
+    }
+
+    pub fn complete_reviewed_skip(
+        &mut self,
+        prompt: &PreparedQaPrompt,
+        reason: &str,
+        model: &str,
+    ) -> Result<(), McpToolError> {
+        self.qa_levels_requested += prompt.qa_types.len();
+        for qa_type in &prompt.qa_types {
+            self.write_record(&qa_skip_envelope(
+                prompt,
+                qa_type.as_str(),
+                reason,
+                model,
+                self.adjudication_protocol.as_deref(),
+            ))?;
+            self.qa_levels_skipped += 1;
+            *self
+                .skip_reason_counts
+                .entry(reason.to_string())
+                .or_default() += 1;
+        }
+        self.prompts_succeeded += 1;
+        if (self.prompts_succeeded + self.prompts_failed).is_multiple_of(10) {
+            self.flush()?;
+        }
+        Ok(())
     }
 
     /// expect: A success count means accepted QA rows were written, not merely attempted.
@@ -942,7 +991,12 @@ impl<W: Write> QaOutput<W> {
                 for disposition in dispositions {
                     match disposition {
                         QaLevelDisposition::Generated(pair) => {
-                            self.write_record(&qa_result_envelope(prompt, pair, model))?;
+                            self.write_record(&qa_result_envelope(
+                                prompt,
+                                pair,
+                                model,
+                                self.adjudication_protocol.as_deref(),
+                            ))?;
                             self.qa_rows_written += 1;
                         }
                         QaLevelDisposition::Skipped {
@@ -954,6 +1008,7 @@ impl<W: Write> QaOutput<W> {
                                 &bloom_level,
                                 &reason,
                                 model,
+                                self.adjudication_protocol.as_deref(),
                             ))?;
                             self.qa_levels_skipped += 1;
                             *self.skip_reason_counts.entry(reason).or_default() += 1;
@@ -1047,7 +1102,12 @@ pub(crate) fn qa_llm_parameters() -> hkask_types::template::LLMParameters {
 /// The envelope format matches what `corpus_ingest_qa`'s `parse_qa_record`
 /// expects: primary identity, QA type, response, canonical evidence and
 /// provenance. Prompt-level token usage stays in the batch summary.
-fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> serde_json::Value {
+fn qa_result_envelope(
+    prompt: &PreparedQaPrompt,
+    pair: QaPair,
+    model: &str,
+    adjudication_protocol: Option<&str>,
+) -> serde_json::Value {
     json!({
         "prompt_id": prompt.prompt_id,
         "chunk_ref": prompt.primary().chunk_ref,
@@ -1062,6 +1122,7 @@ fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> s
         },
         "provenance": {
             "generator_model": model,
+            "passage_adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
@@ -1077,6 +1138,7 @@ fn qa_skip_envelope(
     bloom_level: &str,
     reason: &str,
     model: &str,
+    adjudication_protocol: Option<&str>,
 ) -> serde_json::Value {
     json!({
         "prompt_id": prompt.prompt_id,
@@ -1087,6 +1149,7 @@ fn qa_skip_envelope(
         "reason": reason,
         "provenance": {
             "generator_model": model,
+            "passage_adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,

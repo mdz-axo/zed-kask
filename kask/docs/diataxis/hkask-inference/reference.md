@@ -148,8 +148,10 @@ The direct provider descriptors are DeepInfra, OpenRouter, and Ollama (`kask/cra
 |---|---|---|
 | No explicit chat model and empty `HKASK_DEFAULT_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/hkask_inference.rs:123-143`, `kask/crates/hkask-inference/src/hkask_inference.rs:581-597` |
 | Explicit zed model override cannot be resolved | `InferenceError::Model`; no default substitution | `kask/crates/kask_bridge/src/inference_chat.rs:579-621`, `kask/crates/kask_bridge/src/inference_chat.rs:674-690` |
-| QA model absent from explicit input and `HKASK_QA_GENERATION_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/model_constants.rs:50-59` |
-| QA model malformed or not provider-qualified | `InferenceError::Model` | `kask/crates/hkask-inference/src/model_constants.rs:60-74` |
+| QA model absent from explicit input and `HKASK_QA_GENERATION_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| QA model malformed or not provider-qualified | `InferenceError::Model` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| QA verification model absent from explicit input and `HKASK_QA_VERIFICATION_MODEL` | `InferenceError::NotConfigured`; no generator/chat/classifier/training fallback | `kask/crates/hkask-inference/src/model_constants.rs` |
+| QA verification model malformed or not provider-qualified | `InferenceError::Model` | `kask/crates/hkask-inference/src/model_constants.rs` |
 | Direct embedding model has no usable provider/credential | `EmbeddingGenerationError::Connection` | `kask/crates/hkask-inference/src/hkask_inference.rs:296-307` |
 | Selectable media operation has no configured model | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/provider.rs:231-239` |
 | Media model/provider identifier is invalid | `InferenceError::Model` | `kask/crates/hkask-inference/src/provider.rs:241-255` |
@@ -179,11 +181,12 @@ The client is cloneable and stores an `Arc<PathBuf>` socket path plus an `Arc<At
 
 | API | Environment variable | Evidence |
 |---|---|---|
-| `resolve_qa_generation_model` | explicit input, then `HKASK_QA_GENERATION_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:25-75` |
-| `classifier_model` | `HKASK_CLASSIFIER_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:77-84` |
-| `embedding_model` | `HKASK_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:86-93` |
-| `ocr_model` | `HKASK_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:95-102` |
-| `rerank_model` | `HKASK_RERANK_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs:104-113` |
+| `resolve_qa_generation_model` | explicit input, then `HKASK_QA_GENERATION_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| `resolve_qa_verification_model` | explicit input, then `HKASK_QA_VERIFICATION_MODEL`; no other model source | `kask/crates/hkask-inference/src/model_constants.rs` |
+| `classifier_model` | `HKASK_CLASSIFIER_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| `embedding_model` | `HKASK_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| `ocr_model` | `HKASK_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
+| `rerank_model` | `HKASK_RERANK_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
 
 ## See also
 

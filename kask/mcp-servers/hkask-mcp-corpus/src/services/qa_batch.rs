@@ -14,9 +14,12 @@ use crate::batch::{
     retry_with_backoff,
 };
 use crate::helpers::map_corpus_io_error;
+use crate::services::qa_adjudication::{
+    ReviewedPassageAdjudications, ReviewedPassageDecision, read_complete_adjudications,
+};
 use crate::services::qa_pipeline::{
     PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
-    QaResponseMetadata, complete_disposition_plan, parse_disposition_plan_response,
+    QaResponseMetadata, complete_disposition_plan, enforce_reviewed_admit, merge_disposition_plans,
     parse_passage_quality_response, prompt_wide_skip_plan, qa_llm_parameters, read_prompts,
     render_disposition_plan_messages, render_disposition_review_messages,
     render_passage_quality_messages, render_planned_qa_messages, render_planned_qa_review_messages,
@@ -138,6 +141,7 @@ impl Drop for QaOutputLease {
 
 pub(crate) struct QaBatchRequest {
     pub prompts_jsonl: String,
+    pub quality_adjudications_jsonl: Option<String>,
     pub output: String,
     pub concurrency: usize,
     pub model: Option<String>,
@@ -161,15 +165,23 @@ impl QaBatchService {
     ) -> Result<serde_json::Value, McpToolError> {
         let QaBatchRequest {
             prompts_jsonl,
+            quality_adjudications_jsonl,
             output,
             concurrency,
             model,
         } = request;
         let prompts = read_prompts(&prompts_jsonl)?;
+        let adjudications = quality_adjudications_jsonl
+            .as_deref()
+            .map(|path| read_complete_adjudications(path, &prompts))
+            .transpose()?;
         let selected_model =
             hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
                 .map_err(map_qa_inference_error)?;
         let output_path = crate::path_safety::distinct_output_path(&prompts_jsonl, &output)?;
+        if let Some(path) = quality_adjudications_jsonl.as_deref() {
+            crate::path_safety::distinct_output_path(path, &output)?;
+        }
         let lease = QaOutputLease::acquire(output_path)?;
         let file = std::fs::File::create(&lease.path).map_err(|error| {
             map_corpus_io_error(error, &format!("Cannot create output file '{output}'"))
@@ -180,6 +192,7 @@ impl QaBatchService {
         let completions = QaOutput::new(file, prompts.len());
         self.generate_prepared(
             prompts,
+            adjudications,
             &selected_model,
             AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR),
             completions,
@@ -192,6 +205,7 @@ impl QaBatchService {
     async fn generate_prepared<W: Write>(
         &self,
         prompts: Vec<PreparedQaPrompt>,
+        adjudications: Option<ReviewedPassageAdjudications>,
         selected_model: &str,
         limiter: AdaptiveLimiter,
         mut completions: QaOutput<W>,
@@ -199,9 +213,20 @@ impl QaBatchService {
         output: &str,
     ) -> Result<serde_json::Value, McpToolError> {
         let result = async {
+            let adjudications = adjudications.map(Arc::new);
             let mut tasks = tokio::task::JoinSet::new();
             let mut pending = HashMap::with_capacity(prompts.len());
             for prompt in prompts {
+                let reviewed_decision = adjudications
+                    .as_ref()
+                    .and_then(|adjudications| adjudications.decision(&prompt.prompt_id))
+                    .cloned();
+                if let Some(ReviewedPassageDecision::Skip(reason)) = reviewed_decision.as_ref() {
+                    completions.complete_reviewed_skip(&prompt, reason, selected_model)?;
+                    continue;
+                }
+                let reviewed_admit =
+                    matches!(reviewed_decision, Some(ReviewedPassageDecision::Admit));
                 let router = Arc::clone(&self.inference_router);
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
@@ -215,7 +240,8 @@ impl QaBatchService {
                     // worker actually drops, not merely until its abort is requested.
                     let _lease = task_lease;
                     let mut prior_responses = Vec::new();
-                    let quality_response = match infer_with_retry(
+                    if !reviewed_admit {
+                        let quality_response = match infer_with_retry(
                         &router,
                         &limiter,
                         &selected_model,
@@ -255,6 +281,7 @@ impl QaBatchService {
                             );
                         }
                     }
+                    }
                     let mut planning_response = match infer_with_retry(
                         &router,
                         &limiter,
@@ -271,7 +298,14 @@ impl QaBatchService {
                     let proposed_response =
                         crate::extract_json_from_response(&planning_response.text);
                     let proposed_plan =
-                        parse_disposition_plan_response(&proposed_response, &worker_prompt);
+                        parse_disposition_plan_response(&proposed_response, &worker_prompt)
+                            .and_then(|plan| {
+                                if reviewed_admit {
+                                    enforce_reviewed_admit(plan)
+                                } else {
+                                    Ok(plan)
+                                }
+                            });
                     let proposal_error = proposed_plan.as_ref().err().map(String::as_str);
                     let review_messages = match render_disposition_review_messages(
                         &worker_prompt,
@@ -303,7 +337,14 @@ impl QaBatchService {
                     let mut plan = parse_disposition_plan_response(
                         &crate::extract_json_from_response(&planning_response.text),
                         &worker_prompt,
-                    );
+                    )
+                    .and_then(|plan| {
+                        if reviewed_admit {
+                            enforce_reviewed_admit(plan)
+                        } else {
+                            Ok(plan)
+                        }
+                    });
                     if let Err(error) = &plan {
                         prior_responses.push(response_metadata(&planning_response));
                         let mut correction_messages = review_messages.clone();
@@ -326,7 +367,14 @@ impl QaBatchService {
                         plan = parse_disposition_plan_response(
                             &crate::extract_json_from_response(&planning_response.text),
                             &worker_prompt,
-                        );
+                        )
+                        .and_then(|plan| {
+                            if reviewed_admit {
+                                enforce_reviewed_admit(plan)
+                            } else {
+                                Ok(plan)
+                            }
+                        });
                     }
                     let reviewed_plan = match plan {
                         Ok(plan) => plan,

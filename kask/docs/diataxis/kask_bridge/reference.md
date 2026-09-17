@@ -85,6 +85,7 @@ classDiagram
         +embedding_model: String
         +classifier_model: String
         +qa_generation_model: String
+        +qa_verification_model: String
         +ocr_model: String
         +rerank_model: String
     }
@@ -96,8 +97,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
-verified_date: 2026-09-16
-verified_against: kask/crates/kask_bridge/src/settings.rs:35-96; kask/crates/kask_bridge/src/settings.rs:98-166; kask/crates/kask_bridge/src/settings.rs:416-463; kask/crates/kask_bridge/src/settings.rs:599-633
+verified_date: 2026-09-17
+verified_against: kask/crates/kask_bridge/src/settings.rs:35-96; kask/crates/kask_bridge/src/settings.rs:98-166; kask/crates/kask_bridge/src/settings.rs:416-463; kask/crates/kask_bridge/src/settings.rs:599-637
 status: VERIFIED
 -->
 

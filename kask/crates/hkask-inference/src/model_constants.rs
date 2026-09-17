@@ -16,6 +16,7 @@
 //! Unlike general inference, its resolver never consults the chat default.
 //!
 //! - `HKASK_QA_GENERATION_MODEL` — dedicated non-thinking QA generator
+//! - `HKASK_QA_VERIFICATION_MODEL` — dedicated independent QA verifier
 //! - `HKASK_CLASSIFIER_MODEL` — primary classifier model
 //! - `HKASK_EMBEDDING_MODEL` — default embedding model
 //! - `HKASK_OCR_MODEL` — OCR model for scanned PDF fallback
@@ -24,6 +25,9 @@
 
 /// Environment binding for `kask.models.qa_generation_model`.
 pub const QA_GENERATION_MODEL_ENV: &str = "HKASK_QA_GENERATION_MODEL";
+
+/// Environment binding for `kask.models.qa_verification_model`.
+pub const QA_VERIFICATION_MODEL_ENV: &str = "HKASK_QA_VERIFICATION_MODEL";
 
 /// Resolve an explicit tool model before the dedicated QA setting. There is
 /// deliberately no generator ID default, chat fallback, or training-base input.
@@ -69,6 +73,57 @@ fn select_qa_generation_model(
         return Err(hkask_types::InferenceError::Model(format!(
             "invalid QA generation model {model:?}: set kask.models.qa_generation_model \
              ({QA_GENERATION_MODEL_ENV}) or tool model to Provider/model-id; no fallback"
+        )));
+    }
+    Ok(model.to_owned())
+}
+
+/// Resolve an explicit verification model before the dedicated QA verification
+/// setting. Independent verification deliberately has no generator, chat,
+/// classifier, training-base, or hardcoded model fallback.
+pub fn resolve_qa_verification_model(
+    requested: Option<&str>,
+) -> Result<String, hkask_types::InferenceError> {
+    let configured = if requested.is_none() {
+        match std::env::var(QA_VERIFICATION_MODEL_ENV) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => {
+                return Err(hkask_types::InferenceError::Model(format!(
+                    "invalid {QA_VERIFICATION_MODEL_ENV}: {error}"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    select_qa_verification_model(requested, configured.as_deref())
+}
+
+fn select_qa_verification_model(
+    requested: Option<&str>,
+    configured: Option<&str>,
+) -> Result<String, hkask_types::InferenceError> {
+    let model = requested.or(configured).ok_or_else(|| {
+        hkask_types::InferenceError::NotConfigured(format!(
+            "QA verification requires kask.models.qa_verification_model \
+             ({QA_VERIFICATION_MODEL_ENV}) or an explicit verification model; \
+             QA generation, chat, classifier, and training base models are never used"
+        ))
+    })?;
+    let qualified = model.split_once('/').is_some_and(|(provider, local)| {
+        !provider.is_empty()
+            && provider
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && !local.is_empty()
+            && !local.starts_with('/')
+    });
+    if !qualified || model.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(hkask_types::InferenceError::Model(format!(
+            "invalid QA verification model {model:?}: set \
+             kask.models.qa_verification_model ({QA_VERIFICATION_MODEL_ENV}) or \
+             an explicit verification model to Provider/model-id; no fallback"
         )));
     }
     Ok(model.to_owned())
@@ -162,6 +217,52 @@ mod qa_generation_tests {
             assert!(
                 matches!(
                     select_qa_generation_model(None, Some(invalid)),
+                    Err(hkask_types::InferenceError::Model(_))
+                ),
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn qa_verification_model_is_independent_and_provider_qualified() {
+        let model = "OpenRouter/vendor/independent-verifier";
+        assert_eq!(
+            select_qa_verification_model(Some(model), Some("invalid"))
+                .expect("explicit verification model"),
+            model
+        );
+        assert_eq!(
+            select_qa_verification_model(None, Some(model)).expect("verification setting"),
+            model
+        );
+        assert!(matches!(
+            select_qa_verification_model(None, None),
+            Err(hkask_types::InferenceError::NotConfigured(message))
+                if message.contains("QA generation")
+                    && message.contains("chat")
+                    && message.contains("classifier")
+                    && message.contains("training base")
+        ));
+        for invalid in [
+            "",
+            " ",
+            "bare-model",
+            "/model",
+            "OpenRouter/",
+            "OpenRouter/ model",
+            "~openai/gpt-sol-latest",
+        ] {
+            assert!(
+                matches!(
+                    select_qa_verification_model(Some(invalid), Some(model)),
+                    Err(hkask_types::InferenceError::Model(_))
+                ),
+                "{invalid:?}"
+            );
+            assert!(
+                matches!(
+                    select_qa_verification_model(None, Some(invalid)),
                     Err(hkask_types::InferenceError::Model(_))
                 ),
                 "{invalid:?}"

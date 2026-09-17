@@ -1,5 +1,6 @@
 //! Models sub-page — kask-wide model defaults (default inference model,
-//! embedding model, classifier model, dedicated QA generator, OCR model, rerank model).
+//! embedding model, classifier model, dedicated QA generator and verifier,
+//! OCR model, rerank model).
 
 use super::*;
 
@@ -19,6 +20,7 @@ pub(crate) fn render_models_page(
     let embedding_model = models.embedding_model;
     let classifier_model = models.classifier_model;
     let qa_generation_model = models.qa_generation_model;
+    let qa_verification_model = models.qa_verification_model;
     let ocr_model = models.ocr_model;
     let rerank_model = models.rerank_model;
     // The code defaults (what applies when a field is left empty) — rendered
@@ -61,6 +63,14 @@ pub(crate) fn render_models_page(
         "models",
         "qa_generation_model",
     );
+    let qa_verification_model_input = kask_string_input(
+        "kask-models-qa-verification",
+        "QA Verification Model",
+        "Provider/model-id (required for QA verification)",
+        qa_verification_model,
+        "models",
+        "qa_verification_model",
+    );
     let ocr_model_input = kask_string_input(
         "kask-models-ocr",
         "OCR Model",
@@ -96,7 +106,7 @@ pub(crate) fn render_models_page(
                         "Kask-wide model configuration. These provider-prefixed model \
                          names (e.g. \"{}\") override the kask \
                          defaults for inference, embedding, classification, OCR, and \
-                         rerank; QA generation requires its own model.",
+                         rerank; QA generation and verification require dedicated models.",
                         code_defaults.default_model
                     ))
                     .size(LabelSize::Small)
@@ -173,6 +183,22 @@ pub(crate) fn render_models_page(
         .child(
             v_flex()
                 .gap_1()
+                .child(Label::new("QA Verification Model"))
+                .child(
+                    Label::new(
+                        "Dedicated independent verifier for corpus QA. Empty or invalid \
+                         configuration fails visibly. Never falls back to QA generation, \
+                         chat, classifier, or training models.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(qa_verification_model_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
                 .child(Label::new("OCR Model"))
                 .child(
                     Label::new(format!(
@@ -219,6 +245,21 @@ mod tests {
         assert!(dispatcher.contains(concat!(
             "kask.models.get_or_insert_default().",
             "qa_generation_model ="
+        )));
+    }
+
+    #[test]
+    fn qa_verification_control_has_a_save_dispatch_arm() {
+        let page = include_str!("models.rs");
+        let dispatcher = include_str!("../kask_page.rs");
+        assert!(page.contains(concat!(
+            "\"models\",\n        ",
+            "\"qa_verification_model\","
+        )));
+        assert!(dispatcher.contains(concat!("(\"models\", ", "\"qa_verification_model\") => {")));
+        assert!(dispatcher.contains(concat!(
+            "kask.models.get_or_insert_default().",
+            "qa_verification_model ="
         )));
     }
 
