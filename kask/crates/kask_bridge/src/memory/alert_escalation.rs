@@ -890,6 +890,68 @@ mod tests {
         }
     }
 
+    /// expect: "A publication acknowledgment conflict keeps one stable receipt retryable" [P9]
+    #[test]
+    fn advice_review_publication_acknowledgment_conflict_retries_same_receipt() {
+        let (queue, next_advice_update) = scripted_queue();
+        let applied = chrono::Utc::now();
+        let due = applied + chrono::Duration::days(7);
+        let trigger = reliability(0.2, applied);
+        queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "tool reliability advice".into(),
+                1.0,
+                0,
+                serde_json::json!({
+                    "recovery_signal": trigger,
+                    "applied_at": applied,
+                    "review_due_at": due,
+                    "applied_baseline": trigger,
+                    "advice_review": {
+                        "status": "observation_window",
+                        "finalized": false,
+                        "causal_attribution": "unverified"
+                    }
+                })
+                .to_string(),
+            )
+            .expect("add escalation");
+        let sink = BridgeAlertEscalationSink::new(queue);
+        let reconciliation = sink
+            .reconcile_conditions_at(&[reliability(1.0, due)], due)
+            .expect("final reconciliation");
+        let receipt = reconciliation
+            .pending_receipts
+            .first()
+            .expect("pending receipt")
+            .clone();
+
+        next_advice_update.store(2, Ordering::SeqCst);
+        assert!(
+            !sink
+                .acknowledge_advice_review_at(&receipt, due)
+                .expect("conflicting acknowledgment"),
+            "a lost compare-and-set must not claim acknowledgment"
+        );
+        let retry = sink
+            .reconcile_conditions_at(&[], due)
+            .expect("retry reconciliation");
+        assert_eq!(retry.pending_receipts, vec![receipt.clone()]);
+        assert!(
+            sink.acknowledge_advice_review_at(&receipt, due)
+                .expect("retry acknowledgment")
+        );
+        assert!(
+            sink.reconcile_conditions_at(&[], due)
+                .expect("post-ack reconciliation")
+                .pending_receipts
+                .is_empty(),
+            "an acknowledged receipt must leave the pending outbox"
+        );
+    }
+
     struct FailingInferencePort;
 
     impl hkask_types::InferencePort for FailingInferencePort {
@@ -1133,6 +1195,128 @@ mod tests {
                 .get("rollout_progress_score")
                 .is_some(),
             "rollout progress must remain a separate telemetry channel"
+        );
+    }
+
+    struct FailOnceAdviceArchive {
+        archive: Arc<hkask_storage::RegulationArchive>,
+        fail_next_advice: std::sync::atomic::AtomicBool,
+    }
+
+    impl hkask_types::RegulationSink for FailOnceAdviceArchive {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.archive.persist(event)
+        }
+
+        fn persist_if_absent(
+            &self,
+            source_event_id: &str,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<bool, hkask_types::InfrastructureError> {
+            if event.span.path == "reg.outcome.advice_review_observed"
+                && self
+                    .fail_next_advice
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(hkask_types::InfrastructureError::database(
+                    "scripted advice telemetry failure",
+                ));
+            }
+            self.archive.persist_if_absent(source_event_id, event)
+        }
+    }
+
+    /// expect: "Telemetry failure retains the same advice-review receipt for exactly-once retry" [P9]
+    #[tokio::test]
+    async fn advice_review_receipt_retries_after_telemetry_failure_without_duplication() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let queue =
+            Arc::new(hkask_storage::EscalationQueue::from_driver(driver.clone()).expect("queue"));
+        let archive = Arc::new(
+            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
+        );
+        let applied = chrono::Utc::now();
+        let due = applied + chrono::Duration::days(7);
+        let trigger = reliability(0.2, applied);
+        let id = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "tool reliability advice".into(),
+                1.0,
+                0,
+                serde_json::json!({
+                    "recovery_signal": trigger,
+                    "applied_at": applied,
+                    "review_due_at": due,
+                    "applied_baseline": trigger,
+                    "advice_review": {
+                        "status": "observation_window",
+                        "finalized": false,
+                        "causal_attribution": "unverified"
+                    }
+                })
+                .to_string(),
+            )
+            .expect("add escalation")
+            .to_string();
+        let sink = Arc::new(BridgeAlertEscalationSink::new(queue.clone()));
+        sink.reconcile_conditions_at(&[reliability(1.0, due)], due)
+            .expect("final reconciliation");
+        let event_sink = Arc::new(FailOnceAdviceArchive {
+            archive: archive.clone(),
+            fail_next_advice: std::sync::atomic::AtomicBool::new(true),
+        });
+        let mut regulation = hkask_regulation::CyberneticsLoop::new(Arc::new(
+            tokio::sync::RwLock::new(hkask_regulation::RegulationLedger::default()),
+        ))
+        .with_event_sink(event_sink as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_alert_escalation_sink(Some(sink));
+
+        regulation.tick().await;
+        let after_failure: serde_json::Value =
+            serde_json::from_str(&queue.get(&id).expect("get").expect("entry").error_context)
+                .expect("context");
+        assert!(after_failure["advice_review"]["telemetry_published_at"].is_null());
+        let receipt_id = after_failure["advice_review"]["receipt_id"]
+            .as_str()
+            .expect("receipt id")
+            .to_string();
+
+        regulation.tick().await;
+        regulation.tick().await;
+        let after_retry: serde_json::Value =
+            serde_json::from_str(&queue.get(&id).expect("get").expect("entry").error_context)
+                .expect("context");
+        assert_eq!(
+            after_retry["advice_review"]["receipt_id"], receipt_id,
+            "retry must preserve the logical transition identity"
+        );
+        assert!(!after_retry["advice_review"]["telemetry_published_at"].is_null());
+
+        let records = archive
+            .query_records(applied - chrono::Duration::seconds(1), None, 100)
+            .expect("records");
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.span.path == "reg.outcome.advice_review_observed")
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.span.path == "reg.outcome.loop_quality"
+                        && record.observation["advice_reviews_finalized"] == 1
+                })
+                .count(),
+            1,
+            "the retried receipt contributes to observational progress once"
         );
     }
 

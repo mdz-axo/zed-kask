@@ -146,6 +146,20 @@ struct RolloutImpactCheck {
     metric: String,
 }
 
+#[derive(Default)]
+struct LoopTelemetryState {
+    steady_fingerprint: Option<serde_json::Value>,
+    suppressed_cycles: usize,
+}
+
+struct LoopTelemetryDecision {
+    emit: bool,
+    idle_heartbeat: bool,
+    steady_state_heartbeat: bool,
+    condition_cleared: bool,
+    suppressed_cycles: usize,
+}
+
 /// The Cybernetics Loop — homeostatic self-regulation.
 ///
 /// Implements the sense→compare→compute→act regulation cycle.
@@ -199,6 +213,8 @@ pub struct CyberneticsLoop {
     submitted_rollout_checks: tokio::sync::Mutex<Vec<RolloutImpactCheck>>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
+    /// Coalesces only semantically identical persistent signal telemetry.
+    loop_telemetry_state: Mutex<LoopTelemetryState>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
     /// Fermi-inspired early-stopping pattern for cybernetic regulation.
     stagnation_detector: Arc<StagnationDetector>,
@@ -303,6 +319,7 @@ impl CyberneticsLoop {
             curator_directive_rx: None,
             submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
             loop_quality: RwLock::new(LoopMetrics::default()),
+            loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
             stagnation_detector,
             sensor_registry,
             observations: parking_lot::Mutex::new(HashMap::new()),
@@ -839,17 +856,16 @@ impl CyberneticsLoop {
         );
 
         // Emit LoopMetricsTelemetry on signal-bearing cycles. An empty cycle
-        // (no deviations, no actions, no impact reports) is a heartbeat, not
-        // a signal — emitting it every 10s floods the regulation archive and
+        // (no deviations, advisories, rollout reports, or newly published
+        // advice reviews) is a heartbeat, not a signal — emitting it every 10s floods the regulation archive and
         // the algedonic log with identical no-op observations that displace
         // useful signal. But total silence makes a converged loop
         // indistinguishable from a dead ticker, so idle cycles emit ONE
         // heartbeat span per hour (plus the first tick, so a freshly
         // restarted loop immediately announces liveness). The heartbeat
-        // carries the same all-zero payload plus `heartbeat: true`,
-        // `tick_count`, and the alert log's fill state — the zeros are the
-        // health reading, and tick_count lets a reader confirm the ticker's
-        // achieved rate.
+        // carries zero counts, unknown progress channels, `heartbeat: true`,
+        // `tick_count`, and the alert log's fill state. Tick count lets a
+        // reader confirm the ticker's achieved rate.
         const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
         let cycle_had_signal = !deviations.is_empty()
             || !actions.is_empty()

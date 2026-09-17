@@ -490,7 +490,9 @@ resolve. Conceptual QA must require an explicitly supported mechanism, relations
 distinction, purpose, framework or transferable principle; direct recall of a name,
 list, title, number or sentence paraphrase is factual. Legal notices, publication
 metadata, navigation, marketing, watermarks, isolated captions and garbled text are
-not QA material. Use only the closed skip reasons `non_substantive_passage`,
+not QA material. `non_substantive_passage` and `contaminated_or_garbled` are
+prompt-wide: every requested level must carry the same skip, even if another span
+appears usable. Use only the closed skip reasons `non_substantive_passage`,
 `contaminated_or_garbled`, or the requested level's `<level>_support_absent` reason.
 Malformed, ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
 Generated envelopes retain primary identity, candidate terms, QA type, canonical

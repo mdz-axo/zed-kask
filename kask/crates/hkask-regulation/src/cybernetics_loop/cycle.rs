@@ -2493,7 +2493,7 @@ mod tests {
             .find(|(path, _)| path == "reg.outcome.loop_quality")
             .map(|(_, observation)| observation);
         assert_eq!(
-            loop_quality.and_then(|observation| observation["actions"].as_u64()),
+            loop_quality.and_then(|observation| observation["advisories_computed"].as_u64()),
             Some(1),
             "the deduplicated policy disposition must remain visible in loop-quality telemetry"
         );
@@ -2582,10 +2582,25 @@ mod tests {
                     Some(&serde_json::json!(true)),
                     "idle span {index} must be a heartbeat"
                 );
-                assert_eq!(observation.get("actions").and_then(|v| v.as_u64()), Some(0));
                 assert_eq!(
-                    observation.get("impact_reports").and_then(|v| v.as_u64()),
+                    observation
+                        .get("advisories_computed")
+                        .and_then(|v| v.as_u64()),
                     Some(0)
+                );
+                assert_eq!(
+                    observation
+                        .get("rollout_impact_reports")
+                        .and_then(|v| v.as_u64()),
+                    Some(0)
+                );
+                assert_eq!(
+                    observation.get("rollout_progress_score"),
+                    Some(&serde_json::Value::Null)
+                );
+                assert_eq!(
+                    observation.get("advice_review_progress_score"),
+                    Some(&serde_json::Value::Null)
                 );
                 // The heartbeat carries the alert log's fill state so the
                 // cap trend is visible from any session, not just Curator
@@ -2687,5 +2702,41 @@ mod tests {
                 "signal telemetry carries deviations, never the heartbeat flag"
             );
         });
+    }
+
+    /// expect: "Identical persistent signal cycles cannot consume the algedonic read budget and hide a later novel event" [P9]
+    #[tokio::test(start_paused = true)]
+    async fn unchanged_signal_telemetry_does_not_displace_later_novel_events() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = Arc::new(
+            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
+        );
+        let since = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+
+        // After the three-tick startup grace, the unwired-model deviation is
+        // identical on every tick. More than the curator's 500-row read budget
+        // must not hide a later, informative event.
+        for _ in 0..520 {
+            regulation_loop.tick().await;
+        }
+        let novel = hkask_types::RegulationRecord::new(
+            WebID::from_persona(b"regulation"),
+            hkask_types::event::Span::from_kind(hkask_types::event::SpanKind::ToolOutcomeBreakdown),
+            hkask_types::event::CyclePhase::Act,
+            serde_json::json!({"novel_after_persistent_condition": true}),
+            0,
+        );
+        hkask_types::RegulationSink::persist(&*archive, &novel).expect("persist novel event");
+
+        let visible = archive.query_algedonic(since, 500).expect("algedonic log");
+        assert!(
+            visible
+                .iter()
+                .any(|event| { event.observation["novel_after_persistent_condition"] == true }),
+            "steady-state telemetry must leave room for a later novel event within the 500-row read budget"
+        );
     }
 }

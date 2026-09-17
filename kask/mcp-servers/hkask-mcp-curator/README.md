@@ -36,6 +36,12 @@ dot-delimited descendants. The time and namespace predicates are applied in
 SQL before the requested limit. `curator_algedonic_log` remains the separate
 act-phase, algedonic-category view.
 
+## Advice review semantics
+
+`curator_advice_mark_applied` records a confirmed intervention, not an effectiveness verdict. Its persisted `review_due_at` controls when review can finalize. Missing or stale readings finalize as `insufficient_evidence`, and every review retains `causal_attribution: "unverified"`.
+
+Final review transitions use the escalation row as a durable outbox and publish one idempotent `reg.outcome.advice_review_observed` record. Regulation telemetry keeps `advice_review_progress_score` separate from evidence-bearing `rollout_progress_score`; either is `null` when its evidence channel has no determinate measurement. `curator_advice_reviews` remains the complete read path, including reviews whose originating alerts resolved early.
+
 ## Configuration
 
 No environment variables required. The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.

@@ -461,6 +461,50 @@ fn strip_newsletter_calls_to_action(text: &str) -> (String, Vec<BoilerplateExclu
     (output, exclusions)
 }
 
+fn strip_pdf_distribution_watermarks(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    const MARKER: &str = "OceanofPDF.com";
+
+    let mut output = String::with_capacity(text.len());
+    let mut exclusions = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = text[cursor..].find(MARKER) {
+        let start = cursor + relative_start;
+        let marker_end = start + MARKER.len();
+        let remainder = &text[marker_end..];
+        let whitespace_bytes = remainder
+            .char_indices()
+            .find(|(_, character)| !character.is_whitespace())
+            .map_or(remainder.len(), |(index, _)| index);
+        let after_whitespace = &remainder[whitespace_bytes..];
+        let end = after_whitespace
+            .strip_prefix("Page ")
+            .map(|after_page| {
+                marker_end
+                    + whitespace_bytes
+                    + "Page ".len()
+                    + after_page
+                        .chars()
+                        .take_while(|character| character.is_ascii_digit())
+                        .map(char::len_utf8)
+                        .sum::<usize>()
+            })
+            .filter(|end| *end > marker_end + whitespace_bytes + "Page ".len())
+            .unwrap_or(marker_end);
+        output.push_str(&text[cursor..start]);
+        output.push(' ');
+        exclusions.push(BoilerplateExclusion {
+            reason: "distribution_watermark",
+            boundary_unit: "byte",
+            start,
+            end,
+            removed_words: text[start..end].split_whitespace().count(),
+        });
+        cursor = end;
+    }
+    output.push_str(&text[cursor..]);
+    (output, exclusions)
+}
+
 fn strip_markdown_images(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let mut output = String::with_capacity(text.len());
     let mut exclusions = Vec::new();
@@ -531,6 +575,8 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     };
     let (filtered, promotional_exclusions) = strip_newsletter_calls_to_action(&filtered);
     exclusions.extend(promotional_exclusions);
+    let (filtered, watermark_exclusions) = strip_pdf_distribution_watermarks(&filtered);
+    exclusions.extend(watermark_exclusions);
     let (filtered, image_exclusions) = strip_markdown_images(&filtered);
     exclusions.extend(image_exclusions);
     let retained_words = filtered.split_whitespace().count();
@@ -939,7 +985,20 @@ fn boilerplate_page_reason(page: &str) -> Option<&'static str> {
     }
     let char_count = trimmed.chars().count();
     let lower = trimmed.to_lowercase();
+    let word_count = trimmed.split_whitespace().count();
+    let line_count = trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
 
+    if word_count < 50
+        && line_count <= 3
+        && ["fig. ", "figure ", "table "]
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+    {
+        return Some("isolated_caption");
+    }
     if char_count < 50 {
         return Some("title_or_short_page");
     }
@@ -1159,6 +1218,30 @@ mod tests {
             promotional[0].removed_words,
             promotion.split_whitespace().count()
         );
+    }
+
+    /// expect: I can retrieve substantive page text without distribution watermarks becoming remembered evidence.
+    /// [P3] Motivating: Generative Space — retrieval context contains the work rather than a distributor marker.
+    /// [P1] Constraining: Human Agency — the removed watermark remains reviewable as a byte range.
+    /// [P2] Constraining: Cognitive Sovereignty — surrounding source prose is retained exactly.
+    /// pre: an OceanofPDF page watermark precedes substantive prose
+    /// post: the bounded marker and page number are removed while all surrounding prose remains
+    #[test]
+    fn filter_removes_bounded_pdf_distribution_watermark() {
+        let document = "OceanofPDF.com Page 160 One way or another, each loyalty leader built a foundation of stable ownership that freed management to attend to long-term value creation.";
+
+        let result = filter_boilerplate_pages_with_report(document);
+
+        assert!(!result.text.contains("OceanofPDF.com"));
+        assert!(!result.text.contains("Page 160"));
+        assert!(result.text.contains("each loyalty leader"));
+        let watermark = result
+            .exclusions
+            .iter()
+            .find(|exclusion| exclusion.reason == "distribution_watermark")
+            .expect("watermark exclusion");
+        assert_eq!(watermark.boundary_unit, "byte");
+        assert_eq!(watermark.removed_words, 3);
     }
 
     #[test]
@@ -1429,6 +1512,39 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    /// expect: I do not receive an isolated figure caption as text knowledge when its figure is unavailable.
+    /// [P3] Motivating: Generative Space — text retrieval remains grounded in substantive source passages.
+    /// [P1] Constraining: Human Agency — the caption page is reported rather than silently lost.
+    /// [P2] Constraining: Cognitive Sovereignty — neighboring prose pages remain available.
+    /// pre: a short caption-only page occurs between substantive page-delimited prose
+    /// post: the caption page is excluded and both prose pages are retained
+    #[test]
+    fn filter_excludes_isolated_caption_only_page() {
+        let before = "The algorithm compares candidate solutions by dominance and diversity. This substantive discussion explains the decision process, its assumptions, and the resulting tradeoffs for optimization practice. ".repeat(20);
+        let caption = "Fig. 6 The feasible decision variable and objective spaces for the TNK problem. This is a reprint of Fig. 3 from Deb et al. (2001).";
+        let after = "The next section evaluates convergence behavior under several benchmark conditions. It reports the observed patterns and explains how those patterns affect interpretation of the method. ".repeat(20);
+        let document =
+            [before.clone(), caption.to_string(), after.clone()].join(&FORM_FEED.to_string());
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(
+            result
+                .text
+                .contains("algorithm compares candidate solutions")
+        );
+        assert!(result.text.contains("next section evaluates convergence"));
+        assert!(!result.text.contains("Fig. 6"));
+        let exclusion = result
+            .exclusions
+            .iter()
+            .find(|exclusion| exclusion.reason == "isolated_caption")
+            .expect("caption exclusion");
+        assert_eq!(exclusion.boundary_unit, "page");
+        assert_eq!(exclusion.start, 1);
+        assert_eq!(exclusion.end, 2);
     }
 
     #[test]

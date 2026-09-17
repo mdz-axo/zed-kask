@@ -1,7 +1,7 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-09-16
+last_updated: 2026-09-17
 version: "0.40.0"
 status: "Active"
 domain: "MCP Servers"
@@ -81,7 +81,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`. Directory mode requires output. |
 | `corpus_is_complex` | PDF `path`; optional `target_pages`, `summary=false` |
 | `corpus_ocr` | `path`, optional `model` over the configured OCR model |
-| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded title/contents/index/bibliography/reference exclusions in `boilerplate_exclusion_reports`. |
+| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available |
 | `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
@@ -93,6 +93,14 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
+
+For a source-balanced QA pilot, run
+`kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`
+before `corpus_build_prompts`. The selector requires current-protocol classified
+rows, preserves complete records and canonical identities, chooses deterministic
+interior quantiles by source, refuses to overwrite output, and reports source
+coverage plus the selected `:0` count. It is a pilot scheduler, not a substitute
+for source-furniture filtering or retrieval calibration.
 
 ### Document size and containment
 

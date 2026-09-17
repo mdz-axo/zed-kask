@@ -809,11 +809,8 @@ mod tests {
     /// Pins F1 + F2 + F3: when no deviations or measurements exist
     /// (the healthy steady-state), response coverage and fidelity are 1.0,
     /// while both progress channels remain unknown.
-    ///
-    /// Before the fix, all three reported 0.0 / 0.0 / 1.0 — the operator
-    /// could not distinguish an unresponsive loop from a healthy steady state,
-    /// nor "all actions effective" (effectiveness=1) from "no
-    /// verification ran" (effectiveness=1).
+    /// Unknown progress is represented as `None`, not a numeric zero or one,
+    /// so unmeasured and measured-stagnant cycles remain distinguishable.
     #[test]
     fn from_cycle_healthy_reports_trivially_correct_metrics() {
         let metrics = LoopMetrics::from_cycle(
@@ -911,6 +908,32 @@ mod tests {
         // Response coverage and fidelity are 1.0 because no deviations.
         assert_eq!(metrics.response_coverage, 1.0);
         assert_eq!(metrics.fidelity_score, 1.0);
+    }
+
+    /// Observational advice reviews keep unknown evidence out of the numeric
+    /// denominator instead of silently treating it as no progress.
+    #[test]
+    fn advice_review_progress_preserves_insufficient_evidence_as_unknown() {
+        let receipt = |outcome| crate::AdviceReviewReceipt {
+            event_id: hkask_types::EventID::new(),
+            escalation_id: "escalation".to_string(),
+            outcome,
+            causal_attribution: crate::AdviceReviewCausalAttribution::Unverified,
+        };
+        let insufficient = receipt(crate::AdviceReviewOutcome::InsufficientEvidence);
+        let unknown_only = AdviceReviewMetrics::from_receipts(&[insufficient.clone()]);
+        assert_eq!(unknown_only.finalized, 1);
+        assert_eq!(unknown_only.insufficient_evidence, 1);
+        assert_eq!(unknown_only.progress_score, None);
+
+        let mixed = AdviceReviewMetrics::from_receipts(&[
+            receipt(crate::AdviceReviewOutcome::Improved),
+            receipt(crate::AdviceReviewOutcome::NoImprovement),
+            insufficient,
+        ]);
+        assert_eq!(mixed.finalized, 3);
+        assert_eq!(mixed.insufficient_evidence, 1);
+        assert_eq!(mixed.progress_score, Some(0.5));
     }
 
     // ── TriggerOrigin::Prompted tests (F1) ─────────────────────────────────

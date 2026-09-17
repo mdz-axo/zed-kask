@@ -505,7 +505,7 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     std::fs::write(
         &sources,
         [
-            json!({"entity_ref":"corpus:brooks:0","source":"brooks.txt","text":"Thirty"}),
+            json!({"entity_ref":"corpus:brooks:0","source":"brooks.txt","text":"The measured count is thirty. The duration of 72 hours constrains when the next step can begin."}),
             json!({"entity_ref":"corpus:other:1","source":"other.txt","text":"72 hours"}),
         ]
         .iter()
@@ -551,9 +551,12 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     assert_eq!(rows[0]["answer"], "Thirty");
     assert_eq!(
         rows[1]["verified_claims"][0]["source_reference"]["source"],
-        "other.txt"
+        "brooks.txt"
     );
-    assert_eq!(rows[1]["answer"], "The duration is 72 hours.");
+    assert_eq!(
+        rows[1]["answer"],
+        "It determines when the next step can begin."
+    );
     assert_eq!(rows[1]["fact_score"], Value::Null);
     assert_eq!(flat_report["quality_evidence"]["fact_score"], Value::Null);
     assert_eq!(flat_report["launch_authorized"], false);

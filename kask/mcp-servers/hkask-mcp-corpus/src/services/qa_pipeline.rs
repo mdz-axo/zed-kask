@@ -193,7 +193,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Return exactly {} ordered level dispositions, one per requested level. Quality overrides pair count: never manufacture a question when the primary passage is non-substantive, contaminated, garbled, or lacks support for the requested cognitive level. Evidence candidates with eN IDs are server-owned exact contiguous excerpts from primary passage p0. Context passages can clarify meaning but are not evidence. Candidate-term hints are optional and must be ignored when unsupported. A conceptual question must not be answerable by direct recall of one name, label, list, title, number, or sentence-level paraphrase. For a supported level, first select one to three evidence IDs that directly support the answer; then write a concise answer using only that evidence; then write a concise question answered by it. Emit [\"level\",\"question\",\"answer\",[\"e0\"]]. For an unsupported level, emit [\"level\",null,\"reason\",[]], where reason is exactly one of non_substantive_passage, contaminated_or_garbled, factual_support_absent, conceptual_support_absent, analyze_support_absent, evaluate_support_absent, or create_support_absent. Do not downgrade one level into another. Do not output the selection process. Return one complete compact JSON array on one line and nothing else. Evidence fields contain eN IDs only, never quote text or passage IDs. Emit valid JSON string escaping, no markdown, no canonical source or chunk identities.",
+        "{CONTENT_GUARD_INSTRUCTION}Return exactly {} ordered level dispositions, one per requested level. Quality overrides pair count: never manufacture a question when the primary passage is non-substantive, contaminated, garbled, or lacks support for the requested cognitive level. Evidence candidates with eN IDs are server-owned exact contiguous excerpts from primary passage p0. Context passages can clarify meaning but are not evidence. Candidate-term hints are optional and must be ignored when unsupported. A conceptual question must not be answerable by direct recall of one name, label, list, title, number, or sentence-level paraphrase. Contamination and non-substantive content are prompt-wide: if either applies anywhere in p0, skip every requested level with the same reason even when another span seems usable. For a supported level, first select one to three evidence IDs that directly support the answer; then write a concise answer using only that evidence; then write a concise question answered by it. Emit [\"level\",\"question\",\"answer\",[\"e0\"]]. For an unsupported level, emit [\"level\",null,\"reason\",[]], where reason is exactly one of non_substantive_passage, contaminated_or_garbled, factual_support_absent, conceptual_support_absent, analyze_support_absent, evaluate_support_absent, or create_support_absent. Do not downgrade one level into another. Do not output the selection process. Return one complete compact JSON array on one line and nothing else. Evidence fields contain eN IDs only, never quote text or passage IDs. Emit valid JSON string escaping, no markdown, no canonical source or chunk identities.",
         prompt.qa_types.len(),
     );
     Ok([
@@ -239,7 +239,8 @@ fn parse_prepared_qa_response(
         .iter()
         .map(|candidate| (candidate.local_id.as_str(), candidate))
         .collect::<HashMap<_, _>>();
-    raw.into_iter()
+    let dispositions = raw
+        .into_iter()
         .zip(&prompt.qa_types)
         .enumerate()
         .map(
@@ -305,7 +306,30 @@ fn parse_prepared_qa_response(
                 }))
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(global_reason) = dispositions.iter().find_map(|disposition| {
+        let QaLevelDisposition::Skipped { reason, .. } = disposition else {
+            return None;
+        };
+        matches!(
+            reason.as_str(),
+            "non_substantive_passage" | "contaminated_or_garbled"
+        )
+        .then_some(reason)
+    }) {
+        let all_levels_skipped_for_same_reason = dispositions.iter().all(|disposition| {
+            matches!(
+                disposition,
+                QaLevelDisposition::Skipped { reason, .. } if reason == global_reason
+            )
+        });
+        if !all_levels_skipped_for_same_reason {
+            return Err(format!(
+                "prompt-wide quality reason '{global_reason}' must skip every requested level"
+            ));
+        }
+    }
+    Ok(dispositions)
 }
 
 /// expect: Every prepared instruction is validated before any paid inference.
@@ -940,5 +964,13 @@ mod tests {
         ] {
             assert!(parse_prepared_qa_response(response, &prompt).is_err());
         }
+
+        prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
+        let mixed_global_skip = json!([
+            ["factual", "What is grounded?", "The answer.", ["e0"]],
+            ["conceptual", null, "contaminated_or_garbled", []],
+        ])
+        .to_string();
+        assert!(parse_prepared_qa_response(&mixed_global_skip, &prompt).is_err());
     }
 }

@@ -465,7 +465,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Read observed progress reviews of operator-applied advice, including resolved alerts. Reviews distinguish recovery, improvement, no improvement, and insufficient evidence; causal attribution remains unverified."
+        description = "Read observational progress reviews of operator-applied advice, including resolved alerts. Reviews remain separate from rollout impact, distinguish recovery, improvement, no improvement, and insufficient evidence, and keep causal attribution unverified."
     )]
     pub async fn curator_advice_reviews(
         &self,

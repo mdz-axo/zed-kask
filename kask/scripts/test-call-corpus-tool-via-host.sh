@@ -90,4 +90,11 @@ if kill -0 "$server_pid" 2>/dev/null; then
     echo "host call left normally exiting corpus child alive: pid=$server_pid" >&2
     exit 1
 fi
-printf '%s\n' "call corpus tool timeout/reap and normal-exit tests passed"
+
+export HKASK_QA_GENERATION_MODEL="fixture/qa"
+rm -f "$FAKE_SERVER_GRACEFUL_FILE" "$FAKE_SERVER_TERMINATED_FILE"
+"$host_call" corpus_generate_qa_batch "$tmp/arguments.json" "$tmp/qa-response.json" "$tmp/qa-server.log"
+jq -e '.id == 2 and .result.isError == false' "$tmp/qa-response.json" >/dev/null
+[[ -e "$FAKE_SERVER_GRACEFUL_FILE" ]]
+[[ ! -e "$FAKE_SERVER_TERMINATED_FILE" ]]
+printf '%s\n' "call corpus tool timeout/reap, normal-exit, and QA-routing tests passed"

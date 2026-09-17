@@ -238,6 +238,8 @@ require an explicit mechanism, relationship, distinction, purpose, framework or
 transferable principle; direct recall of a name, list, title, number or sentence
 paraphrase is factual, not conceptual. Legal notices, publication metadata,
 navigation, marketing, watermarks, isolated captions and garbled text are skipped.
+`non_substantive_passage` and `contaminated_or_garbled` are prompt-wide: every
+requested level must carry the same skip, even if another span appears usable.
 Closed skip reasons are `non_substantive_passage`, `contaminated_or_garbled`, and
 the requested level's `<level>_support_absent` reason.
 
