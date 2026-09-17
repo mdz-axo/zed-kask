@@ -180,6 +180,7 @@ fn conceptual_relation_is_supported(relation: &str) -> bool {
     matches!(
         relation,
         "mechanism"
+            | "relationship"
             | "causal_relationship"
             | "distinction"
             | "purpose"
@@ -226,7 +227,7 @@ pub(crate) fn render_disposition_plan_messages(
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Return one typed disposition plan before any QA is written. First judge the complete primary passage. Return [\"skip\",\"contaminated_or_garbled\"] when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments between prose or list entries, joins unrelated sections, or truncates a thought required for an answer. Return [\"skip\",\"non_substantive_passage\"] when the passage is only navigation, marketing, legal or publication furniture, an unfilled template, or an isolated caption. These reasons are prompt-wide. Do not reject a coherent continuation fragment or a short legible factual passage merely because it begins mid-sentence, contains notation, or lacks conceptual support. For a clean passage return [\"clean\",[[\"level\",\"generate\",relation_or_null,[\"e0\"]],[\"level\",\"skip\",\"level_support_absent\",[]]]], with exactly one ordered entry per requested level. Generated levels require one to three unique evidence IDs. Conceptual generation additionally requires exactly one relation from mechanism, causal_relationship, distinction, purpose, framework, transferable_principle. A structured set of components supports framework only when the passage states distinct component roles or interactions, so the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A condition, action, and resulting configuration supports mechanism when that chain is explicit. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
+        "{CONTENT_GUARD_INSTRUCTION}Return one typed disposition plan before any QA is written. First judge the complete primary passage. Return [\"skip\",\"contaminated_or_garbled\"] when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments between prose or list entries, joins unrelated sections, or truncates a thought required for an answer. Return [\"skip\",\"non_substantive_passage\"] when the passage is only navigation, marketing, legal or publication furniture, an unfilled template, or an isolated caption. These reasons are prompt-wide. Do not reject a coherent continuation fragment or a short legible factual passage merely because it begins mid-sentence, contains notation, or lacks conceptual support. For a clean passage return [\"clean\",[[\"level\",\"generate\",relation_or_null,[\"e0\"]],[\"level\",\"skip\",\"level_support_absent\",[]]]], with exactly one ordered entry per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; adjacent future actions, hopes, or preferences do not establish why an action is taken. A condition, action, and resulting configuration supports mechanism when that chain is explicit. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
     );
     Ok([
         ChatMessage {
@@ -413,7 +414,7 @@ pub(crate) fn render_planned_qa_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render planned QA: {error}")))?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA triples for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every triple; never emit separate arrays or any prose before, between, or after them. Each triple is [\"level\",\"question\",\"answer\"]. The question premise and every answer claim must be entailed by the supplied evidence alone. Preserve modality exactly: hope, may, likely, and possibility are not facts or purposes. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. Return compact JSON only.",
+        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA triples for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every triple; never emit separate arrays or any prose before, between, or after them. Each triple is [\"level\",\"question\",\"answer\"]. The question premise and every answer claim must be entailed by the supplied evidence alone. A factual level asks only what, which, who, when, or how many is directly stated; never turn sequence or timing into causation, reverse a condition, or imply that an action already happened. A statement that it is time to act when X does not mean X occurs when or because the action is taken. Do not ask for a complete list unless the supplied evidence contains the complete list. Preserve negation and modality exactly: hope, may, likely, and possibility are not facts or purposes. Use a why-question only when the evidence explicitly states the cause or purpose. Do not remove not, cannot, or another qualification. Do not replace a source term with a broader consequence such as viability. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. For an exemplification relationship, synthesize how the supplied examples support the passage's stated general claim; do not ask how one example's label relates to its own stated implication. Return compact JSON only.",
         planned_levels.len(),
     );
     Ok(Some([
@@ -1191,6 +1192,32 @@ mod tests {
         assert!(error.contains("needs a relation"));
     }
 
+    /// expect: Every closed conceptual relation kind is accepted and no private label is admitted.
+    #[test]
+    fn disposition_plan_uses_the_closed_conceptual_relation_vocabulary() {
+        let mut prompt = prepared();
+        prompt.qa_types = vec![QaType::Conceptual];
+        for relation in [
+            "mechanism",
+            "relationship",
+            "causal_relationship",
+            "distinction",
+            "purpose",
+            "framework",
+            "transferable_principle",
+        ] {
+            let response =
+                json!(["clean", [["conceptual", "generate", relation, ["e0"]]]]).to_string();
+            assert!(parse_disposition_plan_response(&response, &prompt).is_ok());
+        }
+        let response = json!([
+            "clean",
+            [["conceptual", "generate", "private_relation", ["e0"]]]
+        ])
+        .to_string();
+        assert!(parse_disposition_plan_response(&response, &prompt).is_err());
+    }
+
     /// expect: Planned generation can use only unique evidence identities owned by the server.
     #[test]
     fn disposition_plan_rejects_unknown_or_repeated_evidence() {
@@ -1214,8 +1241,11 @@ mod tests {
             .expect("render")
             .expect("writer required");
         let system = &messages[0].content;
-        assert!(system.contains("Preserve modality exactly"));
+        assert!(system.contains("does not mean X occurs"));
+        assert!(system.contains("factual level asks only"));
+        assert!(system.contains("Preserve negation and modality exactly"));
         assert!(system.contains("normative should"));
+        assert!(system.contains("why-question only when"));
         assert!(system.contains("causal mechanism"));
         assert!(system.contains("do not select new evidence"));
         assert!(system.contains("one outer JSON array"));
@@ -1236,7 +1266,10 @@ mod tests {
         assert!(rendered.contains("conceptual_support_absent"));
         assert!(rendered.contains("contaminated_or_garbled"));
         assert!(rendered.contains("only retrieve a name"));
-        assert!(rendered.contains("components and their roles"));
+        assert!(rendered.contains("components to distinct roles or interactions"));
+        assert!(rendered.contains("entry count that constrains a formula"));
+        assert!(rendered.contains("result language supports a relationship"));
+        assert!(rendered.contains("hopes, or preferences do not establish why"));
         assert!(rendered.contains("condition, action, and resulting configuration"));
         assert!(!rendered.contains("Generate exactly 2 source-grounded QA pairs"));
     }

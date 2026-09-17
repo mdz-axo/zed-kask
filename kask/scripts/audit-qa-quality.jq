@@ -21,6 +21,14 @@ def source_ok: type == "object" and (.entity_ref | nonblank)
   and (.source | nonblank) and (.text | nonblank);
 def citation_ok: type == "object" and (keys | sort) == ["chunk_ref","quote","source"]
   and (.chunk_ref | nonblank) and (.source | nonblank) and (.quote | nonblank);
+def generation_protocol_ok($r):
+  ($r.provenance | type == "object")
+  and ($r.provenance.prompt_id == $r.prompt_id)
+  and ($r.provenance.source_chunk_ref == $r.chunk_ref)
+  and ($r.provenance.prepared_prompt_protocol == "prepared-qa-local-evidence-v1")
+  and (($r.provenance.prompt_protocol == "prepared-qa-quality-gated-v3")
+    or ($r.provenance.prompt_protocol == "prepared-qa-staged-quality-v4"
+      and $r.provenance.disposition_plan_protocol == "prepared-qa-disposition-plan-v1"));
 def identify($index; $ref):
   (if $ref.chunk_ref | nonblank then ($index[$ref.chunk_ref] // []) else [] end) as $matches
   | if ($ref.chunk_ref | nonblank | not) or ($ref.source | nonblank | not) then "missing_source_metadata"
@@ -53,10 +61,7 @@ def audit_row($index):
      and (($r.reason == "non_substantive_passage")
        or ($r.reason == "contaminated_or_garbled")
        or ($r.reason == expected_skip_reason($r.qa_type)))
-     and ($r.provenance | type == "object")
-     and ($r.provenance.prompt_protocol == "prepared-qa-quality-gated-v3")
-     and ($r.provenance.prompt_id == $r.prompt_id)
-     and ($r.provenance.source_chunk_ref == $r.chunk_ref)
+     and generation_protocol_ok($r)
      and ($source_state == "identified")) as $skip_ok
   | (($b.instruction | nonblank) and ($out | nonblank)) as $shape_ok
   | ("row-\($raw.line)") as $id
@@ -100,6 +105,7 @@ def audit_row($index):
        if $source_state != "identified" then $source_state else empty end
      else
        if ($shape_ok|not) then "invalid_qa_shape" else empty end,
+       if $generated and (generation_protocol_ok($r)|not) then "invalid_generation_protocol" else empty end,
        if ($b.evidence_quotes | type) != "array" then "missing_or_invalid_evidence_metadata" else empty end,
        if $source_state != "identified" then $source_state else empty end,
        if ($quotes|length) == 0 then "zero_citations" else empty end,

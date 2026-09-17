@@ -10,10 +10,11 @@ AUDIT="$SCRIPT_DIR/audit-qa-quality.sh"
 passed=0
 jq -nc '{entity_ref:"chunk:a",source:"book-a",text:"Revenue rose from ten to twelve units. Exact sources preserve meaningful evidence for every reader."},
         {entity_ref:"chunk:b",source:"book-b",text:"Costs fell from nine to seven units."}' > "$WORK/chunks.jsonl"
-jq -nc '{chunk_ref:"chunk:a",source:"book-a",qa_type:"factual",
+jq -nc '{prompt_id:"qa-base",chunk_ref:"chunk:a",source:"book-a",qa_type:"factual",
          response:{instruction:"What happened to revenue?",
                    output:([{chunk_ref:"chunk:a",source:"book-a",quote:"Revenue rose from ten to twelve units."}]|tojson),
-                   evidence_quotes:[{chunk_ref:"chunk:a",source:"book-a",quote:"Revenue rose from ten to twelve units."}]}}' > "$WORK/base.jsonl"
+                   evidence_quotes:[{chunk_ref:"chunk:a",source:"book-a",quote:"Revenue rose from ten to twelve units."}]},
+         provenance:{prompt_protocol:"prepared-qa-quality-gated-v3",prepared_prompt_protocol:"prepared-qa-local-evidence-v1",prompt_id:"qa-base",source_chunk_ref:"chunk:a"}}' > "$WORK/base.jsonl"
 
 check() {
     local name=$1 expected=$2 input=$3 chunks=$4 assertion=$5 status=0
@@ -41,7 +42,7 @@ check() {
 # expect: A valid quality-gated skip is a terminal non-QA disposition, not an invalid QA shape.
 jq -nc '{prompt_id:"qa-skip",chunk_ref:"chunk:a",source:"book-a",qa_type:"conceptual",
          status:"skipped",reason:"conceptual_support_absent",
-         provenance:{prompt_protocol:"prepared-qa-quality-gated-v3",prompt_id:"qa-skip",source_chunk_ref:"chunk:a"}}' \
+         provenance:{prompt_protocol:"prepared-qa-quality-gated-v3",prepared_prompt_protocol:"prepared-qa-local-evidence-v1",prompt_id:"qa-skip",source_chunk_ref:"chunk:a"}}' \
     > "$WORK/skip.jsonl"
 cat "$WORK/base.jsonl" "$WORK/skip.jsonl" > "$WORK/mixed.jsonl"
 check 'valid quality-gated skip reconciles outside QA metrics' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
@@ -54,6 +55,13 @@ check 'valid staged-v4 skip requires disposition-plan provenance' 0 "$WORK/mixed
 jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'unknown staged skip protocol remains invalid' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v4" | .provenance.disposition_plan_protocol="prepared-qa-disposition-plan-v1"' \
+    "$WORK/base.jsonl" > "$WORK/case.jsonl"
+check 'valid staged-v4 QA requires disposition-plan provenance' 0 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
+check 'unknown staged QA protocol is visible' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_generation_protocol")!=null)'
 jq -c '.reason="unsupported"' "$WORK/skip.jsonl" > "$WORK/case.jsonl"
 check 'malformed quality skip remains an invalid shape' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
@@ -141,7 +149,7 @@ check 'mixed verified and rejected citations obey all four weights' 1 "$WORK/cas
 mutate '.response.output="Unverified ordinary narrative." | .response.narrative_fields=[] | .response.provenance="tool_verified"'
 check 'caller cannot waive narrative check or elevate synthesis' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.rows[0].narrative_check.status=="unperformed" and .rows[0].verified_claims[-1].provenance=="model_inference" and .rows[0].fact_score_breakdown.sar==null and .rows[0].fact_score_breakdown.hfr==null'
-mutate '.chunk_ref="chunk:b" | .source="book-b" | .response.evidence_quotes=[{chunk_ref:"chunk:b",source:"book-b",quote:"Costs fell from nine to seven units."}] | .response.output=(.response.evidence_quotes|tojson)'
+mutate '.chunk_ref="chunk:b" | .source="book-b" | .provenance.source_chunk_ref="chunk:b" | .response.evidence_quotes=[{chunk_ref:"chunk:b",source:"book-b",quote:"Costs fell from nine to seven units."}] | .response.output=(.response.evidence_quotes|tojson)'
 cat "$WORK/base.jsonl" "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'source diversity measures both identified books' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.quality_evidence.source_diversity.identified_sources==2 and .quality_evidence.source_diversity.coverage==1'

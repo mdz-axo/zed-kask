@@ -229,13 +229,17 @@ impl QaBatchService {
                         &crate::extract_json_from_response(&planning_response.text),
                         &worker_prompt,
                     );
-                    if plan.is_err() {
+                    if let Err(error) = &plan {
                         prior_responses.push(response_metadata(&planning_response));
+                        let mut correction_messages = planning_messages.clone();
+                        correction_messages[0].content.push_str(&format!(
+                            " Your previous response failed the typed disposition schema: {error}. Return one corrected response only."
+                        ));
                         planning_response = match infer_with_retry(
                             &router,
                             &limiter,
                             &selected_model,
-                            &planning_messages,
+                            &correction_messages,
                             &prompt_id,
                             "QA disposition schema correction",
                         )
@@ -298,13 +302,17 @@ impl QaBatchService {
                         &plan,
                         Some(&crate::extract_json_from_response(&writer_response.text)),
                     );
-                    if completed.is_err() {
+                    if let Err(error) = &completed {
                         prior_responses.push(response_metadata(&writer_response));
+                        let mut correction_messages = writer_messages.clone();
+                        correction_messages[0].content.push_str(&format!(
+                            " Your previous response failed the typed writer schema: {error}. Return one corrected outer array only."
+                        ));
                         writer_response = match infer_with_retry(
                             &router,
                             &limiter,
                             &selected_model,
-                            &writer_messages,
+                            &correction_messages,
                             &prompt_id,
                             "QA writer schema correction",
                         )
@@ -434,6 +442,13 @@ mod tests {
             assert!(tools.is_none());
             let mode = self.mode;
             let is_planning = messages[0].content.contains("disposition plan");
+            if matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 2 {
+                assert!(
+                    messages[0]
+                        .content
+                        .contains("failed the typed writer schema")
+                );
+            }
             Box::pin(async move {
                 if matches!(mode, Mode::Pending) {
                     return std::future::pending().await;

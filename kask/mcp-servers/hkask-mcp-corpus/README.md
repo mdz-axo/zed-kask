@@ -231,8 +231,8 @@ disposition planner sees the complete guarded primary passage and evidence
 candidates. It either returns one prompt-wide bad-passage skip or one ordered plan
 per requested level. A generated level fixes one to three evidence IDs before any
 question or answer is written; conceptual generation also fixes one closed relation
-kind (`mechanism`, `causal_relationship`, `distinction`, `purpose`, `framework`, or
-`transferable_principle`). An unsupported level records its canonical
+kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
+`framework`, or `transferable_principle`). An unsupported level records its canonical
 `<level>_support_absent` reason.
 
 The second inference receives only planned generated levels and their selected
