@@ -71,10 +71,10 @@ hkask_mcp_server::mcp_server!(
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
         /// Replay protection for `kanban_goal_create` — the same durable
-        /// store as task creates. Goals persist until resolved (operator
-        /// ruling 2026-09-09, superseding the 2026-08-29 ephemerality
-        /// ruling), so a replayed create returns a live goal's id, not a
-        /// ghost pointer whose next `kanban_goal_judge` fails NotFound.
+        /// store as task creates. Goals persist through resolution until
+        /// curator-memory acknowledgment (operator ruling 2026-09-16), so a
+        /// replayed create returns a live goal's id, not a ghost pointer whose
+        /// next `kanban_goal_judge` fails NotFound.
         pub goal_idempotency: Arc<idempotency::IdempotencyStore>,
     }
 );
@@ -1904,10 +1904,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                // Goals persist until resolved (operator ruling 2026-09-09,
-                // superseding the 2026-08-29 ephemerality ruling), so their
-                // replay protection shares the durable store — a replayed
-                // create returns a live goal's id.
+                // Goals persist through resolution until curator-memory
+                // acknowledgment (operator ruling 2026-09-16), so their replay
+                // protection shares the durable store — a replayed create
+                // returns a live goal's id.
                 let idempotency = Arc::new(idempotency);
                 let goal_idempotency = Arc::clone(&idempotency);
 

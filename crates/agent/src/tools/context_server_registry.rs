@@ -808,8 +808,13 @@ impl AnyAgentTool for ContextServerTool {
             // durable record in the escalation context; this fires the live
             // `reg.skill.<id>.operator_feedback` span the metacognition
             // drift consumer reads.
-            if let Some(skill_id) = advice_apply_feedback_skill(&tool_name, &result) {
-                crate::record_operator_feedback(&skill_id, true, None);
+            if let Some(skill_id) = advice_apply_feedback_skill(&tool_name, &result)
+                && let Err(error) = crate::record_operator_feedback(&skill_id, true, None)
+            {
+                log::warn!(
+                    "Applied curator advice for skill {skill_id}, but durable operator-feedback \
+                     recording failed: {error}"
+                );
             }
             result
         })

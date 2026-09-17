@@ -74,7 +74,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT execute refinement actions — it only recommends.
 - Ground every claim in the raw signal data. Do not fabricate alerts, escalations, or skill issues that are not present in the inputs.
 - If a signal channel returned an error or empty result, note it in the briefing — do not silently omit it.
-- Skill feedback spans (outcome, operator_feedback, convergence) are recorded to the in-memory RegulationLedger (the outcome and operator_feedback writers are both wired — the direct `record_skill_feedback` tool and the advice-apply bridge), but the ledger is not exposed for reading via MCP. The skill uses `curator_consult` as a proxy signal (skill-use issue reports are persisted to the curator's memory).
+- Skill feedback spans feed the bounded RegulationLedger working view, which is not exposed directly via MCP. Operator-feedback observations from both `record_skill_feedback` and the advice-apply bridge are first persisted to the curator's RegulationArchive and rehydrated after editor restart; skill outcomes and convergence remain process-local. The skill uses `curator_consult` as a proxy signal for persisted skill-use issue reports.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Design References

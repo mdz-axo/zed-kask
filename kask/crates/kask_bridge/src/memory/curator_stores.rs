@@ -10,6 +10,8 @@
 
 use hkask_memory::{MemoryConsolidator, MemoryStore};
 use hkask_storage::{EmbeddingStore, HMemStore, open_or_repair};
+use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink, Span, SpanNamespace};
+use hkask_types::{InfrastructureError, WebID};
 use std::sync::{Arc, RwLock};
 
 use super::open_regulation_archive;
@@ -39,6 +41,85 @@ pub fn open_curator_regulation_archive(
 ) -> Option<Arc<hkask_storage::RegulationArchive>> {
     open_regulation_archive(&curator_db_path(), passphrase, "curator")
 }
+
+/// Persist one operator-feedback observation before its recording surface
+/// reports success. The archive is authoritative; the RegulationLedger is a
+/// bounded working view hydrated from these records after restart.
+pub fn persist_operator_feedback(
+    archive: &hkask_storage::RegulationArchive,
+    skill_id: &str,
+    payload: serde_json::Value,
+) -> Result<(), InfrastructureError> {
+    if skill_id.trim().is_empty() {
+        return Err(InfrastructureError::Serialization(
+            "operator feedback skill_id must not be empty".to_string(),
+        ));
+    }
+    let namespace = SpanNamespace::new("reg.skill").ok_or_else(|| {
+        InfrastructureError::Serialization("reg.skill namespace is not registered".to_string())
+    })?;
+    let event = RegulationRecord::new(
+        WebID::from_persona(b"curator"),
+        Span::new(namespace, &format!("{skill_id}.operator_feedback")),
+        CyclePhase::Sense,
+        payload,
+        0,
+    );
+    archive.persist(&event)
+}
+
+/// Load the durable operator-feedback history in chronological order.
+/// Malformed paths are surfaced and excluded rather than converted into a
+/// fabricated skill identity.
+pub fn load_operator_feedback(
+    archive: &hkask_storage::RegulationArchive,
+) -> Result<Vec<(String, serde_json::Value)>, InfrastructureError> {
+    let mut feedback = Vec::new();
+    for event in archive.query_operator_feedback()? {
+        let Some(skill_id) = event
+            .span
+            .path
+            .strip_prefix("reg.skill.")
+            .and_then(|path| path.strip_suffix(".operator_feedback"))
+            .filter(|skill_id| !skill_id.is_empty())
+        else {
+            tracing::warn!(
+                target: "reg.storage",
+                span_path = %event.span.path,
+                "Ignoring malformed durable operator-feedback span path"
+            );
+            continue;
+        };
+        feedback.push((skill_id.to_string(), event.observation));
+    }
+    Ok(feedback)
+}
+
+/// Rebuild the bounded RegulationLedger working view from durable feedback.
+/// Invalid payloads remain archived for diagnosis but never become fabricated
+/// rejection observations in drift sensing.
+pub async fn hydrate_operator_feedback(
+    archive: &hkask_storage::RegulationArchive,
+    ledger: &hkask_regulation::RegulationLedger,
+) -> Result<usize, InfrastructureError> {
+    let mut restored = 0usize;
+    for (skill_id, payload) in load_operator_feedback(archive)? {
+        if hkask_regulation::OperatorFeedbackObservation::from_payload(&payload).is_none() {
+            tracing::warn!(
+                target: "reg.storage",
+                skill_id = %skill_id,
+                "Ignoring malformed durable operator-feedback payload"
+            );
+            continue;
+        }
+        ledger
+            .record_skill_span(&skill_id, "operator_feedback", payload)
+            .await;
+        restored += 1;
+    }
+    Ok(restored)
+}
+
 /// The curator's sovereign store, with self-healing open.
 ///
 /// One store holds all of the curator's h_mems — the `HMemOntology` blob
@@ -299,6 +380,37 @@ mod tests {
             store.memory_life_days(),
             30.0,
             "the configured decay constant must reach the store that actually decays"
+        );
+    }
+
+    #[tokio::test]
+    async fn operator_feedback_survives_archive_restart() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = hkask_storage::RegulationArchive::from_driver(driver.clone())
+            .expect("regulation archive");
+        let payload = serde_json::json!({"accepted": false, "note": "too broad"});
+
+        persist_operator_feedback(&archive, "task-breakdown", payload.clone())
+            .expect("feedback must be durable before acknowledgment");
+        drop(archive);
+
+        let restarted =
+            hkask_storage::RegulationArchive::from_driver(driver).expect("restarted archive");
+        assert_eq!(
+            load_operator_feedback(&restarted).expect("load durable feedback"),
+            vec![("task-breakdown".to_string(), payload)]
+        );
+
+        let ledger = hkask_regulation::RegulationLedger::with_threshold(1);
+        assert_eq!(
+            hydrate_operator_feedback(&restarted, &ledger)
+                .await
+                .expect("hydrate durable feedback"),
+            1
+        );
+        assert_eq!(
+            ledger.skill_ids_with_feedback("operator_feedback").await,
+            vec!["task-breakdown".to_string()]
         );
     }
 }

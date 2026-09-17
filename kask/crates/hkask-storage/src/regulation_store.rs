@@ -348,6 +348,26 @@ impl RegulationArchive {
         })
         .map_err(|e| InfrastructureError::database(e.to_string()))
     }
+
+    /// Load durable operator-feedback observations in chronological order.
+    ///
+    /// The caller rebuilds its bounded working view from these records after
+    /// restart. Archive retention remains the durable history bound; the
+    /// working `SkillSpanStore` applies its configured per-skill cap.
+    pub fn query_operator_feedback(&self) -> Result<Vec<RegulationRecord>, InfrastructureError> {
+        query_map(
+            &*self.driver,
+            "SELECT id, timestamp, observer_webid, span_category, span_path, phase, \
+             observation, regulation, outcome, recursion_depth, parent_event, visibility \
+             FROM reg_records \
+             WHERE span_category = 'skill' \
+               AND span_path LIKE 'reg.skill.%.operator_feedback' \
+             ORDER BY timestamp ASC",
+            &[],
+            |row| row_to_regulation_record(row).map_err(|e| db_error(e.to_string())),
+        )
+        .map_err(|e| InfrastructureError::database(e.to_string()))
+    }
 }
 
 /// Small helper to map string errors to DbError.

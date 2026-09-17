@@ -4495,11 +4495,13 @@ pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) 
 /// task-breakdown: "overridden tasks, rejection reasons, corrected_fields")
 /// and the advice-apply bridge (the operator confirming application of a
 /// skill's recommendation — lora-training: "the operator reacts to a
-/// recommendation"). The spans land in the shared `RegulationLedger` as
-/// `reg.skill.<id>.operator_feedback`, which the metacognition loop's
-/// drift sensing trends ("declining operator acceptance" — outputs that
+/// recommendation"). Production persists the spans in the curator's
+/// `RegulationArchive`, then feeds the shared `RegulationLedger` working view
+/// as `reg.skill.<id>.operator_feedback`, which the metacognition loop's drift
+/// sensing trends ("declining operator acceptance" — outputs that
 /// are technically successful but increasingly useless).
-pub type OperatorFeedbackRecorder = Arc<dyn Fn(&str, bool, Option<&str>) + Send + Sync>;
+pub type OperatorFeedbackRecorder =
+    Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
 
 /// Global hook for operator skill feedback. Wired in `main.rs` to a closure
 /// that stores each reaction as a `reg.skill.<id>.operator_feedback` span
@@ -4513,20 +4515,22 @@ pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
     OPERATOR_FEEDBACK_RECORDER.set(Some(recorder));
 }
 
-/// Record the operator's reaction to a skill's output. Best-effort by
-/// design: when no recorder is wired (tests, non-kask embedders) the
-/// feedback is dropped with a debug log — telemetry must never fail a
-/// tool call. The absent-input state stays explicitly unobserved: no
-/// recorder means no span, never a fabricated disposition.
-pub fn record_operator_feedback(skill_id: &str, accepted: bool, note: Option<&str>) {
-    let recorder = OPERATOR_FEEDBACK_RECORDER.get();
-    match recorder {
-        Some(record) => record(skill_id, accepted, note),
-        None => log::debug!(
-            "record_operator_feedback: recorder not wired — feedback for \
-             {skill_id} not recorded"
-        ),
-    }
+/// Record the operator's reaction to a skill's output.
+///
+/// A successful receipt means the configured recorder durably accepted the
+/// observation. An unwired or failed recorder is surfaced so the direct
+/// feedback tool cannot claim that restart-safe history exists when it does
+/// not. Callers whose primary action already committed may log this secondary
+/// failure while preserving that action's result.
+pub fn record_operator_feedback(
+    skill_id: &str,
+    accepted: bool,
+    note: Option<&str>,
+) -> Result<(), String> {
+    let recorder = OPERATOR_FEEDBACK_RECORDER.get().ok_or_else(|| {
+        format!("operator feedback persistence is not available for skill {skill_id}")
+    })?;
+    recorder(skill_id, accepted, note)
 }
 
 /// Collect successfully-loaded global and project-local skills into a
@@ -4920,10 +4924,9 @@ mod internal_tests {
         set_skill_outcome_recorder(std::sync::Arc::new(|_, _, _| {}));
     }
 
-    /// T15: the operator-feedback recorder records, is replaceable, and —
-    /// unwired — drops with a debug log, never a panic (the absent-input
-    /// state stays explicitly unobserved). Same process-global slot
-    /// discipline as the outcome recorder test above.
+    /// T15: the operator-feedback recorder records, returns an acceptance
+    /// receipt, and is replaceable. Same process-global slot discipline as the
+    /// outcome recorder test above.
     #[test]
     fn operator_feedback_recorder_records_and_is_replaceable() {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -4932,13 +4935,15 @@ mod internal_tests {
             if let Ok(mut entries) = captured.lock() {
                 entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));
             }
+            Ok(())
         }));
-        record_operator_feedback("lora-training", true, None);
+        record_operator_feedback("lora-training", true, None).expect("feedback accepted");
         record_operator_feedback(
             "task-breakdown",
             false,
             Some("overridden: slice 3 too coarse"),
-        );
+        )
+        .expect("feedback accepted");
         let relevant: Vec<(String, bool, Option<String>)> = {
             let recorded = recorded.lock().expect("recorded lock");
             recorded
@@ -4967,8 +4972,10 @@ mod internal_tests {
             if let Ok(mut called) = flag.lock() {
                 *called = true;
             }
+            Ok(())
         }));
-        record_operator_feedback("media-workflow", false, Some("wrong codec"));
+        record_operator_feedback("media-workflow", false, Some("wrong codec"))
+            .expect("replacement accepted feedback");
         assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
         let relevant_after: Vec<_> = {
             let recorded = recorded.lock().expect("recorded lock");
@@ -4987,7 +4994,7 @@ mod internal_tests {
         );
 
         // Leave the global slot inert for subsequent parallel tests.
-        set_operator_feedback_recorder(std::sync::Arc::new(|_, _, _| {}));
+        set_operator_feedback_recorder(std::sync::Arc::new(|_, _, _| Ok(())));
     }
 
     /// An injector that recalls nothing. Wiring it must be observationally

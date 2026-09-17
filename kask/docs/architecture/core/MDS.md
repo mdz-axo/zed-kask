@@ -463,7 +463,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.41.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) loaded into the editor process and 11 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist until resolved. The SpecStore surface in §4 is not implemented.*
+*MDS v0.41.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) loaded into the editor process and 11 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist through resolution until curator-memory acknowledgment. The SpecStore surface in §4 is not implemented.*
 
 ---
 

@@ -988,41 +988,6 @@ fn main() {
             ));
         }
 
-        // zed-kask: T15 — the operator-feedback recorder wiring. Both
-        // channels fire this hook: the explicit `record_skill_feedback`
-        // tool (channel b — the operator's direct rating) and the
-        // advice-apply bridge (channel a — the operator confirming
-        // application of a skill's recommendation, fired by the
-        // editor-side tool-call observer). The spans land in the shared
-        // RegulationLedger as `reg.skill.<id>.operator_feedback`, which
-        // the metacognition loop's drift sensing trends ("declining
-        // operator acceptance"). Until this wiring the operator_feedback
-        // reader shipped with no writer — that drift half was permanently
-        // empty (the T15 recovery finding).
-        {
-            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
-            let ledger_for_operator_feedback = regulation_ledger.clone();
-            agent::set_operator_feedback_recorder(std::sync::Arc::new(
-                move |skill_id, accepted, note| {
-                    let skill_id = skill_id.to_string();
-                    let note = note.map(str::to_string);
-                    // Clone per call — the closure is `Fn` (invoked for every
-                    // feedback event), so it cannot move the captured ledger
-                    // into the spawned future.
-                    let ledger = ledger_for_operator_feedback.clone();
-                    tokio_handle.spawn(async move {
-                        let ledger = ledger.read().await;
-                        let payload = hkask_regulation::OperatorFeedbackObservation::new(
-                            accepted, note,
-                        )
-                        .into_payload();
-                        ledger
-                            .record_skill_span(&skill_id, "operator_feedback", payload)
-                            .await;
-                    });
-                },
-            ));
-        }
 
         // zed-kask: single spawn authority (I1, 2026-08-29). The governed
         // McpRuntime is the agent's kask tool source: kask servers are no
@@ -1099,7 +1064,8 @@ fn main() {
         // status bar (wired later in the deferred task's model-dependent
         // wiring block).
         let panel_regulation_ledger = regulation_ledger.clone();
-        let _regulation_ledger_for_model_task = regulation_ledger.clone();
+        let regulation_ledger_for_deferred = regulation_ledger.clone();
+        let operator_feedback_runtime = gpui_tokio::Tokio::handle(&*cx);
         // The alert sink forwards critical alerts to a GPUI foreground task
         // that dispatches them as toasts, so the user is notified even when
         // the Kask panel is closed. The channel bridges the background tokio
@@ -1664,6 +1630,68 @@ fn main() {
                                     let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
                                     loop_guard.set_event_sink(sink);
                                 }
+
+                                // zed-kask: operator-feedback history is durable in the
+                                // RegulationArchive and rehydrates the bounded ledger view
+                                // before new ratings are accepted. The direct feedback tool
+                                // receives success only after `persist_operator_feedback`
+                                // commits its row; the live ledger update may follow
+                                // asynchronously because restart recovery reads the archive.
+                                {
+                                    let ledger = regulation_ledger_for_deferred.read().await;
+                                    match kask_bridge::hydrate_operator_feedback(&archive, &ledger)
+                                        .await
+                                    {
+                                        Ok(restored) => tracing::info!(
+                                            target: "reg.storage",
+                                            restored,
+                                            "Hydrated operator-feedback history from RegulationArchive"
+                                        ),
+                                        Err(error) => tracing::warn!(
+                                            target: "reg.storage",
+                                            %error,
+                                            "Failed to hydrate operator-feedback history from RegulationArchive"
+                                        ),
+                                    }
+                                }
+
+                                let archive_for_feedback = archive.clone();
+                                let ledger_for_feedback = regulation_ledger_for_deferred.clone();
+                                let feedback_runtime = operator_feedback_runtime.clone();
+                                agent::set_operator_feedback_recorder(std::sync::Arc::new(
+                                    move |skill_id, accepted, note| {
+                                        let payload = hkask_regulation::OperatorFeedbackObservation::new(
+                                            accepted,
+                                            note.map(str::to_string),
+                                        )
+                                        .into_payload();
+                                        kask_bridge::persist_operator_feedback(
+                                            &archive_for_feedback,
+                                            skill_id,
+                                            payload.clone(),
+                                        )
+                                        .map_err(|error| {
+                                            format!(
+                                                "failed to persist operator feedback for {skill_id}: {error}"
+                                            )
+                                        })?;
+
+                                        let skill_id = skill_id.to_string();
+                                        let ledger = ledger_for_feedback.clone();
+                                        feedback_runtime.spawn(async move {
+                                            let ledger = ledger.read().await;
+                                            ledger
+                                                .record_skill_span(
+                                                    &skill_id,
+                                                    "operator_feedback",
+                                                    payload,
+                                                )
+                                                .await;
+                                        });
+                                        Ok(())
+                                    },
+                                ));
+
                                 // zed-kask: maintenance tick — run WAL checkpoint +
                                 // incremental_vacuum + reg_records retention on a slow
                                 // cadence. Prevents WAL checkpoint starvation under

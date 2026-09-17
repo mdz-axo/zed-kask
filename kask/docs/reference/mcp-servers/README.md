@@ -317,7 +317,7 @@ verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl
 status: VERIFIED
 -->
 
-The Kata-Kanban server persists boards, tasks, and unresolved functional goals as RDF h_mems in the same DB-backed `HMemStore` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60`; `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,315-321`). Goals survive server restarts until `kanban_goal_score` records the resolution and prunes the active row; the turn-ingestion path retains the durable outcome record (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:271-301`). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per task by `kanban_task_kata_prompt`. `TaskStatus` is defined in `kask/crates/hkask-types/src/kanban_status.rs:24`.
+The Kata-Kanban server persists boards, tasks, and functional goals as RDF h_mems in the same DB-backed `HMemStore` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60`; `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,271-324`). `kanban_goal_score` records the resolution but retains the row across restarts as a retryable outbox entry. After the production turn-ingestion path stores the scored outcome in curator memory, `kanban_goal_memory_acknowledge` prunes the retained row; failed ingestion or acknowledgment leaves it retryable (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:242-324`). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per task by `kanban_task_kata_prompt`. `TaskStatus` is defined in `kask/crates/hkask-types/src/kanban_status.rs:24`.
 
 ## Footnotes
 

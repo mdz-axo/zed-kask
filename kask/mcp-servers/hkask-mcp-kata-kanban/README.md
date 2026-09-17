@@ -2,7 +2,7 @@
 
 Kata-Kanban workflow coordination MCP server — task management with WIP limits, authenticated self-claim, kata prompts, and Regulation observability.
 
-## Tools (18)
+## Tools
 
 ### Board management
 | Tool | Description |
@@ -28,25 +28,24 @@ Native goal-setting and verification for the four-moves interaction loop
 kata target condition: the user's functional requirement in the user's
 words, with observable criteria and a Brier-scored intake prediction.
 
-**Goals persist until resolved** (operator ruling 2026-09-09, superseding
-the 2026-08-29 ephemerality ruling): the goal store is the same DB-backed
-HMemStore that persists boards and tasks, so the Brier closure
-(`kanban_goal_score`) survives server restarts. Resolution is the prune
-point — a scored goal's row is deleted, so resolved goals leave no
-persistent clutter. The curator's memory remains the durable outcome
-record: every `kanban_goal_*` tool result in a turn is written as a
-first-class goal h_mem by the bridge's turn-ingestion path
-(`kask_bridge/src/memory/ingest.rs`), so therapy / algedonic-review find
-goal entities, not prose archaeology.
-Curator-involved goals additionally get a curator-perspective Private
-h_mem (the curator's own memory); zed-agent goals get a shared copy only.
+**Goals persist through resolution until curator-memory acknowledgment**
+(operator ruling 2026-09-16, extending the 2026-09-09 persistence ruling):
+the goal store is the same DB-backed HMemStore that persists boards and tasks,
+so the Brier closure (`kanban_goal_score`) survives server restarts as a
+retryable outbox entry. The production turn-ingestion path stores the score as
+a first-class goal h_mem in curator memory, then invokes
+`kanban_goal_memory_acknowledge` to prune the retained row. Failed ingestion or
+acknowledgment leaves the resolved goal retryable; conflicting outcomes are
+rejected. Every goal event uses the same shared `curator:goal:{goal_id}` copy;
+there is no curator-perspective duplicate.
 
 | Tool | Description |
 |------|-------------|
 | `kanban_goal_create` | Create a functional goal with 1–4 observable criteria and an optional intake prediction |
 | `kanban_goal_judge` | Record a done/continue/blocked verdict with confidence and a result for every criterion (history preserved) |
-| `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; `brier: null` + note when no prediction was recorded |
-| `kanban_goal_list` | List the caller's goals with latest verdicts and resolution state, newest first |
+| `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; retain the resolved row until memory acknowledgment |
+| `kanban_goal_memory_acknowledge` | Internal lifecycle operation: confirm the scored outcome reached curator memory, then prune the retained row |
+| `kanban_goal_list` | List the caller's goals, including resolved goals awaiting memory acknowledgment, newest first |
 
 ### Communication
 | Tool | Description |
@@ -81,7 +80,7 @@ h_mem (the curator's own memory); zed-agent goals get a shared copy only.
 
 ## Regulation Spans
 
-All tools emit `reg.tool.*` spans through the MCP framework. Kanban board/task operations additionally emit `reg.kanban` spans from `KanbanService`. Kata operations emit `reg.kata` spans when routed through `KataEngine`.
+All tools emit `reg.tool.*` spans through the MCP framework. Kanban service operations additionally emit `reg.kanban` spans from `KanbanService`.
 
 ## Quick Start
 

@@ -1230,6 +1230,11 @@ async fn retrieval_invalid_vectors_do_not_publish() {
         assert_eq!(summary["total"], 2);
         assert_eq!(summary["embedded"], 0);
         assert_eq!(summary["failed"], 2);
+        assert_eq!(summary["failed_entity_refs_complete"], true);
+        assert_eq!(
+            summary["failed_entity_refs"],
+            json!(["corpus:test:1", "corpus:test:2"])
+        );
         let store = crate::helpers::open_memory_store(
             &directory.path().join("memory.db").to_string_lossy(),
             PASSPHRASE,
@@ -1271,6 +1276,8 @@ async fn retrieval_inflight_embed_is_cancelled() {
         let result = content(Ok(result.0));
         assert_eq!(result["embedded"], 0);
         assert_eq!(result["failed"], 1);
+        assert_eq!(result["failed_entity_refs_complete"], true);
+        assert_eq!(result["failed_entity_refs"], json!(["corpus:test:1"]));
         assert_eq!(result["cancelled"], 1);
         assert!(
             result["note"]

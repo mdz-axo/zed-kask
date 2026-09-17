@@ -498,11 +498,11 @@ async fn create_goal(
 
 /// Goal replay protection survives a restart, and the replayed goal is live.
 ///
-/// Goals persist in the kanban DB until resolved (operator ruling
-/// 2026-09-09, superseding the 2026-08-29 ephemerality ruling): the goal
-/// store shares the kanban driver, so a re-create with the same idempotency
-/// key on a new process over the same DB returns the SAME goal — listable,
-/// scoreable, and pruned on resolution, not a ghost pointer.
+/// Goals persist in the kanban DB through resolution until curator-memory
+/// acknowledgment (operator ruling 2026-09-16): the goal store shares the
+/// kanban driver, so a re-create with the same idempotency key on a new process
+/// over the same DB returns the SAME goal — listable, scoreable, and retained
+/// as a retryable outbox entry until explicitly acknowledged.
 #[tokio::test]
 async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
     let webid = WebID::new();
@@ -555,8 +555,8 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
         "the persisted goal must survive the restart in the store, got: {listed}"
     );
 
-    // And scoreable — the Brier closure survives the restart. Scoring is
-    // also the prune: the resolved goal's row is deleted.
+    // And scoreable — the Brier closure survives the restart. Scoring retains
+    // the resolved row as a retryable outbox entry until memory acknowledgment.
     let out = process_b
         .kanban_goal_score(Parameters(GoalScoreRequest {
             goal_id: first_id.clone(),
@@ -579,9 +579,39 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
         .filter_map(|g| g["goal_id"].as_str())
         .collect();
     assert!(
-        !ids.contains(&first_id.as_str()),
-        "the resolved goal must be pruned from the store, got: {listed}"
+        ids.contains(&first_id.as_str()),
+        "the resolved goal must remain retryable until memory acknowledgment, got: {listed}"
     );
+
+    process_b
+        .kanban_goal_memory_acknowledge(Parameters(GoalMemoryAcknowledgeRequest {
+            goal_id: first_id.clone(),
+        }))
+        .await
+        .expect("memory acknowledgment must prune the retained goal");
+
+    let out = process_b
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect("tool ok");
+    let listed = parse(&out);
+    let ids: Vec<&str> = listed["goals"]
+        .as_array()
+        .expect("goals array")
+        .iter()
+        .filter_map(|g| g["goal_id"].as_str())
+        .collect();
+    assert!(
+        !ids.contains(&first_id.as_str()),
+        "memory acknowledgment must prune the retained goal, got: {listed}"
+    );
+
+    process_b
+        .kanban_goal_memory_acknowledge(Parameters(GoalMemoryAcknowledgeRequest {
+            goal_id: first_id,
+        }))
+        .await
+        .expect("repeated memory acknowledgment must be idempotent");
 }
 
 #[test]

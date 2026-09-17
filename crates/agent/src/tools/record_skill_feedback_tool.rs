@@ -8,9 +8,10 @@ use std::sync::Arc;
 /// The operator's direct skill-feedback control (T15, channel b): explicitly
 /// rate a skill's output — acceptance or rejection with an optional reason.
 ///
-/// The rating lands in the shared `RegulationLedger` as a
-/// `reg.skill.<id>.operator_feedback` span, which the metacognition loop's
-/// drift sensing trends ("declining operator acceptance" — outputs that are
+/// The rating is persisted as a `reg.skill.<id>.operator_feedback` record in
+/// the curator's `RegulationArchive`, then added to the shared
+/// `RegulationLedger` working view, which the metacognition loop's drift
+/// sensing trends ("declining operator acceptance" — outputs that are
 /// technically successful but increasingly useless; the outcome channel alone
 /// cannot catch that). This is the operator's channel for reacting to a
 /// skill's output directly: overridden tasks, rejection reasons, and
@@ -72,7 +73,11 @@ impl AgentTool for RecordSkillFeedbackTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_| {
             let input = input.recv().await.map_err(|error| error.to_string())?;
-            crate::record_operator_feedback(&input.skill_id, input.accepted, input.note.as_deref());
+            crate::record_operator_feedback(
+                &input.skill_id,
+                input.accepted,
+                input.note.as_deref(),
+            )?;
             let disposition = if input.accepted {
                 "accepted"
             } else {
@@ -105,6 +110,7 @@ mod tests {
                 accepted,
                 note.map(str::to_string),
             ));
+            Ok(())
         }));
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
@@ -126,18 +132,40 @@ mod tests {
             output.contains("lora-training"),
             "the tool confirms: {output}"
         );
-        let recorded = recorded.lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(
-            *recorded,
-            vec![(
-                "lora-training".to_string(),
-                false,
-                Some("rank 16 too small for the dataset".to_string())
-            )],
-            "the hook must receive the skill, disposition, and reason"
-        );
+        {
+            let recorded = recorded.lock().unwrap_or_else(|e| e.into_inner());
+            assert_eq!(
+                *recorded,
+                vec![(
+                    "lora-training".to_string(),
+                    false,
+                    Some("rank 16 too small for the dataset".to_string())
+                )],
+                "the hook must receive the skill, disposition, and reason"
+            );
+        }
 
-        // Restore the unwired state for other tests.
-        crate::set_operator_feedback_recorder(Arc::new(|_, _, _| {}));
+        crate::set_operator_feedback_recorder(Arc::new(|_, _, _| {
+            Err("archive unavailable".to_string())
+        }));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let failed = cx
+            .update(|cx: &mut App| {
+                Arc::new(RecordSkillFeedbackTool::new()).run(
+                    ToolInput::resolved(RecordSkillFeedbackInput {
+                        skill_id: "lora-training".to_string(),
+                        accepted: true,
+                        note: None,
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("durability failure must prevent a success receipt");
+        assert!(failed.contains("archive unavailable"));
+
+        // Leave the global slot inert for other tests.
+        crate::set_operator_feedback_recorder(Arc::new(|_, _, _| Ok(())));
     }
 }

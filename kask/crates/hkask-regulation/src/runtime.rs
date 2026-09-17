@@ -44,9 +44,9 @@ use tracing;
 
 /// A stored skill feedback span with its field payload.
 ///
-/// Unlike tracing events (which fire and vanish), StoredSkillSpan retains
-/// the structured payload so `query_skill_feedback` can return it to the
-/// next skill invocation.
+/// `StoredSkillSpan` is the bounded in-process working view used by drift
+/// sensing. Production operator-feedback records are restored into this view
+/// from the durable RegulationArchive after restart.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OperatorFeedbackObservation {
     pub accepted: bool,
@@ -799,10 +799,11 @@ impl RegulationLedger {
 
     /// Record a skill feedback span for later query by the same skill.
     ///
-    /// Stores `reg.skill.<skill_id>.<phase>` span payloads so skills can
-    /// query their own prior feedback (self-improvement τ_t / e_t signals).
-    /// Unlike tracing events (which fire and vanish), this method persists
-    /// the structured payload in the ledger.
+    /// Stores `reg.skill.<skill_id>.<phase>` span payloads in the bounded
+    /// working view so skills can query prior feedback (self-improvement τ_t /
+    /// e_t signals). Production operator feedback is persisted to the
+    /// RegulationArchive before this method is called and rehydrated here
+    /// after restart.
     ///
     /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
     /// post: span stored in SkillSpanStore, bounded to the configured max_skill_span_history per key

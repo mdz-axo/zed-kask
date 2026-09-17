@@ -2,7 +2,7 @@
 
 ## Status
 
-Future work — specification, not yet implemented.
+Partially implemented — sensing and operator-feedback persistence are live; the complete human review workflow remains future work.
 
 ## Origin
 
@@ -23,10 +23,12 @@ signals and proposes actions; the human operator makes refinement decisions.
 
 ## Critical Prerequisite
 
-`RegulationLedger::record_skill_span` is defined but **never called** in the
-codebase. `SkillSpanStore` is empty at runtime. Before the gemba loop can
-function, the emission path must be wired (Step 0 of the revised plan in
-`compiled-ai-gaps-review.md`).
+The emission path is wired. Skill outcomes feed the bounded process-local
+`SkillSpanStore`; operator acceptance/rejection records are persisted to the
+curator's `RegulationArchive` before the direct recording tool reports success
+and are rehydrated into that working view after editor restart. The remaining
+prerequisite is a review-facing read surface that exposes these signals without
+requiring direct ledger access.
 
 ## The Six-Phase Loop
 

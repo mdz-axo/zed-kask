@@ -76,8 +76,9 @@ pub use mcp_servers::{
     remove_shadowing_context_server_entries, shadowed_context_server_entry_ids,
 };
 pub use memory::{
-    BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, open_curator_escalation_queue,
-    open_curator_regulation_archive,
+    BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, hydrate_operator_feedback,
+    load_operator_feedback, open_curator_escalation_queue, open_curator_regulation_archive,
+    persist_operator_feedback,
 };
 pub use model_resolution::resolve_model_names;
 pub use settings::{

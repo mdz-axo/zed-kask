@@ -23,6 +23,9 @@ cat > "$tmp/run-spec.json" <<JSON
   "entity_ref_prefix": "calibration:e2e",
   "embedding_model": "requested-test-embedding-model",
   "batch_size": 4,
+  "embedding_max_concurrency": 4,
+  "embedding_shard_retry_limit": 3,
+  "embedding_retry_backoff_secs": 0,
   "max_queries": 1,
   "retriever": {"name":"corpus_query_cosine","top_k":5,"word_budget":200,"min_score":0},
   "selection": {"max_budgeted_exact_evidence_loss_count":1},
@@ -110,13 +113,20 @@ while IFS= read -r line; do
                     model=$(jq -r '.model' <<<"$arguments")
                     total=$(wc -l < "$chunks" | tr -d ' ')
                     if [[ -n ${FAKE_EMBED_CALL_LOG:-} ]]; then
-                        printf '%s\t%s\n' "$(basename "$db" .db)" "$(stat -c %s "$chunks")" \
-                            >> "$FAKE_EMBED_CALL_LOG"
+                        printf '%s\t%s\t%s\n' "$(basename "$db" .db)" "$(stat -c %s "$chunks")" \
+                            "${HKASK_MAX_CONCURRENCY:-missing}" >> "$FAKE_EMBED_CALL_LOG"
                     fi
                     printf 'indexed\n' > "$db"
                     status=${FAKE_ACTUAL_MODEL_STATUS:-confirmed}
+                    if [[ -n ${FAKE_EMBED_FAIL_ONCE_MARKER:-} && ! -e $FAKE_EMBED_FAIL_ONCE_MARKER ]]; then
+                        touch "$FAKE_EMBED_FAIL_ONCE_MARKER"
+                        failed_refs=$(jq -sc '.[0:1] | map(.entity_ref)' "$chunks")
+                        respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" --argjson refs "$failed_refs" \
+                            '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:($total-1),failed:1,failed_entity_refs:$refs,failed_entity_refs_complete:true,cancelled:false}')"
+                        continue
+                    fi
                     respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" \
-                        '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,cancelled:false}')"
+                        '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,failed_entity_refs:[],failed_entity_refs_complete:true,cancelled:false}')"
                     ;;
                 corpus_query)
                     db=$(jq -r '.db_path' <<<"$arguments")
@@ -170,6 +180,7 @@ export HKASK_TEMPLATE_ROOT="$tmp"
 export HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS=10
 export HKASK_CALIBRATION_EMBED_SHARD_MAX_BYTES=1000
 export FAKE_EMBED_CALL_LOG="$tmp/embed-calls.log"
+export FAKE_EMBED_FAIL_ONCE_MARKER="$tmp/embed-failed-once"
 
 printf '%s\n' '{"entity_ref":"test:tag:0","source":"source-a.txt","text":"alpha beta","word_count":2}' > "$tmp/tag-input.jsonl"
 jq -n --arg input "$tmp/tag-input.jsonl" --arg output "$tmp/tag-output.jsonl" \
@@ -191,6 +202,7 @@ jq -e '
   all(.policies[]; .ndcg.status == "unavailable") and
   all(.policies[]; .answer_grounding.status == "unavailable") and
   (.measured_costs.embedding | length) == 3 and
+  any(.measured_costs.embedding[]; .attempted_rows > .total_rows) and
   (.measured_costs.evaluation | length) == 3
 ' "$tmp/run/comparison.json" >/dev/null
 jq -e '
@@ -205,7 +217,8 @@ for policy in reference current fine; do
     [[ -s "$tmp/run/$policy.db" ]]
     [[ $(wc -l < "$tmp/run/evaluation-$policy/raw-results.jsonl") -eq 1 ]]
 done
-awk -F '\t' '$2 > 1000 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
+awk -F '\t' '$2 > 1000 || $3 != 4 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
+[[ $(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 [[ $(awk -F '\t' '$1 == "fine" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 
 costs_before_resume=$(sha256sum "$tmp/run/measured-costs.json" | cut -d' ' -f1)

@@ -33,8 +33,11 @@ use crate::inference_embedding::LanguageModelEmbeddingPort;
 // `use super::open_regulation_archive`.
 mod curator_stores;
 pub(crate) use curator_stores::curator_db_path;
-pub use curator_stores::open_curator_regulation_archive;
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
+pub use curator_stores::{
+    hydrate_operator_feedback, load_operator_feedback, open_curator_regulation_archive,
+    persist_operator_feedback,
+};
 
 // ── Alert escalation — extracted to `memory/alert_escalation.rs` ──────────
 // Deep-module split (bridge-audit BD-04): the algedonic alert path implements a

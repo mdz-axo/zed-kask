@@ -342,6 +342,7 @@ impl CorpusServer {
 
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed_entity_refs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let identity = Arc::new(std::sync::Mutex::new(EmbeddingIdentityState::default()));
 
         let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -357,6 +358,7 @@ impl CorpusServer {
             let model_name = Arc::clone(&model_name);
             let embedded = Arc::clone(&embedded);
             let failed = Arc::clone(&failed);
+            let failed_entity_refs = Arc::clone(&failed_entity_refs);
             let identity = Arc::clone(&identity);
 
             let batch_len = chunk_batch.len();
@@ -386,6 +388,10 @@ impl CorpusServer {
                             "Batch {batch_idx} failed after retries"
                         );
                         failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
+                        failed_entity_refs
+                            .lock()
+                            .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
+                            .extend(chunk_batch.iter().map(|chunk| chunk.0.clone()));
                         return Ok(());
                     }
                 };
@@ -398,6 +404,10 @@ impl CorpusServer {
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
                     failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
+                    failed_entity_refs
+                        .lock()
+                        .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
+                        .extend(chunk_batch.iter().map(|chunk| chunk.0.clone()));
                     return Ok(());
                 }
 
@@ -411,6 +421,10 @@ impl CorpusServer {
                             return Err(e);
                         }
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        failed_entity_refs
+                            .lock()
+                            .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
+                            .push(c.0.clone());
                         if failed.load(std::sync::atomic::Ordering::Relaxed) <= 5 {
                             tracing::warn!(
                                 target: "hkask.mcp.docproc.embed",
@@ -457,6 +471,13 @@ impl CorpusServer {
             .map_err(|_| McpToolError::internal("embedding identity lock poisoned"))?;
         let actual_model_status = identity.status();
         let actual_model = identity.actual_model.clone();
+        let mut failed_entity_refs = failed_entity_refs
+            .lock()
+            .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
+            .clone();
+        failed_entity_refs.sort();
+        failed_entity_refs.dedup();
+        let failed_entity_refs_complete = failed_entity_refs.len() == failed;
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
@@ -468,6 +489,8 @@ impl CorpusServer {
             "total": total,
             "embedded": embedded,
             "failed": failed,
+            "failed_entity_refs": failed_entity_refs,
+            "failed_entity_refs_complete": failed_entity_refs_complete,
             "cancelled": cancelled,
             "model": model_name,
             "requested_model": model_name,

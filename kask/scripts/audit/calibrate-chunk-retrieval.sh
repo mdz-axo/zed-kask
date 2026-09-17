@@ -40,6 +40,9 @@ jq -e '
   (.entity_ref_prefix | type == "string" and length > 0) and
   (.embedding_model | type == "string" and length > 0) and
   (.batch_size | type == "number" and . > 0 and floor == .) and
+  (.embedding_max_concurrency | type == "number" and . > 0 and floor == .) and
+  (.embedding_shard_retry_limit | type == "number" and . > 0 and floor == .) and
+  (.embedding_retry_backoff_secs | type == "number" and . >= 0 and floor == .) and
   (.max_queries | type == "number" and . > 0 and floor == .) and
   (.retriever.name == "corpus_query_cosine") and
   (.retriever.top_k | type == "number" and . > 0 and . <= 50 and floor == .) and
@@ -202,7 +205,11 @@ if [[ "$resume" != true ]]; then
     ' "$representation_manifest" >/dev/null
 
     batch_size=$(jq -r '.batch_size' "$run_spec")
+    embedding_max_concurrency=$(jq -r '.embedding_max_concurrency' "$run_spec")
+    embedding_shard_retry_limit=$(jq -r '.embedding_shard_retry_limit' "$run_spec")
+    embedding_retry_backoff_secs=$(jq -r '.embedding_retry_backoff_secs' "$run_spec")
     export HKASK_EMBEDDING_MODEL=$requested_model
+    export HKASK_MAX_CONCURRENCY=$embedding_max_concurrency
     mkdir -p "$output_dir/embed"
     embed_cost_rows="$output_dir/embed-costs.jsonl"
     : > "$embed_cost_rows"
@@ -216,65 +223,109 @@ if [[ "$resume" != true ]]; then
         shard_dir="$output_dir/embed/$policy-shards"
         split_jsonl_by_bytes "$representation" "$shard_dir" "$embed_shard_max_bytes"
         expected_total=$(wc -l < "$representation" | tr -d ' ')
-        policy_total=0
+        policy_total=$expected_total
+        policy_attempted=0
         policy_embedded=0
         policy_elapsed_ms=0
         policy_shards=0
+        policy_attempts=0
         policy_model=
         for shard in "$shard_dir"/shard-*.jsonl; do
             shard_name=$(basename "$shard" .jsonl)
-            arguments="$output_dir/embed/$policy-$shard_name-arguments.json"
-            response="$output_dir/embed/$policy-$shard_name-response.json"
-            log="$output_dir/embed/$policy-$shard_name-server.log"
-            jq -n \
-                --arg chunks_jsonl "$shard" \
-                --arg db_path "$index_db" \
-                --arg model "$requested_model" \
-                --argjson batch_size "$batch_size" \
-                '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,
-                  model:$model,batch_size:$batch_size}' > "$arguments"
-            started=$(now_ns)
-            "$host_call" corpus_embed "$arguments" "$response" "$log"
-            ended=$(now_ns)
-            content=$(tool_content "$response")
-            reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
-            if [[ "$reported_requested_model" != "$requested_model" ]]; then
-                echo "embedding transport changed requested model identity for $policy/$shard_name: $reported_requested_model" >&2
-                exit 65
-            fi
-            actual_model_status=$(jq -er '.actual_model_status | select(type == "string")' <<<"$content")
-            if [[ "$actual_model_status" != "confirmed" ]]; then
-                echo "embedding provider did not confirm one model identity for $policy/$shard_name: $actual_model_status" >&2
-                exit 65
-            fi
-            model=$(jq -er '.actual_model | select(type == "string" and length > 0)' <<<"$content")
-            embedded=$(jq -er '.embedded' <<<"$content")
-            failed=$(jq -er '.failed' <<<"$content")
-            cancelled=$(jq -r '.cancelled' <<<"$content")
-            total=$(jq -er '.total' <<<"$content")
-            if [[ "$failed" -ne 0 || "$cancelled" != 0 && "$cancelled" != false || "$embedded" -ne "$total" ]]; then
-                echo "embedding reconciliation failed for $policy/$shard_name" >&2
-                exit 65
-            fi
-            if [[ -z "$policy_model" ]]; then
-                policy_model=$model
-            elif [[ "$policy_model" != "$model" ]]; then
-                echo "embedding shards used different actual models for $policy: $policy_model vs $model" >&2
-                exit 65
-            fi
-            if [[ -z "$actual_model" ]]; then
-                actual_model=$model
-            elif [[ "$actual_model" != "$model" ]]; then
-                echo "embedding policies used different actual models: $actual_model vs $model" >&2
-                exit 65
-            fi
-            policy_total=$((policy_total + total))
-            policy_embedded=$((policy_embedded + embedded))
-            policy_elapsed_ms=$((policy_elapsed_ms + $(elapsed_ms "$started" "$ended")))
+            shard_expected=$(wc -l < "$shard" | tr -d ' ')
+            shard_embedded=0
+            pending=$shard
+            attempt=1
+            while true; do
+                attempt_label=$(printf '%02d' "$attempt")
+                arguments="$output_dir/embed/$policy-$shard_name-attempt-$attempt_label-arguments.json"
+                response="$output_dir/embed/$policy-$shard_name-attempt-$attempt_label-response.json"
+                log="$output_dir/embed/$policy-$shard_name-attempt-$attempt_label-server.log"
+                jq -n \
+                    --arg chunks_jsonl "$pending" \
+                    --arg db_path "$index_db" \
+                    --arg model "$requested_model" \
+                    --argjson batch_size "$batch_size" \
+                    '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,
+                      model:$model,batch_size:$batch_size}' > "$arguments"
+                started=$(now_ns)
+                "$host_call" corpus_embed "$arguments" "$response" "$log"
+                ended=$(now_ns)
+                content=$(tool_content "$response")
+                reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
+                if [[ "$reported_requested_model" != "$requested_model" ]]; then
+                    echo "embedding transport changed requested model identity for $policy/$shard_name attempt $attempt: $reported_requested_model" >&2
+                    exit 65
+                fi
+                actual_model_status=$(jq -er '.actual_model_status | select(type == "string")' <<<"$content")
+                if [[ "$actual_model_status" != "confirmed" ]]; then
+                    echo "embedding provider did not confirm one model identity for $policy/$shard_name attempt $attempt: $actual_model_status" >&2
+                    exit 65
+                fi
+                model=$(jq -er '.actual_model | select(type == "string" and length > 0)' <<<"$content")
+                embedded=$(jq -er '.embedded' <<<"$content")
+                failed=$(jq -er '.failed' <<<"$content")
+                cancelled=$(jq -r '.cancelled' <<<"$content")
+                total=$(jq -er '.total' <<<"$content")
+                if [[ "$cancelled" != 0 && "$cancelled" != false || $((embedded + failed)) -ne "$total" ]]; then
+                    echo "embedding accounting failed for $policy/$shard_name attempt $attempt" >&2
+                    exit 65
+                fi
+                if [[ -z "$policy_model" ]]; then
+                    policy_model=$model
+                elif [[ "$policy_model" != "$model" ]]; then
+                    echo "embedding shards used different actual models for $policy: $policy_model vs $model" >&2
+                    exit 65
+                fi
+                if [[ -z "$actual_model" ]]; then
+                    actual_model=$model
+                elif [[ "$actual_model" != "$model" ]]; then
+                    echo "embedding policies used different actual models: $actual_model vs $model" >&2
+                    exit 65
+                fi
+                shard_embedded=$((shard_embedded + embedded))
+                policy_embedded=$((policy_embedded + embedded))
+                policy_attempted=$((policy_attempted + total))
+                policy_elapsed_ms=$((policy_elapsed_ms + $(elapsed_ms "$started" "$ended")))
+                policy_attempts=$((policy_attempts + 1))
+                if [[ "$failed" -eq 0 ]]; then
+                    if [[ "$shard_embedded" -ne "$shard_expected" ]]; then
+                        echo "embedding retry totals do not reconcile for $policy/$shard_name: expected=$shard_expected embedded=$shard_embedded" >&2
+                        exit 65
+                    fi
+                    break
+                fi
+                if [[ "$attempt" -ge "$embedding_shard_retry_limit" ]]; then
+                    echo "embedding shard exhausted retry limit for $policy/$shard_name: failed=$failed attempts=$attempt" >&2
+                    exit 65
+                fi
+                refs_complete=$(jq -r '.failed_entity_refs_complete' <<<"$content")
+                refs_count=$(jq -r '.failed_entity_refs | length' <<<"$content")
+                if [[ "$refs_complete" != true || "$refs_count" -ne "$failed" ]]; then
+                    echo "embedding shard did not return a complete failed-ref set for $policy/$shard_name" >&2
+                    exit 65
+                fi
+                failed_refs="$output_dir/embed/$policy-$shard_name-attempt-$attempt_label-failed-refs.json"
+                retry_file="$shard_dir/$shard_name-retry-$attempt_label.jsonl"
+                jq '.failed_entity_refs' <<<"$content" > "$failed_refs"
+                jq -c --slurpfile failed "$failed_refs" \
+                    'select(.entity_ref as $ref | ($failed[0] | index($ref)) != null)' \
+                    "$pending" > "$retry_file"
+                if [[ $(wc -l < "$retry_file" | tr -d ' ') -ne "$failed" ]]; then
+                    echo "failed-ref retry selection did not reconcile for $policy/$shard_name" >&2
+                    exit 65
+                fi
+                sleep_seconds=$((embedding_retry_backoff_secs * attempt))
+                if [[ "$sleep_seconds" -gt 0 ]]; then
+                    sleep "$sleep_seconds"
+                fi
+                pending=$retry_file
+                attempt=$((attempt + 1))
+            done
             policy_shards=$((policy_shards + 1))
         done
-        if [[ "$policy_total" -ne "$expected_total" || "$policy_embedded" -ne "$expected_total" ]]; then
-            echo "embedding shard totals do not reconcile for $policy: expected=$expected_total total=$policy_total embedded=$policy_embedded" >&2
+        if [[ "$policy_embedded" -ne "$expected_total" ]]; then
+            echo "embedding shard totals do not reconcile for $policy: expected=$expected_total embedded=$policy_embedded" >&2
             exit 65
         fi
         if [[ ! -f "$index_db" ]]; then
@@ -283,12 +334,16 @@ if [[ "$resume" != true ]]; then
         fi
         jq -cn --arg policy "$policy" --arg model "$policy_model" \
             --argjson elapsed_ms "$policy_elapsed_ms" \
-            --argjson total "$policy_total" --argjson embedded "$policy_embedded" \
-            --argjson shards "$policy_shards" --argjson shard_max_bytes "$embed_shard_max_bytes" \
+            --argjson total "$policy_total" --argjson attempted "$policy_attempted" \
+            --argjson embedded "$policy_embedded" --argjson shards "$policy_shards" \
+            --argjson attempts "$policy_attempts" --argjson shard_max_bytes "$embed_shard_max_bytes" \
+            --argjson max_concurrency "$embedding_max_concurrency" \
             --argjson index_bytes "$(stat -c %s "$index_db")" \
             '{policy:$policy,actual_embedding_model:$model,elapsed_ms:$elapsed_ms,
-              total_rows:$total,embedded_rows:$embedded,shards:$shards,
-              shard_max_bytes:$shard_max_bytes,index_bytes:$index_bytes}' \
+              total_rows:$total,attempted_rows:$attempted,embedded_rows:$embedded,
+              shards:$shards,attempts:$attempts,shard_max_bytes:$shard_max_bytes,
+              max_concurrency:$max_concurrency,
+              index_bytes:$index_bytes}' \
             >> "$embed_cost_rows"
     done
 
