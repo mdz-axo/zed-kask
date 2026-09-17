@@ -150,6 +150,7 @@ impl CorpusServer {
             output,
             concurrency,
             model,
+            verification_model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_generate_qa_batch", async {
@@ -160,6 +161,7 @@ impl CorpusServer {
                     output,
                     concurrency,
                     model,
+                    verification_model,
                 })
                 .await
         })
@@ -541,6 +543,10 @@ pub(crate) struct GenerateQaBatchRequest {
     /// no active-chat or training-base fallback. Must accept non-thinking requests.
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional provider-prefixed verification model for disposition and draft
+    /// review. It must differ from the generator and has no generator fallback.
+    #[serde(default)]
+    pub verification_model: Option<String>,
 }
 
 fn default_batch_concurrency() -> usize {

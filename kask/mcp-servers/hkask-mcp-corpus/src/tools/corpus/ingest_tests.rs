@@ -461,9 +461,11 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
         server
             .corpus_generate_qa_batch(Parameters(GenerateQaBatchRequest {
                 prompts_jsonl: prompts.to_string_lossy().into(),
+                quality_adjudications_jsonl: None,
                 output: req.generated_jsonl.clone(),
                 concurrency: 1,
                 model: Some("OpenRouter/offline-model".into()),
+                verification_model: Some("OpenRouter/offline-verifier".into()),
             }))
             .await?,
     )?;

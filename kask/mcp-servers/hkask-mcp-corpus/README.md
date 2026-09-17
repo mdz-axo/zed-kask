@@ -282,6 +282,32 @@ protocol provenance, with no response. A failed prompt writes primary `prompt_id
 `finish_reason`, with no response; unavailable provider telemetry is null rather
 than fabricated. Skips and failed prompts are never training data.
 
+### Verification architecture references
+
+The QA pipeline uses a bounded generator–verifier recovery block, not an
+unbounded agent loop:
+
+- Madaan et al., *Self-Refine: Iterative Refinement with Self-Feedback*
+  ([arXiv:2303.17651](https://arxiv.org/abs/2303.17651); reference implementation:
+  [madaan/self-refine](https://github.com/madaan/self-refine)) supplies the explicit
+  draft → feedback → one refinement composition.
+- Dhuliawala et al., *Chain-of-Verification Reduces Hallucination in Large
+  Language Models* ([arXiv:2309.11495](https://arxiv.org/abs/2309.11495)) supplies
+  independently answered verification checks so draft context does not become its
+  own evidence.
+- Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*
+  ([arXiv:2306.05685](https://arxiv.org/abs/2306.05685)) documents position,
+  verbosity and self-enhancement biases; therefore verification requires a
+  separately configured model and records both model identities.
+- Avizienis, *The N-Version Approach to Fault-Tolerant Software* (IEEE TSE,
+  1985) and the recovery-block pattern ground design diversity, an acceptance
+  test, bounded alternate execution and fail-closed output.
+
+The adaptation here is: generator draft → distinct-model typed verification → at
+most one feedback-guided correction → distinct-model re-verification. Stage 8
+remains an external oracle; an accepted model verdict is not promoted to factual
+truth.
+
 ## QA routing, scheduling and output ownership
 
 A dedicated non-thinking QA generator is mandatory: explicit `model` overrides

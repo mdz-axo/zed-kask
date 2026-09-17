@@ -63,6 +63,22 @@ impl QaDispositionPlan {
             .iter()
             .any(|level| matches!(level, PlannedQaLevel::Generate { .. }))
     }
+
+    fn global_skip_reason(&self) -> Option<&str> {
+        let mut reasons = self.levels.iter().map(|level| match level {
+            PlannedQaLevel::Skipped { reason, .. }
+                if matches!(
+                    reason.as_str(),
+                    "contaminated_or_garbled" | "non_substantive_passage"
+                ) =>
+            {
+                Some(reason.as_str())
+            }
+            _ => None,
+        });
+        let first = reasons.next()??;
+        reasons.all(|reason| reason == Some(first)).then_some(first)
+    }
 }
 
 /// One server-owned passage identity. Only `local_id` and guarded `text` enter
@@ -231,6 +247,38 @@ pub(crate) fn render_passage_quality_messages(
             content: user,
         },
     ])
+}
+
+/// expect: An initially clean passage receives an independent quality decision before QA planning.
+/// [P9] Motivating: A single model miss cannot admit contaminated or non-substantive training prose.
+/// pre: prompt is valid and proposed_quality is the first pass's compact response.
+/// post: the verification model receives the complete passage, proposal, and identical closed decision schema.
+/// [P1] Constraining: Preserve the prepared passage without rewriting or inferred identity.
+pub(crate) fn render_passage_quality_review_messages(
+    prompt: &PreparedQaPrompt,
+    proposed_quality: &str,
+) -> Result<[ChatMessage; 2], McpToolError> {
+    let mut messages = render_passage_quality_messages(prompt)?;
+    messages[0].content.push_str(
+        " Independently review the proposed passage-quality decision against the complete passage. The proposal is not authoritative. Return one complete corrected decision in the identical compact schema and nothing else.",
+    );
+    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
+        McpToolError::internal(format!(
+            "Cannot parse rendered passage quality request: {error}"
+        ))
+    })?;
+    let object = user.as_object_mut().ok_or_else(|| {
+        McpToolError::internal("Rendered passage quality request is not a JSON object")
+    })?;
+    object.insert(
+        "proposed_passage_quality".to_string(),
+        serde_json::from_str(proposed_quality)
+            .unwrap_or_else(|_| Value::String(proposed_quality.into())),
+    );
+    messages[1].content = serde_json::to_string(&user).map_err(|error| {
+        McpToolError::internal(format!("Cannot render passage quality review: {error}"))
+    })?;
+    Ok(messages)
 }
 
 pub(crate) fn parse_passage_quality_response(response: &str) -> Result<PassageQuality, String> {
@@ -841,6 +889,7 @@ pub(crate) struct QaOutput<W: Write> {
     provider_responses: usize,
     cost_reports: usize,
     reported_cost_usd: f64,
+    verification_model: Option<String>,
     adjudication_protocol: Option<String>,
     adjudicated_admits: usize,
     adjudicated_skips: usize,
@@ -865,10 +914,15 @@ impl<W: Write> QaOutput<W> {
             provider_responses: 0,
             cost_reports: 0,
             reported_cost_usd: 0.0,
+            verification_model: None,
             adjudication_protocol: None,
             adjudicated_admits: 0,
             adjudicated_skips: 0,
         }
+    }
+
+    pub fn set_verification_model(&mut self, model: &str) {
+        self.verification_model = Some(model.to_string());
     }
 
     pub fn set_reviewed_adjudications(&mut self, protocol: &str, admits: usize, skips: usize) {
@@ -923,6 +977,7 @@ impl<W: Write> QaOutput<W> {
                 qa_type.as_str(),
                 reason,
                 model,
+                self.verification_model.as_deref(),
                 self.adjudication_protocol.as_deref(),
             ))?;
             self.qa_levels_skipped += 1;
@@ -995,6 +1050,7 @@ impl<W: Write> QaOutput<W> {
                                 prompt,
                                 pair,
                                 model,
+                                self.verification_model.as_deref(),
                                 self.adjudication_protocol.as_deref(),
                             ))?;
                             self.qa_rows_written += 1;
@@ -1008,6 +1064,7 @@ impl<W: Write> QaOutput<W> {
                                 &bloom_level,
                                 &reason,
                                 model,
+                                self.verification_model.as_deref(),
                                 self.adjudication_protocol.as_deref(),
                             ))?;
                             self.qa_levels_skipped += 1;
@@ -1051,7 +1108,8 @@ impl<W: Write> QaOutput<W> {
         }
         let outcome = BatchOutcome::from_counts(self.prompts_failed, self.prompts_total);
         outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
-        let cost_reporting_complete = self.provider_responses >= self.prompts_total
+        let expected_inferred_prompts = self.prompts_total.saturating_sub(self.adjudicated_skips);
+        let cost_reporting_complete = self.provider_responses >= expected_inferred_prompts
             && self.cost_reports == self.provider_responses;
         let reported_cost_usd = cost_reporting_complete.then_some(self.reported_cost_usd);
         let completion_token_reporting_complete =
@@ -1066,6 +1124,10 @@ impl<W: Write> QaOutput<W> {
             "qa_rows_written": self.qa_rows_written,
             "qa_levels_skipped": self.qa_levels_skipped,
             "skip_reason_counts": self.skip_reason_counts,
+            "verification_model": self.verification_model,
+            "passage_adjudication_protocol": self.adjudication_protocol,
+            "adjudicated_admits": self.adjudicated_admits,
+            "adjudicated_skips": self.adjudicated_skips,
             "tokens_used": self.tokens_used,
             "completion_tokens_used": self.completion_tokens_used,
             "completion_token_reporting_complete": completion_token_reporting_complete,
@@ -1106,6 +1168,7 @@ fn qa_result_envelope(
     prompt: &PreparedQaPrompt,
     pair: QaPair,
     model: &str,
+    verification_model: Option<&str>,
     adjudication_protocol: Option<&str>,
 ) -> serde_json::Value {
     json!({
@@ -1122,6 +1185,7 @@ fn qa_result_envelope(
         },
         "provenance": {
             "generator_model": model,
+            "verification_model": verification_model,
             "passage_adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
@@ -1138,6 +1202,7 @@ fn qa_skip_envelope(
     bloom_level: &str,
     reason: &str,
     model: &str,
+    verification_model: Option<&str>,
     adjudication_protocol: Option<&str>,
 ) -> serde_json::Value {
     json!({
@@ -1149,6 +1214,7 @@ fn qa_skip_envelope(
         "reason": reason,
         "provenance": {
             "generator_model": model,
+            "verification_model": verification_model,
             "passage_adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
