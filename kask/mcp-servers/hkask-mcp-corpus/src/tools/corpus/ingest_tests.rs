@@ -375,6 +375,11 @@ impl InferencePort for CitationGeneration {
         assert!(!rendered.contains("brooks.txt"));
         let rows = if rendered.contains("focused passage-quality gate") {
             json!(["clean"])
+        } else if rendered.contains("Independently verify each proposed QA object") {
+            json!([
+                {"level":"factual","verdict":"accept","subject":true,"condition":true,"premise":true,"entailment":true,"completeness":true,"actual_difficulty":true,"findings":[]},
+                {"level":"conceptual","verdict":"accept","subject":true,"condition":true,"premise":true,"entailment":true,"completeness":true,"actual_difficulty":true,"findings":[]}
+            ])
         } else if rendered.contains("disposition plan") {
             assert!(rendered.contains("evidence IDs"));
             assert!(rendered.contains("conceptual_support_absent"));

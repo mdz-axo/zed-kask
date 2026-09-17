@@ -17,7 +17,7 @@ use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response}
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
 const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v5";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v6";
 const QA_VERIFICATION_PROTOCOL: &str = "prepared-qa-verification-verdict-v1";
 const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
@@ -1713,6 +1713,82 @@ mod tests {
         assert!(system.contains("source category name and intentionality"));
         assert!(system.contains("do not select new evidence"));
         assert!(system.contains("one outer JSON array"));
+    }
+
+    /// expect: Verification is a strict verdict channel: accept is internally
+    /// consistent, correct carries actionable findings, and QA fields are forbidden.
+    #[test]
+    fn typed_qa_verdicts_enforce_checks_findings_and_writer_ownership() {
+        let prompt = prepared();
+        let plan = parse_disposition_plan_response(
+            &json!([
+                "clean",
+                [{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]}]
+            ])
+            .to_string(),
+            &prompt,
+        )
+        .expect("valid plan");
+        let accepted = json!([{
+            "level":"factual",
+            "verdict":"accept",
+            "subject":true,
+            "condition":true,
+            "premise":true,
+            "entailment":true,
+            "completeness":true,
+            "actual_difficulty":true,
+            "findings":[]
+        }])
+        .to_string();
+        assert!(
+            !parse_planned_qa_verdicts(&accepted, &plan)
+                .expect("valid accept")
+                .requires_correction()
+        );
+
+        let correction = json!([{
+            "level":"factual",
+            "verdict":"correct",
+            "subject":false,
+            "condition":true,
+            "premise":true,
+            "entailment":true,
+            "completeness":true,
+            "actual_difficulty":true,
+            "findings":["Restore the source subject."]
+        }])
+        .to_string();
+        assert!(
+            parse_planned_qa_verdicts(&correction, &plan)
+                .expect("valid correction")
+                .requires_correction()
+        );
+
+        for invalid in [
+            json!([{
+                "level":"factual","verdict":"accept","subject":false,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":[]
+            }]),
+            json!([{
+                "level":"factual","verdict":"correct","subject":true,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":["No failed check."]
+            }]),
+            json!([{
+                "level":"factual","verdict":"correct","subject":false,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":[]
+            }]),
+            json!([{
+                "level":"factual","verdict":"accept","subject":true,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":[],"question":"Verifier rewrite"
+            }]),
+        ] {
+            assert!(parse_planned_qa_verdicts(&invalid.to_string(), &plan).is_err());
+        }
     }
 
     /// expect: Unsupported or contaminated levels are skipped explicitly instead of

@@ -92,9 +92,17 @@ if kill -0 "$server_pid" 2>/dev/null; then
 fi
 
 export HKASK_QA_GENERATION_MODEL="fixture/qa"
+unset HKASK_QA_VERIFICATION_MODEL
 rm -f "$FAKE_SERVER_GRACEFUL_FILE" "$FAKE_SERVER_TERMINATED_FILE"
+if "$host_call" corpus_generate_qa_batch "$tmp/arguments.json" "$tmp/qa-response.json" "$tmp/qa-server.log"; then
+    echo "QA host call unexpectedly succeeded without HKASK_QA_VERIFICATION_MODEL" >&2
+    exit 1
+fi
+rm -f "$tmp/qa-response.json" "$tmp/qa-server.log"
+
+export HKASK_QA_VERIFICATION_MODEL="fixture/verifier"
 "$host_call" corpus_generate_qa_batch "$tmp/arguments.json" "$tmp/qa-response.json" "$tmp/qa-server.log"
 jq -e '.id == 2 and .result.isError == false' "$tmp/qa-response.json" >/dev/null
 [[ -e "$FAKE_SERVER_GRACEFUL_FILE" ]]
 [[ ! -e "$FAKE_SERVER_TERMINATED_FILE" ]]
-printf '%s\n' "call corpus tool timeout/reap, normal-exit, and QA-routing tests passed"
+printf '%s\n' "call corpus tool timeout/reap, normal-exit, and QA generator/verifier routing tests passed"

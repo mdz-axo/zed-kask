@@ -11,6 +11,7 @@ arguments_file=$2
 response_file=$3
 log_file=$4
 binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
+required_secondary_model_var=
 
 case "$tool_name" in
     corpus_build_chunk_representations|corpus_embedding_inventory)
@@ -31,6 +32,7 @@ case "$tool_name" in
     corpus_generate_qa_batch)
         needs_inference=true
         required_model_var=HKASK_QA_GENERATION_MODEL
+        required_secondary_model_var=HKASK_QA_VERIFICATION_MODEL
         default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
         ;;
     *)
@@ -62,7 +64,11 @@ required_model=
 if [[ -n "$required_model_var" ]]; then
     required_model=${!required_model_var:-}
 fi
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
+required_secondary_model=
+if [[ -n "$required_secondary_model_var" ]]; then
+    required_secondary_model=${!required_secondary_model_var:-}
+fi
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model || ( -n $required_secondary_model_var && -z $required_secondary_model ) ) ]]; then
     host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
     if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
         echo "running host-managed hkask-mcp-corpus process not found" >&2
@@ -77,6 +83,7 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $requ
     host_embedding_model=$(read_host_env HKASK_EMBEDDING_MODEL)
     host_classifier_model=$(read_host_env HKASK_CLASSIFIER_MODEL)
     host_qa_generation_model=$(read_host_env HKASK_QA_GENERATION_MODEL)
+    host_qa_verification_model=$(read_host_env HKASK_QA_VERIFICATION_MODEL)
     host_template_root=$(read_host_env HKASK_TEMPLATE_ROOT)
     host_deepinfra_token=$(read_host_env DEEPINFRA_TOKEN)
     host_openrouter_token=$(read_host_env OPENROUTER_API_KEY)
@@ -85,11 +92,13 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $requ
     HKASK_EMBEDDING_MODEL=${HKASK_EMBEDDING_MODEL:-$host_embedding_model}
     HKASK_CLASSIFIER_MODEL=${HKASK_CLASSIFIER_MODEL:-$host_classifier_model}
     HKASK_QA_GENERATION_MODEL=${HKASK_QA_GENERATION_MODEL:-$host_qa_generation_model}
+    HKASK_QA_VERIFICATION_MODEL=${HKASK_QA_VERIFICATION_MODEL:-$host_qa_verification_model}
     HKASK_TEMPLATE_ROOT=${HKASK_TEMPLATE_ROOT:-$host_template_root}
     DEEPINFRA_TOKEN=${DEEPINFRA_TOKEN:-$host_deepinfra_token}
     OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-$host_openrouter_token}
     export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL
-    export HKASK_CLASSIFIER_MODEL HKASK_QA_GENERATION_MODEL HKASK_TEMPLATE_ROOT
+    export HKASK_CLASSIFIER_MODEL HKASK_QA_GENERATION_MODEL HKASK_QA_VERIFICATION_MODEL
+    export HKASK_TEMPLATE_ROOT
     export DEEPINFRA_TOKEN OPENROUTER_API_KEY
 fi
 if [[ -n "$required_model_var" ]]; then

@@ -825,7 +825,6 @@ mod tests {
         DraftReviewMalformed,
         QaCorrectionThenAccept,
         QaCorrectionRejected,
-        QaVerdictMalformed,
         VerifierWritesQa,
         Pending,
     }
@@ -864,7 +863,22 @@ mod tests {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             assert_eq!(messages.len(), 2);
             assert!(!parameters.thinking_allowed);
-            let verification_call = messages[0].content.contains("Independently review");
+            let is_quality = messages[0].content.contains("focused passage-quality gate");
+            let is_quality_review = is_quality
+                && messages[0]
+                    .content
+                    .contains("Independently review the proposed passage-quality decision");
+            let is_planning = messages[0].content.contains("disposition plan");
+            let is_review = messages[0]
+                .content
+                .contains("Independently review the proposed disposition");
+            let is_qa_verification = messages[0]
+                .content
+                .contains("prepared-qa-verification-verdict-v1");
+            let is_qa_correction = messages[0]
+                .content
+                .contains("single bounded refinement step");
+            let verification_call = is_quality_review || is_review || is_qa_verification;
             assert_eq!(
                 model,
                 Some(if verification_call {
@@ -875,15 +889,25 @@ mod tests {
             );
             assert!(tools.is_none());
             let mode = self.mode;
-            let is_quality = messages[0].content.contains("focused passage-quality gate");
-            let is_quality_review = is_quality && verification_call;
-            let is_planning = messages[0].content.contains("disposition plan");
-            let is_review = messages[0]
-                .content
-                .contains("Independently review the proposed disposition");
-            let is_draft_review = messages[0]
-                .content
-                .contains("Independently review the proposed QA");
+            let user: serde_json::Value =
+                serde_json::from_str(&messages[1].content).expect("stub user JSON");
+            if is_qa_verification {
+                assert!(
+                    messages[0]
+                        .content
+                        .contains("Do not output question, answer")
+                );
+                assert!(user.get("proposed_qa").is_some());
+            }
+            if is_qa_correction {
+                assert_eq!(user["planned_levels"][0]["evidence"][0]["id"], "e0");
+                assert_eq!(user["verification_findings"][0]["subject"], false);
+                assert!(
+                    user["verification_findings"][0]["findings"][0]
+                        .as_str()
+                        .is_some_and(|finding| finding.contains("subject"))
+                );
+            }
             if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 5
             {
                 assert!(
@@ -896,15 +920,13 @@ mod tests {
                 if matches!(mode, Mode::Pending) {
                     return std::future::pending().await;
                 }
+                let malformed_writer = !is_quality && !is_planning && !is_qa_verification;
                 let text = if matches!(mode, Mode::Malformed)
                     || matches!(mode, Mode::QualityReviewMalformed) && is_quality_review
                     || matches!(mode, Mode::ReviewMalformed) && is_review
-                    || matches!(mode, Mode::DraftReviewMalformed) && is_draft_review
-                    || matches!(mode, Mode::WriterMalformed) && !is_quality && !is_planning
-                    || matches!(mode, Mode::WriterMalformedOnce)
-                        && !is_quality
-                        && !is_planning
-                        && call == 4
+                    || matches!(mode, Mode::DraftReviewMalformed) && is_qa_verification
+                    || matches!(mode, Mode::WriterMalformed) && malformed_writer
+                    || matches!(mode, Mode::WriterMalformedOnce) && malformed_writer && call == 4
                 {
                     "[".to_string()
                 } else if matches!(mode, Mode::RejectContaminated)
@@ -931,8 +953,67 @@ mod tests {
                         ]
                     ])
                     .to_string()
+                } else if is_qa_verification && matches!(mode, Mode::VerifierWritesQa) {
+                    json!([{
+                        "level":"factual",
+                        "question":"Verifier rewrite",
+                        "answer":"Verifier-authored QA"
+                    }])
+                    .to_string()
+                } else if is_qa_verification {
+                    let proposed = user["proposed_qa"].as_array().expect("proposed QA array");
+                    let corrected = proposed
+                        .first()
+                        .and_then(|draft| draft["question"].as_str())
+                        == Some("What is grounded?");
+                    let reject = matches!(mode, Mode::QaCorrectionRejected)
+                        || matches!(mode, Mode::QaCorrectionThenAccept) && !corrected;
+                    proposed
+                        .iter()
+                        .map(|draft| {
+                            let level = draft["level"].as_str().expect("draft level");
+                            if reject {
+                                json!({
+                                    "level":level,
+                                    "verdict":"correct",
+                                    "subject":false,
+                                    "condition":true,
+                                    "premise":true,
+                                    "entailment":true,
+                                    "completeness":true,
+                                    "actual_difficulty":true,
+                                    "findings":["Restore the source's grammatical subject."]
+                                })
+                            } else {
+                                json!({
+                                    "level":level,
+                                    "verdict":"accept",
+                                    "subject":true,
+                                    "condition":true,
+                                    "premise":true,
+                                    "entailment":true,
+                                    "completeness":true,
+                                    "actual_difficulty":true,
+                                    "findings":[]
+                                })
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .collect::<serde_json::Value>()
+                        .to_string()
                 } else if matches!(mode, Mode::SkipConceptual | Mode::ReviewSkipsConceptual) {
                     json!([{"level":"factual","question":"What is grounded?","answer":"Grounded answer one."}]).to_string()
+                } else if matches!(
+                    mode,
+                    Mode::QaCorrectionThenAccept | Mode::QaCorrectionRejected
+                ) && !is_qa_correction
+                {
+                    json!([
+                        {"level":"factual","question":"Wrong subject?","answer":"Grounded answer one."},
+                        {"level":"conceptual","question":"Why is it grounded?","answer":"Grounded answer two."}
+                    ])
+                    .to_string()
                 } else {
                     json!([
                         {"level":"factual","question":"What is grounded?","answer":"Grounded answer one."},
@@ -1028,7 +1109,8 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Prepared generation restores canonical evidence and reports every prompt once.
+    /// expect: Typed accept verdicts admit only the generator's named-object drafts,
+    /// restore canonical evidence, and report every prompt once.
     #[tokio::test]
     async fn generates_verified_rows_and_truthful_summary() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1066,6 +1148,84 @@ mod tests {
                 .as_str()
                 .is_some_and(|chunk| chunk.starts_with("chunk-qa-"))
         }));
+        Ok(())
+    }
+
+    /// expect: A subject-substituted generator draft is corrected once by the generator
+    /// from typed findings and admitted only after the distinct verifier accepts it.
+    #[tokio::test]
+    async fn typed_correction_then_accept_preserves_generator_ownership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::QaCorrectionThenAccept));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 0);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["provider_responses"], 8);
+        assert_eq!(summary["tokens_used"], 80);
+        assert_eq!(summary["reported_cost_usd"], 0.08);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
+        let rows = records(&output)?;
+        assert_eq!(rows[0]["response"]["instruction"], "What is grounded?");
+        assert!(rows.iter().all(|row| {
+            row["provenance"]["verification_model"] == "OpenRouter/offline-verifier"
+        }));
+        Ok(())
+    }
+
+    /// expect: A second correct verdict exhausts the bounded recovery block and
+    /// fails the entire prompt without leaking either generator draft.
+    #[tokio::test]
+    async fn second_correct_verdict_fails_prompt_without_partial_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::QaCorrectionRejected));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 0);
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["provider_responses"], 8);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("response").is_none());
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("corrected QA rejected by final verification"))
+        );
+        Ok(())
+    }
+
+    /// expect: Even schema-shaped QA from the verifier is forbidden replacement
+    /// content, receives only the one schema correction, and then fails closed.
+    #[tokio::test]
+    async fn verifier_cannot_write_replacement_qa() -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::VerifierWritesQa));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["provider_responses"], 7);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 7);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("response").is_none());
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("QA verification verdict rejected"))
+        );
         Ok(())
     }
 
@@ -1361,9 +1521,10 @@ mod tests {
         Ok(())
     }
 
-    /// expect: An invalid QA draft review cannot retain unchecked writer output after correction fails.
+    /// expect: A malformed QA verdict gets one fully metered schema correction,
+    /// then fails closed without retaining unchecked generator output.
     #[tokio::test]
-    async fn invalid_draft_review_fails_closed_after_one_correction()
+    async fn malformed_qa_verdict_fails_closed_after_one_schema_correction()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_directory, request) = fixture(&[prompt("qa-1")])?;
         let output = request.output.clone();
@@ -1381,7 +1542,7 @@ mod tests {
         assert!(
             rows[0]["error"]
                 .as_str()
-                .is_some_and(|error| error.contains("QA draft review rejected"))
+                .is_some_and(|error| error.contains("QA verification verdict rejected"))
         );
         Ok(())
     }

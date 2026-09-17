@@ -246,11 +246,18 @@ kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpos
 
 The writer receives only the reviewed generated levels and their selected source
 spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
-select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}` objects. A focused draft review checks unchanged subjects, conditions, categories,
-negation, modality, premise support and answer completeness before final parsing.
-The server recombines those drafts with planned skips, restores immutable
-`QaEvidence {chunk_ref, source, quote}` from `p0`, and validates the existing final
-row contract.
+select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}`
+objects. The distinct verification model returns verdict objects only: each generated
+level has `level`, `verdict` (`accept` or `correct`), boolean `subject`, `condition`,
+`premise`, `entailment`, `completeness`, and `actual_difficulty` checks, plus
+`findings`. Acceptance requires every check true and no findings; correction requires
+at least one false check and nonempty findings. Unknown fields are rejected, so the
+verifier cannot return replacement QA. A `correct` verdict sends the unchanged plan,
+evidence, draft, and typed findings back to the generator for one correction, followed
+by one independent re-verification. A second `correct` verdict fails the whole prompt.
+The server recombines only the finally accepted generator draft with planned skips,
+restores immutable `QaEvidence {chunk_ref, source, quote}` from `p0`, and validates
+the existing final row contract.
 
 Conceptual QA must explain its planned relation; direct recall of a name, list,
 title, number, stated explanation or sentence paraphrase is factual. Questions and
@@ -263,8 +270,9 @@ short, begins mid-sentence, contains notation or lacks conceptual support.
 
 `non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
 Closed level reasons remain the requested level's `<level>_support_absent`. Any
-malformed passage review, plan, or writer response rejects the whole prompt before
-rows are written. The semantic decisions remain model-mediated and require the
+malformed passage review, plan, writer response, or verification verdict rejects the
+whole prompt before rows are written after its applicable single schema correction.
+The semantic decisions remain model-mediated and require the
 separate Stage 8 audit; exact evidence restoration does not certify answer
 entailment. Generated rows use `prepared-qa-staged-quality-v6` with
 `passage_quality_protocol=prepared-qa-passage-quality-v1` and
@@ -278,9 +286,8 @@ One accepted pair becomes one ingestible envelope:
 ```
 
 The model identifiers above are illustrative, not configured defaults. Batch usage
-and cost totals include every actual quality, review, planning, and writing provider
-response; they
-are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
+and cost totals include every actual quality, review, planning, writing, correction,
+and re-verification provider response; they are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
 `qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`. A skip writes
 primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and
 protocol provenance, with no response. A failed prompt writes primary `prompt_id`,
@@ -328,9 +335,11 @@ Synchronous inference uses AIMD: starts at up to 2, adds one on success and halv
 on transient capacity failure, bounded by requested concurrency. Each retry gets
 its own slot. Only typed `Connection`, `Overloaded`, `Timeout` errors retry,
 with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures and
-open circuits do not retry. A successful planning or writing response that fails its
-typed schema receives exactly one metered correction attempt; a second rejection
-fails the whole prompt without partial rows
+open circuits do not retry. A successful planning, writing, or verification response
+that fails its typed schema receives exactly one metered schema correction attempt.
+QA semantic correction is separately bounded to one generator refinement followed by
+one final verification; a second semantic rejection fails the whole prompt without
+partial rows
 (`src/batch.rs`; `src/services/qa_batch.rs`).
 
 Before truncating output, the generator validates the entire input, resolves the
