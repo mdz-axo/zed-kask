@@ -15,11 +15,12 @@ use crate::batch::{
 };
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
-    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, QaResponseMetadata,
-    complete_disposition_plan, merge_disposition_plans, parse_disposition_plan_response,
+    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
+    QaResponseMetadata, complete_disposition_plan, merge_disposition_plans,
+    parse_disposition_plan_response, parse_passage_quality_response, prompt_wide_skip_plan,
     qa_llm_parameters, read_prompts, render_disposition_plan_messages,
-    render_disposition_review_messages, render_planned_qa_messages,
-    render_planned_qa_review_messages,
+    render_disposition_review_messages, render_passage_quality_messages,
+    render_planned_qa_messages, render_planned_qa_review_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -206,6 +207,7 @@ impl QaBatchService {
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
                 let task_lease = Arc::clone(&lease);
+                let quality_messages = render_passage_quality_messages(&prompt)?;
                 let planning_messages = render_disposition_plan_messages(&prompt)?;
                 let worker_prompt = prompt.clone();
                 let prompt_id = prompt.prompt_id.clone();
@@ -214,6 +216,46 @@ impl QaBatchService {
                     // worker actually drops, not merely until its abort is requested.
                     let _lease = task_lease;
                     let mut prior_responses = Vec::new();
+                    let quality_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &quality_messages,
+                        &prompt_id,
+                        "passage quality",
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    let quality = parse_passage_quality_response(
+                        &crate::extract_json_from_response(&quality_response.text),
+                    );
+                    match quality {
+                        Ok(PassageQuality::Clean) => {
+                            prior_responses.push(response_metadata(&quality_response));
+                        }
+                        Ok(PassageQuality::Skip(reason)) => {
+                            let plan = prompt_wide_skip_plan(&worker_prompt, &reason);
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    quality_response,
+                                    complete_disposition_plan(&plan, None),
+                                )),
+                            );
+                        }
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    quality_response,
+                                    Err(format!("passage quality response rejected: {error}")),
+                                )),
+                            );
+                        }
+                    }
                     let mut planning_response = match infer_with_retry(
                         &router,
                         &limiter,
@@ -560,9 +602,13 @@ mod tests {
             assert_eq!(model, Some("OpenRouter/offline-model"));
             assert!(tools.is_none());
             let mode = self.mode;
+            let is_quality = messages[0].content.contains("focused passage-quality gate");
             let is_planning = messages[0].content.contains("disposition plan");
-            let is_review = messages[0].content.contains("Independently review");
-            if matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 3 {
+            let is_review = messages[0]
+                .content
+                .contains("Independently review the proposed disposition");
+            if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 4
+            {
                 assert!(
                     messages[0]
                         .content
@@ -575,12 +621,17 @@ mod tests {
                 }
                 let text = if matches!(mode, Mode::Malformed)
                     || matches!(mode, Mode::ReviewMalformed) && is_review
-                    || matches!(mode, Mode::WriterMalformed) && !is_planning
-                    || matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 2
+                    || matches!(mode, Mode::WriterMalformed) && !is_quality && !is_planning
+                    || matches!(mode, Mode::WriterMalformedOnce)
+                        && !is_quality
+                        && !is_planning
+                        && call == 3
                 {
                     "[".to_string()
                 } else if matches!(mode, Mode::RejectContaminated) {
                     json!(["skip", "contaminated_or_garbled"]).to_string()
+                } else if is_quality {
+                    json!(["clean"]).to_string()
                 } else if is_planning {
                     let conceptual = if matches!(mode, Mode::SkipConceptual) {
                         json!({"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]})
@@ -685,17 +736,17 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 2);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
-        assert_eq!(summary["provider_responses"], 8);
-        assert_eq!(summary["tokens_used"], 80);
+        assert_eq!(summary["provider_responses"], 10);
+        assert_eq!(summary["tokens_used"], 100);
         assert!(
             (summary["reported_cost_usd"]
                 .as_f64()
                 .expect("reported cost")
-                - 0.08)
+                - 0.10)
                 .abs()
                 < 1e-12
         );
-        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 10);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
@@ -720,9 +771,9 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
         assert_eq!(summary["qa_levels_skipped"], 2);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(summary["reported_cost_usd"], 0.02);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(summary["provider_responses"], 1);
+        assert_eq!(summary["reported_cost_usd"], 0.01);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row["status"] == "skipped"));
@@ -746,8 +797,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 1);
         assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 5);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["qa_type"], "factual");
@@ -827,8 +878,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 6);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
         assert_eq!(records(&output)?.len(), 2);
         Ok(())
     }
@@ -846,8 +897,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 6);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
         assert_eq!(records(&output)?.len(), 2);
         Ok(())
     }
@@ -865,8 +916,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 0);
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 5);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["prompt_id"], "qa-1");

@@ -52,12 +52,21 @@ jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v4" | .provenance
 cat "$WORK/base.jsonl" "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'valid staged-v4 skip requires disposition-plan provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v5" | .provenance.passage_quality_protocol="prepared-qa-passage-quality-v1"' \
+    "$WORK/case.jsonl" > "$WORK/v5.jsonl"
+cat "$WORK/base.jsonl" "$WORK/v5.jsonl" > "$WORK/mixed.jsonl"
+check 'valid staged-v5 skip requires quality and disposition provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
 jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'unknown staged skip protocol remains invalid' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
 jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v4" | .provenance.disposition_plan_protocol="prepared-qa-disposition-plan-v1"' \
     "$WORK/base.jsonl" > "$WORK/case.jsonl"
 check 'valid staged-v4 QA requires disposition-plan provenance' 0 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v5" | .provenance.passage_quality_protocol="prepared-qa-passage-quality-v1"' \
+    "$WORK/case.jsonl" > "$WORK/v5.jsonl"
+check 'valid staged-v5 QA requires quality and disposition provenance' 0 "$WORK/v5.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
 jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'unknown staged QA protocol is visible' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \

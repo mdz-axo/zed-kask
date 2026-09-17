@@ -226,7 +226,7 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. Generation then uses proposal, review and writing stages.
+local IDs `e0`, `e1`, etc. Generation then uses disposition proposal/review and QA writing/review stages.
 First, the disposition planner sees the complete guarded primary passage and
 evidence candidates. It either returns one prompt-wide bad-passage skip or one
 ordered plan per requested level. A separate focused pass reviews that proposal.
@@ -239,7 +239,8 @@ kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpos
 
 The writer receives only the merged generated levels and their selected source
 spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
-select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}` objects.
+select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}` objects. A focused draft review checks unchanged subjects, conditions, categories,
+negation, modality, premise support and answer completeness before final parsing.
 The server recombines those drafts with planned skips, restores immutable
 `QaEvidence {chunk_ref, source, quote}` from `p0`, and validates the existing final
 row contract.

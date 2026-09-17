@@ -1117,6 +1117,7 @@ fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> s
         },
         "provenance": {
             "generator_model": model,
+            "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
             "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,
@@ -1141,6 +1142,7 @@ fn qa_skip_envelope(
         "reason": reason,
         "provenance": {
             "generator_model": model,
+            "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
             "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,

@@ -193,7 +193,7 @@ from rendered model messages.
 pairs. One compact prepared request per chunk carries the selected level rotation.
 Generation proposes and independently reviews passage/level dispositions, merges
 bad-passage decisions conservatively and supported clean levels for retention, then
-uses a writer call only when at least one level is supported. Summary separates `prompts_written` from
+uses writer and focused draft-review calls when at least one level is supported. Summary separates `prompts_written` from
 `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
@@ -227,7 +227,9 @@ receives only planned generated levels and fixed evidence, then returns:
 ```
 
 The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,
-conceptual generation without a relation, or any writer deviation from the plan.
+conceptual generation without a relation, or any writer deviation from the plan. A
+focused draft review checks subjects, conditions, categories, negation, modality,
+premises and answer completeness before final parsing.
 It then restores canonical `QaEvidence {chunk_ref, source, quote}`. The planner and
 writer are model-mediated; semantic answer entailment remains a separate Stage 8
 audit.
