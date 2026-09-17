@@ -371,17 +371,18 @@ impl InferencePort for CitationGeneration {
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("exact nonempty quote"));
+        assert!(rendered.contains("evidence IDs"));
+        assert!(rendered.contains("conceptual_support_absent"));
         assert!(rendered.contains("p0"));
         assert!(!rendered.contains("corpus:brooks:0"));
         assert!(!rendered.contains("brooks.txt"));
         let rows = json!([
-            ["factual", "How many?", "Thirty", [["p0", "Thirty"]]],
+            ["factual", "What is the measured count?", "Thirty", ["e0"]],
             [
                 "conceptual",
-                "What duration is supplied?",
-                "The duration is 72 hours.",
-                [["p1", "72 hours"]]
+                "Why does the duration constrain timing?",
+                "It determines when the next step can begin.",
+                ["e0"]
             ]
         ]);
         Box::pin(async move {
@@ -433,7 +434,7 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
                 local_id: "p0".into(),
                 chunk_ref: "corpus:brooks:0".into(),
                 source: "brooks.txt".into(),
-                text: "Thirty".into(),
+                text: "The measured count is thirty. The duration of 72 hours constrains when the next step can begin.".into(),
             },
             PreparedQaPassage {
                 local_id: "p1".into(),

@@ -107,14 +107,64 @@ pub enum AlertQueueOutcome {
 /// store's own error type.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AlertPersistError {
+    #[error("escalation queue read failed: {0}")]
+    QueueRead(String),
     #[error("escalation queue write failed: {0}")]
     QueueWrite(String),
+    #[error("invalid persisted advice review: {0}")]
+    InvalidAdviceReview(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdviceReviewOutcome {
+    Recovered,
+    Improved,
+    NoImprovement,
+    InsufficientEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdviceReviewCausalAttribution {
+    Unverified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdviceReviewReceipt {
+    pub event_id: hkask_types::EventID,
+    pub escalation_id: String,
+    pub outcome: AdviceReviewOutcome,
+    pub causal_attribution: AdviceReviewCausalAttribution,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdviceReviewReconciliation {
+    /// Durable applications currently retained by the authoritative queue.
+    pub interventions_confirmed: usize,
+    /// Finalized logical receipts not yet acknowledged as published.
+    pub pending_receipts: Vec<AdviceReviewReceipt>,
 }
 
 pub trait AlertEscalationSink: Send + Sync {
-    /// Compare durable triggering conditions with fresh observations each tick.
-    /// Missing observations must never resolve an escalation.
-    fn reconcile_conditions(&self, _observations: &[crate::loops::Signal]) {}
+    /// Compare durable triggering conditions with fresh observations each tick,
+    /// then return the queue's intervention gauge and unpublished final-review
+    /// receipts. Missing observations must never resolve an escalation.
+    fn reconcile_conditions(
+        &self,
+        _observations: &[crate::loops::Signal],
+    ) -> Result<AdviceReviewReconciliation, AlertPersistError> {
+        Ok(AdviceReviewReconciliation::default())
+    }
+
+    /// Mark one logical receipt published after Regulation persistence succeeds.
+    /// `false` means concurrent queue change; retry on a later tick.
+    fn acknowledge_advice_review(
+        &self,
+        _receipt: &AdviceReviewReceipt,
+    ) -> Result<bool, AlertPersistError> {
+        Ok(false)
+    }
 
     /// Persist an alert to the reviewable escalation queue, reporting the
     /// durable-write outcome — the reporting variant of `persist_alert`.

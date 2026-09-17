@@ -15,7 +15,7 @@ use crate::tools::corpus::{QaType, qa_type_instruction};
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-evidence-candidates-v2";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-quality-gated-v3";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
 const EVIDENCE_CANDIDATE_OVERLAP_WORDS: usize = 6;
 
@@ -24,6 +24,11 @@ struct QaPair {
     answer: String,
     bloom_level: String,
     evidence_quotes: Vec<hkask_types::corpus::QaEvidence>,
+}
+
+enum QaLevelDisposition {
+    Generated(QaPair),
+    Skipped { bloom_level: String, reason: String },
 }
 
 /// One server-owned passage identity. Only `local_id` and guarded `text` enter
@@ -188,7 +193,7 @@ pub(crate) fn render_prepared_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render prepared QA: {error}")))?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Generate exactly {} source-grounded QA pairs, one per requested level in the supplied order. Evidence candidates with eN IDs are server-owned exact contiguous excerpts from primary passage p0. Context passages can clarify meaning but are not evidence. Candidate-term hints are optional and must be ignored when unsupported. For each pair, first select one to three evidence IDs that directly support the answer; then write a concise answer using only that evidence; then write a concise question answered by it. Do not output this selection process. Return one complete compact JSON array on one line and nothing else. Each tuple has exactly this shape: [\"level\",\"question\",\"answer\",[\"e0\"]]. The evidence field contains eN IDs only, never quote text or passage IDs. Emit valid JSON string escaping, no markdown, no canonical source or chunk identities.",
+        "{CONTENT_GUARD_INSTRUCTION}Return exactly {} ordered level dispositions, one per requested level. Quality overrides pair count: never manufacture a question when the primary passage is non-substantive, contaminated, garbled, or lacks support for the requested cognitive level. Evidence candidates with eN IDs are server-owned exact contiguous excerpts from primary passage p0. Context passages can clarify meaning but are not evidence. Candidate-term hints are optional and must be ignored when unsupported. A conceptual question must not be answerable by direct recall of one name, label, list, title, number, or sentence-level paraphrase. For a supported level, first select one to three evidence IDs that directly support the answer; then write a concise answer using only that evidence; then write a concise question answered by it. Emit [\"level\",\"question\",\"answer\",[\"e0\"]]. For an unsupported level, emit [\"level\",null,\"reason\",[]], where reason is exactly one of non_substantive_passage, contaminated_or_garbled, factual_support_absent, conceptual_support_absent, analyze_support_absent, evaluate_support_absent, or create_support_absent. Do not downgrade one level into another. Do not output the selection process. Return one complete compact JSON array on one line and nothing else. Evidence fields contain eN IDs only, never quote text or passage IDs. Emit valid JSON string escaping, no markdown, no canonical source or chunk identities.",
         prompt.qa_types.len(),
     );
     Ok([
@@ -204,17 +209,27 @@ pub(crate) fn render_prepared_messages(
 }
 
 #[derive(Deserialize)]
-struct PreparedQaPair(String, String, String, Vec<String>);
+struct PreparedQaPair(String, Option<String>, String, Vec<String>);
+
+fn support_absent_reason(qa_type: QaType) -> &'static str {
+    match qa_type {
+        QaType::Factual => "factual_support_absent",
+        QaType::Conceptual => "conceptual_support_absent",
+        QaType::Analyze => "analyze_support_absent",
+        QaType::Evaluate => "evaluate_support_absent",
+        QaType::Create => "create_support_absent",
+    }
+}
 
 fn parse_prepared_qa_response(
     response: &str,
     prompt: &PreparedQaPrompt,
-) -> Result<Vec<QaPair>, String> {
+) -> Result<Vec<QaLevelDisposition>, String> {
     let raw: Vec<PreparedQaPair> = serde_json::from_str(response)
         .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
     if raw.len() != prompt.qa_types.len() {
         return Err(format!(
-            "expected {} QA pairs, received {}",
+            "expected {} QA level dispositions, received {}",
             prompt.qa_types.len(),
             raw.len()
         ));
@@ -235,6 +250,27 @@ fn parse_prepared_qa_response(
                         expected.as_str()
                     ));
                 }
+                let Some(question) = question else {
+                    if !evidence_ids.is_empty() {
+                        return Err(format!(
+                            "skip {index} must carry an empty evidence ID list"
+                        ));
+                    }
+                    let reason = answer.trim();
+                    if reason != "non_substantive_passage"
+                        && reason != "contaminated_or_garbled"
+                        && reason != support_absent_reason(*expected)
+                    {
+                        return Err(format!(
+                            "skip {index} has unsupported reason '{reason}' for level '{}'",
+                            expected.as_str()
+                        ));
+                    }
+                    return Ok(QaLevelDisposition::Skipped {
+                        bloom_level: level,
+                        reason: reason.to_string(),
+                    });
+                };
                 if question.trim().is_empty()
                     || answer.trim().is_empty()
                     || evidence_ids.is_empty()
@@ -261,12 +297,12 @@ fn parse_prepared_qa_response(
                         quote: candidate.quote.clone(),
                     });
                 }
-                Ok(QaPair {
+                Ok(QaLevelDisposition::Generated(QaPair {
                     question,
                     answer,
                     bloom_level: level,
                     evidence_quotes,
-                })
+                }))
             },
         )
         .collect()
@@ -326,7 +362,10 @@ pub(crate) struct QaOutput<W: Write> {
     prompts_total: usize,
     prompts_succeeded: usize,
     prompts_failed: usize,
+    qa_levels_requested: usize,
     qa_rows_written: usize,
+    qa_levels_skipped: usize,
+    skip_reason_counts: BTreeMap<String, usize>,
     tokens_used: u64,
     completion_tokens_used: u64,
     completion_token_reports: usize,
@@ -344,7 +383,10 @@ impl<W: Write> QaOutput<W> {
             prompts_total,
             prompts_succeeded: 0,
             prompts_failed: 0,
+            qa_levels_requested: 0,
             qa_rows_written: 0,
+            qa_levels_skipped: 0,
+            skip_reason_counts: BTreeMap::new(),
             tokens_used: 0,
             completion_tokens_used: 0,
             completion_token_reports: 0,
@@ -379,6 +421,7 @@ impl<W: Write> QaOutput<W> {
         completion: Result<QaCompletion, QaCompletionError>,
         model: &str,
     ) -> Result<(), McpToolError> {
+        self.qa_levels_requested += prompt.qa_types.len();
         let mut completion_metadata = None;
         let parsed = match completion {
             Ok(completion) => {
@@ -407,10 +450,27 @@ impl<W: Write> QaOutput<W> {
             Err(error) => Err(error),
         };
         match parsed {
-            Ok(pairs) => {
-                for pair in pairs {
-                    self.write_record(&qa_result_envelope(prompt, pair, model))?;
-                    self.qa_rows_written += 1;
+            Ok(dispositions) => {
+                for disposition in dispositions {
+                    match disposition {
+                        QaLevelDisposition::Generated(pair) => {
+                            self.write_record(&qa_result_envelope(prompt, pair, model))?;
+                            self.qa_rows_written += 1;
+                        }
+                        QaLevelDisposition::Skipped {
+                            bloom_level,
+                            reason,
+                        } => {
+                            self.write_record(&qa_skip_envelope(
+                                prompt,
+                                &bloom_level,
+                                &reason,
+                                model,
+                            ))?;
+                            self.qa_levels_skipped += 1;
+                            *self.skip_reason_counts.entry(reason).or_default() += 1;
+                        }
+                    }
                 }
                 self.prompts_succeeded += 1;
             }
@@ -459,7 +519,10 @@ impl<W: Write> QaOutput<W> {
             "prompts_total": self.prompts_total,
             "prompts_succeeded": self.prompts_succeeded,
             "prompts_failed": self.prompts_failed,
+            "qa_levels_requested": self.qa_levels_requested,
             "qa_rows_written": self.qa_rows_written,
+            "qa_levels_skipped": self.qa_levels_skipped,
+            "skip_reason_counts": self.skip_reason_counts,
             "tokens_used": self.tokens_used,
             "completion_tokens_used": self.completion_tokens_used,
             "completion_token_reporting_complete": completion_token_reporting_complete,
@@ -509,6 +572,29 @@ fn qa_result_envelope(prompt: &PreparedQaPrompt, pair: QaPair, model: &str) -> s
             "concepts": prompt.candidate_terms,
             "evidence_quotes": pair.evidence_quotes,
         },
+        "provenance": {
+            "generator_model": model,
+            "prompt_protocol": QA_GENERATION_PROTOCOL,
+            "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,
+            "prompt_id": prompt.prompt_id,
+            "source_chunk_ref": prompt.primary().chunk_ref,
+        },
+    })
+}
+
+fn qa_skip_envelope(
+    prompt: &PreparedQaPrompt,
+    bloom_level: &str,
+    reason: &str,
+    model: &str,
+) -> serde_json::Value {
+    json!({
+        "prompt_id": prompt.prompt_id,
+        "chunk_ref": prompt.primary().chunk_ref,
+        "source": prompt.primary().source,
+        "qa_type": bloom_level,
+        "status": "skipped",
+        "reason": reason,
         "provenance": {
             "generator_model": model,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
@@ -751,6 +837,20 @@ mod tests {
         assert!(!params.thinking_allowed);
     }
 
+    /// expect: Unsupported or contaminated levels are skipped explicitly instead of
+    /// being downgraded to factual recall under a stronger label.
+    #[test]
+    fn prepared_contract_advertises_quality_gated_skips() {
+        let mut prompt = prepared();
+        prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
+        let messages = render_prepared_messages(&prompt).expect("render");
+        let system = &messages[0].content;
+        assert!(system.contains("conceptual_support_absent"));
+        assert!(system.contains("contaminated_or_garbled"));
+        assert!(system.contains("must not be answerable by direct recall"));
+        assert!(!system.contains("Generate exactly 2 source-grounded QA pairs"));
+    }
+
     #[test]
     fn prepared_contract_fuses_levels_and_restores_verified_canonical_evidence() {
         let mut prompt = prepared();
@@ -770,11 +870,75 @@ mod tests {
             ["conceptual", "How is it grounded?", "By evidence.", ["e0"]]
         ])
         .to_string();
-        let pairs = parse_prepared_qa_response(&response, &prompt).expect("parse");
-        assert_eq!(pairs.len(), 2);
-        for pair in pairs {
+        let dispositions = parse_prepared_qa_response(&response, &prompt).expect("parse");
+        assert_eq!(dispositions.len(), 2);
+        for disposition in dispositions {
+            let QaLevelDisposition::Generated(pair) = disposition else {
+                panic!("supported fixture level must generate QA");
+            };
             assert_eq!(pair.evidence_quotes[0].chunk_ref, "chunk-1");
             assert_eq!(pair.evidence_quotes[0].source, "source.txt");
+        }
+    }
+
+    /// expect: Every requested level receives one explicit terminal disposition;
+    /// unsupported conceptual material is visible and never becomes training data.
+    #[test]
+    fn quality_skip_is_validated_written_and_accounted() -> Result<(), Box<dyn std::error::Error>> {
+        let mut prompt = prepared();
+        prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
+        let completion = Ok(QaCompletion {
+            text: json!([
+                ["factual", "What is grounded?", "The answer.", ["e0"]],
+                ["conceptual", null, "conceptual_support_absent", []],
+            ])
+            .to_string(),
+            tokens_used: 10,
+            completion_tokens: Some(5),
+            finish_reason: Some("stop".into()),
+            cost_usd: Some(0.01),
+        });
+        let mut bytes = Vec::new();
+        let mut output = QaOutput::new(&mut bytes, 1);
+        output.complete(&prompt, completion, "offline-model")?;
+        let summary = output.finish("unused")?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 0);
+        assert_eq!(summary["qa_levels_requested"], 2);
+        assert_eq!(summary["qa_rows_written"], 1);
+        assert_eq!(summary["qa_levels_skipped"], 1);
+        assert_eq!(
+            summary["skip_reason_counts"]["conceptual_support_absent"],
+            1
+        );
+
+        let rows = String::from_utf8(bytes)?
+            .lines()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].get("response").is_some());
+        assert_eq!(rows[1]["status"], "skipped");
+        assert_eq!(rows[1]["qa_type"], "conceptual");
+        assert_eq!(rows[1]["reason"], "conceptual_support_absent");
+        assert!(rows[1].get("response").is_none());
+        assert_eq!(
+            rows[1]["provenance"]["prompt_protocol"],
+            QA_GENERATION_PROTOCOL
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quality_skip_rejects_ambiguous_or_wrong_level_reasons() {
+        let mut prompt = prepared();
+        prompt.qa_types = vec![QaType::Conceptual];
+        for response in [
+            r#"[["conceptual",null,"unsupported",[]]]"#,
+            r#"[["conceptual",null,"factual_support_absent",[]]]"#,
+            r#"[["conceptual",null,"conceptual_support_absent",["e0"]]]"#,
+        ] {
+            assert!(parse_prepared_qa_response(response, &prompt).is_err());
         }
     }
 }

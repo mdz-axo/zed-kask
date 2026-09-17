@@ -433,6 +433,34 @@ fn is_ocr_figure_destination(destination: &str) -> bool {
     }) && parts.next().is_none()
 }
 
+fn strip_newsletter_calls_to_action(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    const START: &str = "Thanks for reading ";
+    const END: &str = "Subscribe for free to receive new posts and support my work.";
+
+    let mut output = String::with_capacity(text.len());
+    let mut exclusions = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = text[cursor..].find(START) {
+        let start = cursor + relative_start;
+        let Some(relative_end) = text[start..].find(END) else {
+            break;
+        };
+        let end = start + relative_end + END.len();
+        output.push_str(&text[cursor..start]);
+        output.push(' ');
+        exclusions.push(BoilerplateExclusion {
+            reason: "promotional_call_to_action",
+            boundary_unit: "byte",
+            start,
+            end,
+            removed_words: text[start..end].split_whitespace().count(),
+        });
+        cursor = end;
+    }
+    output.push_str(&text[cursor..]);
+    (output, exclusions)
+}
+
 fn strip_markdown_images(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let mut output = String::with_capacity(text.len());
     let mut exclusions = Vec::new();
@@ -476,12 +504,12 @@ fn strip_markdown_images(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     (output, exclusions)
 }
 
-/// expect: I can remove bounded book furniture while retaining substantive content and reviewing every exclusion.
+/// expect: I can remove bounded book furniture and promotional calls to action while retaining substantive source content and reviewing every exclusion.
 /// [P3] Motivating: Generative Space — downstream corpus stages receive content rather than front/back matter.
 /// [P1] Constraining: Human Agency — every removal carries a reason and source boundary.
 /// [P2] Constraining: Cognitive Sovereignty — prose mentions never act as deletion commands.
 /// pre: text is valid UTF-8 and may be page-delimited or a form-feed-free extraction
-/// post: returns retained text plus complete word-count and exclusion-range accounting
+/// post: removes only structurally bounded furniture before a detected body or bounded promotional spans, retaining source text plus complete word-count and exclusion-range accounting
 pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResult {
     let input_words = text.split_whitespace().count();
     let (filtered, mut exclusions) = if text.contains(FORM_FEED) {
@@ -501,6 +529,8 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     } else {
         filter_unpaged_boilerplate(text)
     };
+    let (filtered, promotional_exclusions) = strip_newsletter_calls_to_action(&filtered);
+    exclusions.extend(promotional_exclusions);
     let (filtered, image_exclusions) = strip_markdown_images(&filtered);
     exclusions.extend(image_exclusions);
     let retained_words = filtered.split_whitespace().count();
@@ -518,10 +548,17 @@ pub fn filter_boilerplate_pages(text: &str) -> String {
 }
 
 fn filter_page_delimited_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let pages = text.split(FORM_FEED).collect::<Vec<_>>();
+    let front_end = bounded_front_page_end(&pages);
     let mut kept = Vec::new();
     let mut exclusions = Vec::new();
-    for (page_index, page) in text.split(FORM_FEED).enumerate() {
-        if let Some(reason) = boilerplate_page_reason(page) {
+    for (page_index, page) in pages.into_iter().enumerate() {
+        let reason = if page_index < front_end && !page.trim().is_empty() {
+            Some("front_matter")
+        } else {
+            boilerplate_page_reason(page)
+        };
+        if let Some(reason) = reason {
             exclusions.push(BoilerplateExclusion {
                 reason,
                 boundary_unit: "page",
@@ -537,6 +574,67 @@ fn filter_page_delimited_boilerplate(text: &str) -> (String, Vec<BoilerplateExcl
         }
     }
     (kept.join("\n"), exclusions)
+}
+
+fn bounded_front_page_end(pages: &[&str]) -> usize {
+    let Some(body_start) = pages.iter().position(|page| is_substantive_page(page)) else {
+        return 0;
+    };
+    if body_start == 0 {
+        return 0;
+    }
+    let total_words = pages
+        .iter()
+        .flat_map(|page| page.split_whitespace())
+        .count();
+    let candidate_words = pages
+        .get(..body_start)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|page| page.split_whitespace())
+        .count();
+    if candidate_words.saturating_mul(20) <= total_words {
+        body_start
+    } else {
+        0
+    }
+}
+
+fn is_substantive_page(page: &str) -> bool {
+    if boilerplate_page_reason(page).is_some() {
+        return false;
+    }
+    let trimmed = page.trim();
+    let first_heading = trimmed
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(normalized_heading)
+        .unwrap_or_default();
+    if is_front_furniture_heading(&first_heading) {
+        return false;
+    }
+    let word_count = trimmed.split_whitespace().count();
+    let sentence_ends = trimmed
+        .chars()
+        .filter(|character| matches!(character, '.' | '!' | '?'))
+        .count();
+    (word_count >= 40 && sentence_ends >= 2)
+        || (word_count >= 20 && is_body_start_heading(&first_heading))
+}
+
+fn is_front_furniture_heading(heading: &str) -> bool {
+    [
+        "praise for",
+        "advance praise",
+        "other books by",
+        "also by",
+        "books by",
+        "sign up",
+        "subscribe",
+        "join our mailing list",
+    ]
+    .iter()
+    .any(|prefix| heading.starts_with(prefix))
 }
 
 fn filter_unpaged_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
@@ -1028,6 +1126,41 @@ mod tests {
         assert_eq!(sanitize_text(input), "hello world test end");
     }
 
+    /// expect: I can retrieve the article around a newsletter sign-up block without learning the promotion as source knowledge.
+    /// [P3] Motivating: Generative Space — article evidence remains available without promotional contamination.
+    /// [P1] Constraining: Human Agency — the exact removed span is reviewable.
+    /// [P2] Constraining: Cognitive Sovereignty — neighboring source prose is unchanged.
+    /// pre: an exact bounded newsletter call-to-action occurs between substantive source passages
+    /// post: only the promotional span is removed and reported as a byte range
+    #[test]
+    fn filter_removes_bounded_newsletter_cta_between_source_prose() {
+        let before =
+            "The research explains why feedback improves metacognitive accuracy. ".repeat(20);
+        let promotion = "Thanks for reading Merchant Adventures! Subscribe for free to receive new posts and support my work.";
+        let after =
+            "The following section applies that evidence to forecasting practice. ".repeat(20);
+        let document = format!("{before}{promotion} {after}");
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("metacognitive accuracy"));
+        assert!(result.text.contains("forecasting practice"));
+        assert!(!result.text.contains("Thanks for reading"));
+        assert!(!result.text.contains("Subscribe for free"));
+        let promotional = result
+            .exclusions
+            .iter()
+            .filter(|exclusion| exclusion.reason == "promotional_call_to_action")
+            .collect::<Vec<_>>();
+        assert_eq!(promotional.len(), 1);
+        assert_eq!(promotional[0].boundary_unit, "byte");
+        assert!(promotional[0].end > promotional[0].start);
+        assert_eq!(
+            promotional[0].removed_words,
+            promotion.split_whitespace().count()
+        );
+    }
+
     #[test]
     fn filter_removes_ocr_images_but_preserves_surrounding_source_text() {
         let prose = "Substantive source prose remains available for evidence\n".repeat(30);
@@ -1224,6 +1357,78 @@ mod tests {
         // Unicode math symbols (⊢, ⊥, λ, Γ) are NOT control chars
         let math = "Given Γ ⊢ A ⊥ λ, the proof term is constructed as follows.";
         assert!(!has_corrupted_font_encoding(math));
+    }
+
+    /// expect: I receive a book's substantive opening rather than its title, publisher, and contents pages.
+    /// [P3] Motivating: Generative Space — retrieval starts from source content instead of book furniture.
+    /// [P1] Constraining: Human Agency — removed pages remain visible in the exclusion report.
+    /// [P2] Constraining: Cognitive Sovereignty — removal stops at demonstrated substantive prose.
+    /// pre: page-delimited front matter precedes a substantive opening within five percent of document words
+    /// post: all bounded front pages are excluded with page identities and the substantive opening is retained
+    #[test]
+    fn page_delimited_book_filters_bounded_front_matter_with_report() {
+        let title = "A PHILOSOPHY OF SOFTWARE DESIGN\nJOHN OUSTERHOUT";
+        let publisher =
+            "A Philosophy of Software Design\nJohn Ousterhout\nStanford University\nOceanofPDF.com";
+        let contents = "Contents\nPreface\n1 Introduction\n1.1 How to use this book\n2 The Nature of Complexity";
+        let body = "1 Introduction\nSoftware design is the process of decomposing a complex system into modules with interfaces that hide implementation details. Good design reduces the amount of information developers must hold in mind while making a change. This chapter develops that argument with concrete examples and explains why complexity accumulates over time. ".repeat(40);
+        let document = [
+            title.to_string(),
+            publisher.to_string(),
+            contents.to_string(),
+            body.clone(),
+        ]
+        .join(&FORM_FEED.to_string());
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(!result.text.contains("JOHN OUSTERHOUT"));
+        assert!(!result.text.contains("OceanofPDF.com"));
+        assert!(!result.text.contains("Contents"));
+        assert!(result.text.starts_with("1 Introduction"));
+        assert!(result.text.contains("complex system into modules"));
+        assert_eq!(result.exclusions.len(), 3);
+        assert!(
+            result
+                .exclusions
+                .iter()
+                .enumerate()
+                .all(|(index, exclusion)| {
+                    exclusion.reason == "front_matter"
+                        && exclusion.boundary_unit == "page"
+                        && exclusion.start == index
+                        && exclusion.end == index + 1
+                        && exclusion.removed_words > 0
+                })
+        );
+    }
+
+    /// expect: I do not receive cover endorsements as the opening knowledge of a book.
+    /// [P3] Motivating: Generative Space — retrieval begins with the work rather than promotional praise.
+    /// [P1] Constraining: Human Agency — the removed praise page remains reviewable by page identity.
+    /// [P2] Constraining: Cognitive Sovereignty — a following substantive page terminates front-matter removal.
+    /// pre: a heading-marked praise page precedes substantive body prose within the bounded front section
+    /// post: title and praise pages are excluded while body prose remains
+    #[test]
+    fn page_delimited_book_filters_heading_marked_promotional_praise() {
+        let title = "SUPERFORECASTING\nThe Art and Science of Prediction";
+        let praise = "PRAISE FOR SUPERFORECASTING\nThis remarkable book changes how readers understand prediction. It offers a compelling account of judgment and disciplined learning. The examples are vivid, practical, and memorable. Every decision maker should read this important work. Its methods will transform institutions, improve choices, and inspire careful readers throughout the world. —A Reviewer";
+        let body = "Introduction\nForecasting skill can be measured when predictions are stated precisely and scored against outcomes. Teams improve by decomposing questions, updating estimates, and examining calibration over repeated judgments. This chapter explains the evidence for those practices and the limits of each result. ".repeat(40);
+        let document = [title.to_string(), praise.to_string(), body].join(&FORM_FEED.to_string());
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(!result.text.contains("PRAISE FOR"));
+        assert!(!result.text.contains("A Reviewer"));
+        assert!(result.text.starts_with("Introduction"));
+        assert_eq!(
+            result
+                .exclusions
+                .iter()
+                .filter(|exclusion| exclusion.reason == "front_matter")
+                .count(),
+            2
+        );
     }
 
     #[test]

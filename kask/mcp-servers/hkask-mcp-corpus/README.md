@@ -224,33 +224,47 @@ from rendered model messages.
 The renderer partitions primary passage `p0` into overlapping exact source spans
 with local IDs `e0`, `e1`, etc. Context passages remain available for meaning but
 cannot supply evidence. Candidate terms are optional topic hints. Prepared
-inference selects one to three evidence IDs per pair and returns compact tuples in
-requested-level order:
+inference returns one compact disposition per requested level in order. A supported
+level selects one to three evidence IDs; an unsupported or contaminated level uses
+an explicit quality skip:
 
 ```json
-[["factual","What is the delay?","72 hours",["e0"]],["conceptual","Why does the delay constrain timing?","It postpones the next step.",["e0","e1"]]]
+[["factual","What is the delay?","72 hours",["e0"]],["conceptual",null,"conceptual_support_absent",[]]]
 ```
 
-Every pair must match its requested Bloom level and contain a nonblank question,
-answer, and one to three unique, known evidence IDs. The model never reproduces
-quote text. The server resolves each ID to its immutable exact span and restores
-canonical `QaEvidence {chunk_ref, source, quote}` from `p0`. Any bad pair rejects
-the whole prompt; answer entailment remains a separate semantic audit. Generated
-rows identify this renderer as `prepared-qa-evidence-candidates-v2`; existing
-prepared JSONL remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
+Generated pairs must match their requested Bloom level and contain a nonblank
+question, answer, and one to three unique, known evidence IDs. Conceptual QA must
+require an explicit mechanism, relationship, distinction, purpose, framework or
+transferable principle; direct recall of a name, list, title, number or sentence
+paraphrase is factual, not conceptual. Legal notices, publication metadata,
+navigation, marketing, watermarks, isolated captions and garbled text are skipped.
+Closed skip reasons are `non_substantive_passage`, `contaminated_or_garbled`, and
+the requested level's `<level>_support_absent` reason.
+
+The model never reproduces quote text. The server resolves each evidence ID to its
+immutable exact span and restores canonical `QaEvidence {chunk_ref, source, quote}`
+from `p0`. It writes accepted pairs as ingestible envelopes and skips as explicit
+`status:"skipped"` non-training records. Any malformed or ambiguous disposition
+rejects the whole prompt; answer entailment and cognitive difficulty remain separate
+semantic audits. Generated rows identify this renderer as
+`prepared-qa-quality-gated-v3`; existing prepared JSONL remains
+`prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-evidence-candidates-v2","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-quality-gated-v3","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifier above is illustrative, not a configured default. Prompt
 token usage is counted once in the batch summary rather than repeated on every
-pair row. A failed prompt writes primary `prompt_id`, `chunk_ref`, `source`,
-`error`, provider `completion_tokens`, and provider `finish_reason`, with no
-response; unavailable provider telemetry is null rather than fabricated. Failed
-prompts are never training data.
+pair row. Summaries separately reconcile `qa_levels_requested`,
+`qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`. A skip writes
+primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and
+protocol provenance, with no response. A failed prompt writes primary `prompt_id`,
+`chunk_ref`, `source`, `error`, provider `completion_tokens`, and provider
+`finish_reason`, with no response; unavailable provider telemetry is null rather
+than fabricated. Skips and failed prompts are never training data.
 
 ## QA routing, scheduling and output ownership
 

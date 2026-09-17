@@ -47,6 +47,33 @@ impl super::CyberneticsLoop {
         }
     }
 
+    /// Publish one observational advice-review receipt with its queue-assigned
+    /// identity. `Some(false)` means the archive already contains that logical
+    /// transition; `None` means no durable event sink is configured.
+    pub(super) async fn persist_advice_review_receipt(
+        &self,
+        receipt: &crate::AdviceReviewReceipt,
+    ) -> Result<Option<bool>, hkask_types::InfrastructureError> {
+        let Some(sink) = &self.event_sink else {
+            tracing::warn!(target: "reg.outcome", "Advice-review receipt retained — no event_sink configured");
+            return Ok(None);
+        };
+        let mut event = RegulationRecord::new(
+            WebID::from_persona(b"regulation"),
+            Span::from_kind(SpanKind::AdviceReviewObserved),
+            CyclePhase::Sense,
+            serde_json::json!({
+                "escalation_id": receipt.escalation_id,
+                "outcome": receipt.outcome,
+                "causal_attribution": receipt.causal_attribution,
+            }),
+            0,
+        );
+        event.id = receipt.event_id;
+        sink.persist_if_absent(&receipt.event_id.to_string(), &event)
+            .map(Some)
+    }
+
     /// Persist an algedonic alert to the reviewable escalation queue.
     ///
     /// This is the primary durable path for alert review: every escalated
@@ -1611,9 +1638,9 @@ mod tests {
                 (index + 1) as u32
             );
             assert_eq!(
-                LoopMetrics::from_cycle(0, &[], &[], &reports, TriggerOrigin::Scheduled)
-                    .observed_progress_score,
-                0.0
+                LoopMetrics::from_cycle(0, &[], &[], &reports, &[], TriggerOrigin::Scheduled)
+                    .rollout_progress_score,
+                Some(0.0)
             );
         }
         *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.3)));
@@ -1841,8 +1868,14 @@ mod tests {
             parameters: RegulatoryActionParams::reason("some_unrelated_low_thing"),
             metric_name: None,
         };
-        let metrics =
-            LoopMetrics::from_cycle(0, &[deviation], &[action], &[], TriggerOrigin::Scheduled);
+        let metrics = LoopMetrics::from_cycle(
+            0,
+            &[deviation],
+            &[action],
+            &[],
+            &[],
+            TriggerOrigin::Scheduled,
+        );
         assert_eq!(
             metrics.fidelity_score, 0.0,
             "action without metric_name must not match via string fallback"

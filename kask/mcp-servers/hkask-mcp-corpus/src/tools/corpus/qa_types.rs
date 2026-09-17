@@ -59,10 +59,10 @@ pub(crate) fn parse_type_distribution(spec: &str) -> Vec<QaType> {
 pub(crate) fn qa_type_instruction(qt: QaType) -> &'static str {
     match qt {
         QaType::Factual => {
-            "Ask about one specific detail, definition, quantity, or claim explicitly stated by the selected evidence. Give the directly stated fact as a concise answer, with no inference, synthesis, explanation, or outside knowledge."
+            "Ask about one specific detail, definition, quantity, or claim explicitly stated by substantive selected evidence. Give the directly stated fact as a concise answer, with no inference, synthesis, explanation, or outside knowledge. Do not generate QA from legal notices, publication metadata, navigation, marketing, watermarks, isolated captions, or garbled text; use the quality-skip contract instead."
         }
         QaType::Conceptual => {
-            "Ask about a definition, mechanism, relationship, distinction, purpose, or framework explicitly described by the selected evidence. If no mechanism is present, ask what a concept means or what role it plays according to the text. Answer only from the selected evidence, with no outside inference."
+            "Ask for an explanation of a mechanism, causal relationship, meaningful distinction, purpose, framework, or transferable principle explicitly supported by the selected evidence. A conceptual question must not be answerable by direct recall of one name, label, list, title, number, or sentence-level paraphrase. If the evidence supports only recall, or has no explicit conceptual relationship to explain, use conceptual_support_absent through the quality-skip contract instead of generating or relabeling factual QA."
         }
         QaType::Analyze => {
             "Generate an ANALYZE question: compare or contrast ideas within the passage. Identify patterns, distinguish structural factors from situational ones, or break down the components of a system described in the text to understand how they interact."

@@ -23,7 +23,9 @@ pub(crate) mod system_simulator;
 
 pub(crate) mod runtime;
 pub use algedonic::{
-    AlertEmailSink, AlertEscalationSink, AlertPersistError, AlertQueueOutcome, RuntimeAlert,
+    AdviceReviewCausalAttribution, AdviceReviewOutcome, AdviceReviewReceipt,
+    AdviceReviewReconciliation, AlertEmailSink, AlertEscalationSink, AlertPersistError,
+    AlertQueueOutcome, RuntimeAlert,
 };
 pub use cybernetics_loop::{
     CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,

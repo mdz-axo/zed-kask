@@ -472,6 +472,8 @@ pub enum SpanKind {
     RegulatoryPlateauDetected,
     /// Loop-quality telemetry recorded: `reg.outcome.loop_quality`
     LoopMetricsTelemetry,
+    /// Observational post-advice review finalized: `reg.outcome.advice_review_observed`
+    AdviceReviewObserved,
     /// Per-domain tool-outcome breakdown (success rates, operation counts,
     /// per-error-kind tallies): `reg.outcome.tool_domains`
     ToolOutcomeBreakdown,
@@ -493,6 +495,7 @@ impl SpanKind {
             SpanKind::ActionBlocked => ("reg.outcome", "action_blocked"),
             SpanKind::RegulatoryPlateauDetected => ("reg.outcome", "plateau_detected"),
             SpanKind::LoopMetricsTelemetry => ("reg.outcome", "loop_quality"),
+            SpanKind::AdviceReviewObserved => ("reg.outcome", "advice_review_observed"),
             SpanKind::ToolOutcomeBreakdown => ("reg.outcome", "tool_domains"),
             SpanKind::InferenceCircuitTransition => ("reg.inference", "circuit_transition"),
             SpanKind::InferenceObservedRecovery => ("reg.inference", "observed_recovery"),

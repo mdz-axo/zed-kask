@@ -107,11 +107,16 @@ mod tests {
     }
 
     impl hkask_regulation::AlertEscalationSink for RecordingAlertSink {
-        fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
+        fn reconcile_conditions(
+            &self,
+            observations: &[hkask_regulation::Signal],
+        ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
+        {
             self.observations
                 .lock()
                 .expect("observations lock")
                 .push(observations.to_vec());
+            Ok(hkask_regulation::AdviceReviewReconciliation::default())
         }
 
         fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {

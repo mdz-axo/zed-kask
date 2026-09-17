@@ -476,24 +476,39 @@ at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failu
 and rejected QA are not retried. There is one synchronous prepared-prompt
 transport; no provider-batch side path.
 
-The model returns exactly one tuple per requested level, in order:
+The model returns exactly one disposition per requested level, in order. A
+supported level is a grounded QA tuple; an unsupported or contaminated level is an
+explicit quality skip:
 
 ```json
-[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
+[["factual","What is the delay?","72 hours",["e0"]],["conceptual",null,"conceptual_support_absent",[]]]
 ```
 
-Every pair requires nonblank question, answer and local evidence. Local IDs must
-resolve and quotes must be exact passage substrings; otherwise the whole prompt
-fails. The server restores canonical `QaEvidence` only after this check. Generated
-envelopes retain primary identity, candidate terms, QA type, canonical evidence
-and protocol/model provenance. Prompt token usage is counted once in the summary,
-not repeated per pair. Matching quotation bytes still does not validate answer
-synthesis.
+A generated pair requires a nonblank question, answer and one to three server-owned
+evidence IDs. The server restores canonical `QaEvidence` only after those IDs
+resolve. Conceptual QA must require an explicitly supported mechanism, relationship,
+distinction, purpose, framework or transferable principle; direct recall of a name,
+list, title, number or sentence paraphrase is factual. Legal notices, publication
+metadata, navigation, marketing, watermarks, isolated captions and garbled text are
+not QA material. Use only the closed skip reasons `non_substantive_passage`,
+`contaminated_or_garbled`, or the requested level's `<level>_support_absent` reason.
+Malformed, ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
+Generated envelopes retain primary identity, candidate terms, QA type, canonical
+evidence and protocol/model provenance. Skip envelopes retain primary identity,
+requested QA type, closed reason and provenance but no response, and are never
+training data. Prompt token usage is counted once in the summary, not repeated per
+pair. Matching quotation bytes still does not validate answer synthesis or cognitive
+difficulty.
 
 **Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
-all prepared IDs, require no unresolved failed prompts, and separately measure
-`qa_rows_written`. A prompt may yield multiple pairs; row count is not prompt
-coverage. Failure rows have identity plus `error`, never training data.
+all prepared IDs and require no unresolved failed prompts. Separately reconcile
+`qa_levels_requested = qa_rows_written + qa_levels_skipped` for accepted prompts,
+inspect `skip_reason_counts`, and require every physical row to be either an
+accepted QA envelope, explicit skip, or identified prompt failure. A prompt may
+yield multiple pairs and/or skips; QA row count is neither prompt nor requested-level
+coverage. Failure and skip rows are never training data. Before expansion, audit
+both retained QA and skip decisions: a model that generates factual recall under a
+conceptual label or skips substantive support has failed the semantic gate.
 Writes/flushes can fail and leave explicit partial output. Cancellation warns;
 no automatic resume, atomic replacement or fsync guarantee exists. Once owners
 stop, inspect/reconcile partial records before any explicit rerun, which overwrites

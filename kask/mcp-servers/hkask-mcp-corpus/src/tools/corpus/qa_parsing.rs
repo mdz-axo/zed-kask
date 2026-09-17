@@ -59,10 +59,11 @@ pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
         return Err(QaRecordError::Malformed);
     }
     let body = value.get("response").unwrap_or(&value);
-    if [value.get("error"), body.get("error")]
-        .into_iter()
-        .flatten()
-        .any(|error| !error.is_null())
+    if value.get("status").and_then(serde_json::Value::as_str) == Some("skipped")
+        || [value.get("error"), body.get("error")]
+            .into_iter()
+            .flatten()
+            .any(|error| !error.is_null())
     {
         return Err(QaRecordError::GeneratorError);
     }
@@ -137,21 +138,14 @@ mod tests {
             qa_types: vec![QaType::Factual],
         };
         let quotes = json!([
-            {"chunk_ref":"chunk-1", "source":"source.txt", "quote":"Answer."},
-            {"chunk_ref":"chunk-2", "source":"other.txt", "quote":"Other evidence."}
+            {"chunk_ref":"chunk-1", "source":"source.txt", "quote":"Answer."}
         ]);
         let mut bytes = Vec::new();
         let mut output = QaOutput::new(&mut bytes, 2);
         output.complete(
             &prompt,
             Ok(QaCompletion {
-                text: json!([[
-                    "factual",
-                    "Question?",
-                    "Answer.",
-                    [["p0", "Answer."], ["p1", "Other evidence."]]
-                ]])
-                .to_string(),
+                text: json!([["factual", "Question?", "Answer.", ["e0"]]]).to_string(),
                 tokens_used: 10,
                 completion_tokens: Some(5),
                 finish_reason: Some("stop".into()),
@@ -202,6 +196,25 @@ mod tests {
         ));
         assert!(lines.next().is_none());
         Ok(())
+    }
+
+    /// expect: Quality-gated skips remain explicit generator terminals and can
+    /// never enter ingestion as blank QA.
+    #[test]
+    fn explicit_quality_skip_is_not_ingestible() {
+        let row = json!({
+            "prompt_id":"qa-1",
+            "chunk_ref":"chunk-1",
+            "source":"source.txt",
+            "qa_type":"conceptual",
+            "status":"skipped",
+            "reason":"conceptual_support_absent",
+            "provenance":{},
+        });
+        assert!(matches!(
+            parse_qa_record(&row.to_string()),
+            Err(QaRecordError::GeneratorError)
+        ));
     }
 
     /// expect: No missing/old/malformed citation shape silently becomes evidence.

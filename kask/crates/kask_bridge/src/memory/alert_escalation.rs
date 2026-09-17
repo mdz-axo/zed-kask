@@ -76,14 +76,13 @@ impl BridgeAlertEscalationSink {
         &self,
         observations: &[hkask_regulation::Signal],
         now: chrono::DateTime<chrono::Utc>,
-    ) {
-        let entries = match self.queue.list_advice_observations() {
-            Ok(entries) => entries,
-            Err(error) => {
-                tracing::warn!(target: "reg.alert", %error, "Recovery reconciliation unavailable; alerts retained");
-                return;
-            }
-        };
+    ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
+    {
+        let entries = self
+            .queue
+            .list_advice_observations()
+            .map_err(|error| hkask_regulation::AlertPersistError::QueueRead(error.to_string()))?;
+        let mut reconciliation = hkask_regulation::AdviceReviewReconciliation::default();
         for entry in entries {
             let mut context: serde_json::Value = match serde_json::from_str(&entry.error_context) {
                 Ok(context) => context,
@@ -92,6 +91,12 @@ impl BridgeAlertEscalationSink {
                     continue;
                 }
             };
+            if context
+                .get("applied_at")
+                .is_some_and(|value| !value.is_null())
+            {
+                reconciliation.interventions_confirmed += 1;
+            }
             let Some(value) = context
                 .get("recovery_signal")
                 .filter(|value| !value.is_null())
@@ -150,10 +155,16 @@ impl BridgeAlertEscalationSink {
                     review_due_at,
                     now,
                 );
+                let finalized = !matches!(status, "awaiting_action" | "observation_window");
+                let receipt_id = finalized.then(hkask_types::EventID::new);
                 context["latest_observation"] = serde_json::json!(current);
                 context["advice_review"] = serde_json::json!({
-                    "status": status, "observed_at": now, "causal_attribution": "unverified",
-                    "finalized": !matches!(status, "awaiting_action" | "observation_window"),
+                    "status": status,
+                    "observed_at": now,
+                    "causal_attribution": "unverified",
+                    "finalized": finalized,
+                    "receipt_id": receipt_id,
+                    "telemetry_published_at": null,
                 });
                 match self.queue.update_advice_context(
                     &entry.id.to_string(),
@@ -188,7 +199,90 @@ impl BridgeAlertEscalationSink {
                     }
                 }
             }
+            if let Some(receipt) = Self::pending_receipt(&entry.id.to_string(), &context)? {
+                reconciliation.pending_receipts.push(receipt);
+            }
         }
+        Ok(reconciliation)
+    }
+
+    fn pending_receipt(
+        escalation_id: &str,
+        context: &serde_json::Value,
+    ) -> Result<Option<hkask_regulation::AdviceReviewReceipt>, hkask_regulation::AlertPersistError>
+    {
+        let review = &context["advice_review"];
+        if review["finalized"].as_bool() != Some(true)
+            || !review["telemetry_published_at"].is_null()
+        {
+            return Ok(None);
+        }
+        let Some(receipt_id) = review["receipt_id"].as_str() else {
+            return Ok(None);
+        };
+        let event_id = receipt_id.parse().map_err(|error| {
+            hkask_regulation::AlertPersistError::InvalidAdviceReview(format!(
+                "invalid receipt id for escalation {escalation_id}: {error}"
+            ))
+        })?;
+        let outcome = match review["status"].as_str() {
+            Some("recovered") => hkask_regulation::AdviceReviewOutcome::Recovered,
+            Some("improved") => hkask_regulation::AdviceReviewOutcome::Improved,
+            Some("no_improvement") => hkask_regulation::AdviceReviewOutcome::NoImprovement,
+            Some("insufficient_evidence") => {
+                hkask_regulation::AdviceReviewOutcome::InsufficientEvidence
+            }
+            status => {
+                return Err(hkask_regulation::AlertPersistError::InvalidAdviceReview(
+                    format!("invalid finalized status for escalation {escalation_id}: {status:?}"),
+                ));
+            }
+        };
+        if review["causal_attribution"].as_str() != Some("unverified") {
+            return Err(hkask_regulation::AlertPersistError::InvalidAdviceReview(
+                format!("invalid causal attribution for escalation {escalation_id}"),
+            ));
+        }
+        Ok(Some(hkask_regulation::AdviceReviewReceipt {
+            event_id,
+            escalation_id: escalation_id.to_string(),
+            outcome,
+            causal_attribution: hkask_regulation::AdviceReviewCausalAttribution::Unverified,
+        }))
+    }
+
+    fn acknowledge_advice_review_at(
+        &self,
+        receipt: &hkask_regulation::AdviceReviewReceipt,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, hkask_regulation::AlertPersistError> {
+        let Some(entry) = self
+            .queue
+            .get(&receipt.escalation_id)
+            .map_err(|error| hkask_regulation::AlertPersistError::QueueRead(error.to_string()))?
+        else {
+            return Ok(false);
+        };
+        let mut context: serde_json::Value =
+            serde_json::from_str(&entry.error_context).map_err(|error| {
+                hkask_regulation::AlertPersistError::InvalidAdviceReview(error.to_string())
+            })?;
+        if context["advice_review"]["receipt_id"].as_str()
+            != Some(receipt.event_id.to_string().as_str())
+        {
+            return Ok(false);
+        }
+        if !context["advice_review"]["telemetry_published_at"].is_null() {
+            return Ok(true);
+        }
+        context["advice_review"]["telemetry_published_at"] = serde_json::json!(now);
+        self.queue
+            .update_advice_context(
+                &receipt.escalation_id,
+                &entry.error_context,
+                &context.to_string(),
+            )
+            .map_err(|error| hkask_regulation::AlertPersistError::QueueWrite(error.to_string()))
     }
 }
 
@@ -278,8 +372,19 @@ impl BridgeAlertEscalationSink {
 }
 
 impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
-    fn reconcile_conditions(&self, observations: &[hkask_regulation::Signal]) {
-        self.reconcile_conditions_at(observations, chrono::Utc::now());
+    fn reconcile_conditions(
+        &self,
+        observations: &[hkask_regulation::Signal],
+    ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
+    {
+        self.reconcile_conditions_at(observations, chrono::Utc::now())
+    }
+
+    fn acknowledge_advice_review(
+        &self,
+        receipt: &hkask_regulation::AdviceReviewReceipt,
+    ) -> Result<bool, hkask_regulation::AlertPersistError> {
+        self.acknowledge_advice_review_at(receipt, chrono::Utc::now())
     }
 
     fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
@@ -623,7 +728,8 @@ mod tests {
                 .expect("context")
         };
         let early = applied + chrono::Duration::days(1);
-        sink.reconcile_conditions_at(&[reliability(1.0, early)], early);
+        sink.reconcile_conditions_at(&[reliability(1.0, early)], early)
+            .expect("early reconciliation");
         let resolved_at = queue
             .get(&id)
             .expect("get")
@@ -646,7 +752,8 @@ mod tests {
             )
             .expect("recurrence");
         let due = applied + chrono::Duration::days(7);
-        sink.reconcile_conditions_at(&[reliability(0.9, due)], due);
+        sink.reconcile_conditions_at(&[reliability(0.9, due)], due)
+            .expect("due reconciliation");
         assert_eq!(context()["advice_review"]["status"], "recovered");
         assert_eq!(
             context()["advice_review"]["causal_attribution"],
@@ -664,7 +771,8 @@ mod tests {
             queue.get(&id).expect("get").expect("entry").resolved_at,
             Some(resolved_at)
         );
-        sink.reconcile_conditions_at(&[], due + chrono::Duration::days(1));
+        sink.reconcile_conditions_at(&[], due + chrono::Duration::days(1))
+            .expect("repeated reconciliation");
         assert_eq!(
             context()["advice_review"]["status"],
             "recovered",
@@ -719,7 +827,8 @@ mod tests {
             let id = queue.add(hkask_types::TemplateID::new(), hkask_types::BotID::new(), "reliability".into(), 1.0, 0,
                 serde_json::json!({"recovery_signal":reliability(0.2, applied), "applied_at":applied, "review_due_at":due, "applied_baseline":baseline}).to_string()).expect("add");
             let sink = BridgeAlertEscalationSink::new(queue.clone());
-            sink.reconcile_conditions_at(&current.into_iter().collect::<Vec<_>>(), due);
+            sink.reconcile_conditions_at(&current.into_iter().collect::<Vec<_>>(), due)
+                .expect("evidence reconciliation");
             let entry = queue.get(&id.to_string()).expect("get").expect("entry");
             let context: serde_json::Value =
                 serde_json::from_str(&entry.error_context).expect("context");
@@ -762,14 +871,16 @@ mod tests {
             let sink = BridgeAlertEscalationSink::new(queue.clone());
 
             next_advice_update.store(scripted_outcome, Ordering::SeqCst);
-            sink.reconcile_conditions_at(&[reliability(1.0, due)], due);
+            sink.reconcile_conditions_at(&[reliability(1.0, due)], due)
+                .expect("scripted failed reconciliation");
             let unchanged = queue.get(&id).expect("get").expect("entry");
             let unchanged: serde_json::Value =
                 serde_json::from_str(&unchanged.error_context).expect("context");
             assert_eq!(unchanged["advice_review"]["finalized"], false);
             assert_eq!(unchanged["advice_review"]["status"], "observation_window");
 
-            sink.reconcile_conditions_at(&[reliability(1.0, due)], due);
+            sink.reconcile_conditions_at(&[reliability(1.0, due)], due)
+                .expect("scripted retry reconciliation");
             let retried = queue.get(&id).expect("get").expect("entry");
             let retried: serde_json::Value =
                 serde_json::from_str(&retried.error_context).expect("context");
@@ -869,7 +980,8 @@ mod tests {
         );
 
         let sink = BridgeAlertEscalationSink::new(queue.clone());
-        sink.reconcile_conditions_at(&[reliability(1.0, original_due)], original_due);
+        sink.reconcile_conditions_at(&[reliability(1.0, original_due)], original_due)
+            .expect("original due reconciliation");
         let before_due = queue.get(&id).expect("get").expect("entry");
         let before_due_context: serde_json::Value =
             serde_json::from_str(&before_due.error_context).expect("context");
@@ -884,9 +996,13 @@ mod tests {
 
         let restarted_sink = BridgeAlertEscalationSink::new(queue.clone());
         let restarted_server = build_server();
-        restarted_sink.reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due);
+        restarted_sink
+            .reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due)
+            .expect("postponed due reconciliation");
         let finalized = queue.get(&id).expect("get").expect("entry").error_context;
-        restarted_sink.reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due);
+        restarted_sink
+            .reconcile_conditions_at(&[reliability(1.0, postponed_due)], postponed_due)
+            .expect("repeated postponed due reconciliation");
         assert_eq!(
             queue.get(&id).expect("get").expect("entry").error_context,
             finalized,
@@ -915,6 +1031,108 @@ mod tests {
             )
             .expect("persisted applied_at"),
             applied_at
+        );
+    }
+
+    /// expect: "A finalized queue review reaches Regulation exactly once through telemetry separate from rollout impact" [P9]
+    #[tokio::test]
+    async fn finalized_advice_review_reaches_regulation_once_as_observational_progress() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let queue =
+            Arc::new(hkask_storage::EscalationQueue::from_driver(driver.clone()).expect("queue"));
+        let archive = Arc::new(
+            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
+        );
+        let applied = chrono::Utc::now();
+        let due = applied + chrono::Duration::days(7);
+        let trigger = reliability(0.2, applied);
+        let id = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "tool reliability advice".into(),
+                1.0,
+                0,
+                serde_json::json!({
+                    "recovery_signal": trigger,
+                    "applied_at": applied,
+                    "review_due_at": due,
+                    "applied_baseline": trigger,
+                    "advice_review": {
+                        "status": "observation_window",
+                        "finalized": false,
+                        "causal_attribution": "unverified"
+                    }
+                })
+                .to_string(),
+            )
+            .expect("add escalation")
+            .to_string();
+        let sink = Arc::new(BridgeAlertEscalationSink::new(queue.clone()));
+        sink.reconcile_conditions_at(&[reliability(1.0, due)], due)
+            .expect("final reconciliation");
+        let finalized: serde_json::Value =
+            serde_json::from_str(&queue.get(&id).expect("get").expect("entry").error_context)
+                .expect("context");
+        assert_eq!(finalized["advice_review"]["status"], "recovered");
+
+        let mut regulation = hkask_regulation::CyberneticsLoop::new(Arc::new(
+            tokio::sync::RwLock::new(hkask_regulation::RegulationLedger::default()),
+        ))
+        .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_alert_escalation_sink(Some(sink));
+        regulation.tick().await;
+        regulation.tick().await;
+
+        let records = archive
+            .query_records(applied - chrono::Duration::seconds(1), None, 100)
+            .expect("records");
+        let review_records = records
+            .iter()
+            .filter(|record| record.span.path == "reg.outcome.advice_review_observed")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            review_records.len(),
+            1,
+            "one finalized transition must have one durable Regulation identity"
+        );
+        assert_eq!(review_records[0].observation["outcome"], "recovered");
+        assert_eq!(
+            review_records[0].observation["causal_attribution"],
+            "unverified"
+        );
+
+        let loop_metrics = records
+            .iter()
+            .find(|record| {
+                record.span.path == "reg.outcome.loop_quality"
+                    && record.observation["advice_reviews_finalized"] == 1
+            })
+            .expect("loop telemetry carrying the finalized review");
+        assert_eq!(loop_metrics.observation["advisories_computed"], 0);
+        assert_eq!(loop_metrics.observation["interventions_confirmed"], 1);
+        assert_eq!(loop_metrics.observation["rollout_impact_reports"], 0);
+        assert_eq!(loop_metrics.observation["advice_reviews_recovered"], 1);
+        assert_eq!(loop_metrics.observation["advice_reviews_improved"], 0);
+        assert_eq!(loop_metrics.observation["advice_reviews_no_improvement"], 0);
+        assert_eq!(
+            loop_metrics.observation["advice_reviews_insufficient_evidence"],
+            0
+        );
+        assert_eq!(
+            loop_metrics.observation["advice_review_progress_score"],
+            1.0
+        );
+        assert_eq!(
+            loop_metrics.observation["advice_review_causal_attribution"],
+            "unverified"
+        );
+        assert!(
+            loop_metrics
+                .observation
+                .get("rollout_progress_score")
+                .is_some(),
+            "rollout progress must remain a separate telemetry channel"
         );
     }
 
