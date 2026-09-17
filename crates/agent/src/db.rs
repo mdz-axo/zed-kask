@@ -1259,29 +1259,26 @@ mod tests {
     }
 
     // zed-kask: D28 — pins the canonical archived-threads DB path.
-    // Tests that `threads_db_path_override` returns the path set by
-    // `set_threads_db_path_override`, and that the override is `None` by
-    // default. Does NOT construct a `ThreadsDatabase` (which would race with
-    // concurrent tests via the global `Mutex`). The path-resolution logic in
-    // `ThreadsDatabase::new` is covered by the production wiring in
-    // `main.rs` + the `cfg!(test)` guard that skips the override in test
-    // builds to prevent cross-test contamination.
+    // Tests the accessor through a scoped test-thread override. Production
+    // continues to use the ProcessGlobal composition-root hook. This does not
+    // construct a `ThreadsDatabase`: test builds deliberately use isolated
+    // in-memory connections while production requires the wired path.
     #[test]
     fn test_threads_db_override_hook_round_trips() {
-        // Default: no override set (other tests may have reset it).
-        // We set it, verify, then reset.
+        let baseline = crate::threads_db_path_override();
         let sentinel = std::path::PathBuf::from("/tmp/kask-test-threads.db");
-        crate::set_threads_db_path_override(Some(sentinel.clone()));
+        {
+            let _override = crate::scoped_threads_db_path_override_for_test(sentinel.clone());
+            assert_eq!(
+                crate::threads_db_path_override(),
+                Some(sentinel),
+                "the current test thread must observe its path override"
+            );
+        }
         assert_eq!(
             crate::threads_db_path_override(),
-            Some(sentinel),
-            "override hook must return the path set by set_threads_db_path_override"
-        );
-        crate::set_threads_db_path_override(None);
-        assert_eq!(
-            crate::threads_db_path_override(),
-            None,
-            "override hook must return None after reset"
+            baseline,
+            "dropping the scoped override must restore prior state"
         );
     }
 }

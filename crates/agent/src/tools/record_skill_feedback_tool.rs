@@ -98,20 +98,22 @@ mod tests {
 
     /// T15 (channel b): the direct tool fires the operator-feedback hook
     /// with the operator's disposition and reason — the explicit rating
-    /// reaches the ledger wiring as an operator_feedback span.
+    /// reaches the durable archive writer before the live ledger view.
     #[gpui::test]
     async fn records_the_operators_disposition(cx: &mut gpui::TestAppContext) {
         let recorded: Arc<Mutex<Vec<(String, bool, Option<String>)>>> =
             Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&recorded);
-        crate::set_operator_feedback_recorder(Arc::new(move |skill_id, accepted, note| {
-            sink.lock().unwrap_or_else(|e| e.into_inner()).push((
-                skill_id.to_string(),
-                accepted,
-                note.map(str::to_string),
-            ));
-            Ok(())
-        }));
+        let mut recorder_override = crate::scoped_operator_feedback_recorder_for_test(Arc::new(
+            move |skill_id, accepted, note| {
+                sink.lock().unwrap_or_else(|e| e.into_inner()).push((
+                    skill_id.to_string(),
+                    accepted,
+                    note.map(str::to_string),
+                ));
+                Ok(())
+            },
+        ));
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let tool = Arc::new(RecordSkillFeedbackTool::new());
@@ -145,9 +147,7 @@ mod tests {
             );
         }
 
-        crate::set_operator_feedback_recorder(Arc::new(|_, _, _| {
-            Err("archive unavailable".to_string())
-        }));
+        recorder_override.replace(Arc::new(|_, _, _| Err("archive unavailable".to_string())));
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let failed = cx
             .update(|cx: &mut App| {
@@ -164,8 +164,5 @@ mod tests {
             .await
             .expect_err("durability failure must prevent a success receipt");
         assert!(failed.contains("archive unavailable"));
-
-        // Leave the global slot inert for other tests.
-        crate::set_operator_feedback_recorder(Arc::new(|_, _, _| Ok(())));
     }
 }

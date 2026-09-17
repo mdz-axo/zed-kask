@@ -5192,16 +5192,11 @@ async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppCon
 /// separately by `test_curator_memory_edit_tools_available_to_non_curator_threads`.
 #[gpui::test]
 async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut TestAppContext) {
-    // Shared-slot hygiene: the process-global kask tool source leaks across
-    // tests. A stale source left by an earlier test is merged by the registry
-    // on the store event `setup_context_server` fires below — and the merge
-    // REPLACES same-id servers, clobbering this test's store-registered
-    // "curator" with whatever the stale source held. Install an empty source
-    // first so every merge in this test is a no-op; this test exercises the
-    // ContextServerStore path, not the kask-source path.
-    set_kask_tool_source(std::sync::Arc::new(MutableKaskToolSource(
-        std::sync::Mutex::new(Vec::new()),
-    )));
+    // This test exercises the ContextServerStore path, so its scoped kask
+    // source stays empty without affecting parallel registries.
+    let _source_override = crate::scoped_kask_tool_source_for_test(std::sync::Arc::new(
+        MutableKaskToolSource(std::sync::Mutex::new(Vec::new())),
+    ));
 
     let ThreadTest {
         model,
@@ -5297,13 +5292,8 @@ impl KaskToolSource for MutableKaskToolSource {
 /// for the whole app session (observed live 2026-08-30: a fresh session had
 /// zero kask tools until a store event was fired by hand).
 ///
-/// Shared-slot hazard (see the NOT-covered note on
-/// `kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired`):
-/// while this test's source is populated, a registry constructed by a
-/// parallel test merges this server too. The server id and tool name are
-/// distinctive, the populated window is a single `run_until_parked`, and
-/// the source is reset to empty (the documented inert state) immediately
-/// after the poll has run.
+/// The source double is scoped to this test thread, so its populated window
+/// cannot alter a registry constructed by a parallel test.
 #[gpui::test]
 async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
     cx: &mut TestAppContext,
@@ -5317,12 +5307,10 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
         thread.set_profile(AgentProfileId("test".into()), cx)
     });
 
-    // The startup window: `setup` constructed the registry above, against an
-    // empty/absent source — exactly the live race (registry created before
-    // the deferred MCP launch). Wire the source empty first so no parallel
-    // test's registry construction can observe a populated source.
+    // The startup window: `setup` constructed the registry above before this
+    // source exists, matching the live deferred-launch ordering.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
-    set_kask_tool_source(source.clone());
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
 
     // The deferred launch registers tools — no store event fires for this
     // (kask servers are not in the ContextServerStore).
@@ -5338,10 +5326,6 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
     // the registry's 2s kask-tool poll interval explicitly, then drain.
     cx.executor().advance_clock(Duration::from_secs(4));
     cx.run_until_parked();
-
-    // Reset the source before asserting so the populated window is exactly
-    // one `run_until_parked`. The merged tools stay in the registry.
-    source.set(Vec::new());
 
     thread.update(cx, |thread, cx| {
         thread
@@ -5408,11 +5392,10 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
         thread.set_profile(AgentProfileId("test".into()), cx)
     });
 
-    // Wire the source empty first (shared-slot hazard, see the note on the
-    // startup-race pin above), then register one tool the profile keeps and
-    // one it filters.
+    // Register one tool the profile keeps and one it filters through this
+    // test's scoped source.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
-    set_kask_tool_source(source.clone());
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
     source.set(vec![
         KaskToolDescriptor {
             server_id: "kask-marker-test".to_string(),
@@ -5429,7 +5412,6 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
     ]);
     cx.executor().advance_clock(Duration::from_secs(4));
     cx.run_until_parked();
-    source.set(Vec::new());
 
     thread.update(cx, |thread, cx| {
         thread
@@ -5519,7 +5501,7 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
     // A "curator" server whose registered surface includes the memory-edit
     // tool. The default thread (zed agent — agent_id unset) must see it.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
-    set_kask_tool_source(source.clone());
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
     source.set(vec![KaskToolDescriptor {
         server_id: "curator".to_string(),
         name: "memory_insert".to_string(),
@@ -5547,15 +5529,6 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
     );
 
     fake_model.end_last_completion_stream();
-
-    // Shared-slot hygiene: reset before exit — this test's source holds a
-    // "curator" server with a single tool, and the process-global slot leaks
-    // it into every later test. The registry merge REPLACES same-id servers,
-    // so a later test that store-registers its own "curator" server would be
-    // clobbered on its first store event (observed: the plain-threads variant
-    // surfacing only memory_insert). The empty reset matches the convention
-    // in `test_kask_tools_surface_...` and `test_system_prompt_names_...`.
-    source.set(Vec::new());
 }
 
 /// zed-kask: D44 discovery pin — the `list_mcp_tools` meta-tool. This is
@@ -5570,23 +5543,17 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
 /// the model would trade a false-absence belief for a false-index belief.
 #[gpui::test]
 async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
-    // Shared-slot hygiene: install the empty source BEFORE `setup` — the
-    // registry is created inside setup, and a stale source left by an
-    // earlier test merges on setup's store events. The merge replaces
-    // same-id servers but never removes absent ones, so a stale server would
-    // linger in every listing below (observed: total_tools 4 vs 3). The
-    // test's own source is installed after setup — too late to prevent that.
-    set_kask_tool_source(std::sync::Arc::new(MutableKaskToolSource(
-        std::sync::Mutex::new(Vec::new()),
-    )));
+    // Keep the source empty while setup constructs the registry, then replace
+    // this test-local value with the populated source below.
+    let mut source_override = crate::scoped_kask_tool_source_for_test(std::sync::Arc::new(
+        MutableKaskToolSource(std::sync::Mutex::new(Vec::new())),
+    ));
 
     let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
 
-    // Wire the source empty first (shared-slot hazard, see the note on the
-    // startup-race pin above), then register tools on two servers and let
-    // the registry's poll merge them.
+    // Register tools on two servers and let the registry's poll merge them.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
-    set_kask_tool_source(source.clone());
+    source_override.replace(source.clone());
     source.set(vec![
         KaskToolDescriptor {
             server_id: "research".to_string(),
@@ -5609,7 +5576,6 @@ async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
     ]);
     cx.executor().advance_clock(Duration::from_secs(4));
     cx.run_until_parked();
-    source.set(Vec::new());
 
     let run_listing = |cx: &mut TestAppContext, filter: Option<String>| {
         thread.update(cx, |thread, cx| {

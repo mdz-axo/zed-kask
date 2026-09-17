@@ -3014,6 +3014,7 @@ pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
 pub(crate) struct ScopedTestOverride<T: 'static> {
     slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
     previous: Option<T>,
+    _owner_thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 #[cfg(test)]
@@ -3035,16 +3036,20 @@ impl<T> Drop for ScopedTestOverride<T> {
 }
 
 #[cfg(test)]
-fn scoped_test_override<T>(
+pub(crate) fn scoped_test_override<T>(
     slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
     value: T,
 ) -> ScopedTestOverride<T> {
     let previous = slot.with(|slot| slot.replace(Some(value)));
-    ScopedTestOverride { slot, previous }
+    ScopedTestOverride {
+        slot,
+        previous,
+        _owner_thread: std::marker::PhantomData,
+    }
 }
 
 #[cfg(test)]
-fn test_override<T: Clone>(
+pub(crate) fn test_override<T: Clone>(
     slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
 ) -> Option<T> {
     slot.with(|slot| slot.borrow().clone())
@@ -3257,6 +3262,7 @@ thread_local! {
 #[cfg(test)]
 pub(crate) struct ScopedThreadCondenserOverride {
     previous: Option<Arc<dyn ThreadCondenser>>,
+    _owner_thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 #[cfg(test)]
@@ -3279,7 +3285,10 @@ pub(crate) fn scoped_thread_condenser_for_test(
     condenser: Arc<dyn ThreadCondenser>,
 ) -> ScopedThreadCondenserOverride {
     let previous = TEST_THREAD_CONDENSER.with(|slot| slot.replace(Some(condenser)));
-    ScopedThreadCondenserOverride { previous }
+    ScopedThreadCondenserOverride {
+        previous,
+        _owner_thread: std::marker::PhantomData,
+    }
 }
 
 /// Get a cloned handle to the thread condenser, if set.
@@ -5005,12 +5014,11 @@ mod internal_tests {
 
     #[test]
     fn mcp_outcome_recorder_records_and_is_replaceable() {
-        // The hook is a process-global Mutex slot — all recorder assertions
-        // must stay in ONE test so parallel tests cannot race the shared
-        // slot.
+        // The test double is scoped to this test thread. Production still uses
+        // the re-settable ProcessGlobal composition-root hook.
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        set_mcp_tool_outcome_recorder(std::sync::Arc::new(
+        let mut recorder_override = scoped_mcp_tool_outcome_recorder_for_test(std::sync::Arc::new(
             move |server, tool, success, error_kind| {
                 captured.lock().expect("captured lock").push((
                     server.to_string(),
@@ -5050,7 +5058,7 @@ mod internal_tests {
         // depend on.
         let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let flag = replaced_called.clone();
-        set_mcp_tool_outcome_recorder(std::sync::Arc::new(move |_, _, _, _| {
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _, _| {
             *flag.lock().expect("flag lock") = true;
         }));
         record_mcp_tool_outcome("media", "model_list", true, None);
@@ -5091,21 +5099,15 @@ mod internal_tests {
 
     #[test]
     fn skill_outcome_recorder_records_and_is_replaceable() {
-        // Same process-global slot discipline as the MCP recorder test above,
-        // with one additional hazard: `SkillTool::run` fires this hook on every
-        // activation, so parallel skill_tool tests in this binary push entries
-        // into the captured vec mid-flight. The closure never panics under the
-        // lock (a panic would poison the mutex for every later closure call),
-        // assertions snapshot-then-release before asserting, and only THIS
-        // test's ids (`bug-hunt`/`tdd`) are asserted. The slot is left inert on
-        // exit.
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        set_skill_outcome_recorder(std::sync::Arc::new(move |skill_id, success, error| {
-            if let Ok(mut entries) = captured.lock() {
-                entries.push((skill_id.to_string(), success, error.map(str::to_string)));
-            }
-        }));
+        let mut recorder_override = scoped_skill_outcome_recorder_for_test(std::sync::Arc::new(
+            move |skill_id, success, error| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((skill_id.to_string(), success, error.map(str::to_string)));
+                }
+            },
+        ));
         record_skill_outcome("bug-hunt", true, None);
         record_skill_outcome("tdd", false, Some("declared dependencies not installed"));
         let relevant: Vec<(String, bool, Option<String>)> = {
@@ -5126,14 +5128,13 @@ mod internal_tests {
                     Some("declared dependencies not installed".to_string())
                 )
             ],
-            "this test's two calls are recorded in order; other ids are \
-             concurrent tests firing the process-global hook"
+            "this test's two calls are recorded in order"
         );
 
         // Re-settable: a second set replaces the first.
         let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let flag = replaced_called.clone();
-        set_skill_outcome_recorder(std::sync::Arc::new(move |_, _, _| {
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _| {
             if let Ok(mut called) = flag.lock() {
                 *called = true;
             }
@@ -5153,9 +5154,6 @@ mod internal_tests {
             2,
             "the replaced recorder must no longer receive calls"
         );
-
-        // Leave the global slot inert for subsequent parallel tests.
-        set_skill_outcome_recorder(std::sync::Arc::new(|_, _, _| {}));
     }
 
     /// T15: the operator-feedback recorder records, returns an acceptance
@@ -5165,12 +5163,14 @@ mod internal_tests {
     fn operator_feedback_recorder_records_and_is_replaceable() {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        set_operator_feedback_recorder(std::sync::Arc::new(move |skill_id, accepted, note| {
-            if let Ok(mut entries) = captured.lock() {
-                entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));
-            }
-            Ok(())
-        }));
+        let mut recorder_override = scoped_operator_feedback_recorder_for_test(
+            std::sync::Arc::new(move |skill_id, accepted, note| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));
+                }
+                Ok(())
+            }),
+        );
         record_operator_feedback("lora-training", true, None).expect("feedback accepted");
         record_operator_feedback(
             "task-breakdown",
@@ -5202,7 +5202,7 @@ mod internal_tests {
         // Re-settable: a second set replaces the first.
         let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let flag = replaced_called.clone();
-        set_operator_feedback_recorder(std::sync::Arc::new(move |_, _, _| {
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _| {
             if let Ok(mut called) = flag.lock() {
                 *called = true;
             }
@@ -5226,9 +5226,6 @@ mod internal_tests {
             2,
             "the replaced recorder must no longer receive calls"
         );
-
-        // Leave the global slot inert for subsequent parallel tests.
-        set_operator_feedback_recorder(std::sync::Arc::new(|_, _, _| Ok(())));
     }
 
     /// An injector that recalls nothing. Wiring it must be observationally

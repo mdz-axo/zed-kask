@@ -5,6 +5,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use hkask_types::process_global::ProcessGlobal;
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -60,8 +61,13 @@ pub trait KaskToolSource: Send + Sync {
     >;
 }
 
-static KASK_TOOL_SOURCE: std::sync::Mutex<Option<Arc<dyn KaskToolSource>>> =
-    std::sync::Mutex::new(None);
+static KASK_TOOL_SOURCE: ProcessGlobal<Arc<dyn KaskToolSource>> = ProcessGlobal::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_KASK_TOOL_SOURCE: std::cell::RefCell<Option<Arc<dyn KaskToolSource>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Warn-once latch for the unwired kask tool source. Resets when the source
 /// is present, so the normal startup window (main.rs wires the source in its
@@ -87,18 +93,25 @@ fn note_kask_tool_source_wired() {
 /// Wire the governed `McpRuntime` as the agent's kask tool source. Called
 /// once from `main.rs` after the runtime is created.
 pub fn set_kask_tool_source(source: Arc<dyn KaskToolSource>) {
-    *KASK_TOOL_SOURCE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(source);
+    KASK_TOOL_SOURCE.set(Some(source));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_kask_tool_source_for_test(
+    source: Arc<dyn KaskToolSource>,
+) -> crate::ScopedTestOverride<Arc<dyn KaskToolSource>> {
+    crate::scoped_test_override(&TEST_KASK_TOOL_SOURCE, source)
 }
 
 /// The wired kask tool source, if any (absent in tests and lightweight
 /// embedders — kask tools then simply do not surface).
 pub fn kask_tool_source() -> Option<Arc<dyn KaskToolSource>> {
-    KASK_TOOL_SOURCE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+    #[cfg(test)]
+    if let Some(source) = crate::test_override(&TEST_KASK_TOOL_SOURCE) {
+        return Some(source);
+    }
+
+    KASK_TOOL_SOURCE.get()
 }
 
 pub struct ContextServerPrompt {
@@ -1579,40 +1592,51 @@ mod tests {
         note_kask_tool_source_wired();
     }
 
-    /// Pin: the `KaskToolSource` process-global hook (wired in `main.rs` to
-    /// the governed `McpRuntime`) is settable and replaceable (Mutex slot,
-    /// same pattern as the mcp outcome recorder), and — the documented
-    /// degradation — `kask_tool_source()` reads `None` while unwired, which
-    /// makes `reload_kask_tools` a no-op so kask tools do not surface in
-    /// tests and lightweight embedders. The fakes used for the
-    /// set/replace assertions expose zero tools so parallel tests are
-    /// unaffected; the slot is reset to `None` at the end.
-    ///
-    /// NOT covered: the degradation is silent by design (the doc on
-    /// `kask_tool_source` says tools "simply do not surface" — there is no
-    /// operator-visible note/status for the unwired state). The
-    /// registry-level merge (`reload_kask_tools` inserting into
-    /// `registered_servers`) IS pinned end-to-end now, by
-    /// `agent::tests::test_kask_tools_surface_when_source_populates_after_registry_creation`
-    /// (tests/mod.rs): the shared-slot leak hazard this comment once cited
-    /// is handled there with a distinctive server id, a minimal populated
-    /// window, and an empty-source reset.
+    /// Pin: test sources are scoped to their owner thread and restored during
+    /// panic unwinding. Production retains the re-settable `ProcessGlobal`
+    /// composition-root hook; `reload_kask_tools` surfaces an unwired source
+    /// through its warn-once latch and polls for late startup wiring.
+    /// expect: "Parallel registries observe only their test's kask tool source"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: one test installs a scoped kask tool source
+    /// post: a concurrent thread cannot observe it, and unwinding restores prior state
+    #[test]
+    fn scoped_kask_tool_source_is_thread_local_and_panic_safe() {
+        let source = FakeKaskToolSource::empty();
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = scoped_kask_tool_source_for_test(source.clone());
+            assert!(Arc::ptr_eq(
+                &kask_tool_source().expect("owner thread source"),
+                &(source.clone() as Arc<dyn KaskToolSource>)
+            ));
+            let concurrent = std::thread::spawn(kask_tool_source)
+                .join()
+                .expect("concurrent source read");
+            assert!(concurrent.as_ref().is_none_or(|candidate| {
+                !Arc::ptr_eq(candidate, &(source.clone() as Arc<dyn KaskToolSource>))
+            }));
+            panic!("exercise scoped cleanup");
+        }));
+        assert!(unwind.is_err());
+        assert!(kask_tool_source().as_ref().is_none_or(|candidate| {
+            !Arc::ptr_eq(candidate, &(source as Arc<dyn KaskToolSource>))
+        }));
+    }
+
     #[test]
     fn kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired() {
-        // All assertions on the shared slot stay in ONE test (the recorder
-        // pattern) so parallel tests cannot race it.
         let source_a = FakeKaskToolSource::empty();
-        set_kask_tool_source(source_a.clone());
+        let mut source_override = scoped_kask_tool_source_for_test(source_a.clone());
         let wired = kask_tool_source().expect("source must be wired after set");
         assert!(
             std::sync::Arc::ptr_eq(&wired, &source_a),
             "set_kask_tool_source must install the given source"
         );
 
-        // Replaceable (Mutex, not OnceLock): a second wiring replaces the
-        // first — the deferred re-wiring pattern depends on this.
+        // The scoped test slot is replaceable; production replacement is the
+        // shared ProcessGlobal contract pinned in hkask-types.
         let source_b = FakeKaskToolSource::empty();
-        set_kask_tool_source(source_b.clone());
+        source_override.replace(source_b.clone());
         let wired = kask_tool_source().expect("source must remain wired after replace");
         assert!(
             std::sync::Arc::ptr_eq(&wired, &source_b),
@@ -1620,11 +1644,7 @@ mod tests {
         );
         assert!(!std::sync::Arc::ptr_eq(&wired, &source_a));
 
-        // Absent-source degradation: unset the slot (in-crate tests reach
-        // the private static directly) and confirm the hook reads None.
-        *KASK_TOOL_SOURCE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        drop(source_override);
         assert!(
             kask_tool_source().is_none(),
             "unwired source must read None — kask tools do not surface"
