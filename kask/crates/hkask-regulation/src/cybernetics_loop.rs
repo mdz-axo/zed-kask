@@ -149,6 +149,7 @@ struct RolloutImpactCheck {
 #[derive(Default)]
 struct LoopTelemetryState {
     steady_fingerprint: Option<serde_json::Value>,
+    intervention_observation: Option<Option<usize>>,
     suppressed_cycles: usize,
 }
 
@@ -680,6 +681,7 @@ impl CyberneticsLoop {
         &self,
         deviations: &[crate::loops::Deviation],
         actions: &[crate::loops::RegulatoryAction],
+        interventions_confirmed: Option<usize>,
         force_transition: bool,
         tick_number: usize,
     ) -> LoopTelemetryDecision {
@@ -703,6 +705,11 @@ impl CyberneticsLoop {
             .loop_telemetry_state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        let intervention_changed = state
+            .intervention_observation
+            .is_some_and(|previous| previous != interventions_confirmed);
+        state.intervention_observation = Some(interventions_confirmed);
+        let force_transition = force_transition || intervention_changed;
 
         match fingerprint {
             Some(fingerprint) if state.steady_fingerprint.as_ref() != Some(&fingerprint) => {
@@ -945,9 +952,12 @@ impl CyberneticsLoop {
         // the existing hourly tick boundary re-announces liveness and reports
         // how many records were suppressed.
         let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
+        let interventions_confirmed =
+            advice_observation_available.then_some(advice_reconciliation.interventions_confirmed);
         let decision = self.loop_telemetry_decision(
             &deviations,
             &actions,
+            interventions_confirmed,
             !impact_reports.is_empty() || !published_advice_reviews.is_empty(),
             tick_number,
         );
@@ -961,7 +971,7 @@ impl CyberneticsLoop {
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "advisories_computed": actions.len(),
-                "interventions_confirmed": advice_observation_available.then_some(advice_reconciliation.interventions_confirmed),
+                "interventions_confirmed": interventions_confirmed,
                 "rollout_impact_reports": impact_reports.len(),
                 "advice_reviews_finalized": quality.advice_review.finalized,
                 "advice_reviews_recovered": quality.advice_review.recovered,

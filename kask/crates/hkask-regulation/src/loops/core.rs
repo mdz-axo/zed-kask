@@ -921,7 +921,7 @@ mod tests {
             causal_attribution: crate::AdviceReviewCausalAttribution::Unverified,
         };
         let insufficient = receipt(crate::AdviceReviewOutcome::InsufficientEvidence);
-        let unknown_only = AdviceReviewMetrics::from_receipts(&[insufficient.clone()]);
+        let unknown_only = AdviceReviewMetrics::from_receipts(std::slice::from_ref(&insufficient));
         assert_eq!(unknown_only.finalized, 1);
         assert_eq!(unknown_only.insufficient_evidence, 1);
         assert_eq!(unknown_only.progress_score, None);

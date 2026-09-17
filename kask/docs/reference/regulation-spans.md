@@ -34,7 +34,7 @@ A tracing target is not automatically a persisted Regulation record. The tool pa
 
 `CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs`). `AdviceReviewObserved` uses the Sense phase because it is an observational receipt, not a causal impact verdict.
 
-`LoopMetricsTelemetry` exposes rollout and advice review as separate channels. `rollout_progress_score` is evidence-bearing and nullable; `advice_review_progress_score` is observational and nullable. The record also carries `advisories_computed`, `interventions_confirmed`, `rollout_impact_reports`, finalized-review outcome counts, and the advice review's unverified causal-attribution state. An unchanged persistent condition is summarized with `steady_state_heartbeat` and `suppressed_steady_state_cycles`; clearing is marked with `condition_cleared`. Idle heartbeat, archive retention, and the ledger alert-log cap remain separate mechanisms.
+`LoopMetricsTelemetry` exposes rollout and advice review as separate channels. `rollout_progress_score` is evidence-bearing and nullable; `advice_review_progress_score` is observational and nullable. The record also carries `advisories_computed`, `interventions_confirmed`, `rollout_impact_reports`, finalized-review outcome counts, and the advice review's unverified causal-attribution state. An unchanged persistent condition is summarized with `steady_state_heartbeat` and `suppressed_steady_state_cycles`; clearing is marked with `condition_cleared`. Changes in the separately observed `interventions_confirmed` count or its availability bypass suppression. Idle heartbeat, archive retention, and the ledger alert-log cap remain separate mechanisms.
 
 ## 3. Actual MCP tool outcome paths
 

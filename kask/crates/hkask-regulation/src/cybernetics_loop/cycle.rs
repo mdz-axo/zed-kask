@@ -2704,6 +2704,68 @@ mod tests {
         });
     }
 
+    /// expect: "A confirmed-intervention state change emits immediately even when the persistent condition is otherwise identical" [P9]
+    #[tokio::test]
+    async fn confirmed_intervention_change_bypasses_steady_state_suppression() {
+        struct InterventionGaugeSink(std::sync::atomic::AtomicUsize);
+        impl crate::AlertEscalationSink for InterventionGaugeSink {
+            fn reconcile_conditions(
+                &self,
+                _observations: &[Signal],
+            ) -> Result<crate::AdviceReviewReconciliation, crate::AlertPersistError> {
+                Ok(crate::AdviceReviewReconciliation {
+                    interventions_confirmed: self.0.load(std::sync::atomic::Ordering::SeqCst),
+                    pending_receipts: Vec::new(),
+                })
+            }
+
+            fn persist_alert(&self, _output: &str, _confidence: f64, _error_context: &str) {}
+
+            fn has_pending_alert(&self, _output: &str) -> bool {
+                true
+            }
+        }
+
+        let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+        let event_sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let advice_sink = Arc::new(InterventionGaugeSink(std::sync::atomic::AtomicUsize::new(
+            0,
+        )));
+        let mut regulation_loop = CyberneticsLoop::new(ledger)
+            .with_event_sink(event_sink.clone() as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.set_alert_escalation_sink(Some(advice_sink.clone()));
+
+        for _ in 0..5 {
+            regulation_loop.tick().await;
+        }
+        let before = event_sink
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|(path, _)| path == "reg.outcome.loop_quality")
+            .count();
+        advice_sink.0.store(1, std::sync::atomic::Ordering::SeqCst);
+        regulation_loop.tick().await;
+        let spans = event_sink
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let loop_quality = spans
+            .iter()
+            .filter(|(path, _)| path == "reg.outcome.loop_quality")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            loop_quality.len(),
+            before + 1,
+            "confirmed intervention is a state transition, not a steady-state duplicate"
+        );
+        assert_eq!(
+            loop_quality.last().expect("new telemetry").1["interventions_confirmed"],
+            1
+        );
+    }
+
     /// expect: "Telemetry coalescing suppresses only exact steady state; changes, clearing, and measured transitions emit immediately" [P9]
     #[test]
     fn loop_telemetry_coalescer_preserves_transitions_and_reports_suppression() {
@@ -2711,45 +2773,65 @@ mod tests {
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
         let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.2, 0.8);
         let first = Deviation::from_signal(&signal).expect("deviation");
-        let first_decision =
-            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 4);
+        let first_decision = regulation_loop.loop_telemetry_decision(
+            std::slice::from_ref(&first),
+            &[],
+            None,
+            false,
+            4,
+        );
         assert!(first_decision.emit);
         assert!(!first_decision.steady_state_heartbeat);
 
-        let duplicate =
-            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 5);
+        let duplicate = regulation_loop.loop_telemetry_decision(
+            std::slice::from_ref(&first),
+            &[],
+            None,
+            false,
+            5,
+        );
         assert!(!duplicate.emit);
 
-        let mut changed_signal = signal.clone();
+        let mut changed_signal = signal;
         changed_signal.value = 0.3;
         let changed = Deviation::from_signal(&changed_signal).expect("changed deviation");
-        let changed_decision =
-            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], false, 6);
+        let changed_decision = regulation_loop.loop_telemetry_decision(
+            std::slice::from_ref(&changed),
+            &[],
+            None,
+            false,
+            6,
+        );
         assert!(changed_decision.emit);
         assert_eq!(changed_decision.suppressed_cycles, 1);
 
-        let forced_measurement =
-            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], true, 7);
+        let forced_measurement = regulation_loop.loop_telemetry_decision(
+            std::slice::from_ref(&changed),
+            &[],
+            None,
+            true,
+            7,
+        );
         assert!(
             forced_measurement.emit,
             "measured transitions are never suppressed"
         );
 
-        let cleared = regulation_loop.loop_telemetry_decision(&[], &[], false, 8);
+        let cleared = regulation_loop.loop_telemetry_decision(&[], &[], None, false, 8);
         assert!(cleared.emit);
         assert!(cleared.condition_cleared);
         assert!(
             !regulation_loop
-                .loop_telemetry_decision(&[], &[], false, 9)
+                .loop_telemetry_decision(&[], &[], None, false, 9)
                 .emit
         );
 
         assert!(
             regulation_loop
-                .loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 10)
+                .loop_telemetry_decision(std::slice::from_ref(&first), &[], None, false, 10,)
                 .emit
         );
-        let steady = regulation_loop.loop_telemetry_decision(&[first], &[], false, 360);
+        let steady = regulation_loop.loop_telemetry_decision(&[first], &[], None, false, 360);
         assert!(steady.emit);
         assert!(steady.steady_state_heartbeat);
         assert_eq!(steady.suppressed_cycles, 1);
