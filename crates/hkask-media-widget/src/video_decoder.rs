@@ -2206,11 +2206,6 @@ mod tests {
         }
         let position_after_ticks = player.position();
         assert!(position_after_ticks >= Duration::from_secs(1));
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(
-            player.position() > position_after_ticks,
-            "the master clock must advance at wall time while playing"
-        );
         assert!(
             player.has_audio(),
             "audio pipeline must survive playback ticks"
@@ -2218,6 +2213,16 @@ mod tests {
         assert!(
             player.audio_queue_len() > 0,
             "audio samples must be queued on the output player after seeking into the stream"
+        );
+        let consumption_deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while player.position() <= position_after_ticks
+            && std::time::Instant::now() < consumption_deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            player.position() > position_after_ticks,
+            "the audio-master clock must advance when the default device consumes samples"
         );
         // Pause freezes the clock. Capture AFTER pause() — rodio's position
         // control updates on a 5ms periodic tick, so one final update can
