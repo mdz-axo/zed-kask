@@ -19,6 +19,7 @@ use crate::services::qa_pipeline::{
     complete_disposition_plan, merge_disposition_plans, parse_disposition_plan_response,
     qa_llm_parameters, read_prompts, render_disposition_plan_messages,
     render_disposition_review_messages, render_planned_qa_messages,
+    render_planned_qa_review_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -371,9 +372,81 @@ impl QaBatchService {
                             Some(&crate::extract_json_from_response(&writer_response.text)),
                         );
                     }
+                    let writer_completed = match completed {
+                        Ok(completed) => completed,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(writer_response, Err(error))),
+                            );
+                        }
+                    };
+                    let review_messages = match render_planned_qa_review_messages(
+                        &worker_prompt,
+                        &plan,
+                        &writer_completed,
+                    ) {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(writer_response, Err(error.to_string()))),
+                            );
+                        }
+                    };
+                    prior_responses.push(response_metadata(&writer_response));
+                    let mut review_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &review_messages,
+                        &prompt_id,
+                        "QA draft review",
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    let mut reviewed = complete_disposition_plan(
+                        &plan,
+                        Some(&crate::extract_json_from_response(&review_response.text)),
+                    );
+                    if let Err(error) = &reviewed {
+                        prior_responses.push(response_metadata(&review_response));
+                        let mut correction_messages = review_messages.clone();
+                        correction_messages[0].content.push_str(&format!(
+                            " Your reviewed QA failed the typed schema: {error}. Return one corrected outer array only."
+                        ));
+                        review_response = match infer_with_retry(
+                            &router,
+                            &limiter,
+                            &selected_model,
+                            &correction_messages,
+                            &prompt_id,
+                            "QA draft review schema correction",
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => return (prior_responses, Err(error)),
+                        };
+                        reviewed = complete_disposition_plan(
+                            &plan,
+                            Some(&crate::extract_json_from_response(&review_response.text)),
+                        );
+                    }
+                    if reviewed.is_err() {
+                        tracing::warn!(
+                            target: "hkask.mcp.docproc.qa_batch",
+                            prompt_id,
+                            "QA draft review remained invalid after correction; retaining the valid writer output"
+                        );
+                        reviewed = Ok(writer_completed);
+                    }
                     (
                         prior_responses,
-                        Ok(qa_completion(writer_response, completed)),
+                        Ok(qa_completion(review_response, reviewed)),
                     )
                 });
                 pending.insert(task.id(), prompt);
@@ -612,17 +685,17 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 2);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
-        assert_eq!(summary["provider_responses"], 6);
-        assert_eq!(summary["tokens_used"], 60);
+        assert_eq!(summary["provider_responses"], 8);
+        assert_eq!(summary["tokens_used"], 80);
         assert!(
             (summary["reported_cost_usd"]
                 .as_f64()
                 .expect("reported cost")
-                - 0.06)
+                - 0.08)
                 .abs()
                 < 1e-12
         );
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
@@ -673,8 +746,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 1);
         assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["qa_type"], "factual");

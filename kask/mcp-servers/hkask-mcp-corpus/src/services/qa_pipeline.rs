@@ -15,8 +15,10 @@ use crate::tools::corpus::{QaType, qa_type_instruction};
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
+const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v4";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v5";
+const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
 const EVIDENCE_CANDIDATE_OVERLAP_WORDS: usize = 6;
 
@@ -48,6 +50,11 @@ enum PlannedQaLevel {
 #[derive(Clone)]
 pub(crate) struct QaDispositionPlan {
     levels: Vec<PlannedQaLevel>,
+}
+
+pub(crate) enum PassageQuality {
+    Clean,
+    Skip(String),
 }
 
 impl QaDispositionPlan {
@@ -257,6 +264,64 @@ fn conceptual_relation_is_supported(relation: &str) -> bool {
 /// [P9] Motivating: Bad or unsupported source material cannot become accepted training prose.
 /// pre: prompt carries validated primary text and ordered requested levels.
 /// post: the model receives one whole-passage decision task with server-owned evidence candidates.
+pub(crate) fn render_passage_quality_messages(
+    prompt: &PreparedQaPrompt,
+) -> Result<[ChatMessage; 2], McpToolError> {
+    prompt.validate()?;
+    let user = serde_json::to_string(&json!({
+        "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
+        "primary_passage": crate::guard_content(&prompt.primary().text),
+    }))
+    .map_err(|error| McpToolError::internal(format!("Cannot render passage quality: {error}")))?;
+    let system = format!(
+        "{CONTENT_GUARD_INSTRUCTION}{PASSAGE_QUALITY_POLICY} Return exactly [\"clean\"] for an eligible passage, [\"skip\",\"contaminated_or_garbled\"], or [\"skip\",\"non_substantive_passage\"]. This is a focused passage-quality gate: do not judge Bloom-level support, draft questions, or select evidence. Emit one compact JSON array and nothing else."
+    );
+    Ok([
+        ChatMessage {
+            role: "system".to_string(),
+            content: system,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user,
+        },
+    ])
+}
+
+pub(crate) fn parse_passage_quality_response(response: &str) -> Result<PassageQuality, String> {
+    let fields: Vec<String> = serde_json::from_str(response)
+        .map_err(|error| format!("invalid compact passage-quality JSON: {error}"))?;
+    match fields.as_slice() {
+        [decision] if decision == "clean" => Ok(PassageQuality::Clean),
+        [decision, reason]
+            if decision == "skip"
+                && matches!(
+                    reason.as_str(),
+                    "contaminated_or_garbled" | "non_substantive_passage"
+                ) =>
+        {
+            Ok(PassageQuality::Skip(reason.clone()))
+        }
+        _ => Err(
+            "passage quality must be exactly one canonical clean or prompt-wide skip disposition"
+                .to_string(),
+        ),
+    }
+}
+
+pub(crate) fn prompt_wide_skip_plan(prompt: &PreparedQaPrompt, reason: &str) -> QaDispositionPlan {
+    QaDispositionPlan {
+        levels: prompt
+            .qa_types
+            .iter()
+            .map(|qa_type| PlannedQaLevel::Skipped {
+                bloom_level: qa_type.as_str().to_string(),
+                reason: reason.to_string(),
+            })
+            .collect(),
+    }
+}
+
 pub(crate) fn render_disposition_plan_messages(
     prompt: &PreparedQaPrompt,
 ) -> Result<[ChatMessage; 2], McpToolError> {
@@ -291,7 +356,7 @@ pub(crate) fn render_disposition_plan_messages(
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Return one typed disposition plan before any QA is written. First judge the complete primary passage. Return [\"skip\",\"contaminated_or_garbled\"] when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments between prose or list entries, joins unrelated sections, or truncates a thought required for an answer. Return [\"skip\",\"non_substantive_passage\"] when the passage is only navigation, marketing, legal or publication furniture, an unfilled template, or an isolated caption. These reasons are prompt-wide. Do not reject a coherent continuation fragment or a short legible factual passage merely because it begins mid-sentence, contains notation, or lacks conceptual support. For a clean passage return [\"clean\",[{{\"level\":\"factual\",\"disposition\":\"generate\",\"relation\":null,\"reason\":null,\"evidence_ids\":[\"e0\"]}},{{\"level\":\"conceptual\",\"disposition\":\"skip\",\"relation\":null,\"reason\":\"conceptual_support_absent\",\"evidence_ids\":[]}}]], with exactly one ordered object per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Never emit a generate disposition with an empty evidence list: copy the supporting eN IDs, or use the level's support-absent skip when no candidate supports it. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; a statement that someone urges an action to produce an outcome is explicit purpose and should be retained. Adjacent future actions, hopes, or preferences alone do not establish why an action is taken. An explicit condition, decision, action, and resulting configuration supports mechanism and must not be skipped merely because each step is directly stated. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
+        "{CONTENT_GUARD_INSTRUCTION}{PASSAGE_QUALITY_POLICY} Return one typed disposition plan before any QA is written. Prompt-wide quality reasons override all level dispositions. For a clean passage return [\"clean\",[{{\"level\":\"factual\",\"disposition\":\"generate\",\"relation\":null,\"reason\":null,\"evidence_ids\":[\"e0\"]}},{{\"level\":\"conceptual\",\"disposition\":\"skip\",\"relation\":null,\"reason\":\"conceptual_support_absent\",\"evidence_ids\":[]}}]], with exactly one ordered object per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Never emit a generate disposition with an empty evidence list: copy the supporting eN IDs, or use the level's support-absent skip when no candidate supports it. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A stated threshold or sufficiently large parameter connected to infeasibility is a supported relationship without requiring an unstated mechanism. A characterization followed by how a subject treats its stated faults is a supported characterization relationship. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; a statement that someone urges an action to produce an outcome is explicit purpose and should be retained. Adjacent future actions, hopes, or preferences alone do not establish why an action is taken. An explicit condition, decision, action, and resulting configuration supports mechanism and must not be skipped merely because each step is directly stated. A passage that merely asserts a relation with phrases such as useful, enables, or shows, without explaining how the relation works, does not support mechanism or causal_relationship. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
     );
     Ok([
         ChatMessage {
@@ -524,7 +589,7 @@ pub(crate) fn render_planned_qa_messages(
     }))
     .map_err(|error| McpToolError::internal(format!("Cannot render planned QA: {error}")))?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA objects for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every object; never emit separate arrays or any prose before, between, or after them. Each object has exactly level, question, and answer, for example {{\"level\":\"factual\",\"question\":\"What is stated?\",\"answer\":\"The stated fact.\"}}. The question premise and every answer claim must be entailed by the supplied evidence alone. A factual level asks only what, which, who, when, or how many is directly stated; never turn sequence or timing into causation, reverse a condition, or imply that an action already happened. A statement that it is time to act when X does not mean X occurs when or because the action is taken. Do not ask for a complete list unless the supplied evidence contains the complete list. Preserve negation and modality exactly: hope, may, likely, and possibility are not facts or purposes. Use a why-question only when the evidence explicitly states the cause or purpose. Do not remove not, cannot, or another qualification. Do not replace a source term with a broader consequence such as viability. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. For an exemplification relationship, synthesize how the supplied examples support the passage's stated general claim; do not ask how one example's label relates to its own stated implication. Return compact JSON only.",
+        "{CONTENT_GUARD_INSTRUCTION}Write exactly {} ordered QA objects for the supplied planned levels. Evidence and dispositions are already fixed: do not add, remove, reorder, relabel, or skip a level, and do not select new evidence. Return one outer JSON array containing every object; never emit separate arrays or any prose before, between, or after them. Each object has exactly level, question, and answer, for example {{\"level\":\"factual\",\"question\":\"What is stated?\",\"answer\":\"The stated fact.\"}}. The question premise and every answer claim must be entailed by the supplied evidence alone. A factual level asks only what, which, who, when, or how many is directly stated; never turn sequence or timing into causation, reverse a condition, or imply that an action already happened. A statement that it is time to act when X does not mean X occurs when or because the action is taken. Do not ask for a complete list unless the supplied evidence contains the complete list. Preserve negation and modality exactly: hope, may, likely, and possibility are not facts or purposes. Use a why-question only when the evidence explicitly states the cause or purpose. Do not remove not, cannot, or another qualification. Do not replace a source term with a broader consequence such as viability. Preserve the source category name and intentionality; never substitute an accidental, opposite, or merely related label. Do not invent advice, a normative should, a causal mechanism, or which component changed unless the evidence states it. For conceptual QA, the question and answer must explain the named relation rather than retrieve or paraphrase a list, label, title, number, or stated phrase. For an exemplification relationship, synthesize how the supplied examples support the passage's stated general claim; do not ask how one example's label relates to its own stated implication. Return compact JSON only.",
         planned_levels.len(),
     );
     Ok(Some([
@@ -545,6 +610,33 @@ struct PreparedQaDraft {
     level: String,
     question: String,
     answer: String,
+}
+
+pub(crate) fn render_planned_qa_review_messages(
+    prompt: &PreparedQaPrompt,
+    plan: &QaDispositionPlan,
+    proposed_qa: &str,
+) -> Result<[ChatMessage; 2], McpToolError> {
+    let mut messages = render_planned_qa_messages(prompt, plan)?.ok_or_else(|| {
+        McpToolError::internal("Cannot review QA when the disposition plan has no generated levels")
+    })?;
+    messages[0].content.push_str(
+        " Independently review the proposed QA against the fixed evidence. Correct any changed grammatical subject, reversed condition, category substitution, missing negation or modality, unsupported premise, incomplete why answer, or question broader than the evidence. Preserve the planned levels and return the same named-object schema only.",
+    );
+    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
+        McpToolError::internal(format!("Cannot parse rendered QA writer request: {error}"))
+    })?;
+    let object = user
+        .as_object_mut()
+        .ok_or_else(|| McpToolError::internal("Rendered QA writer request is not a JSON object"))?;
+    object.insert(
+        "proposed_qa".to_string(),
+        serde_json::from_str(proposed_qa).unwrap_or_else(|_| Value::String(proposed_qa.into())),
+    );
+    messages[1].content = serde_json::to_string(&user).map_err(|error| {
+        McpToolError::internal(format!("Cannot render planned QA review: {error}"))
+    })?;
+    Ok(messages)
 }
 
 pub(crate) fn complete_disposition_plan(
@@ -1377,6 +1469,7 @@ mod tests {
         assert!(system.contains("normative should"));
         assert!(system.contains("why-question only when"));
         assert!(system.contains("causal mechanism"));
+        assert!(system.contains("source category name and intentionality"));
         assert!(system.contains("do not select new evidence"));
         assert!(system.contains("one outer JSON array"));
     }
@@ -1403,6 +1496,13 @@ mod tests {
         assert!(rendered.contains("hopes, or preferences alone do not establish why"));
         assert!(rendered.contains("Never emit a generate disposition with an empty evidence list"));
         assert!(rendered.contains("condition, decision, action, and resulting configuration"));
+        assert!(rendered.contains("interface controls, media titles, or navigation residue"));
+        assert!(
+            rendered.contains("bibliographic navigation or an isolated table or figure caption")
+        );
+        assert!(rendered.contains("isolated anecdote or cross-document fragment"));
+        assert!(rendered.contains("single broken word or line-break hyphen"));
+        assert!(rendered.contains("merely asserts a relation"));
         assert!(!rendered.contains("Generate exactly 2 source-grounded QA pairs"));
     }
 
