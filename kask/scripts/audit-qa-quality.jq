@@ -29,6 +29,9 @@ def generation_protocol_ok($r):
   and ($r.provenance.prepared_prompt_protocol == "prepared-qa-local-evidence-v1")
   and (($r.provenance.prompt_protocol == "prepared-qa-quality-gated-v3")
     or ($r.provenance.prompt_protocol == "prepared-qa-staged-quality-v4"
+      and $r.provenance.disposition_plan_protocol == "prepared-qa-disposition-plan-v1")
+    or ($r.provenance.prompt_protocol == "prepared-qa-staged-quality-v5"
+      and $r.provenance.passage_quality_protocol == "prepared-qa-passage-quality-v1"
       and $r.provenance.disposition_plan_protocol == "prepared-qa-disposition-plan-v1"));
 def identify($index; $ref):
   (if $ref.chunk_ref | nonblank then ($index[$ref.chunk_ref] // []) else [] end) as $matches

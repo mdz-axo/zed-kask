@@ -226,18 +226,20 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. Generation then uses disposition proposal/review and QA writing/review stages.
-First, the disposition planner sees the complete guarded primary passage and
-evidence candidates. It either returns one prompt-wide bad-passage skip or one
-ordered plan per requested level. A separate focused pass reviews that proposal.
-Prompt-wide bad-passage decisions combine conservatively, while either valid clean
-plan may retain a supported level; an invalid review cannot erase a valid proposal. A generated level fixes one to three evidence IDs before any
-question or answer is written; conceptual generation also fixes one closed relation
+local IDs `e0`, `e1`, etc. Generation first runs a focused whole-passage quality
+gate. A bad-passage decision short-circuits planning and writes one prompt-wide
+skip per requested level. For a clean passage, the disposition planner sees the
+complete guarded primary passage and evidence candidates and returns one ordered
+plan per requested level. A separate focused pass reviews that proposal. A
+schema-valid reviewed plan is authoritative; the valid proposal is retained only
+when the review and its single correction remain invalid. A generated level fixes
+one to three evidence IDs before any question or answer is written; conceptual
+generation also fixes one closed relation
 kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
 `framework`, or `transferable_principle`). An unsupported level records its canonical
 `<level>_support_absent` reason.
 
-The writer receives only the merged generated levels and their selected source
+The writer receives only the reviewed generated levels and their selected source
 spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
 select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}` objects. A focused draft review checks unchanged subjects, conditions, categories,
 negation, modality, premise support and answer completeness before final parsing.
@@ -259,14 +261,15 @@ Closed level reasons remain the requested level's `<level>_support_absent`. Any
 malformed plan or writer response rejects the whole prompt before rows are written.
 The semantic decisions remain model-mediated and require the separate Stage 8 audit;
 exact evidence restoration does not certify answer entailment. Generated rows use
-`prepared-qa-staged-quality-v4` with
+`prepared-qa-staged-quality-v5` with
+`passage_quality_protocol=prepared-qa-passage-quality-v1` and
 `disposition_plan_protocol=prepared-qa-disposition-plan-v1`; existing prepared JSONL
 remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v4","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v5","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifier above is illustrative, not a configured default. Batch usage

@@ -16,11 +16,10 @@ use crate::batch::{
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
     PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
-    QaResponseMetadata, complete_disposition_plan, merge_disposition_plans,
-    parse_disposition_plan_response, parse_passage_quality_response, prompt_wide_skip_plan,
-    qa_llm_parameters, read_prompts, render_disposition_plan_messages,
-    render_disposition_review_messages, render_passage_quality_messages,
-    render_planned_qa_messages, render_planned_qa_review_messages,
+    QaResponseMetadata, complete_disposition_plan, parse_disposition_plan_response,
+    parse_passage_quality_response, prompt_wide_skip_plan, qa_llm_parameters, read_prompts,
+    render_disposition_plan_messages, render_disposition_review_messages,
+    render_passage_quality_messages, render_planned_qa_messages, render_planned_qa_review_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -352,7 +351,7 @@ impl QaBatchService {
                             }
                         },
                     };
-                    let plan = merge_disposition_plans(proposed_plan.ok(), reviewed_plan);
+                    let plan = reviewed_plan;
                     let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
                         Ok(messages) => messages,
                         Err(error) => {
@@ -558,6 +557,8 @@ mod tests {
         Success,
         RejectContaminated,
         SkipConceptual,
+        ReviewSkipsConceptual,
+        ReviewGeneratesConceptual,
         Malformed,
         WriterMalformed,
         WriterMalformedOnce,
@@ -633,7 +634,10 @@ mod tests {
                 } else if is_quality {
                     json!(["clean"]).to_string()
                 } else if is_planning {
-                    let conceptual = if matches!(mode, Mode::SkipConceptual) {
+                    let skip_conceptual = matches!(mode, Mode::SkipConceptual)
+                        || matches!(mode, Mode::ReviewSkipsConceptual) && is_review
+                        || matches!(mode, Mode::ReviewGeneratesConceptual) && !is_review;
+                    let conceptual = if skip_conceptual {
                         json!({"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]})
                     } else {
                         json!({"level":"conceptual","disposition":"generate","relation":"mechanism","reason":null,"evidence_ids":["e0"]})
@@ -646,7 +650,7 @@ mod tests {
                         ]
                     ])
                     .to_string()
-                } else if matches!(mode, Mode::SkipConceptual) {
+                } else if matches!(mode, Mode::SkipConceptual | Mode::ReviewSkipsConceptual) {
                     json!([{"level":"factual","question":"What is grounded?","answer":"Grounded answer one."}]).to_string()
                 } else {
                     json!([
@@ -809,6 +813,49 @@ mod tests {
         assert_eq!(rows[1]["qa_type"], "conceptual");
         assert_eq!(rows[1]["status"], "skipped");
         assert_eq!(rows[1]["reason"], "conceptual_support_absent");
+        Ok(())
+    }
+
+    /// expect: A valid disposition review can stop conceptual generation proposed by the first pass.
+    #[tokio::test]
+    async fn reviewed_skip_overrides_proposed_generation() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewSkipsConceptual));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["qa_rows_written"], 1);
+        assert_eq!(summary["qa_levels_skipped"], 1);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
+        let rows = records(&output)?;
+        assert_eq!(rows[0]["qa_type"], "factual");
+        assert_eq!(rows[1]["qa_type"], "conceptual");
+        assert_eq!(rows[1]["status"], "skipped");
+        assert_eq!(rows[1]["reason"], "conceptual_support_absent");
+        Ok(())
+    }
+
+    /// expect: A valid disposition review can retain conceptual support rejected by the first pass.
+    #[tokio::test]
+    async fn reviewed_generation_overrides_proposed_skip() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewGeneratesConceptual));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["qa_levels_skipped"], 0);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
+        let rows = records(&output)?;
+        assert_eq!(rows[0]["qa_type"], "factual");
+        assert_eq!(rows[1]["qa_type"], "conceptual");
+        assert!(rows.iter().all(|row| row.get("response").is_some()));
         Ok(())
     }
 

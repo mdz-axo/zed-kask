@@ -373,7 +373,9 @@ impl InferencePort for CitationGeneration {
             .join("\n");
         assert!(!rendered.contains("corpus:brooks:0"));
         assert!(!rendered.contains("brooks.txt"));
-        let rows = if rendered.contains("disposition plan") {
+        let rows = if rendered.contains("focused passage-quality gate") {
+            json!(["clean"])
+        } else if rendered.contains("disposition plan") {
             assert!(rendered.contains("evidence IDs"));
             assert!(rendered.contains("conceptual_support_absent"));
             assert!(rendered.contains("primary_passage"));

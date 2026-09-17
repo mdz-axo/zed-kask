@@ -63,61 +63,6 @@ impl QaDispositionPlan {
             .iter()
             .any(|level| matches!(level, PlannedQaLevel::Generate { .. }))
     }
-
-    fn global_skip_reason(&self) -> Option<&str> {
-        let mut reasons = self.levels.iter().map(|level| match level {
-            PlannedQaLevel::Skipped { reason, .. }
-                if matches!(
-                    reason.as_str(),
-                    "contaminated_or_garbled" | "non_substantive_passage"
-                ) =>
-            {
-                Some(reason.as_str())
-            }
-            _ => None,
-        });
-        let first = reasons.next()??;
-        reasons.all(|reason| reason == Some(first)).then_some(first)
-    }
-}
-
-pub(crate) fn merge_disposition_plans(
-    proposed: Option<QaDispositionPlan>,
-    reviewed: QaDispositionPlan,
-) -> QaDispositionPlan {
-    let Some(proposed) = proposed else {
-        return reviewed;
-    };
-    if let Some(reason) = proposed
-        .global_skip_reason()
-        .or_else(|| reviewed.global_skip_reason())
-    {
-        let levels = reviewed
-            .levels
-            .iter()
-            .map(|level| {
-                let bloom_level = match level {
-                    PlannedQaLevel::Generate { bloom_level, .. }
-                    | PlannedQaLevel::Skipped { bloom_level, .. } => bloom_level.clone(),
-                };
-                PlannedQaLevel::Skipped {
-                    bloom_level,
-                    reason: reason.to_string(),
-                }
-            })
-            .collect();
-        return QaDispositionPlan { levels };
-    }
-    let levels = proposed
-        .levels
-        .into_iter()
-        .zip(reviewed.levels)
-        .map(|(proposed, reviewed)| match proposed {
-            generated @ PlannedQaLevel::Generate { .. } => generated,
-            PlannedQaLevel::Skipped { .. } => reviewed,
-        })
-        .collect();
-    QaDispositionPlan { levels }
 }
 
 /// One server-owned passage identity. Only `local_id` and guarded `text` enter
