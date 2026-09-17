@@ -462,12 +462,18 @@ mod tests {
                     json!(["skip", "contaminated_or_garbled"]).to_string()
                 } else if is_planning {
                     let conceptual = if matches!(mode, Mode::SkipConceptual) {
-                        json!(["conceptual", "skip", "conceptual_support_absent", []])
+                        json!({"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]})
                     } else {
-                        json!(["conceptual", "generate", "mechanism", ["e0"]])
+                        json!({"level":"conceptual","disposition":"generate","relation":"mechanism","reason":null,"evidence_ids":["e0"]})
                     };
-                    json!(["clean", [["factual", "generate", null, ["e0"]], conceptual]])
-                        .to_string()
+                    json!([
+                        "clean",
+                        [
+                            {"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},
+                            conceptual
+                        ]
+                    ])
+                    .to_string()
                 } else if matches!(mode, Mode::SkipConceptual) {
                     json!([["factual", "What is grounded?", "Grounded answer one."]]).to_string()
                 } else {

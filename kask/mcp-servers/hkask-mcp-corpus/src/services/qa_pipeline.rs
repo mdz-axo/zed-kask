@@ -174,7 +174,14 @@ fn evidence_candidates(prompt: &PreparedQaPrompt) -> Vec<EvidenceCandidate> {
 }
 
 #[derive(Deserialize)]
-struct PreparedQaPlanLevel(String, String, Option<String>, Vec<String>);
+#[serde(deny_unknown_fields)]
+struct PreparedQaPlanLevel {
+    level: String,
+    disposition: String,
+    relation: Option<String>,
+    reason: Option<String>,
+    evidence_ids: Vec<String>,
+}
 
 fn conceptual_relation_is_supported(relation: &str) -> bool {
     matches!(
@@ -227,7 +234,7 @@ pub(crate) fn render_disposition_plan_messages(
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
     let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Return one typed disposition plan before any QA is written. First judge the complete primary passage. Return [\"skip\",\"contaminated_or_garbled\"] when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments between prose or list entries, joins unrelated sections, or truncates a thought required for an answer. Return [\"skip\",\"non_substantive_passage\"] when the passage is only navigation, marketing, legal or publication furniture, an unfilled template, or an isolated caption. These reasons are prompt-wide. Do not reject a coherent continuation fragment or a short legible factual passage merely because it begins mid-sentence, contains notation, or lacks conceptual support. For a clean passage return [\"clean\",[[\"level\",\"generate\",relation_or_null,[\"e0\"]],[\"level\",\"skip\",\"level_support_absent\",[]]]], with exactly one ordered entry per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; adjacent future actions, hopes, or preferences do not establish why an action is taken. A condition, action, and resulting configuration supports mechanism when that chain is explicit. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
+        "{CONTENT_GUARD_INSTRUCTION}Return one typed disposition plan before any QA is written. First judge the complete primary passage. Return [\"skip\",\"contaminated_or_garbled\"] when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments between prose or list entries, joins unrelated sections, or truncates a thought required for an answer. Return [\"skip\",\"non_substantive_passage\"] when the passage is only navigation, marketing, legal or publication furniture, an unfilled template, or an isolated caption. These reasons are prompt-wide. Do not reject a coherent continuation fragment or a short legible factual passage merely because it begins mid-sentence, contains notation, or lacks conceptual support. For a clean passage return [\"clean\",[{{\"level\":\"factual\",\"disposition\":\"generate\",\"relation\":null,\"reason\":null,\"evidence_ids\":[\"e0\"]}},{{\"level\":\"conceptual\",\"disposition\":\"skip\",\"relation\":null,\"reason\":\"conceptual_support_absent\",\"evidence_ids\":[]}}]], with exactly one ordered object per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Never emit a generate disposition with an empty evidence list: copy the supporting eN IDs, or use the level's support-absent skip when no candidate supports it. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; adjacent future actions, hopes, or preferences do not establish why an action is taken. An explicit condition, decision, action, and resulting configuration supports mechanism and must not be skipped merely because each step is directly stated. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
     );
     Ok([
         ChatMessage {
@@ -286,10 +293,15 @@ pub(crate) fn parse_disposition_plan_response(
             for (index, (raw_level, expected)) in
                 raw_levels.iter().zip(&prompt.qa_types).enumerate()
             {
-                let PreparedQaPlanLevel(level, disposition, detail, evidence_ids) =
-                    serde_json::from_value(raw_level.clone()).map_err(|error| {
-                        format!("invalid QA disposition level {index}: {error}")
-                    })?;
+                let PreparedQaPlanLevel {
+                    level,
+                    disposition,
+                    relation,
+                    reason,
+                    evidence_ids,
+                } = serde_json::from_value(raw_level.clone()).map_err(|error| {
+                    format!("invalid QA disposition level {index}: {error}")
+                })?;
                 if level != expected.as_str() {
                     return Err(format!(
                         "planned level {index} expected '{}', received '{level}'",
@@ -316,8 +328,13 @@ pub(crate) fn parse_disposition_plan_response(
                                 ));
                             }
                         }
+                        if reason.is_some() {
+                            return Err(format!(
+                                "planned generated level {index} must use null reason"
+                            ));
+                        }
                         if *expected == QaType::Conceptual {
-                            let relation = detail.as_deref().ok_or_else(|| {
+                            let relation = relation.as_deref().ok_or_else(|| {
                                 format!("planned conceptual level {index} needs a relation")
                             })?;
                             if !conceptual_relation_is_supported(relation) {
@@ -325,19 +342,24 @@ pub(crate) fn parse_disposition_plan_response(
                                     "planned conceptual level {index} has unsupported relation '{relation}'"
                                 ));
                             }
-                        } else if detail.is_some() {
+                        } else if relation.is_some() {
                             return Err(format!(
                                 "planned non-conceptual level {index} must use null relation"
                             ));
                         }
                         levels.push(PlannedQaLevel::Generate {
                             bloom_level: level,
-                            relation: detail,
+                            relation,
                             evidence_ids,
                         });
                     }
                     "skip" => {
-                        let reason = detail.ok_or_else(|| {
+                        if relation.is_some() {
+                            return Err(format!(
+                                "planned skip level {index} must use null relation"
+                            ));
+                        }
+                        let reason = reason.ok_or_else(|| {
                             format!("planned skip level {index} needs a reason")
                         })?;
                         if reason != support_absent_reason(*expected) || !evidence_ids.is_empty() {
@@ -1181,8 +1203,8 @@ mod tests {
         let response = json!([
             "clean",
             [
-                ["factual", "generate", null, ["e0"]],
-                ["conceptual", "generate", null, ["e0"]]
+                {"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},
+                {"level":"conceptual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]}
             ]
         ])
         .to_string();
@@ -1206,13 +1228,16 @@ mod tests {
             "framework",
             "transferable_principle",
         ] {
-            let response =
-                json!(["clean", [["conceptual", "generate", relation, ["e0"]]]]).to_string();
+            let response = json!([
+                "clean",
+                [{"level":"conceptual","disposition":"generate","relation":relation,"reason":null,"evidence_ids":["e0"]}]
+            ])
+            .to_string();
             assert!(parse_disposition_plan_response(&response, &prompt).is_ok());
         }
         let response = json!([
             "clean",
-            [["conceptual", "generate", "private_relation", ["e0"]]]
+            [{"level":"conceptual","disposition":"generate","relation":"private_relation","reason":null,"evidence_ids":["e0"]}]
         ])
         .to_string();
         assert!(parse_disposition_plan_response(&response, &prompt).is_err());
@@ -1223,7 +1248,11 @@ mod tests {
     fn disposition_plan_rejects_unknown_or_repeated_evidence() {
         let prompt = prepared();
         for evidence in [json!(["missing"]), json!(["e0", "e0"])] {
-            let response = json!(["clean", [["factual", "generate", null, evidence]]]).to_string();
+            let response = json!([
+                "clean",
+                [{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":evidence}]
+            ])
+            .to_string();
             assert!(parse_disposition_plan_response(&response, &prompt).is_err());
         }
     }
@@ -1233,7 +1262,11 @@ mod tests {
     fn planned_writer_contract_forbids_semantic_leaks() {
         let prompt = prepared();
         let plan = parse_disposition_plan_response(
-            &json!(["clean", [["factual", "generate", null, ["e0"]]]]).to_string(),
+            &json!([
+                "clean",
+                [{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]}]
+            ])
+            .to_string(),
             &prompt,
         )
         .expect("valid plan");
@@ -1270,7 +1303,8 @@ mod tests {
         assert!(rendered.contains("entry count that constrains a formula"));
         assert!(rendered.contains("result language supports a relationship"));
         assert!(rendered.contains("hopes, or preferences do not establish why"));
-        assert!(rendered.contains("condition, action, and resulting configuration"));
+        assert!(rendered.contains("Never emit a generate disposition with an empty evidence list"));
+        assert!(rendered.contains("condition, decision, action, and resulting configuration"));
         assert!(!rendered.contains("Generate exactly 2 source-grounded QA pairs"));
     }
 

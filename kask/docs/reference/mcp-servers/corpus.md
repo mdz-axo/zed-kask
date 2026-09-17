@@ -214,7 +214,7 @@ Generation uses two compact model contracts. The disposition planner returns one
 prompt-wide skip or an ordered clean-passage plan:
 
 ```json
-["clean",[["factual","generate",null,["e0"]],["conceptual","skip","conceptual_support_absent",[]]]]
+["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
 ```
 
 A conceptual generated level instead names one closed relation kind. The writer

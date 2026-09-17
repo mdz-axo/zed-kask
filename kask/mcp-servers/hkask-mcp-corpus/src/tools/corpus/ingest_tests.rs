@@ -380,8 +380,8 @@ impl InferencePort for CitationGeneration {
             json!([
                 "clean",
                 [
-                    ["factual", "generate", null, ["e0"]],
-                    ["conceptual", "generate", "causal_relationship", ["e0"]]
+                    {"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},
+                    {"level":"conceptual","disposition":"generate","relation":"causal_relationship","reason":null,"evidence_ids":["e0"]}
                 ]
             ])
         } else {
