@@ -191,11 +191,14 @@ from rendered model messages.
 
 `max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
 pairs. One compact prepared request per chunk carries the selected level rotation.
-Generation first runs a focused whole-passage quality gate; rejection short-circuits
-planning and writes prompt-wide skips. Clean passages proceed through disposition
-proposal and review, with the valid reviewed plan authoritative and the proposal
-used only if review correction remains invalid. Writer and focused draft-review
-calls run when at least one reviewed level is supported. Summary separates
+A complete reviewed adjudication manifest, when supplied, deterministically admits
+or skips every prompt. Otherwise the generation model proposes a focused
+whole-passage decision: proposed skip short-circuits, while proposed clean receives
+an authoritative review from the distinct verification model and fails closed after
+one malformed-review correction. Reviewed-clean passages proceed through disposition
+proposal and verification-model review, with the valid reviewed plan authoritative
+and the proposal used only if review correction remains invalid. Writer and focused
+draft-review calls run when at least one reviewed level is supported. Summary separates
 `prompts_written` from `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
@@ -213,11 +216,13 @@ and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived fro
 source, chunk ref, ordered level set and ordinal zero, stable across partitions.
 The whole input is validated before inference/output creation.
 
-Generation uses typed passage-quality, disposition, and writer contracts. The
-passage gate returns `clean` or a prompt-wide skip. For a clean passage, the
-disposition planner returns an ordered level plan and a focused review pass returns
-the same schema. A schema-valid review replaces the proposal; the proposal is a
-fallback only when review correction remains invalid:
+Generation uses typed passage-quality, disposition, and writer contracts. Without a
+reviewed adjudication manifest, the generation model's passage gate returns `clean`
+or a prompt-wide skip. Proposed clean receives an independent verification-model
+review in the same schema before planning. For reviewed-clean passages, the
+disposition planner returns an ordered level plan and another focused verification
+pass returns the same schema. A schema-valid review replaces the proposal; the
+proposal is a fallback only when disposition-review correction remains invalid:
 
 ```json
 ["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
@@ -239,9 +244,10 @@ writer are model-mediated; semantic answer entailment remains a separate Stage 8
 audit.
 
 Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
-canonical evidence, `prepared-qa-passage-quality-v1` admission provenance, and
-`prepared-qa-staged-quality-v5` generation provenance. Batch tokens and cost include
-every returned quality/planning/writing response and are not repeated on pair
+canonical evidence, distinct generation/verification model provenance,
+`prepared-qa-passage-quality-v1` admission provenance, and
+`prepared-qa-staged-quality-v6` generation provenance. Batch tokens and cost include
+every returned quality/review/planning/writing response and are not repeated on pair
 rows. Failed prompts carry primary identity and `error`, never an ingestible response.
 
 ### Batch ownership, retries and accounting

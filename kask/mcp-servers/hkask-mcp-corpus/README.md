@@ -226,13 +226,18 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. Generation first runs a focused whole-passage quality
-gate. A bad-passage decision short-circuits planning and writes one prompt-wide
-skip per requested level. For a clean passage, the disposition planner sees the
-complete guarded primary passage and evidence candidates and returns one ordered
-plan per requested level. A separate focused pass reviews that proposal. A
-schema-valid reviewed plan is authoritative; the valid proposal is retained only
-when the review and its single correction remain invalid. A generated level fixes
+local IDs `e0`, `e1`, etc. A complete reviewed adjudication manifest, when supplied,
+is authoritative: reviewed skips write prompt-wide rows without inference, while
+reviewed admits bypass only probabilistic passage-quality classification. Otherwise
+the generation model proposes one focused whole-passage quality decision. A proposed
+skip short-circuits immediately. A proposed clean decision is independently reviewed
+by the distinct verification model; reviewed skip short-circuits, reviewed clean
+continues, and a malformed review receives one correction before failing closed.
+The disposition planner then sees the complete guarded primary passage and evidence
+candidates and returns one ordered plan per requested level. A separate focused pass
+using the verification model reviews that proposal. A schema-valid reviewed plan is
+authoritative; the valid proposal is retained only when the review and its single
+correction remain invalid. A generated level fixes
 one to three evidence IDs before any question or answer is written; conceptual
 generation also fixes one closed relation
 kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
@@ -258,10 +263,10 @@ short, begins mid-sentence, contains notation or lacks conceptual support.
 
 `non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
 Closed level reasons remain the requested level's `<level>_support_absent`. Any
-malformed plan or writer response rejects the whole prompt before rows are written.
-The semantic decisions remain model-mediated and require the separate Stage 8 audit;
-exact evidence restoration does not certify answer entailment. Generated rows use
-`prepared-qa-staged-quality-v5` with
+malformed passage review, plan, or writer response rejects the whole prompt before
+rows are written. The semantic decisions remain model-mediated and require the
+separate Stage 8 audit; exact evidence restoration does not certify answer
+entailment. Generated rows use `prepared-qa-staged-quality-v6` with
 `passage_quality_protocol=prepared-qa-passage-quality-v1` and
 `disposition_plan_protocol=prepared-qa-disposition-plan-v1`; existing prepared JSONL
 remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
@@ -269,11 +274,12 @@ remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v5","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v6","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
-The model identifier above is illustrative, not a configured default. Batch usage
-and cost totals include every actual planning and writing provider response; they
+The model identifiers above are illustrative, not configured defaults. Batch usage
+and cost totals include every actual quality, review, planning, and writing provider
+response; they
 are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
 `qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`. A skip writes
 primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and

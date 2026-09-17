@@ -24,13 +24,13 @@ use crate::services::qa_adjudication::{
     read_complete_adjudications,
 };
 use crate::services::qa_pipeline::{
-    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
-    QaResponseMetadata, enforce_reviewed_admit, merge_disposition_plans,
-    parse_disposition_plan_response, parse_passage_quality_response, prompt_wide_skip_plan,
-    qa_llm_parameters, read_prompts, render_disposition_plan_messages,
+    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaDispositionPlan, QaOutput,
+    QaResponseMetadata, QaVerificationVerdicts, enforce_reviewed_admit, merge_disposition_plans,
+    parse_disposition_plan_response, parse_passage_quality_response, parse_planned_qa_verdicts,
+    prompt_wide_skip_plan, qa_llm_parameters, read_prompts, render_disposition_plan_messages,
     render_disposition_review_messages, render_passage_quality_messages,
-    render_passage_quality_review_messages, render_planned_qa_messages,
-    render_planned_qa_review_messages,
+    render_passage_quality_review_messages, render_planned_qa_correction_messages,
+    render_planned_qa_messages, render_planned_qa_review_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -101,6 +101,48 @@ async fn infer_with_retry(
     .map_err(|error| {
         QaCompletionError::LlmFailed(attempts, format!("{phase} inference failed: {error}"))
     })
+}
+
+async fn verify_qa_draft(
+    router: &Arc<dyn InferencePort>,
+    limiter: &AdaptiveLimiter,
+    selected_verification_model: &str,
+    messages: &[ChatMessage],
+    prompt_id: &str,
+    phase: &str,
+    plan: &QaDispositionPlan,
+    prior_responses: &mut Vec<QaResponseMetadata>,
+) -> Result<(InferenceResult, Result<QaVerificationVerdicts, String>), QaCompletionError> {
+    let mut response = infer_with_retry(
+        router,
+        limiter,
+        selected_verification_model,
+        messages,
+        prompt_id,
+        phase,
+    )
+    .await?;
+    let mut verdicts =
+        parse_planned_qa_verdicts(&crate::extract_json_from_response(&response.text), plan);
+    if let Err(error) = &verdicts {
+        prior_responses.push(response_metadata(&response));
+        let mut correction_messages = messages.to_vec();
+        correction_messages[0].content.push_str(&format!(
+            " Your verdict failed the strict typed schema: {error}. Return one corrected verdict array only; never output QA content."
+        ));
+        response = infer_with_retry(
+            router,
+            limiter,
+            selected_verification_model,
+            &correction_messages,
+            prompt_id,
+            &format!("{phase} schema correction"),
+        )
+        .await?;
+        verdicts =
+            parse_planned_qa_verdicts(&crate::extract_json_from_response(&response.text), plan);
+    }
+    Ok((response, verdicts))
 }
 
 struct QaOutputLease {
@@ -482,30 +524,18 @@ impl QaBatchService {
                             }
                         });
                     }
-                    let reviewed_plan = match plan {
+                    let plan = match plan {
                         Ok(plan) => plan,
-                        Err(error) => match proposed_plan.as_ref() {
-                            Ok(plan) => {
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.qa_batch",
-                                    prompt_id,
-                                    %error,
-                                    "disposition review remained invalid after correction; retaining the valid proposal"
-                                );
-                                plan.clone()
-                            }
-                            Err(_) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        planning_response,
-                                        Err(format!("QA disposition review rejected: {error}")),
-                                    )),
-                                );
-                            }
-                        },
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    planning_response,
+                                    Err(format!("QA disposition review rejected: {error}")),
+                                )),
+                            );
+                        }
                     };
-                    let plan = reviewed_plan;
                     let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
                         Ok(messages) => messages,
                         Err(error) => {
@@ -539,10 +569,9 @@ impl QaBatchService {
                         Ok(response) => response,
                         Err(error) => return (prior_responses, Err(error)),
                     };
-                    let mut completed = merge_disposition_plans(
-                        &plan,
-                        Some(&crate::extract_json_from_response(&writer_response.text)),
-                    );
+                    let mut writer_draft =
+                        crate::extract_json_from_response(&writer_response.text);
+                    let mut completed = merge_disposition_plans(&plan, Some(&writer_draft));
                     if let Err(error) = &completed {
                         prior_responses.push(response_metadata(&writer_response));
                         let mut correction_messages = writer_messages.clone();
@@ -562,10 +591,8 @@ impl QaBatchService {
                             Ok(response) => response,
                             Err(error) => return (prior_responses, Err(error)),
                         };
-                        completed = merge_disposition_plans(
-                            &plan,
-                            Some(&crate::extract_json_from_response(&writer_response.text)),
-                        );
+                        writer_draft = crate::extract_json_from_response(&writer_response.text);
+                        completed = merge_disposition_plans(&plan, Some(&writer_draft));
                     }
                     let writer_completed = match completed {
                         Ok(completed) => completed,
@@ -579,7 +606,7 @@ impl QaBatchService {
                     let review_messages = match render_planned_qa_review_messages(
                         &worker_prompt,
                         &plan,
-                        &writer_completed,
+                        &writer_draft,
                     ) {
                         Ok(messages) => messages,
                         Err(error) => {
@@ -590,59 +617,134 @@ impl QaBatchService {
                         }
                     };
                     prior_responses.push(response_metadata(&writer_response));
-                    let mut review_response = match infer_with_retry(
+                    let (review_response, verdicts) = match verify_qa_draft(
                         &router,
                         &limiter,
                         &selected_verification_model,
                         &review_messages,
                         &prompt_id,
-                        "QA draft review",
+                        "QA draft verification",
+                        &plan,
+                        &mut prior_responses,
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    let verdicts = match verdicts {
+                        Ok(verdicts) => verdicts,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    review_response,
+                                    Err(format!("QA verification verdict rejected: {error}")),
+                                )),
+                            );
+                        }
+                    };
+                    if !verdicts.requires_correction() {
+                        return (
+                            prior_responses,
+                            Ok(qa_completion(review_response, Ok(writer_completed))),
+                        );
+                    }
+
+                    let correction_messages = match render_planned_qa_correction_messages(
+                        &worker_prompt,
+                        &plan,
+                        &writer_draft,
+                        &verdicts,
+                    ) {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(review_response, Err(error.to_string()))),
+                            );
+                        }
+                    };
+                    prior_responses.push(response_metadata(&review_response));
+                    let corrected_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &correction_messages,
+                        &prompt_id,
+                        "QA correction",
                     )
                     .await
                     {
                         Ok(response) => response,
                         Err(error) => return (prior_responses, Err(error)),
                     };
-                    let mut reviewed = merge_disposition_plans(
+                    let corrected_draft =
+                        crate::extract_json_from_response(&corrected_response.text);
+                    let corrected_completed = match merge_disposition_plans(
                         &plan,
-                        Some(&crate::extract_json_from_response(&review_response.text)),
-                    );
-                    if let Err(error) = &reviewed {
-                        prior_responses.push(response_metadata(&review_response));
-                        let mut correction_messages = review_messages.clone();
-                        correction_messages[0].content.push_str(&format!(
-                            " Your reviewed QA failed the typed schema: {error}. Return one corrected outer array only."
-                        ));
-                        review_response = match infer_with_retry(
-                            &router,
-                            &limiter,
-                            &selected_verification_model,
-                            &correction_messages,
-                            &prompt_id,
-                            "QA draft review schema correction",
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(error) => return (prior_responses, Err(error)),
-                        };
-                        reviewed = merge_disposition_plans(
-                            &plan,
-                            Some(&crate::extract_json_from_response(&review_response.text)),
-                        );
-                    }
-                    if reviewed.is_err() {
-                        tracing::warn!(
-                            target: "hkask.mcp.docproc.qa_batch",
-                            prompt_id,
-                            "QA draft review remained invalid after correction; retaining the valid writer output"
-                        );
-                        reviewed = Ok(writer_completed);
-                    }
-                    (
-                        prior_responses,
-                        Ok(qa_completion(review_response, reviewed)),
+                        Some(&corrected_draft),
+                    ) {
+                        Ok(completed) => completed,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(corrected_response, Err(error))),
+                            );
+                        }
+                    };
+                    let final_review_messages = match render_planned_qa_review_messages(
+                        &worker_prompt,
+                        &plan,
+                        &corrected_draft,
+                    ) {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(corrected_response, Err(error.to_string()))),
+                            );
+                        }
+                    };
+                    prior_responses.push(response_metadata(&corrected_response));
+                    let (final_review_response, final_verdicts) = match verify_qa_draft(
+                        &router,
+                        &limiter,
+                        &selected_verification_model,
+                        &final_review_messages,
+                        &prompt_id,
+                        "corrected QA verification",
+                        &plan,
+                        &mut prior_responses,
                     )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    match final_verdicts {
+                        Ok(final_verdicts) if !final_verdicts.requires_correction() => (
+                            prior_responses,
+                            Ok(qa_completion(final_review_response, Ok(corrected_completed))),
+                        ),
+                        Ok(final_verdicts) => (
+                            prior_responses,
+                            Ok(qa_completion(
+                                final_review_response,
+                                Err(format!(
+                                    "corrected QA rejected by final verification: {}",
+                                    final_verdicts.correction_summary()
+                                )),
+                            )),
+                        ),
+                        Err(error) => (
+                            prior_responses,
+                            Ok(qa_completion(
+                                final_review_response,
+                                Err(format!("final QA verification verdict rejected: {error}")),
+                            )),
+                        ),
+                    }
                 });
                 pending.insert(task.id(), prompt);
             }
@@ -720,6 +822,11 @@ mod tests {
         WriterMalformed,
         WriterMalformedOnce,
         ReviewMalformed,
+        DraftReviewMalformed,
+        QaCorrectionThenAccept,
+        QaCorrectionRejected,
+        QaVerdictMalformed,
+        VerifierWritesQa,
         Pending,
     }
 
@@ -774,6 +881,9 @@ mod tests {
             let is_review = messages[0]
                 .content
                 .contains("Independently review the proposed disposition");
+            let is_draft_review = messages[0]
+                .content
+                .contains("Independently review the proposed QA");
             if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 5
             {
                 assert!(
@@ -789,6 +899,7 @@ mod tests {
                 let text = if matches!(mode, Mode::Malformed)
                     || matches!(mode, Mode::QualityReviewMalformed) && is_quality_review
                     || matches!(mode, Mode::ReviewMalformed) && is_review
+                    || matches!(mode, Mode::DraftReviewMalformed) && is_draft_review
                     || matches!(mode, Mode::WriterMalformed) && !is_quality && !is_planning
                     || matches!(mode, Mode::WriterMalformedOnce)
                         && !is_quality
@@ -1225,9 +1336,9 @@ mod tests {
         Ok(())
     }
 
-    /// expect: An invalid review cannot erase an already valid typed proposal.
+    /// expect: An invalid disposition review cannot authorize generation after correction fails.
     #[tokio::test]
-    async fn invalid_review_retains_valid_proposal_after_one_correction()
+    async fn invalid_disposition_review_fails_closed_after_one_correction()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_directory, request) = fixture(&[prompt("qa-1")])?;
         let output = request.output.clone();
@@ -1235,12 +1346,43 @@ mod tests {
         let summary = QaBatchService::new(port.clone())
             .generate_qa_batch(request)
             .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["prompts_failed"], 0);
-        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["prompts_succeeded"], 0);
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["provider_responses"], 5);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("QA disposition review rejected"))
+        );
+        Ok(())
+    }
+
+    /// expect: An invalid QA draft review cannot retain unchecked writer output after correction fails.
+    #[tokio::test]
+    async fn invalid_draft_review_fails_closed_after_one_correction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::DraftReviewMalformed));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 0);
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
         assert_eq!(summary["provider_responses"], 7);
         assert_eq!(port.calls.load(Ordering::SeqCst), 7);
-        assert_eq!(records(&output)?.len(), 2);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("QA draft review rejected"))
+        );
         Ok(())
     }
 

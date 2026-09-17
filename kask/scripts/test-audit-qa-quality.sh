@@ -57,6 +57,14 @@ jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v5" | .provenance
 cat "$WORK/base.jsonl" "$WORK/v5.jsonl" > "$WORK/mixed.jsonl"
 check 'valid staged-v5 skip requires quality and disposition provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v6" | .provenance.passage_quality_protocol="prepared-qa-passage-quality-v1" | .provenance.generator_model="generator/model" | .provenance.verification_model="verifier/model"' \
+    "$WORK/case.jsonl" > "$WORK/v6.jsonl"
+cat "$WORK/base.jsonl" "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
+check 'valid staged-v6 skip requires distinct generation and verification provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
+jq -c '.provenance.verification_model=.provenance.generator_model' "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
+check 'staged-v6 skip rejects identical generation and verification models' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1'
 jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'unknown staged skip protocol remains invalid' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
@@ -68,6 +76,13 @@ jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v5" | .provenance
     "$WORK/case.jsonl" > "$WORK/v5.jsonl"
 check 'valid staged-v5 QA requires quality and disposition provenance' 0 "$WORK/v5.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v6" | .provenance.passage_quality_protocol="prepared-qa-passage-quality-v1" | .provenance.generator_model="generator/model" | .provenance.verification_model="verifier/model"' \
+    "$WORK/case.jsonl" > "$WORK/v6.jsonl"
+check 'valid staged-v6 QA requires distinct generation and verification provenance' 0 "$WORK/v6.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.verification_model=.provenance.generator_model' "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
+check 'staged-v6 QA rejects identical generation and verification models' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_generation_protocol")!=null)'
 jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
 check 'unknown staged QA protocol is visible' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '(.data_gaps|index("invalid_generation_protocol")!=null)'
