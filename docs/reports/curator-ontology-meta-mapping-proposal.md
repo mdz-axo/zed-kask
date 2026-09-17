@@ -133,9 +133,9 @@ as the others — its tools are _about_ the fleet, not tagged by it.
 
 ### Tool 1: `curator_ontology_audit` — consumption
 
-Reads `reg.tool` spans from the Regulation trace (via
-`RegulationArchive::replay_weighted`, the same store `reg_query` uses)
-and reports fleet-level ontology usage.
+Reads `reg.tool` spans from the Regulation trace via the general
+`RegulationArchive::query_records` path used by `reg_query` and reports
+fleet-level ontology usage. Algedonic decay replay is a separate view.
 
 **Inputs:** time window (default 24h), optional server filter.
 

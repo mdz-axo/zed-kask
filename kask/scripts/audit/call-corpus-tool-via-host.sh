@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <corpus_build_chunk_representations|corpus_embed|corpus_query|corpus_tag_chunks> <arguments-json> <response-json> <server-log>" >&2
+    echo "usage: $0 <corpus_build_chunk_representations|corpus_embedding_inventory|corpus_embed|corpus_query|corpus_tag_chunks> <arguments-json> <response-json> <server-log>" >&2
     exit 64
 fi
 
@@ -13,7 +13,7 @@ log_file=$4
 binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
 
 case "$tool_name" in
-    corpus_build_chunk_representations)
+    corpus_build_chunk_representations|corpus_embedding_inventory)
         needs_inference=false
         required_model_var=
         default_timeout=120
@@ -101,19 +101,56 @@ if [[ ! "$response_timeout" =~ ^[1-9][0-9]*$ ]] || (( response_timeout > 3600 ))
     echo "HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS must be an integer from 1 through 3600" >&2
     exit 64
 fi
+child_term_grace=${HKASK_CALIBRATION_CHILD_TERM_GRACE_SECS:-5}
+if [[ ! "$child_term_grace" =~ ^[1-9][0-9]*$ ]] || (( child_term_grace > 30 )); then
+    echo "HKASK_CALIBRATION_CHILD_TERM_GRACE_SECS must be an integer from 1 through 30" >&2
+    exit 64
+fi
 
-coproc CORPUS_MCP { "$binary" 2>"$log_file"; }
+coproc CORPUS_MCP { exec "$binary" 2>"$log_file"; }
 out_fd=${CORPUS_MCP[0]}
 in_fd=${CORPUS_MCP[1]}
 corpus_pid=$CORPUS_MCP_PID
+process_stopped() {
+    local pid=$1 state
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+    state=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+    [[ -z "$state" || "$state" == Z* ]]
+}
+wait_for_stop() {
+    local pid=$1 limit=$2 elapsed=0
+    while ! process_stopped "$pid" && (( elapsed < limit * 10 )); do
+        sleep 0.1
+        elapsed=$((elapsed + 1))
+    done
+    process_stopped "$pid"
+}
 cleanup() {
+    local child_pid=${corpus_pid:-}
+    corpus_pid=
     if [[ -n ${in_fd:-} ]]; then
         eval "exec ${in_fd}>&-" 2>/dev/null || true
         in_fd=
     fi
-    if [[ -n ${corpus_pid:-} ]]; then
-        wait "$corpus_pid" 2>/dev/null || true
-        corpus_pid=
+    if [[ -n ${out_fd:-} ]]; then
+        eval "exec ${out_fd}<&-" 2>/dev/null || true
+        out_fd=
+    fi
+    if [[ -n "$child_pid" ]]; then
+        if ! process_stopped "$child_pid"; then
+            kill -TERM "$child_pid" 2>/dev/null || true
+            if ! wait_for_stop "$child_pid" "$child_term_grace"; then
+                echo "corpus MCP child did not stop after ${child_term_grace}s; sending KILL: pid=$child_pid" >&2
+                kill -KILL "$child_pid" 2>/dev/null || true
+                wait_for_stop "$child_pid" "$child_term_grace" || \
+                    echo "corpus MCP child remained uninterruptible after KILL: pid=$child_pid" >&2
+            fi
+        fi
+        if process_stopped "$child_pid"; then
+            wait "$child_pid" 2>/dev/null || true
+        fi
     fi
 }
 trap cleanup EXIT

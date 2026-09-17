@@ -633,6 +633,40 @@ impl EmbeddingStore {
         Ok(refs)
     }
 
+    /// Return durable `(entity_ref, model)` rows for an exact requested set.
+    ///
+    /// expect: "A calibration recovery can distinguish absent vectors from vectors stored under another model."
+    /// [P4] Motivating: durable identity evidence fails closed instead of replaying or trusting response files.
+    /// [P1] Constraining: only caller-supplied entity references are disclosed.
+    /// pre: entity_refs contains the exact identities being reconciled.
+    /// post: every returned row exists durably and matches one requested identity.
+    pub fn models_for_entity_refs(
+        &self,
+        entity_refs: &[String],
+    ) -> Result<Vec<(String, String)>, EmbeddingError> {
+        const QUERY_CHUNK_SIZE: usize = 500;
+        let mut found = Vec::new();
+        for refs in entity_refs.chunks(QUERY_CHUNK_SIZE) {
+            if refs.is_empty() {
+                continue;
+            }
+            let placeholders = std::iter::repeat_n("?", refs.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT entity_ref, model FROM embeddings WHERE entity_ref IN ({placeholders})"
+            );
+            let params = refs.iter().cloned().map(DbValue::Text).collect::<Vec<_>>();
+            for row in self.query_driver(&sql, &params)? {
+                found.push((
+                    row.get(0)?.as_text()?.to_string(),
+                    row.get(1)?.as_text()?.to_string(),
+                ));
+            }
+        }
+        Ok(found)
+    }
+
     /// Load all embeddings with their passage text for in-memory index hydration.
     ///
     /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.

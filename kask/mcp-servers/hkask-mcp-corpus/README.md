@@ -1,9 +1,9 @@
 # hkask-mcp-corpus
 
 Corpus processing, retrieval, evidence-carrying QA and style composition over
-MCP. The server has **23 registered tools**; parameters extend existing tools,
+MCP. The server has **25 registered tools**; parameters extend existing tools,
 not the tool count. The router and count test are in
-`src/hkask_mcp_corpus.rs:264–290`.
+`src/hkask_mcp_corpus.rs:252–307`.
 
 Use the [tool reference](../../docs/reference/mcp-servers/corpus.md) for parameters
 and the [build-corpus-pipeline skill](../../../.agents/skills/build-corpus-pipeline/SKILL.md)
@@ -30,12 +30,12 @@ Source identity and derivation use [Dublin Core](https://www.dublincore.org/spec
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
 anchors do not turn generated assertions or exact citations into verified prose.
 
-## Tools (23)
+## Tools (25)
 
 | Group | Registered tools |
 |---|---|
 | Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
-| Process (9) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
+| Process (11) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
 | QA output (4) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
@@ -407,9 +407,14 @@ the configured threshold, not a universally hardcoded distance.
 empty. It is **not a per-query DB selector** on a nonempty index. Call
 `corpus_clear_index` before selecting a different DB alone. Ephemeral chunk
 indexing is not persistent. Durable identity is canonical DB path plus entity ref;
-repeated embed/consolidate replaces that entry. Original/synthesized
-`passage_text`, not annotation-prefixed embedding input, supplies retrieved text
-and answer context. Publication also upserts text/method-signals h_mems.
+repeated embed/consolidate replaces that entry. `corpus_embed` stores the
+provider-confirmed actual model identity when the provider supplies one, otherwise
+it retains the requested model identity and reports that actual identity is
+unavailable. `corpus_embedding_inventory` compares an exact shard ref set with an
+existing DB and expected provider-confirmed model; it neither embeds nor creates a
+DB. Original/synthesized `passage_text`, not annotation-prefixed embedding input,
+supplies retrieved text and answer context. Publication also upserts
+text/method-signals h_mems.
 
 `include_text=false` defaults in plain/Lisp modes and affects returned text only.
 Rows without usable stored text expose `text_available=false`,

@@ -66,7 +66,8 @@ pub struct SemanticSearchRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RegQueryRequest {
-    /// Regulation namespace prefix to filter by (e.g., "reg.sovereignty", "reg.contract")
+    /// Optional Regulation path prefix. Matches the exact path or dot-delimited
+    /// descendants (for example, `reg.skill` includes `reg.skill.<id>`).
     pub namespace: Option<String>,
     /// Lookback window in seconds (default: 3600 = 1 hour)
     pub window_seconds: Option<u64>,

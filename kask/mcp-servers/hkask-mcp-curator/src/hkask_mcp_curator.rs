@@ -1058,7 +1058,7 @@ impl CuratorServer {
     // ── Regulation Query (for platform governance transparency) ────────────────
 
     #[tool(
-        description = "Query Regulation regulation records by namespace prefix within a time window. Returns structured event data for governance transparency reporting and consent auditing."
+        description = "Query Regulation records across all namespaces within a time window. An optional namespace prefix matches that path or dot-delimited descendants before the chronological result limit is applied."
     )]
     pub async fn reg_query(
         &self,
@@ -1070,35 +1070,18 @@ impl CuratorServer {
             let window_secs = req.window_seconds.unwrap_or(3600);
             let limit = req.limit.unwrap_or(100) as u64;
             let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
-            let config = hkask_storage::DecayConfig::default();
-
-            let weighted = store
-                .replay_weighted(since, limit, &config)
+            let records = store
+                .query_records(since, req.namespace.as_deref(), limit)
                 .map_err(|e| map_infra_error(&e, "Regulation query failed"))?;
-            let replayed_count = weighted.len();
-            let filtered: Vec<serde_json::Value> = weighted
+            let events: Vec<serde_json::Value> = records
                 .into_iter()
-                .filter(|we| {
-                    if let Some(ref ns) = req.namespace {
-                        we.event.span.namespace.as_str().starts_with(ns)
-                    } else {
-                        true
-                    }
-                })
-                // No `.take(limit)` here — `replay_weighted` already applied
-                // the SQL `limit` before the namespace filter, so an in-memory
-                // `take` can only reduce the already-capped set (dead code)
-                // and misleads readers into thinking the limit is enforced
-                // post-filter. If post-filter limiting is needed, move the
-                // limit into the SQL query (after the namespace filter).
-                .map(|we| {
+                .map(|event| {
                     json!({
-                        "timestamp": we.event.timestamp.to_rfc3339(),
-                        "namespace": we.event.span.namespace.as_str(),
-                        "path": we.event.span.path,
-                        "phase": format!("{:?}", we.event.phase),
-                        "weight": we.weight,
-                        "observation": we.event.observation,
+                        "timestamp": event.timestamp.to_rfc3339(),
+                        "namespace": event.span.namespace.as_str(),
+                        "path": event.span.path,
+                        "phase": format!("{:?}", event.phase),
+                        "observation": event.observation,
                     })
                 })
                 .collect();
@@ -1115,13 +1098,8 @@ impl CuratorServer {
             Ok(json!({
                 "namespace": namespace_info,
                 "window_seconds": window_secs,
-                // The replay applies the SQL limit before the namespace
-                // filter, so `replayed_count` is the post-limit, post-weight
-                // count — NOT the total number of events in the window for
-                // `namespace`.
-                "replayed_count": replayed_count,
-                "filtered_count": filtered.len(),
-                "events": filtered
+                "count": events.len(),
+                "events": events
             }))
         })
         .await

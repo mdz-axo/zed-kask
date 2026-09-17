@@ -400,6 +400,10 @@ impl CorpusServer {
                     .lock()
                     .map_err(|_| McpToolError::internal("embedding identity lock poisoned"))?
                     .observe(&model_name, &batch)?;
+                let durable_model = batch
+                    .actual_model
+                    .clone()
+                    .unwrap_or_else(|| model_name.to_string());
                 let vectors = batch.vectors;
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
@@ -412,7 +416,9 @@ impl CorpusServer {
                 }
 
                 for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
-                    if let Err(e) = index.publish_durable(&write, &c.0, &c.1, vector, &model_name) {
+                    if let Err(e) =
+                        index.publish_durable(&write, &c.0, &c.1, vector, &durable_model)
+                    {
                         if write.is_cancelled() {
                             cancelled.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         } else {

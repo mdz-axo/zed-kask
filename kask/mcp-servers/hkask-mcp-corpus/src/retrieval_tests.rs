@@ -12,6 +12,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
 use crate::CorpusServer;
+use crate::tools::calibration::EmbeddingInventoryRequest;
 use crate::tools::semantic::EmbedRequest;
 use crate::tools::storage::{PurgeQaRequest, QueryRequest};
 
@@ -843,6 +844,76 @@ async fn corpus_embed_surfaces_provider_confirmed_model_identity() {
             usize::from(actual_model.is_none())
         );
     }
+}
+
+/// expect: an interrupted calibration can identify only shard refs that are absent or stored under another actual model.
+#[tokio::test]
+async fn embedding_inventory_returns_exact_missing_only_retry_refs() {
+    let directory = fixture();
+    let database = directory.path().join("inventory.db");
+    let server = server(Arc::new(IdentityPort {
+        actual_model: Some("provider/actual-model".into()),
+    }));
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "inventory.db",
+                ORIGINAL,
+            )))
+            .await,
+    );
+
+    let shard = directory.path().join("inventory-shard.jsonl");
+    let rows = [
+        json!({"entity_ref":"corpus:test:1", "source":"river.txt", "text":ORIGINAL, "word_count":10}),
+        json!({"entity_ref":"corpus:test:2", "source":"river.txt", "text":"Missing passage.", "word_count":2}),
+    ];
+    std::fs::write(
+        &shard,
+        rows.into_iter()
+            .map(|row| row.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("inventory shard");
+
+    let inventory = content(
+        server
+            .corpus_embedding_inventory(Parameters(EmbeddingInventoryRequest {
+                chunks_jsonl: shard.to_string_lossy().into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                expected_model: "provider/actual-model".into(),
+            }))
+            .await,
+    );
+    assert_eq!(inventory["requested"], 2);
+    assert_eq!(inventory["stored_matching_model"], 1);
+    assert_eq!(inventory["missing_entity_refs"], json!(["corpus:test:2"]));
+    assert_eq!(inventory["mismatched_model_entity_refs"], json!([]));
+    assert_eq!(inventory["retry_entity_refs"], json!(["corpus:test:2"]));
+    assert_eq!(inventory["complete"], false);
+
+    let mismatch = content(
+        server
+            .corpus_embedding_inventory(Parameters(EmbeddingInventoryRequest {
+                chunks_jsonl: shard.to_string_lossy().into(),
+                db_path: database.to_string_lossy().into(),
+                passphrase: PASSPHRASE.into(),
+                expected_model: "provider/other-model".into(),
+            }))
+            .await,
+    );
+    assert_eq!(mismatch["stored_matching_model"], 0);
+    assert_eq!(
+        mismatch["mismatched_model_entity_refs"],
+        json!([{"entity_ref":"corpus:test:1","stored_model":"provider/actual-model"}])
+    );
+    assert_eq!(
+        mismatch["retry_entity_refs"],
+        json!(["corpus:test:1", "corpus:test:2"])
+    );
 }
 
 fn query(database: Option<&std::path::Path>, answer: bool, include_text: bool) -> QueryRequest {

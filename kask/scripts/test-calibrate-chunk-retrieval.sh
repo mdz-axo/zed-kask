@@ -46,6 +46,21 @@ respond() {
     jq -cn --argjson id "$id" --arg text "$inner" \
         '{jsonrpc:"2.0",id:$id,result:{content:[{type:"text",text:$text}],isError:false}}'
 }
+store_inventory() {
+    local db=$1 chunks=$2 model=$3 state new merged
+    state="${db}.inventory.jsonl"
+    new=$(mktemp)
+    merged=$(mktemp)
+    jq -c --arg model "$model" '{entity_ref:.entity_ref,model:$model}' "$chunks" > "$new"
+    if [[ -f "$state" ]]; then
+        jq -sc 'flatten | reduce .[] as $row ({}; .[$row.entity_ref] = $row) | [.[]][]' "$state" "$new" > "$merged"
+    else
+        cat "$new" > "$merged"
+    fi
+    mv "$merged" "$state"
+    rm -f "$new"
+    printf 'indexed\n' > "$db"
+}
 while IFS= read -r line; do
     method=$(jq -r '.method' <<<"$line")
     case "$method" in
@@ -111,22 +126,57 @@ while IFS= read -r line; do
                     chunks=$(jq -r '.chunks_jsonl' <<<"$arguments")
                     db=$(jq -r '.db_path' <<<"$arguments")
                     model=$(jq -r '.model' <<<"$arguments")
+                    actual=${FAKE_ACTUAL_MODEL:-actual-test-embedding-model}
                     total=$(wc -l < "$chunks" | tr -d ' ')
                     if [[ -n ${FAKE_EMBED_CALL_LOG:-} ]]; then
-                        printf '%s\t%s\t%s\n' "$(basename "$db" .db)" "$(stat -c %s "$chunks")" \
-                            "${HKASK_MAX_CONCURRENCY:-missing}" >> "$FAKE_EMBED_CALL_LOG"
+                        printf '%s\t%s\t%s\t%s\n' "$(basename "$db" .db)" "$(stat -c %s "$chunks")" \
+                            "${HKASK_MAX_CONCURRENCY:-missing}" "$(jq -r '.entity_ref' "$chunks" | paste -sd, -)" >> "$FAKE_EMBED_CALL_LOG"
                     fi
-                    printf 'indexed\n' > "$db"
                     status=${FAKE_ACTUAL_MODEL_STATUS:-confirmed}
+                    if [[ -n ${FAKE_EMBED_INTERRUPT_DB:-} && $(basename "$db" .db) == "$FAKE_EMBED_INTERRUPT_DB" && -n ${FAKE_EMBED_INTERRUPT_MARKER:-} && ! -e $FAKE_EMBED_INTERRUPT_MARKER ]]; then
+                        partial=$(mktemp)
+                        head -1 "$chunks" > "$partial"
+                        store_inventory "$db" "$partial" "$actual"
+                        rm -f "$partial"
+                        touch "$FAKE_EMBED_INTERRUPT_MARKER"
+                        exit 0
+                    fi
                     if [[ -n ${FAKE_EMBED_FAIL_ONCE_MARKER:-} && ! -e $FAKE_EMBED_FAIL_ONCE_MARKER ]]; then
                         touch "$FAKE_EMBED_FAIL_ONCE_MARKER"
                         failed_refs=$(jq -sc '.[0:1] | map(.entity_ref)' "$chunks")
-                        respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" --argjson refs "$failed_refs" \
+                        successful=$(mktemp)
+                        tail -n +2 "$chunks" > "$successful"
+                        if [[ -s "$successful" ]]; then
+                            store_inventory "$db" "$successful" "$actual"
+                        else
+                            printf 'indexed\n' > "$db"
+                        fi
+                        rm -f "$successful"
+                        respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" --argjson refs "$failed_refs" \
                             '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:($total-1),failed:1,failed_entity_refs:$refs,failed_entity_refs_complete:true,cancelled:false}')"
                         continue
                     fi
-                    respond "$id" "$(jq -cn --arg model "$model" --arg actual "actual-test-embedding-model" --arg status "$status" --argjson total "$total" \
+                    store_inventory "$db" "$chunks" "$actual"
+                    respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" \
                         '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,failed_entity_refs:[],failed_entity_refs_complete:true,cancelled:false}')"
+                    ;;
+                corpus_embedding_inventory)
+                    chunks=$(jq -r '.chunks_jsonl' <<<"$arguments")
+                    db=$(jq -r '.db_path' <<<"$arguments")
+                    expected=$(jq -r '.expected_model' <<<"$arguments")
+                    state="${db}.inventory.jsonl"
+                    [[ -f "$state" ]] || : > "$state"
+                    inventory=$(jq -n --arg expected "$expected" --slurpfile requested "$chunks" --slurpfile stored "$state" '
+                      ($requested | map(.entity_ref) | unique | sort) as $refs
+                      | ($stored | reduce .[] as $row ({}; .[$row.entity_ref] = $row.model)) as $models
+                      | [$refs[] | select($models[.] == null)] as $missing
+                      | [$refs[] | select($models[.] != null and $models[.] != $expected)
+                          | {entity_ref:.,stored_model:$models[.]}] as $mismatched
+                      | (($missing + [$mismatched[].entity_ref]) | unique | sort) as $retry
+                      | {requested:($refs|length),stored_matching_model:([$refs[] | select($models[.] == $expected)]|length),
+                         missing_entity_refs:$missing,mismatched_model_entity_refs:$mismatched,
+                         retry_entity_refs:$retry,complete:($retry|length == 0),expected_model:$expected}')
+                    respond "$id" "$inventory"
                     ;;
                 corpus_query)
                     db=$(jq -r '.db_path' <<<"$arguments")
@@ -236,6 +286,80 @@ if "$runner" --resume "$tmp/changed-spec.json" "$tmp/run"; then
     echo "resume accepted changed run identity" >&2
     exit 1
 fi
+
+unset FAKE_EMBED_FAIL_ONCE_MARKER
+export HKASK_CALIBRATION_EMBED_SHARD_MAX_BYTES=2000
+export FAKE_EMBED_INTERRUPT_DB=fine
+export FAKE_EMBED_INTERRUPT_MARKER="$tmp/embed-interrupted-once"
+: > "$FAKE_EMBED_CALL_LOG"
+if "$runner" "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "calibration unexpectedly completed after a lost shard response" >&2
+    exit 1
+fi
+[[ -s "$tmp/interrupted-run/run-preseal-identity.json" ]]
+[[ ! -e "$tmp/interrupted-run/run-identity.json" ]]
+[[ -s "$tmp/interrupted-run/embed/checkpoints/reference-shard-00000.json" ]]
+[[ -s "$tmp/interrupted-run/embed/checkpoints/current-shard-00000.json" ]]
+[[ ! -e "$tmp/interrupted-run/embed/checkpoints/fine-shard-00000.json" ]]
+[[ -e "$tmp/interrupted-run/embed/fine-shard-00000-attempt-01-response.json" ]]
+[[ ! -s "$tmp/interrupted-run/embed/fine-shard-00000-attempt-01-response.json" ]]
+reference_calls_before=$(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG")
+current_calls_before=$(awk -F '\t' '$1 == "current" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG")
+
+export FAKE_ACTUAL_MODEL=actual-test-other-model
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "resume accepted a changed provider-confirmed actual model" >&2
+    exit 1
+fi
+unset FAKE_ACTUAL_MODEL
+"$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"
+[[ $(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -eq "$reference_calls_before" ]]
+[[ $(awk -F '\t' '$1 == "current" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -eq "$current_calls_before" ]]
+last_fine_refs=$(awk -F '\t' '$1 == "fine" { refs=$4 } END { print refs }' "$FAKE_EMBED_CALL_LOG")
+[[ "$last_fine_refs" == "calibration:e2e:fine:a:1" ]]
+jq -e '
+  [.embedding[] | select(.policy == "fine")][0]
+  | .attempted_rows == 4 and .recovered_rows == 1 and .attempts == 3
+' "$tmp/interrupted-run/measured-costs.json" >/dev/null
+for checkpoint in "$tmp/interrupted-run/embed/checkpoints"/*.json; do
+    [[ $(sha256sum "$checkpoint" | cut -d' ' -f1) == "$(cat "$checkpoint.sha256")" ]]
+done
+
+checkpoint="$tmp/interrupted-run/embed/checkpoints/current-shard-00000.json"
+cp "$checkpoint" "$tmp/checkpoint.original"
+jq '.embedded_rows = 0' "$tmp/checkpoint.original" > "$checkpoint"
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "resume accepted a tampered shard checkpoint" >&2
+    exit 1
+fi
+mv "$tmp/checkpoint.original" "$checkpoint"
+
+cp "$tmp/fake-corpus" "$tmp/fake-corpus.original"
+printf '%s\n' '# binary identity drift' >> "$tmp/fake-corpus"
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "resume accepted a changed corpus binary" >&2
+    exit 1
+fi
+mv "$tmp/fake-corpus.original" "$tmp/fake-corpus"
+chmod +x "$tmp/fake-corpus"
+
+representation="$tmp/interrupted-run/representations/current.jsonl"
+cp "$representation" "$tmp/current-representation.original"
+printf '\n' >> "$representation"
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "resume accepted a changed representation" >&2
+    exit 1
+fi
+mv "$tmp/current-representation.original" "$representation"
+
+cp "$tmp/source-a.txt" "$tmp/source-a.original"
+printf '%s\n' 'source identity drift' >> "$tmp/source-a.txt"
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
+    echo "resume accepted a changed accepted source" >&2
+    exit 1
+fi
+mv "$tmp/source-a.original" "$tmp/source-a.txt"
+unset FAKE_EMBED_INTERRUPT_DB FAKE_EMBED_INTERRUPT_MARKER
 
 export FAKE_ACTUAL_MODEL_STATUS=unavailable
 if "$runner" "$tmp/run-spec.json" "$tmp/unconfirmed-run"; then

@@ -86,4 +86,47 @@ recovery_input=$(jq -r 'select(.parent_unit == "unit-000") | .input' "$tmp/parti
 "$executor" "$tmp/partial/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001 1
 jq -s -e 'length == 2 and .[0].status == "reconciled_partial" and .[1].status == "completed" and .[1].tagged == 2' "$tmp/partial/queue.jsonl" >/dev/null
 
+mkdir -p "$tmp/mixed/inputs" "$tmp/mixed/outputs" "$tmp/mixed/args" "$tmp/mixed/responses" "$tmp/mixed/logs"
+printf '%s\n' \
+    '{"entity_ref":"mixed:0","source":"a.txt","text":"alpha","word_count":1}' \
+    '{"entity_ref":"mixed:1","source":"a.txt","text":"beta","word_count":1}' \
+    > "$tmp/mixed/inputs/unit-000.jsonl"
+printf '%s\n' \
+    '{"entity_ref":"mixed:2","source":"b.txt","text":"gamma","word_count":1}' \
+    > "$tmp/mixed/inputs/unit-001.jsonl"
+for ordinal in 0 1; do
+    unit=$(printf 'unit-%03d' "$ordinal")
+    rows=$((2 - ordinal))
+    jq -cn --arg unit "$unit" --arg input "$tmp/mixed/inputs/$unit.jsonl" --arg output "$tmp/mixed/outputs/$unit.jsonl" --arg args "$tmp/mixed/args/$unit.json" --arg response "$tmp/mixed/responses/$unit.json" --arg log "$tmp/mixed/logs/$unit.log" --argjson ordinal "$ordinal" --argjson rows "$rows" '{unit:$unit,ordinal:$ordinal,rows:$rows,input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}' >> "$tmp/mixed/queue.jsonl"
+done
+cat > "$tmp/mixed-runner" <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+args_file=$2
+response=$3
+log=$4
+chunks=$(jq -r '.chunks_jsonl' "$args_file")
+output=$(jq -r '.output' "$args_file")
+rows=$(wc -l < "$chunks" | tr -d ' ')
+failed=0
+if [[ "$chunks" == *unit-000.jsonl ]]; then
+    failed=1
+fi
+jq -c --argjson failed "$failed" 'if $failed == 1 and .entity_ref == "mixed:1" then . + {classification:{status:"failed",reason:"synthetic model-contract rejection"}} else . + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},candidate_terms:["term one","term two","term three"],ontology_tags:{core:["5w1h_core"]},concepts:["5w1h_core"]} end' "$chunks" > "$output"
+tagged=$((rows - failed))
+cost=$(jq -n --argjson rows "$rows" '$rows * 0.001')
+inner=$(jq -cn --argjson rows "$rows" --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" '{content:{total_chunks:$rows,tagged:$tagged,failed:$failed,reported_cost_usd:$cost,cost_reporting_complete:true}}')
+jq -cn --arg text "$inner" '{jsonrpc:"2.0",id:2,result:{content:[{type:"text",text:$text}],isError:false}}' > "$response"
+printf '%s\n' ok > "$log"
+printf '%s\n' "$chunks" >> "$MIXED_CALL_LOG"
+BASH
+chmod +x "$tmp/mixed-runner"
+export MIXED_CALL_LOG="$tmp/mixed-calls.log"
+if "$executor" "$tmp/mixed/queue.jsonl" "$tmp/mixed-runner" 1.0 2 10 0.001 2; then
+    echo "expected mixed wave to return a terminal-partial checkpoint" >&2
+    exit 1
+fi
+[[ $(wc -l < "$tmp/mixed-calls.log") -eq 2 ]]
+jq -s -e '.[0].status == "failed_classification" and .[0].tagged == 1 and .[0].failed == 1 and .[1].status == "completed" and .[1].tagged == 1' "$tmp/mixed/queue.jsonl" >/dev/null
+
 printf '%s\n' "corpus classification queue tests passed"

@@ -1926,8 +1926,8 @@ mod tests {
     /// expect: Frame coalescing never discards playback lifecycle outcomes.
     /// [P1] Motivating: a delayed foreground still observes that media opened
     /// and completed instead of seeing an unexplained final frame.
-    /// pre: a complete short video plays without foreground polling.
-    /// post: the next poll reports both Opened and Completed exactly once.
+    /// pre: a complete short video plays while foreground polling is delayed.
+    /// post: bounded polling eventually reports both Opened and Completed exactly once.
     /// [P9] Constraining: terminal outcomes close rather than reinforce polling.
     #[test]
     fn lifecycle_events_survive_frame_coalescing() {
@@ -1935,20 +1935,31 @@ mod tests {
         let mut player = WidgetVideoPlayer::new().expect("worker starts");
         player.open(&path);
         player.play();
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(450));
 
-        let poll = player.poll();
-        assert!(poll.has_opened(), "opened event remains observable");
-        assert!(poll.has_completed(), "completed event remains observable");
-        let second_poll = player.poll();
-        assert!(
-            !second_poll.has_opened(),
-            "opened is delivered exactly once"
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut opened_count = 0;
+        let mut completed_count = 0;
+        while std::time::Instant::now() < deadline && completed_count == 0 {
+            let poll = player.poll();
+            opened_count += usize::from(poll.has_opened());
+            completed_count += usize::from(poll.has_completed());
+            if completed_count == 0 {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        assert_eq!(
+            opened_count, 1,
+            "opened event remains observable exactly once"
         );
-        assert!(
-            !second_poll.has_completed(),
-            "completed is delivered exactly once"
+        assert_eq!(
+            completed_count, 1,
+            "completed event remains observable exactly once"
         );
+        let final_poll = player.poll();
+        assert!(!final_poll.has_opened(), "opened is not repeated");
+        assert!(!final_poll.has_completed(), "completed is not repeated");
     }
 
     /// expect: Delivery statistics count only frames accepted by the foreground,

@@ -518,6 +518,13 @@ impl MemoryStore {
         Ok(self.embedding.get_all_by_prefix(prefix)?)
     }
 
+    pub fn embedding_models_for_refs(
+        &self,
+        entity_refs: &[String],
+    ) -> Result<Vec<(String, String)>, MemoryStoreError> {
+        Ok(self.embedding.models_for_entity_refs(entity_refs)?)
+    }
+
     /// Load all embeddings with passage text for in-memory index hydration.
     /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.
     pub fn all_embeddings_with_text(

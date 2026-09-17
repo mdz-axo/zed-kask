@@ -12,7 +12,7 @@ mds_categories: [domain, composition]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **23 registered tools**, pinned by
+schema contract and **25 registered tools**, pinned by
 `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:250-279`.
 Parameter additions do not add tools.
 
@@ -29,10 +29,12 @@ operator data has been rebuilt, ingested or used for training.
 | Gather (3) | `corpus_discover` | Discover an author's works and prepare a corpus manifest |
 | | `corpus_discover_company` | Discover company documents from an approved-source manifest |
 | | `corpus_cache_work` | Cache extracted work text by slug for reuse |
-| Process (9) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
+| Process (11) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
 | | `corpus_ocr` | Process PDF/image pages with the configured image-capable OCR model and verification report |
 | | `corpus_is_complex` | Cheap PDF triage; optional compact summary |
 | | `corpus_chunk` | Shared bounded word windows with real overlap; directory single-tier or file/text multi-tier |
+| | `corpus_build_chunk_representations` | Build source-faithful reference, current, fine-child, parent, and child-parent calibration artifacts |
+| | `corpus_embedding_inventory` | Reconcile exact shard refs against an existing DB and provider-confirmed actual model without embedding or DB creation |
 | | `corpus_tag_chunks` | Identity-correlated ontology classification with explicit terminal outcomes |
 | | `corpus_embed` | Persist all selected embeddings, original passage text and source metadata |
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
@@ -81,7 +83,8 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_ocr` | `path`, optional `model` over the configured OCR model |
 | `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded title/contents/index/bibliography/reference exclusions in `boilerplate_exclusion_reports`. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
-| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size` |
+| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available |
+| `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `output`, `concurrency`, optional QA `model` |

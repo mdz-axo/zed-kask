@@ -309,6 +309,49 @@ impl RegulationArchive {
         .map_err(|e| InfrastructureError::database(e.to_string()))
     }
 
+    /// Query Regulation records in chronological order.
+    ///
+    /// When `namespace` is present, it matches either the exact stored path or
+    /// dot-delimited descendants. The namespace predicate is evaluated in SQL
+    /// before `limit`, so unrelated earlier records cannot consume the result
+    /// budget.
+    pub fn query_records(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        namespace: Option<&str>,
+        limit: u64,
+    ) -> Result<Vec<RegulationRecord>, InfrastructureError> {
+        let since = DbValue::Text(since.to_rfc3339());
+        let limit = DbValue::Integer(limit as i64);
+        let (sql, params) = if let Some(namespace) = namespace {
+            (
+                "SELECT id, timestamp, observer_webid, span_category, span_path, phase, \
+                 observation, regulation, outcome, recursion_depth, parent_event, visibility \
+                 FROM reg_records \
+                 WHERE timestamp > ?1 \
+                   AND (span_path = ?2 \
+                        OR substr(span_path, 1, length(?2) + 1) = ?2 || '.') \
+                 ORDER BY timestamp ASC \
+                 LIMIT ?3",
+                vec![since, DbValue::Text(namespace.to_string()), limit],
+            )
+        } else {
+            (
+                "SELECT id, timestamp, observer_webid, span_category, span_path, phase, \
+                 observation, regulation, outcome, recursion_depth, parent_event, visibility \
+                 FROM reg_records \
+                 WHERE timestamp > ?1 \
+                 ORDER BY timestamp ASC \
+                 LIMIT ?2",
+                vec![since, limit],
+            )
+        };
+        query_map(&*self.driver, sql, &params, |row| {
+            row_to_regulation_record(row).map_err(|e| db_error(e.to_string()))
+        })
+        .map_err(|e| InfrastructureError::database(e.to_string()))
+    }
+
     /// Query algedonic signals from the event store.
     ///
     /// expect: "The system provides durable storage for event data"

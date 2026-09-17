@@ -17,7 +17,8 @@ use hkask_mcp_curator::types::*;
 use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{EmbeddingStore, EscalationQueue, HMemStore, RegulationArchive};
-use hkask_types::WebID;
+use hkask_types::event::{CyclePhase, Span, SpanNamespace};
+use hkask_types::{RegulationRecord, RegulationSink, WebID};
 use rmcp::handler::server::wrapper::Parameters;
 use std::future::Future;
 use std::pin::Pin;
@@ -115,6 +116,10 @@ fn ensure_embedding_model_env() {
 /// Healing is disabled (no path, no passphrase) via `CuratorDb::from_stores`,
 /// so the self-heal loop never fires during a test.
 fn make_server() -> CuratorServer {
+    make_server_with_regulation_archive().0
+}
+
+fn make_server_with_regulation_archive() -> (CuratorServer, Arc<RegulationArchive>) {
     ensure_embedding_model_env();
     let driver = SqliteDriver::in_memory_driver();
 
@@ -133,11 +138,14 @@ fn make_server() -> CuratorServer {
 
     let stores = CuratorStores {
         escalation_queue: Some(escalation_queue),
-        regulation_store: Some(regulation_store),
+        regulation_store: Some(regulation_store.clone()),
         memory: Some(memory),
     };
     let database = Arc::new(CuratorDb::from_stores(stores));
-    CuratorServer::new(WebID::new(), database, failing_inference_port())
+    (
+        CuratorServer::new(WebID::new(), database, failing_inference_port()),
+        regulation_store,
+    )
 }
 
 /// Build a `CuratorServer` whose memory store carries a live embedding
@@ -1765,6 +1773,140 @@ async fn semantic_search_caps_fragments_per_entity() {
         2,
         "the two flood fragments must be distinct h_mems — got: {response}",
     );
+}
+
+// ── Regulation query — namespace, time, and limit semantics ──────────────────
+
+fn regulation_record(
+    namespace: &str,
+    path: &str,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    observation: &str,
+) -> RegulationRecord {
+    let mut record = RegulationRecord::new(
+        WebID::new(),
+        Span::new(
+            SpanNamespace::new(namespace).expect("test namespace must be canonical"),
+            path,
+        ),
+        CyclePhase::Sense,
+        serde_json::json!({"observation": observation}),
+        0,
+    );
+    record.timestamp = timestamp;
+    record
+}
+
+#[tokio::test]
+async fn reg_query_filters_namespace_in_sql_before_limit() {
+    let (server, archive) = make_server_with_regulation_archive();
+    let base = chrono::Utc::now() - chrono::Duration::minutes(10);
+    let records = [
+        regulation_record("reg.inference", "request", base, "earlier inference"),
+        regulation_record(
+            "reg.curation",
+            "review",
+            base + chrono::Duration::seconds(1),
+            "earlier curation",
+        ),
+        regulation_record(
+            "reg.skill",
+            "program-managerish.operator_feedback",
+            base + chrono::Duration::seconds(2),
+            "textual prefix collision",
+        ),
+        regulation_record(
+            "reg.skill",
+            "program-manager.operator_feedback",
+            base + chrono::Duration::seconds(3),
+            "genuine rejection",
+        ),
+    ];
+    for record in &records {
+        archive.persist(record).expect("seed regulation record");
+    }
+
+    let skill_response = parse(
+        &server
+            .reg_query(Parameters(RegQueryRequest {
+                namespace: Some("reg.skill".to_string()),
+                window_seconds: Some(3600),
+                limit: Some(10),
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(skill_response["count"].as_u64(), Some(2));
+    assert!(
+        skill_response["events"]
+            .as_array()
+            .expect("events array")
+            .iter()
+            .all(|event| event["phase"] == "Sense"),
+        "sense-phase skill feedback must be visible: {skill_response}",
+    );
+
+    let exact_response = parse(
+        &server
+            .reg_query(Parameters(RegQueryRequest {
+                namespace: Some("reg.skill.program-manager".to_string()),
+                window_seconds: Some(3600),
+                limit: Some(1),
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    assert_eq!(exact_response["count"].as_u64(), Some(1));
+    assert_eq!(
+        exact_response["events"][0]["path"].as_str(),
+        Some("reg.skill.program-manager.operator_feedback"),
+        "the namespace predicate must run before LIMIT and respect dot boundaries: {exact_response}",
+    );
+
+    let all_response = parse(
+        &server
+            .reg_query(Parameters(RegQueryRequest {
+                namespace: None,
+                window_seconds: Some(3600),
+                limit: Some(10),
+            }))
+            .await
+            .expect("tool ok"),
+    );
+    let all_events = all_response["events"].as_array().expect("events array");
+    assert_eq!(all_response["count"].as_u64(), Some(4));
+    assert_eq!(
+        all_events[0]["observation"]["observation"],
+        "earlier inference"
+    );
+    assert_eq!(
+        all_events[3]["observation"]["observation"],
+        "genuine rejection"
+    );
+}
+
+#[tokio::test]
+async fn reg_query_surfaces_unavailable_archive_as_typed_error() {
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::from_stores(CuratorStores {
+            escalation_queue: None,
+            regulation_store: None,
+            memory: None,
+        })),
+        failing_inference_port(),
+    );
+
+    let error = server
+        .reg_query(Parameters(RegQueryRequest {
+            namespace: Some("reg.skill".to_string()),
+            window_seconds: Some(3600),
+            limit: Some(10),
+        }))
+        .await
+        .expect_err("missing RegulationArchive must be visible");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+    assert!(error.message.contains("RegulationArchive not available"));
 }
 
 // ── Algedonic log — happy ───────────────────────────────────────────────────

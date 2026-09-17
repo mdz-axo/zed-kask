@@ -15,7 +15,14 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_semantic_search`    | Query the Curator's semantic memory by entity name                                                                                |
 | `curator_memory_recall`      | Recall the Curator's episodic and semantic memory about an entity, or along an ontology axis (`ontology_axis` + `ontology_value`) |
 | `curator_algedonic_log`      | Read algedonic event log for a time window                                                                                        |
-| `reg_query`                  | Query Regulation records by namespace prefix within a time window                                                                 |
+| `reg_query`                  | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting |
+
+`reg_query` is the general governance-observability read path. With no
+namespace it includes records from every Regulation namespace and cycle phase;
+with a namespace such as `reg.skill`, it includes that exact path and
+dot-delimited descendants. The time and namespace predicates are applied in
+SQL before the requested limit. `curator_algedonic_log` remains the separate
+act-phase, algedonic-category view.
 
 ## Configuration
 

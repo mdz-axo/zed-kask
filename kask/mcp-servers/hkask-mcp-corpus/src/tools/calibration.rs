@@ -41,6 +41,19 @@ pub struct BuildChunkRepresentationsRequest {
     pub parent_policy: ChunkPolicyParams,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EmbeddingInventoryRequest {
+    /// Exact shard JSONL whose entity references must be reconciled.
+    pub chunks_jsonl: String,
+    /// Existing SQLCipher embedding database. Inventory never creates a database.
+    pub db_path: String,
+    /// Passphrase for the embedding database.
+    #[serde(default = "crate::helpers::default_corpus_passphrase")]
+    pub passphrase: String,
+    /// Provider-confirmed model identity required for every durable row.
+    pub expected_model: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Provenance {
     raw_path: String,
@@ -140,6 +153,131 @@ impl CorpusServer {
         })
         .await
     }
+
+    /// expect: "An interrupted calibration can retry only refs not durably stored under its confirmed model."
+    /// [P4] Motivating: recovery is derived from durable state rather than response-file existence.
+    /// [P1] Constraining: inventory is bounded to caller-supplied shard identities.
+    /// pre: chunks_jsonl and an existing database identify one calibration shard.
+    /// post: returns exact sorted missing, model-mismatched, and retry entity-reference sets without writing.
+    #[tool(
+        description = "Reconcile one calibration shard against an existing durable embedding database. Returns exact sorted missing refs, refs stored under a different model, their union as retry_entity_refs, and a complete flag. The expected_model must be the provider-confirmed actual identity; the tool never embeds or creates a database."
+    )]
+    pub async fn corpus_embedding_inventory(
+        &self,
+        Parameters(request): Parameters<EmbeddingInventoryRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_embedding_inventory", async move {
+            embedding_inventory(request)
+        })
+        .await
+    }
+}
+
+fn embedding_inventory(
+    request: EmbeddingInventoryRequest,
+) -> Result<serde_json::Value, McpToolError> {
+    if request.expected_model.trim().is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "expected_model must be non-empty",
+        ));
+    }
+    if request.passphrase.is_empty() {
+        return Err(McpToolError::permission_denied(
+            "corpus_embedding_inventory requires HKASK_DB_PASSPHRASE or an explicit passphrase",
+        ));
+    }
+    if !Path::new(&request.db_path).is_file() {
+        return Err(McpToolError::invalid_argument(format!(
+            "embedding database does not exist: {}",
+            request.db_path
+        )));
+    }
+
+    let rows = crate::read_jsonl::<serde_json::Value>(&request.chunks_jsonl, "chunks_jsonl")?;
+    let mut requested = BTreeSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        let entity_ref = row
+            .get("entity_ref")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                McpToolError::invalid_argument(format!(
+                    "chunks_jsonl line {} has no non-empty entity_ref",
+                    index + 1
+                ))
+            })?;
+        if !requested.insert(entity_ref.to_string()) {
+            return Err(McpToolError::invalid_argument(format!(
+                "chunks_jsonl contains duplicate entity_ref: {entity_ref}"
+            )));
+        }
+    }
+    if requested.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "chunks_jsonl contains no entity refs",
+        ));
+    }
+
+    let requested_refs = requested.iter().cloned().collect::<Vec<_>>();
+    let store = hkask_memory::MemoryStore::open(
+        &request.db_path,
+        &request.passphrase,
+        crate::embedding_dim(),
+    )
+    .map_err(|error| {
+        McpToolError::internal(format!(
+            "cannot open embedding database {}: {error}",
+            request.db_path
+        ))
+    })?;
+    let stored = store
+        .embedding_models_for_refs(&requested_refs)
+        .map_err(|error| McpToolError::internal(format!("cannot inventory embeddings: {error}")))?;
+
+    let mut stored_by_ref = BTreeMap::<String, Vec<String>>::new();
+    for (entity_ref, model) in stored {
+        stored_by_ref.entry(entity_ref).or_default().push(model);
+    }
+    if let Some((entity_ref, models)) = stored_by_ref.iter().find(|(_, models)| models.len() != 1) {
+        return Err(McpToolError::failed_precondition(format!(
+            "embedding database contains {} durable rows for entity_ref {entity_ref}",
+            models.len()
+        )));
+    }
+
+    let mut missing_entity_refs = Vec::new();
+    let mut mismatched_model_entity_refs = Vec::new();
+    let mut retry_entity_refs = Vec::new();
+    let mut stored_matching_model = 0usize;
+    for entity_ref in &requested_refs {
+        match stored_by_ref.get(entity_ref) {
+            None => {
+                missing_entity_refs.push(entity_ref.clone());
+                retry_entity_refs.push(entity_ref.clone());
+            }
+            Some(models) if models[0] == request.expected_model => {
+                stored_matching_model += 1;
+            }
+            Some(models) => {
+                mismatched_model_entity_refs.push(serde_json::json!({
+                    "entity_ref": entity_ref,
+                    "stored_model": models[0],
+                }));
+                retry_entity_refs.push(entity_ref.clone());
+            }
+        }
+    }
+
+    let complete = retry_entity_refs.is_empty();
+    Ok(serde_json::json!({
+        "requested": requested_refs.len(),
+        "stored_matching_model": stored_matching_model,
+        "missing_entity_refs": missing_entity_refs,
+        "mismatched_model_entity_refs": mismatched_model_entity_refs,
+        "retry_entity_refs": retry_entity_refs,
+        "complete": complete,
+        "expected_model": request.expected_model,
+    }))
 }
 
 fn build_representations(

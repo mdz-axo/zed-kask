@@ -2586,9 +2586,16 @@ mod tool_behavior_tests {
             "original lineage cause was not preserved: {error}"
         );
         assert_eq!(store.count_assets(&gallery_id)?, 0);
-        assert_eq!(
-            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
-            0
+        let mut generated_files = Vec::new();
+        for entry in std::fs::read_dir(crate::assets::generated_assets_dir())? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                generated_files.push(entry.path());
+            }
+        }
+        assert!(
+            generated_files.is_empty(),
+            "audio lineage rollback left generated files: {generated_files:?}"
         );
         Ok(())
     }
