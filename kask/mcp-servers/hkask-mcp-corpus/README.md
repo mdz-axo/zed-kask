@@ -427,6 +427,26 @@ Explicit `corpus_compose(no_validate=true)` returns false with null validation
 values; other lookup failures are errors. Judge measured `style_passed` against
 the configured threshold, not a universally hardcoded distance.
 
+## Retrieval-calibration runtime
+
+`kask/scripts/audit/calibrate-chunk-retrieval.sh` creates a run-owned runtime
+capsule before representation or paid embedding work. It stable-copies the runner,
+query builder, host wrapper, evaluator, receipt inspector and selected corpus binary,
+publishes a hashed manifest, then re-executes from `<output-dir>/runtime`
+(`kask/scripts/audit/calibrate-chunk-retrieval.sh:74-131,189-208`). Schema-v2
+preseal identity binds those component hashes and the manifest; the runner verifies
+them before every shard and evaluation (`:383-409,514-527,571-581,818-828`). A
+shared-tree edit or `target/debug` rebuild therefore cannot change an active run.
+Resume enters the existing verified capsule and never substitutes current shared
+executables (`:137-144`).
+
+`kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>` is the read-only
+status surface. It verifies hashed preseal/checkpoint receipts and derives lifecycle
+state, row/shard progress, attempts, actual model, pending retry refs and next unit.
+It reports the embedding-to-evaluation transition without claiming completion and
+rejects tampered receipts or premature final artifacts
+(`kask/scripts/audit/inspect-chunk-calibration-run.sh:44-186`).
+
 ## Passage retrieval contract
 
 `corpus_query(db_path=...)` hydrates stored embeddings/text only when the index is

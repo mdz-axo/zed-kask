@@ -2,10 +2,10 @@
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
 last_updated: 2026-09-17
-version: "0.40.0"
+version: "0.41.0"
 status: "Active"
 domain: "MCP Servers"
-mds_categories: [domain, composition]
+mds_categories: [domain, composition, trust, lifecycle]
 ---
 
 # Corpus Server (`hkask-mcp-corpus`)
@@ -94,6 +94,34 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
+
+### Retrieval-calibration execution
+
+Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-json> <output-dir>`
+for a fresh comparison and add `--resume` only for that output's unchanged run
+specification. Before representation or paid embedding work, a fresh run stable-copies
+the runner, query builder, host wrapper, evaluator, receipt inspector and corpus
+binary into `<output-dir>/runtime`, verifies a hashed manifest, and re-executes from
+those run-owned paths (`kask/scripts/audit/calibrate-chunk-retrieval.sh:74-131,189-208`).
+The schema-v2 preseal identity binds every capsule component and its manifest; the
+runner rechecks them before shards and evaluation
+(`kask/scripts/audit/calibrate-chunk-retrieval.sh:383-409,514-527,571-581,818-828`).
+Shared repository edits or `target/debug` rebuilds therefore cannot alter an active
+run. Resume verifies and enters the existing capsule rather than rebuilding it
+(`kask/scripts/audit/calibrate-chunk-retrieval.sh:137-144`).
+
+Inspect progress without editing a ledger:
+
+```bash
+kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>
+```
+
+The inspector verifies preseal/checkpoint hash sidecars, binds checkpoint filenames
+and contents to the sealed shard plan, and derives lifecycle state, planned/completed
+rows and shards, attempts, actual model, pending retry refs and the next unit
+(`kask/scripts/audit/inspect-chunk-calibration-run.sh:44-186`). It reports
+`preparing`, `embedding`, `evaluating` or `complete`; premature or malformed final
+artifacts fail closed rather than manufacturing completion.
 
 For a source-balanced QA pilot, run
 `kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`

@@ -114,12 +114,14 @@ inside a wave when they have disjoint outputs. Reconcile the whole wave before
 starting another; aggregate tools partition JSONL only at record boundaries and
 must reconcile the union of identities with the manifest.
 
-The execution ledger is the durable status API when the MCP tool has none. Before a
-wave, record `planned`, `completed`, `succeeded`, `failed`, `remaining`, the current
-unit or wave, `started_at`, and `updated_at`. After every unit or wave, atomically
-update those fields and report the same counts to the operator, including the last
-completed identity, current blocker and next checkpoint. A stage is not “running”
-when neither tool status nor a changing durable checkpoint can prove progress.
+When a stage has no status surface or durable receipt projection, its execution
+ledger is the status API: before a wave record `planned`, `completed`, `succeeded`,
+`failed`, `remaining`, the current unit, `started_at` and `updated_at`; atomically
+update them after each wave. Retrieval calibration is not such a stage: use
+`kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>` to derive status
+from its sealed preseal/checkpoint/final receipts, and do not maintain a second
+manual ledger. A stage is not “running” when neither tool status nor a changing
+durable receipt can prove progress.
 
 Cancellation is a state transition, not permission to retry. Inspect worker
 liveness and durable outputs, stop orphaned workers when safe, classify each unit as
@@ -281,7 +283,12 @@ The minimum reference suite is:
 
 Hold corpus, query set, actual embedding model, retriever, top-k and retrieved-word
 budget constant. Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-json>
-<output-dir>`; use `--resume` only with the same immutable identity. The run spec must
+<output-dir>`; use `--resume` only with the same immutable identity. A fresh run
+stages and re-executes its runner, query builder, host wrapper, evaluator, status
+inspector and corpus binary from a hashed `<output-dir>/runtime` capsule before paid
+work. Never bypass that capsule with a mutable `target/debug` path. Read progress via
+`kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>`, which verifies
+receipts and derives the next unresolved unit without writing run state. The run spec must
 name every accepted source with raw/canonical paths and SHA-256 values, one entity-ref
 namespace, the exact embedding model, embedding batch size, query limit, fixed
 `corpus_query_cosine` controls, and complete current/fine/parent shared-contract
