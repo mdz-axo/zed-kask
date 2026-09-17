@@ -3189,12 +3189,108 @@ pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
     THREAD_CONDENSER.set(condenser);
 }
 
-/// Get a cloned handle to the global thread condenser, if set.
+#[cfg(test)]
+thread_local! {
+    static TEST_THREAD_CONDENSER: std::cell::RefCell<Option<Arc<dyn ThreadCondenser>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct ScopedThreadCondenserOverride {
+    previous: Option<Arc<dyn ThreadCondenser>>,
+}
+
+#[cfg(test)]
+impl Drop for ScopedThreadCondenserOverride {
+    fn drop(&mut self) {
+        TEST_THREAD_CONDENSER.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+/// Install a fake condenser for the current test thread only.
 ///
-/// Returns an owned `Arc` clone so the caller doesn't hold the lock across
-/// an await point.
+/// expect: "Agent tests do not inherit another test's fake condenser"
+/// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+/// pre: `condenser` is a test double used by the current test
+/// post: the override is visible only on this thread and restored when the guard drops
+#[cfg(test)]
+pub(crate) fn scoped_thread_condenser_for_test(
+    condenser: Arc<dyn ThreadCondenser>,
+) -> ScopedThreadCondenserOverride {
+    let previous = TEST_THREAD_CONDENSER.with(|slot| slot.replace(Some(condenser)));
+    ScopedThreadCondenserOverride { previous }
+}
+
+/// Get a cloned handle to the thread condenser, if set.
+///
+/// Tests first consult their thread-local scoped override. Production callers
+/// read the process-global composition-root hook. The returned `Arc` is owned,
+/// so callers do not hold either slot across an await point.
 pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
+    #[cfg(test)]
+    if let Some(condenser) = TEST_THREAD_CONDENSER.with(|slot| slot.borrow().clone()) {
+        return Some(condenser);
+    }
+
     THREAD_CONDENSER.get()
+}
+
+#[cfg(test)]
+mod thread_condenser_test_isolation {
+    use super::*;
+
+    struct MarkerCondenser;
+
+    impl ThreadCondenser for MarkerCondenser {
+        fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
+            format!("{output} [COMPRESSED]")
+        }
+
+        fn precompress_history(
+            &self,
+            _messages: &mut [language_model::LanguageModelRequestMessage],
+            _protected_tools: &[&str],
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// expect: "Agent tests do not inherit another test's fake condenser"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: a test installs a scoped fake condenser
+    /// post: only the owner thread sees it, and unwinding restores prior state
+    #[test]
+    fn scoped_override_is_thread_local_and_panic_safe() {
+        let baseline = thread_condenser();
+        let marker: Arc<dyn ThreadCondenser> = Arc::new(MarkerCondenser);
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = scoped_thread_condenser_for_test(marker.clone());
+            assert!(Arc::ptr_eq(
+                &thread_condenser().expect("owner thread sees override"),
+                &marker
+            ));
+
+            let concurrent = std::thread::spawn(thread_condenser)
+                .join()
+                .expect("concurrent reader");
+            assert!(
+                concurrent
+                    .as_ref()
+                    .is_none_or(|condenser| { !Arc::ptr_eq(condenser, &marker) })
+            );
+            panic!("exercise scoped cleanup");
+        }));
+
+        assert!(unwind.is_err());
+        match (thread_condenser(), baseline) {
+            (Some(actual), Some(expected)) => assert!(Arc::ptr_eq(&actual, &expected)),
+            (None, None) => {}
+            _ => panic!("scoped override did not restore prior condenser state"),
+        }
+    }
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

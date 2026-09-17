@@ -9311,7 +9311,8 @@ mod tests {
             });
         });
 
-        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
+        let _condenser_override =
+            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -9320,7 +9321,6 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
-        crate::set_thread_condenser(None);
 
         let compaction_request = model.pending_completions().pop().unwrap();
         assert_eq!(
@@ -9388,7 +9388,8 @@ mod tests {
             });
         });
 
-        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
+        let _condenser_override =
+            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -9403,7 +9404,6 @@ mod tests {
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        crate::set_thread_condenser(None);
         assert!(
             compaction_request.thinking_allowed,
             "reasoning-capable compaction model must not receive an implicit disable"
@@ -9769,14 +9769,14 @@ mod tests {
             thread.set_model(model.clone(), cx);
             thread.messages = original.clone();
         });
-        crate::set_thread_condenser(Some(Arc::new(MarkerCondenser)));
+        let _condenser_override =
+            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
         let mut events = thread
             .update(cx, |thread, cx| {
                 thread.compact(ClientUserMessageId::new(), cx)
             })
             .expect("manual compaction");
         cx.run_until_parked();
-        crate::set_thread_condenser(None);
         assert!(model.pending_completions().is_empty());
         let mut saw_error = false;
         while let Some(event) = events.next().await {
@@ -11822,7 +11822,7 @@ mod tests {
     fn test_no_compress_tools_bypasses_read_file() {
         // Wire a condenser that would mutate every input.
         let condenser: Arc<dyn crate::ThreadCondenser> = Arc::new(MarkerCondenser);
-        crate::set_thread_condenser(Some(condenser));
+        let _condenser_override = crate::scoped_thread_condenser_for_test(condenser.clone());
 
         // read_file is in NO_COMPRESS_TOOLS → output must pass through verbatim.
         let tool_name: Arc<str> = Arc::from("read_file");
@@ -11855,9 +11855,6 @@ mod tests {
             other_content.contains("[COMPRESSED]"),
             "terminal output should be compressed (not in NO_COMPRESS_TOOLS)"
         );
-
-        // Cleanup: unset the condenser so other tests are not affected.
-        crate::set_thread_condenser(None);
     }
 
     #[test]
