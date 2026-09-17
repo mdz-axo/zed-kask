@@ -1,6 +1,6 @@
 //! Public-tool oracles for compact prepared QA requests.
 use crate::CorpusServer;
-use crate::services::qa_pipeline::{PreparedQaPrompt, render_prepared_messages};
+use crate::services::qa_pipeline::{PreparedQaPrompt, render_disposition_plan_messages};
 use crate::tools::corpus::BuildPromptsRequest as ToolRequest;
 use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
 use hkask_types::template::LLMParameters;
@@ -181,13 +181,13 @@ async fn split_builds_have_stable_ids_and_primary_only_needs_no_db() -> anyhow::
     for prompt in all_by_id.values() {
         assert_eq!(prompt.qa_types.len(), 2);
         assert_eq!(prompt.passages.len(), 1);
-        let rendered = render_prepared_messages(prompt)?;
+        let rendered = render_disposition_plan_messages(prompt)?;
         let messages = rendered
             .iter()
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(messages.contains("p0"));
+        assert!(messages.contains("e0"));
         assert!(!messages.contains(&prompt.primary().chunk_ref));
         assert!(!messages.contains(&prompt.primary().source));
     }

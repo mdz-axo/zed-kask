@@ -146,6 +146,7 @@ mod tests {
             &prompt,
             Ok(QaCompletion {
                 text: json!([["factual", "Question?", "Answer.", ["e0"]]]).to_string(),
+                rejection: None,
                 tokens_used: 10,
                 completion_tokens: Some(5),
                 finish_reason: Some("stop".into()),

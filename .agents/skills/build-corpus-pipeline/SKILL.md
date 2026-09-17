@@ -65,7 +65,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `concurrency` | Bound tool concurrency to available capacity; AIMD starts at up to 2, grows by 1, halves on capacity failure |
 | requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
-| `qa_pairs_per_chunk` | Caller-approved positive pair count produced in one request per chunk; default **2** |
+| `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses one disposition-planning response plus a writer response only when at least one level is supported |
 | `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB and authorized passphrase |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
@@ -480,7 +480,9 @@ is requested. Never race a timed-out/cancelled call with a replacement writer.
 
 Synchronous inference retries only typed Connection/Overloaded/Timeout failures,
 at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failures
-and rejected QA are not retried. There is one synchronous prepared-prompt
+do not retry. A returned disposition-plan or writer payload that fails its typed
+schema receives exactly one metered correction attempt; a second rejection fails
+the whole prompt without partial rows. There is one synchronous prepared-prompt
 transport; no provider-batch side path.
 
 The model returns exactly one disposition per requested level, in order. A
@@ -505,9 +507,9 @@ Malformed, ambiguous, wrong-level or evidence-bearing skips reject the whole pro
 Generated envelopes retain primary identity, candidate terms, QA type, canonical
 evidence and protocol/model provenance. Skip envelopes retain primary identity,
 requested QA type, closed reason and provenance but no response, and are never
-training data. Prompt token usage is counted once in the summary, not repeated per
-pair. Matching quotation bytes still does not validate answer synthesis or cognitive
-difficulty.
+training data. Usage and cost totals include every returned disposition-planning and
+QA-writing provider response and are not repeated per pair. Matching quotation bytes
+still does not validate answer synthesis or cognitive difficulty.
 
 **Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
 all prepared IDs and require no unresolved failed prompts. Separately reconcile

@@ -371,20 +371,30 @@ impl InferencePort for CitationGeneration {
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("evidence IDs"));
-        assert!(rendered.contains("conceptual_support_absent"));
-        assert!(rendered.contains("p0"));
         assert!(!rendered.contains("corpus:brooks:0"));
         assert!(!rendered.contains("brooks.txt"));
-        let rows = json!([
-            ["factual", "What is the measured count?", "Thirty", ["e0"]],
-            [
-                "conceptual",
-                "Why does the duration constrain timing?",
-                "It determines when the next step can begin.",
-                ["e0"]
-            ]
-        ]);
+        let rows = if rendered.contains("disposition plan") {
+            assert!(rendered.contains("evidence IDs"));
+            assert!(rendered.contains("conceptual_support_absent"));
+            assert!(rendered.contains("primary_passage"));
+            json!([
+                "clean",
+                [
+                    ["factual", "generate", null, ["e0"]],
+                    ["conceptual", "generate", "causal_relationship", ["e0"]]
+                ]
+            ])
+        } else {
+            assert!(rendered.contains("planned_levels"));
+            json!([
+                ["factual", "What is the measured count?", "Thirty"],
+                [
+                    "conceptual",
+                    "Why does the duration constrain timing?",
+                    "It determines when the next step can begin."
+                ]
+            ])
+        };
         Box::pin(async move {
             Ok(InferenceResult {
                 text: rows.to_string(),

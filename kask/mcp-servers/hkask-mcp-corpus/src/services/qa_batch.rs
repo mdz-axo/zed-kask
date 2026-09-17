@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::InferencePort;
+use hkask_types::{ChatMessage, InferencePort, InferenceResult};
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, inference_error_is_transient,
@@ -15,14 +15,80 @@ use crate::batch::{
 };
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_pipeline::{
-    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, qa_llm_parameters, read_prompts,
-    render_prepared_messages,
+    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, QaResponseMetadata,
+    complete_disposition_plan, parse_disposition_plan_response, qa_llm_parameters, read_prompts,
+    render_disposition_plan_messages, render_planned_qa_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
 
 // One registry across service instances and transports, not one mutex per call.
 static QA_OUTPUTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+fn response_metadata(response: &InferenceResult) -> QaResponseMetadata {
+    QaResponseMetadata {
+        tokens_used: u64::from(response.usage.total_tokens),
+        completion_tokens: Some(u64::from(response.usage.completion_tokens)),
+        finish_reason: Some(response.finish_reason.clone()),
+        cost_usd: response.cost_usd,
+    }
+}
+
+fn qa_completion(response: InferenceResult, completed: Result<String, String>) -> QaCompletion {
+    let (text, rejection) = match completed {
+        Ok(text) => (text, None),
+        Err(error) => (String::new(), Some(error)),
+    };
+    QaCompletion {
+        text,
+        rejection,
+        tokens_used: u64::from(response.usage.total_tokens),
+        completion_tokens: Some(u64::from(response.usage.completion_tokens)),
+        finish_reason: Some(response.finish_reason),
+        cost_usd: response.cost_usd,
+    }
+}
+
+async fn infer_with_retry(
+    router: &Arc<dyn InferencePort>,
+    limiter: &AdaptiveLimiter,
+    selected_model: &str,
+    messages: &[ChatMessage],
+    prompt_id: &str,
+    phase: &str,
+) -> Result<InferenceResult, QaCompletionError> {
+    let mut attempts = 0;
+    let retry_identity = format!("{prompt_id}:{phase}");
+    retry_with_backoff(
+        MAX_RETRIES,
+        "hkask.mcp.docproc.qa_batch",
+        &retry_identity,
+        || {
+            attempts += 1;
+            async {
+                let slot = limiter.acquire().await;
+                let response = router
+                    .generate_with_messages(
+                        messages,
+                        &qa_llm_parameters(),
+                        Some(selected_model),
+                        None,
+                    )
+                    .await;
+                match &response {
+                    Ok(_) => slot.report_success(),
+                    Err(error) if inference_error_is_transient(error) => slot.report_failure(),
+                    Err(_) => {}
+                }
+                response
+            }
+        },
+    )
+    .await
+    .map_err(|error| {
+        QaCompletionError::LlmFailed(attempts, format!("{phase} inference failed: {error}"))
+    })
+}
 
 struct QaOutputLease {
     path: PathBuf,
@@ -138,54 +204,124 @@ impl QaBatchService {
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
                 let task_lease = Arc::clone(&lease);
-                let messages = render_prepared_messages(&prompt)?;
+                let planning_messages = render_disposition_plan_messages(&prompt)?;
+                let worker_prompt = prompt.clone();
                 let prompt_id = prompt.prompt_id.clone();
                 let task = tasks.spawn(async move {
                     // JoinSet abort is asynchronous: retain ownership until this
                     // worker actually drops, not merely until its abort is requested.
                     let _lease = task_lease;
-                    let parameters = qa_llm_parameters();
-                    let mut attempts = 0;
-                    let response = retry_with_backoff(
-                        MAX_RETRIES,
-                        "hkask.mcp.docproc.qa_batch",
+                    let mut prior_responses = Vec::new();
+                    let mut planning_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &planning_messages,
                         &prompt_id,
-                        || {
-                            attempts += 1;
-                            async {
-                                let slot = limiter.acquire().await;
-                                let response = router
-                                    .generate_with_messages(
-                                        &messages,
-                                        &parameters,
-                                        Some(&selected_model),
-                                        None,
-                                    )
-                                    .await;
-                                match &response {
-                                    Ok(_) => slot.report_success(),
-                                    Err(error) if inference_error_is_transient(error) => {
-                                        slot.report_failure()
-                                    }
-                                    Err(_) => {}
-                                }
-                                response
-                            }
-                        },
+                        "QA disposition planning",
                     )
-                    .await;
-                    match response {
-                        Ok(response) => Ok(QaCompletion {
-                            text: response.text,
-                            tokens_used: u64::from(response.usage.total_tokens),
-                            completion_tokens: Some(u64::from(response.usage.completion_tokens)),
-                            finish_reason: Some(response.finish_reason),
-                            cost_usd: response.cost_usd,
-                        }),
-                        Err(error) => {
-                            Err(QaCompletionError::LlmFailed(attempts, error.to_string()))
-                        }
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    let mut plan = parse_disposition_plan_response(
+                        &crate::extract_json_from_response(&planning_response.text),
+                        &worker_prompt,
+                    );
+                    if plan.is_err() {
+                        prior_responses.push(response_metadata(&planning_response));
+                        planning_response = match infer_with_retry(
+                            &router,
+                            &limiter,
+                            &selected_model,
+                            &planning_messages,
+                            &prompt_id,
+                            "QA disposition schema correction",
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => return (prior_responses, Err(error)),
+                        };
+                        plan = parse_disposition_plan_response(
+                            &crate::extract_json_from_response(&planning_response.text),
+                            &worker_prompt,
+                        );
                     }
+                    let plan = match plan {
+                        Ok(plan) => plan,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    planning_response,
+                                    Err(format!("QA disposition response rejected: {error}")),
+                                )),
+                            );
+                        }
+                    };
+                    let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            prior_responses.push(response_metadata(&planning_response));
+                            return (
+                                prior_responses,
+                                Err(QaCompletionError::Rejected(error.to_string())),
+                            );
+                        }
+                    };
+                    let Some(writer_messages) = writer_messages else {
+                        return (
+                            prior_responses,
+                            Ok(qa_completion(
+                                planning_response,
+                                complete_disposition_plan(&plan, None),
+                            )),
+                        );
+                    };
+                    prior_responses.push(response_metadata(&planning_response));
+                    let mut writer_response = match infer_with_retry(
+                        &router,
+                        &limiter,
+                        &selected_model,
+                        &writer_messages,
+                        &prompt_id,
+                        "QA writing",
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (prior_responses, Err(error)),
+                    };
+                    let mut completed = complete_disposition_plan(
+                        &plan,
+                        Some(&crate::extract_json_from_response(&writer_response.text)),
+                    );
+                    if completed.is_err() {
+                        prior_responses.push(response_metadata(&writer_response));
+                        writer_response = match infer_with_retry(
+                            &router,
+                            &limiter,
+                            &selected_model,
+                            &writer_messages,
+                            &prompt_id,
+                            "QA writer schema correction",
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => return (prior_responses, Err(error)),
+                        };
+                        completed = complete_disposition_plan(
+                            &plan,
+                            Some(&crate::extract_json_from_response(&writer_response.text)),
+                        );
+                    }
+                    (
+                        prior_responses,
+                        Ok(qa_completion(writer_response, completed)),
+                    )
                 });
                 pending.insert(task.id(), prompt);
             }
@@ -194,17 +330,25 @@ impl QaBatchService {
             // fails or the tool is cancelled. Keep metadata outside tasks so panics
             // still produce an identified failed-prompt record.
             while let Some(result) = tasks.join_next_with_id().await {
-                let (identity, completion) = match result {
-                    Ok((identity, completion)) => (identity, completion),
+                let (identity, prior_responses, completion) = match result {
+                    Ok((identity, (prior_responses, completion))) => {
+                        (identity, prior_responses, completion)
+                    }
                     Err(error) => (
                         error.id(),
+                        Vec::new(),
                         Err(QaCompletionError::JoinFailed(error.to_string())),
                     ),
                 };
                 let prompt = pending.remove(&identity).ok_or_else(|| {
                     McpToolError::internal("QA task completed without prompt metadata")
                 })?;
-                completions.complete(&prompt, completion, selected_model)?;
+                completions.complete_with_prior(
+                    &prompt,
+                    completion,
+                    &prior_responses,
+                    selected_model,
+                )?;
             }
             completions.finish(output)
         }
@@ -244,7 +388,11 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Mode {
         Success,
+        RejectContaminated,
+        SkipConceptual,
         Malformed,
+        WriterMalformed,
+        WriterMalformedOnce,
         Pending,
     }
 
@@ -279,32 +427,38 @@ mod tests {
             model: Option<&str>,
             tools: Option<&[ChatToolDefinition]>,
         ) -> Reply<'_> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
             assert_eq!(messages.len(), 2);
             assert!(!parameters.thinking_allowed);
             assert_eq!(model, Some("OpenRouter/offline-model"));
             assert!(tools.is_none());
             let mode = self.mode;
+            let is_planning = messages[0].content.contains("disposition plan");
             Box::pin(async move {
                 if matches!(mode, Mode::Pending) {
                     return std::future::pending().await;
                 }
-                let text = if matches!(mode, Mode::Malformed) {
+                let text = if matches!(mode, Mode::Malformed)
+                    || matches!(mode, Mode::WriterMalformed) && !is_planning
+                    || matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 1
+                {
                     "[".to_string()
+                } else if matches!(mode, Mode::RejectContaminated) {
+                    json!(["skip", "contaminated_or_garbled"]).to_string()
+                } else if is_planning {
+                    let conceptual = if matches!(mode, Mode::SkipConceptual) {
+                        json!(["conceptual", "skip", "conceptual_support_absent", []])
+                    } else {
+                        json!(["conceptual", "generate", "mechanism", ["e0"]])
+                    };
+                    json!(["clean", [["factual", "generate", null, ["e0"]], conceptual]])
+                        .to_string()
+                } else if matches!(mode, Mode::SkipConceptual) {
+                    json!([["factual", "What is grounded?", "Grounded answer one."]]).to_string()
                 } else {
                     json!([
-                        [
-                            "factual",
-                            "What is grounded?",
-                            "Grounded answer one.",
-                            ["e0"]
-                        ],
-                        [
-                            "conceptual",
-                            "Why is it grounded?",
-                            "Grounded answer two.",
-                            ["e0"]
-                        ]
+                        ["factual", "What is grounded?", "Grounded answer one."],
+                        ["conceptual", "Why is it grounded?", "Grounded answer two."]
                     ])
                     .to_string()
                 };
@@ -389,9 +543,10 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 2);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(summary["reported_cost_usd"], 0.02);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(summary["tokens_used"], 40);
+        assert_eq!(summary["reported_cost_usd"], 0.04);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
@@ -400,6 +555,60 @@ mod tests {
                 .as_str()
                 .is_some_and(|chunk| chunk.starts_with("chunk-qa-"))
         }));
+        Ok(())
+    }
+
+    /// expect: A passage rejected before generation produces one prompt-wide skip per requested level.
+    #[tokio::test]
+    async fn passage_admission_rejection_skips_every_level_before_generation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::RejectContaminated));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["qa_levels_skipped"], 2);
+        assert_eq!(summary["provider_responses"], 1);
+        assert_eq!(summary["reported_cost_usd"], 0.01);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row["status"] == "skipped"));
+        assert!(
+            rows.iter()
+                .all(|row| row["reason"] == "contaminated_or_garbled")
+        );
+        Ok(())
+    }
+
+    /// expect: Per-level planning can retain factual QA while skipping unsupported conceptual QA before writing.
+    #[tokio::test]
+    async fn level_plan_skips_unsupported_conceptual_before_writing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::SkipConceptual));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["qa_rows_written"], 1);
+        assert_eq!(summary["qa_levels_skipped"], 1);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["qa_type"], "factual");
+        assert_eq!(
+            rows[0]["response"]["evidence_quotes"][0]["chunk_ref"],
+            "chunk-qa-1"
+        );
+        assert_eq!(rows[1]["qa_type"], "conceptual");
+        assert_eq!(rows[1]["status"], "skipped");
+        assert_eq!(rows[1]["reason"], "conceptual_support_absent");
         Ok(())
     }
 
@@ -449,6 +658,47 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 0);
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["prompt_id"], "qa-1");
+        assert!(rows[0].get("response").is_none());
+        Ok(())
+    }
+
+    /// expect: One malformed writer payload receives one metered schema correction attempt.
+    #[tokio::test]
+    async fn writer_schema_correction_recovers_without_partial_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::WriterMalformedOnce));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 0);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(records(&output)?.len(), 2);
+        Ok(())
+    }
+
+    /// expect: Two malformed writer payloads reject the whole planned prompt without partial QA.
+    #[tokio::test]
+    async fn malformed_writer_is_an_explicit_prompt_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::WriterMalformed));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 0);
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["prompt_id"], "qa-1");

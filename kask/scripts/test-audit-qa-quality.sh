@@ -46,6 +46,14 @@ jq -nc '{prompt_id:"qa-skip",chunk_ref:"chunk:a",source:"book-a",qa_type:"concep
 cat "$WORK/base.jsonl" "$WORK/skip.jsonl" > "$WORK/mixed.jsonl"
 check 'valid quality-gated skip reconciles outside QA metrics' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.input_rows==2 and .structural_counts.qa_rows==1 and .structural_counts.skipped_rows==1 and .structural_counts.parse_error_rows==0 and .structural_counts.generation_error_rows==0 and .structural_counts.invalid_shape_rows==0 and .rows[1].row_kind=="skipped" and .rows[1].data_gaps==[] and (.quality_evidence.fact_score-1|fabs)<1e-12'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v4" | .provenance.disposition_plan_protocol="prepared-qa-disposition-plan-v1"' \
+    "$WORK/skip.jsonl" > "$WORK/case.jsonl"
+cat "$WORK/base.jsonl" "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
+check 'valid staged-v4 skip requires disposition-plan provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
+jq -c '.provenance.disposition_plan_protocol="unknown"' "$WORK/case.jsonl" > "$WORK/mixed.jsonl"
+check 'unknown staged skip protocol remains invalid' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'
 jq -c '.reason="unsupported"' "$WORK/skip.jsonl" > "$WORK/case.jsonl"
 check 'malformed quality skip remains an invalid shape' 2 "$WORK/case.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1 and (.data_gaps|index("invalid_skip_shape")!=null)'

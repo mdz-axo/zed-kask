@@ -162,9 +162,10 @@ Canonical passage identities are stored with local `p0`, `p1`, etc. but withheld
 from rendered model messages.
 
 `max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
-pairs. One compact prepared request per chunk carries the selected level rotation,
-so two requested pairs produce one provider call with factual and conceptual
-levels. Summary separates `prompts_written` from `pairs_requested` and reports
+pairs. One compact prepared request per chunk carries the selected level rotation.
+Generation first plans passage/level dispositions and then uses a writer call only
+when at least one level is supported. Summary separates `prompts_written` from
+`pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
 canonical rebuild from retained sources and verified obsolete-artifact deletion,
@@ -181,22 +182,30 @@ and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived fro
 source, chunk ref, ordered level set and ordinal zero, stable across partitions.
 The whole input is validated before inference/output creation.
 
-Required model response shape:
+Generation uses two compact model contracts. The disposition planner returns one
+prompt-wide skip or an ordered clean-passage plan:
 
 ```json
-[["factual","What is the delay?","72 hours",[["p0","The delay is 72 hours."]]],["conceptual","Why does it matter?","It constrains timing.",[["p0","delay is 72 hours"]]]]
+["clean",[["factual","generate",null,["e0"]],["conceptual","skip","conceptual_support_absent",[]]]]
 ```
 
-Pair count and ordered Bloom levels must exactly match the request. Every pair
-requires nonblank question, answer and local evidence. Each local ID must resolve
-and every quote must be an exact source substring; only then does the server
-restore canonical `QaEvidence {chunk_ref, source, quote}`. Semantic answer
-entailment remains a separate audit.
+A conceptual generated level instead names one closed relation kind. The writer
+receives only planned generated levels and fixed evidence, then returns:
+
+```json
+[["factual","What is the delay?","72 hours"]]
+```
+
+The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,
+conceptual generation without a relation, or any writer deviation from the plan.
+It then restores canonical `QaEvidence {chunk_ref, source, quote}`. The planner and
+writer are model-mediated; semantic answer entailment remains a separate Stage 8
+audit.
 
 Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
-canonical evidence and protocol/model provenance. Completion tokens are counted
-once in the batch summary, not repeated on pair rows. Failed prompts carry
-primary identity and `error`, never an ingestible response.
+canonical evidence and `prepared-qa-staged-quality-v4` provenance. Batch tokens and
+cost include every returned planning/writing response and are not repeated on pair
+rows. Failed prompts carry primary identity and `error`, never an ingestible response.
 
 ### Batch ownership, retries and accounting
 
@@ -210,11 +219,13 @@ truncation. One process-wide canonical output lease spans service instances.
 Workers retain ownership until destroyed, including after an abort request; it is
 not a cross-process lock. Synchronous AIMD retries only typed
 Connection/Overloaded/Timeout errors, at most **3 total attempts** (2s/4s backoff).
-Permanent/configuration errors and response rejection are not retried
+Permanent/configuration errors do not retry. A returned planning or writing payload
+that fails its typed schema receives exactly one metered correction attempt; a
+second rejection fails the prompt without partial rows
 (`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs`).
 
 Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
-`qa_rows_written`, prompt-level `tokens_used`, `completion_tokens_used`,
+`qa_rows_written`, provider-response `tokens_used`, `completion_tokens_used`,
 `completion_token_reporting_complete`, `finish_reason_counts`,
 `finish_reason_reporting_complete`, `provider_responses`, `reported_cost_usd`,
 `cost_reporting_complete`, `output`, and `degraded`, with total =

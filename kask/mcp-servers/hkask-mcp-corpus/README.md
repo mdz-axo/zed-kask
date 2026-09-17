@@ -225,46 +225,50 @@ from rendered model messages.
 
 ### Evidence and generated records
 
-The renderer partitions primary passage `p0` into overlapping exact source spans
-with local IDs `e0`, `e1`, etc. Context passages remain available for meaning but
-cannot supply evidence. Candidate terms are optional topic hints. Prepared
-inference returns one compact disposition per requested level in order. A supported
-level selects one to three evidence IDs; an unsupported or contaminated level uses
-an explicit quality skip:
+The server partitions primary passage `p0` into overlapping exact source spans with
+local IDs `e0`, `e1`, etc. Generation then uses two typed stages. First, the
+disposition planner sees the complete guarded primary passage and evidence
+candidates. It either returns one prompt-wide bad-passage skip or one ordered plan
+per requested level. A generated level fixes one to three evidence IDs before any
+question or answer is written; conceptual generation also fixes one closed relation
+kind (`mechanism`, `causal_relationship`, `distinction`, `purpose`, `framework`, or
+`transferable_principle`). An unsupported level records its canonical
+`<level>_support_absent` reason.
 
-```json
-[["factual","What is the delay?","72 hours",["e0"]],["conceptual",null,"conceptual_support_absent",[]]]
-```
+The second inference receives only planned generated levels and their selected
+source spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
+select new evidence. It writes compact `["level","question","answer"]` triples.
+The server recombines those drafts with planned skips, restores immutable
+`QaEvidence {chunk_ref, source, quote}` from `p0`, and validates the existing final
+row contract.
 
-Generated pairs must match their requested Bloom level and contain a nonblank
-question, answer, and one to three unique, known evidence IDs. Conceptual QA must
-require an explicit mechanism, relationship, distinction, purpose, framework or
-transferable principle; direct recall of a name, list, title, number or sentence
-paraphrase is factual, not conceptual. Legal notices, publication metadata,
-navigation, marketing, watermarks, isolated captions and garbled text are skipped.
-`non_substantive_passage` and `contaminated_or_garbled` are prompt-wide: every
-requested level must carry the same skip, even if another span appears usable.
-Closed skip reasons are `non_substantive_passage`, `contaminated_or_garbled`, and
-the requested level's `<level>_support_absent` reason.
+Conceptual QA must explain its planned relation; direct recall of a name, list,
+title, number, stated explanation or sentence paraphrase is factual. Questions and
+answers must preserve source modality and cannot add advice, normative rules, causal
+mechanisms or changed components absent from evidence. Material OCR/layout damage,
+interleaved page furniture, sentence-breaking footnotes, unrelated seams and
+required-thought truncation are prompt-wide contamination. A coherent continuation
+fragment or short legible factual passage is not contamination merely because it is
+short, begins mid-sentence, contains notation or lacks conceptual support.
 
-The model never reproduces quote text. The server resolves each evidence ID to its
-immutable exact span and restores canonical `QaEvidence {chunk_ref, source, quote}`
-from `p0`. It writes accepted pairs as ingestible envelopes and skips as explicit
-`status:"skipped"` non-training records. Any malformed or ambiguous disposition
-rejects the whole prompt; answer entailment and cognitive difficulty remain separate
-semantic audits. Generated rows identify this renderer as
-`prepared-qa-quality-gated-v3`; existing prepared JSONL remains
-`prepared-qa-local-evidence-v1` and does not need rebuilding.
+`non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
+Closed level reasons remain the requested level's `<level>_support_absent`. Any
+malformed plan or writer response rejects the whole prompt before rows are written.
+The semantic decisions remain model-mediated and require the separate Stage 8 audit;
+exact evidence restoration does not certify answer entailment. Generated rows use
+`prepared-qa-staged-quality-v4` with
+`disposition_plan_protocol=prepared-qa-disposition-plan-v1`; existing prepared JSONL
+remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","prompt_protocol":"prepared-qa-quality-gated-v3","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v4","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
-The model identifier above is illustrative, not a configured default. Prompt
-token usage is counted once in the batch summary rather than repeated on every
-pair row. Summaries separately reconcile `qa_levels_requested`,
+The model identifier above is illustrative, not a configured default. Batch usage
+and cost totals include every actual planning and writing provider response; they
+are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
 `qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`. A skip writes
 primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and
 protocol provenance, with no response. A failed prompt writes primary `prompt_id`,
@@ -285,8 +289,10 @@ synchronous transport. The QA model is not approval of a training base.
 Synchronous inference uses AIMD: starts at up to 2, adds one on success and halves
 on transient capacity failure, bounded by requested concurrency. Each retry gets
 its own slot. Only typed `Connection`, `Overloaded`, `Timeout` errors retry,
-with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures,
-open circuits and rejected/malformed QA do not retry
+with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures and
+open circuits do not retry. A successful planning or writing response that fails its
+typed schema receives exactly one metered correction attempt; a second rejection
+fails the whole prompt without partial rows
 (`src/batch.rs`; `src/services/qa_batch.rs`).
 
 Before truncating output, the generator validates the entire input, resolves the
@@ -310,7 +316,7 @@ errors. Join failures retain prompt identity for a failed-prompt row.
 | `prompts_succeeded` | Entire response accepted and rows written |
 | `prompts_failed` | Identified failed-prompt records |
 | `qa_rows_written` | Accepted pairs only; a prompt can yield multiple pairs |
-| `tokens_used` | Total usage counted once per returned prompt, including rejected QA |
+| `tokens_used` | Total usage across every returned planning/writing provider response, including rejected responses |
 | `completion_tokens_used`, `completion_token_reporting_complete` | Completion-token coverage; incomplete reporting is unknown, never zero |
 | `finish_reason_counts`, `finish_reason_reporting_complete` | Provider stop-reason distribution and whether every provider response reported one |
 | `provider_responses`, `reported_cost_usd`, `cost_reporting_complete` | Cost coverage; null/incomplete cost is unknown, never zero |

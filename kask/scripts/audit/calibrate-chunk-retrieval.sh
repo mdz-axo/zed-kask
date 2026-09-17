@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# expect: A paid calibration run keeps using its own sealed execution components when the shared tree changes.
+# [P1] Motivating: one reproducible derivation must retain one execution identity.
+# [P2] [P3] [P4] [P8] Constraining: preserve evidence, composition, boundaries, and durable provenance.
+# pre: a valid run specification and executable corpus runtime exist.
+# post: fresh execution re-execs from a verified run-owned capsule; resume accepts only that capsule.
+
 usage() {
     echo "usage: $0 [--resume] <run-spec-json> <output-dir>" >&2
     exit 64
@@ -14,23 +20,129 @@ fi
 [[ $# -eq 2 ]] || usage
 run_spec=$1
 output_dir=$2
+capsule_active=${HKASK_CALIBRATION_CAPSULE_ACTIVE:-false}
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 query_builder="$repo_root/kask/scripts/audit/build-chunk-calibration-queries.sh"
 host_call="$repo_root/kask/scripts/audit/call-corpus-tool-via-host.sh"
 evaluator="$repo_root/kask/scripts/audit/evaluate-chunk-retrieval.sh"
+inspector="$repo_root/kask/scripts/audit/inspect-chunk-calibration-run.sh"
 corpus_binary=${HKASK_CORPUS_BINARY:-$HOME/.local/bin/hkask-mcp-corpus}
+runtime_dir="$output_dir/runtime"
+runtime_manifest="$runtime_dir/manifest.json"
 
-for command in jq sha256sum stat date cmp; do
+for command in jq sha256sum stat date cmp cp chmod mkdir mktemp mv rmdir; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "required command not found: $command" >&2
         exit 69
     fi
 done
+
+capsule_sha_file() {
+    sha256sum "$1" | cut -d' ' -f1
+}
+verify_runtime_capsule() {
+    local component relative expected path
+    if [[ ! -s "$runtime_manifest" || ! -s "$runtime_manifest.sha256" ]]; then
+        echo "runtime capsule manifest is incomplete: $runtime_manifest" >&2
+        return 66
+    fi
+    if [[ $(cat "$runtime_manifest.sha256") != "$(capsule_sha_file "$runtime_manifest")" ]]; then
+        echo "runtime capsule manifest changed: $runtime_manifest" >&2
+        return 65
+    fi
+    jq -e '
+      .schema_version == 1 and
+      (.components | keys | sort) == ["corpus_binary","evaluator","host_call","inspector","query_builder","runner"] and
+      all(.components[];
+        (.path | type == "string" and length > 0) and
+        (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
+    ' "$runtime_manifest" >/dev/null
+    for component in runner query_builder host_call evaluator inspector corpus_binary; do
+        relative=$(jq -er --arg component "$component" '.components[$component].path' "$runtime_manifest")
+        expected=$(jq -er --arg component "$component" '.components[$component].sha256' "$runtime_manifest")
+        path="$runtime_dir/$relative"
+        if [[ ! -f "$path" || ! -x "$path" ]]; then
+            echo "runtime capsule component is unavailable: $component ($path)" >&2
+            return 66
+        fi
+        if [[ $(capsule_sha_file "$path") != "$expected" ]]; then
+            echo "runtime capsule component changed: $component" >&2
+            return 65
+        fi
+    done
+}
+stage_runtime_capsule() (
+    local temporary source_before source_after copied component source destination
+    temporary=$(mktemp -d "$output_dir/.runtime.tmp.XXXXXX")
+    trap 'rm -rf "$temporary"' EXIT
+    mkdir -p "$temporary/kask/scripts/audit" "$temporary/bin"
+    stable_copy() {
+        source=$1
+        destination=$2
+        component=$3
+        source_before=$(capsule_sha_file "$source")
+        cp "$source" "$destination"
+        source_after=$(capsule_sha_file "$source")
+        copied=$(capsule_sha_file "$destination")
+        if [[ "$source_before" == "$source_after" && "$source_before" == "$copied" ]]; then
+            :
+        else
+            echo "runtime source changed while staging: $component" >&2
+            return 65
+        fi
+        chmod 0555 "$destination"
+    }
+    stable_copy "$repo_root/kask/scripts/audit/calibrate-chunk-retrieval.sh" \
+        "$temporary/kask/scripts/audit/calibrate-chunk-retrieval.sh" runner
+    stable_copy "$query_builder" "$temporary/kask/scripts/audit/build-chunk-calibration-queries.sh" query_builder
+    stable_copy "$host_call" "$temporary/kask/scripts/audit/call-corpus-tool-via-host.sh" host_call
+    stable_copy "$evaluator" "$temporary/kask/scripts/audit/evaluate-chunk-retrieval.sh" evaluator
+    stable_copy "$inspector" "$temporary/kask/scripts/audit/inspect-chunk-calibration-run.sh" inspector
+    stable_copy "$corpus_binary" "$temporary/bin/hkask-mcp-corpus" corpus_binary
+    jq -cnS \
+        --arg runner "$(capsule_sha_file "$temporary/kask/scripts/audit/calibrate-chunk-retrieval.sh")" \
+        --arg query_builder "$(capsule_sha_file "$temporary/kask/scripts/audit/build-chunk-calibration-queries.sh")" \
+        --arg host_call "$(capsule_sha_file "$temporary/kask/scripts/audit/call-corpus-tool-via-host.sh")" \
+        --arg evaluator "$(capsule_sha_file "$temporary/kask/scripts/audit/evaluate-chunk-retrieval.sh")" \
+        --arg inspector "$(capsule_sha_file "$temporary/kask/scripts/audit/inspect-chunk-calibration-run.sh")" \
+        --arg corpus_binary "$(capsule_sha_file "$temporary/bin/hkask-mcp-corpus")" \
+        '{schema_version:1,components:{
+          runner:{path:"kask/scripts/audit/calibrate-chunk-retrieval.sh",sha256:$runner},
+          query_builder:{path:"kask/scripts/audit/build-chunk-calibration-queries.sh",sha256:$query_builder},
+          host_call:{path:"kask/scripts/audit/call-corpus-tool-via-host.sh",sha256:$host_call},
+          evaluator:{path:"kask/scripts/audit/evaluate-chunk-retrieval.sh",sha256:$evaluator},
+          inspector:{path:"kask/scripts/audit/inspect-chunk-calibration-run.sh",sha256:$inspector},
+          corpus_binary:{path:"bin/hkask-mcp-corpus",sha256:$corpus_binary}}}' > "$temporary/manifest.json"
+    capsule_sha_file "$temporary/manifest.json" > "$temporary/manifest.json.sha256"
+    chmod 0444 "$temporary/manifest.json" "$temporary/manifest.json.sha256"
+    chmod 0755 "$temporary/kask/scripts/audit" "$temporary/kask/scripts" "$temporary/kask" "$temporary/bin"
+    mv "$temporary" "$runtime_dir"
+    trap - EXIT
+)
+exec_runtime_capsule() {
+    local runner="$runtime_dir/kask/scripts/audit/calibrate-chunk-retrieval.sh"
+    local binary="$runtime_dir/bin/hkask-mcp-corpus"
+    if [[ "$resume" == true ]]; then
+        exec env HKASK_CALIBRATION_CAPSULE_ACTIVE=true HKASK_CORPUS_BINARY="$binary" \
+            bash "$runner" --resume "$run_spec" "$output_dir"
+    fi
+    exec env HKASK_CALIBRATION_CAPSULE_ACTIVE=true HKASK_CORPUS_BINARY="$binary" \
+        bash "$runner" "$run_spec" "$output_dir"
+}
+
 if [[ ! -f "$run_spec" ]]; then
     echo "run spec does not exist: $run_spec" >&2
     exit 66
 fi
-for script in "$query_builder" "$host_call" "$evaluator"; do
+if [[ "$resume" == true && "$capsule_active" != true ]]; then
+    if [[ ! -d "$output_dir" || ! -f "$output_dir/run-preseal-identity.json" ]]; then
+        echo "resume requires an output directory with run-preseal-identity.json" >&2
+        exit 66
+    fi
+    verify_runtime_capsule
+    exec_runtime_capsule
+fi
+for script in "$query_builder" "$host_call" "$evaluator" "$inspector"; do
     if [[ ! -x "$script" ]]; then
         echo "required executable script does not exist: $script" >&2
         exit 66
@@ -69,12 +181,32 @@ if [[ "$resume" == true ]]; then
         echo "resume requires an output directory with run-preseal-identity.json" >&2
         exit 66
     fi
+elif [[ "$capsule_active" == true ]]; then
+    if [[ ! -d "$output_dir" ]]; then
+        echo "active runtime capsule output directory does not exist: $output_dir" >&2
+        exit 66
+    fi
 else
     if [[ -e "$output_dir" ]]; then
         echo "refusing to overwrite output directory: $output_dir" >&2
         exit 73
     fi
     mkdir -p "$output_dir"
+    if ! stage_runtime_capsule; then
+        rmdir "$output_dir" 2>/dev/null || true
+        echo "failed to stage runtime capsule" >&2
+        exit 65
+    fi
+    verify_runtime_capsule
+    exec_runtime_capsule
+fi
+if [[ "$capsule_active" == true ]]; then
+    expected_repo_root=$(cd "$runtime_dir" && pwd)
+    if [[ "$repo_root" != "$expected_repo_root" ]]; then
+        echo "active runtime capsule does not own the runner path" >&2
+        exit 65
+    fi
+    verify_runtime_capsule
 fi
 
 queries="$output_dir/queries.jsonl"
@@ -246,8 +378,11 @@ build_preseal_candidate() {
         --arg retriever_sha256 "$(jq -cS '.retriever' "$run_spec" | sha256sum | cut -d' ' -f1)" \
         --arg evaluator_sha256 "$evaluator_sha256" \
         --arg runner_sha256 "$(sha_file "$repo_root/kask/scripts/audit/calibrate-chunk-retrieval.sh")" \
+        --arg query_builder_sha256 "$(sha_file "$query_builder")" \
+        --arg inspector_sha256 "$(sha_file "$inspector")" \
         --arg host_call_sha256 "$(sha_file "$host_call")" \
         --arg corpus_binary_sha256 "$(sha_file "$corpus_binary")" \
+        --arg runtime_manifest_sha256 "$(sha_file "$runtime_manifest")" \
         --arg representation_cost_sha256 "$(sha_file "$representation_cost")" \
         --arg reference_sha256 "$(sha_file "$reference_representation")" \
         --arg current_sha256 "$(sha_file "$current_representation")" \
@@ -262,12 +397,14 @@ build_preseal_candidate() {
         --argjson reference_shards "$reference_shards" \
         --argjson current_shards "$current_shards" \
         --argjson fine_shards "$fine_shards" '
-      {schema_version:1,accepted_sources_sha256:$accepted_sources_sha256,
+      {schema_version:2,accepted_sources_sha256:$accepted_sources_sha256,
        run_spec_sha256:$run_spec_sha256,queries_sha256:$queries_sha256,
        requested_embedding_model:$requested_embedding_model,
        policies_sha256:$policies_sha256,retriever_sha256:$retriever_sha256,
        evaluator_sha256:$evaluator_sha256,runner_sha256:$runner_sha256,
-       host_call_sha256:$host_call_sha256,corpus_binary_sha256:$corpus_binary_sha256,
+       query_builder_sha256:$query_builder_sha256,inspector_sha256:$inspector_sha256,
+       host_call_sha256:$host_call_sha256,
+       corpus_binary_sha256:$corpus_binary_sha256,runtime_manifest_sha256:$runtime_manifest_sha256,
        representation_cost_sha256:$representation_cost_sha256,
        embedding:{batch_size:$batch_size,max_concurrency:$max_concurrency,
          retry_limit:$retry_limit,retry_backoff_secs:$retry_backoff_secs,
@@ -375,10 +512,15 @@ verify_runtime_identity() {
     done
 }
 verify_runtime_executables() {
+    verify_runtime_capsule
     verify_runtime_identity \
         runner "$repo_root/kask/scripts/audit/calibrate-chunk-retrieval.sh" runner_sha256 \
+        query_builder "$query_builder" query_builder_sha256 \
         host_call "$host_call" host_call_sha256 \
-        corpus_binary "$corpus_binary" corpus_binary_sha256
+        evaluator "$evaluator" evaluator_sha256 \
+        inspector "$inspector" inspector_sha256 \
+        corpus_binary "$corpus_binary" corpus_binary_sha256 \
+        runtime_manifest "$runtime_manifest" runtime_manifest_sha256
 }
 verify_runtime_executables
 mkdir -p "$checkpoint_dir"

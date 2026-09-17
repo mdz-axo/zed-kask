@@ -2,10 +2,16 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-runner="$repo_root/kask/scripts/audit/calibrate-chunk-retrieval.sh"
-host_call="$repo_root/kask/scripts/audit/call-corpus-tool-via-host.sh"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap 'chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+fixture_root="$tmp/shared-repo"
+mkdir -p "$fixture_root/kask/scripts/audit"
+for script in calibrate-chunk-retrieval.sh build-chunk-calibration-queries.sh \
+    call-corpus-tool-via-host.sh evaluate-chunk-retrieval.sh inspect-chunk-calibration-run.sh; do
+    cp "$repo_root/kask/scripts/audit/$script" "$fixture_root/kask/scripts/audit/$script"
+done
+runner="$fixture_root/kask/scripts/audit/calibrate-chunk-retrieval.sh"
+host_call="$fixture_root/kask/scripts/audit/call-corpus-tool-via-host.sh"
 
 cat > "$tmp/source-a.txt" <<'TEXT'
 Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega joins source faithful calibration evidence across every deterministic representation policy.
@@ -46,10 +52,10 @@ respond() {
     jq -cn --argjson id "$id" --arg text "$inner" \
         '{jsonrpc:"2.0",id:$id,result:{content:[{type:"text",text:$text}],isError:false}}'
 }
-maybe_mutate_binary() {
-    if [[ -n ${FAKE_MUTATE_BINARY_ONCE_MARKER:-} && ! -e $FAKE_MUTATE_BINARY_ONCE_MARKER ]]; then
-        touch "$FAKE_MUTATE_BINARY_ONCE_MARKER"
-        printf '%s\n' '# runtime binary identity drift' >> "$0"
+maybe_mutate_shared_runtime() {
+    if [[ -n ${FAKE_MUTATE_SHARED_ONCE_MARKER:-} && ! -e $FAKE_MUTATE_SHARED_ONCE_MARKER ]]; then
+        touch "$FAKE_MUTATE_SHARED_ONCE_MARKER"
+        printf '%s\n' '# shared runtime identity drift' >> "$FAKE_MUTATE_SHARED_PATH"
     fi
 }
 store_inventory() {
@@ -164,13 +170,13 @@ while IFS= read -r line; do
                         rm -f "$successful"
                         respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" --argjson refs "$failed_refs" \
                             '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:($total-1),failed:1,failed_entity_refs:$refs,failed_entity_refs_complete:true,cancelled:false}')"
-                        maybe_mutate_binary
+                        maybe_mutate_shared_runtime
                         continue
                     fi
                     store_inventory "$db" "$chunks" "$actual"
                     respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" \
                         '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,failed_entity_refs:[],failed_entity_refs_complete:true,cancelled:false}')"
-                    maybe_mutate_binary
+                    maybe_mutate_shared_runtime
                     ;;
                 corpus_embedding_inventory)
                     chunks=$(jq -r '.chunks_jsonl' <<<"$arguments")
@@ -283,16 +289,26 @@ awk -F '\t' '$2 > 1000 || $3 != 4 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
 [[ $(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 [[ $(awk -F '\t' '$1 == "fine" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 
-cp "$tmp/fake-corpus" "$tmp/fake-corpus.pre-runtime-drift"
-export FAKE_MUTATE_BINARY_ONCE_MARKER="$tmp/runtime-binary-mutated"
-if "$runner" "$tmp/run-spec.json" "$tmp/runtime-binary-drift-run"; then
-    echo "calibration accepted a corpus binary change between embedding shards" >&2
-    exit 1
-fi
-[[ $(find "$tmp/runtime-binary-drift-run/embed" -maxdepth 1 -type f -name '*response.json' -size +0c | wc -l) -eq 1 ]]
-mv "$tmp/fake-corpus.pre-runtime-drift" "$tmp/fake-corpus"
-chmod +x "$tmp/fake-corpus"
-unset FAKE_MUTATE_BINARY_ONCE_MARKER
+cp "$host_call" "$tmp/shared-host-call.original"
+export FAKE_MUTATE_SHARED_ONCE_MARKER="$tmp/shared-runtime-mutated"
+export FAKE_MUTATE_SHARED_PATH="$host_call"
+"$runner" "$tmp/run-spec.json" "$tmp/runtime-capsule-run"
+[[ -s "$tmp/runtime-capsule-run/runtime/manifest.json" ]]
+[[ -s "$tmp/runtime-capsule-run/runtime/manifest.json.sha256" ]]
+[[ $(sha256sum "$tmp/runtime-capsule-run/runtime/manifest.json" | cut -d' ' -f1) == "$(cat "$tmp/runtime-capsule-run/runtime/manifest.json.sha256")" ]]
+[[ $(sha256sum "$host_call" | cut -d' ' -f1) != "$(sha256sum "$tmp/shared-host-call.original" | cut -d' ' -f1)" ]]
+jq -e '
+  .schema_version == 1 and
+  (.components.runner.sha256 | test("^[0-9a-f]{64}$")) and
+  (.components.query_builder.sha256 | test("^[0-9a-f]{64}$")) and
+  (.components.host_call.sha256 | test("^[0-9a-f]{64}$")) and
+  (.components.evaluator.sha256 | test("^[0-9a-f]{64}$")) and
+  (.components.inspector.sha256 | test("^[0-9a-f]{64}$")) and
+  (.components.corpus_binary.sha256 | test("^[0-9a-f]{64}$"))
+' "$tmp/runtime-capsule-run/runtime/manifest.json" >/dev/null
+mv "$tmp/shared-host-call.original" "$host_call"
+chmod +x "$host_call"
+unset FAKE_MUTATE_SHARED_ONCE_MARKER FAKE_MUTATE_SHARED_PATH
 
 costs_before_resume=$(sha256sum "$tmp/run/measured-costs.json" | cut -d' ' -f1)
 "$runner" --resume "$tmp/run-spec.json" "$tmp/run"
@@ -357,14 +373,20 @@ if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
 fi
 mv "$tmp/checkpoint.original" "$checkpoint"
 
-cp "$tmp/fake-corpus" "$tmp/fake-corpus.original"
-printf '%s\n' '# binary identity drift' >> "$tmp/fake-corpus"
+capsule_binary="$tmp/interrupted-run/runtime/bin/hkask-mcp-corpus"
+cp "$capsule_binary" "$tmp/capsule-binary.original"
+chmod u+w "$capsule_binary"
+printf '%s\n' '# capsule binary identity drift' >> "$capsule_binary"
+embed_calls_before_capsule_tamper=$(wc -l < "$FAKE_EMBED_CALL_LOG")
 if "$runner" --resume "$tmp/run-spec.json" "$tmp/interrupted-run"; then
-    echo "resume accepted a changed corpus binary" >&2
+    echo "resume accepted a changed runtime capsule binary" >&2
     exit 1
 fi
-mv "$tmp/fake-corpus.original" "$tmp/fake-corpus"
-chmod +x "$tmp/fake-corpus"
+[[ $(wc -l < "$FAKE_EMBED_CALL_LOG") -eq "$embed_calls_before_capsule_tamper" ]]
+chmod u+w "$(dirname "$capsule_binary")"
+mv "$tmp/capsule-binary.original" "$capsule_binary"
+chmod 0555 "$capsule_binary"
+chmod 0755 "$(dirname "$capsule_binary")"
 
 representation="$tmp/interrupted-run/representations/current.jsonl"
 cp "$representation" "$tmp/current-representation.original"
