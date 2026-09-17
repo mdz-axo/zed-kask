@@ -1202,7 +1202,7 @@ mod ffmpeg_impl {
 
         #[cfg(test)]
         #[must_use]
-        fn has_audio(&self) -> bool {
+        pub(super) fn has_audio(&self) -> bool {
             self.audio.is_some()
         }
 

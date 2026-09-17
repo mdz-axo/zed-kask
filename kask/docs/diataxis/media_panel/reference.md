@@ -170,7 +170,12 @@ panel remains a vertically split viewer/director surface with a draggable split
 The viewer pane must retain `min_h_0` and `min_w_0` so media and toolbars shrink
 inside the dock instead of propagating intrinsic dimensions. The selected media
 uses the shared media widget, preserving aspect ratio through the widget's
-contain fit. Volume and mute are intentionally delegated to the operating
+contain fit. Playback timing is source-driven: source PTS and the audio-master
+clock decide when frames are due; a 4 ms decoder poll provides deadline
+headroom, while an 8 ms foreground poll follows GPUI's 120 Hz frame cadence and
+renders only on a new source frame or state change. The production benchmark
+requires one visible 30 fps player to present at least 89 of 90 source frames.
+Volume and mute are intentionally delegated to the operating
 system's default output device; the widget keeps unity application gain and
 provides no competing mixer. Playback speed, zoom, and fullscreen controls are
 not implemented in `media_panel` as of this edit.
