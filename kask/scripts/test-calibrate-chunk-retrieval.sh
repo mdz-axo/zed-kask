@@ -46,6 +46,12 @@ respond() {
     jq -cn --argjson id "$id" --arg text "$inner" \
         '{jsonrpc:"2.0",id:$id,result:{content:[{type:"text",text:$text}],isError:false}}'
 }
+maybe_mutate_binary() {
+    if [[ -n ${FAKE_MUTATE_BINARY_ONCE_MARKER:-} && ! -e $FAKE_MUTATE_BINARY_ONCE_MARKER ]]; then
+        touch "$FAKE_MUTATE_BINARY_ONCE_MARKER"
+        printf '%s\n' '# runtime binary identity drift' >> "$0"
+    fi
+}
 store_inventory() {
     local db=$1 chunks=$2 model=$3 state new merged
     state="${db}.inventory.jsonl"
@@ -154,11 +160,13 @@ while IFS= read -r line; do
                         rm -f "$successful"
                         respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" --argjson refs "$failed_refs" \
                             '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:($total-1),failed:1,failed_entity_refs:$refs,failed_entity_refs_complete:true,cancelled:false}')"
+                        maybe_mutate_binary
                         continue
                     fi
                     store_inventory "$db" "$chunks" "$actual"
                     respond "$id" "$(jq -cn --arg model "$model" --arg actual "$actual" --arg status "$status" --argjson total "$total" \
                         '{model:$model,requested_model:$model,actual_model:(if $status == "confirmed" then $actual else null end),actual_model_status:$status,identity_batches:{confirmed:(if $status == "confirmed" then 1 else 0 end),missing:(if $status == "confirmed" then 0 else 1 end)},total:$total,embedded:$total,failed:0,failed_entity_refs:[],failed_entity_refs_complete:true,cancelled:false}')"
+                    maybe_mutate_binary
                     ;;
                 corpus_embedding_inventory)
                     chunks=$(jq -r '.chunks_jsonl' <<<"$arguments")
@@ -270,6 +278,17 @@ done
 awk -F '\t' '$2 > 1000 || $3 != 4 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
 [[ $(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 [[ $(awk -F '\t' '$1 == "fine" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
+
+cp "$tmp/fake-corpus" "$tmp/fake-corpus.pre-runtime-drift"
+export FAKE_MUTATE_BINARY_ONCE_MARKER="$tmp/runtime-binary-mutated"
+if "$runner" "$tmp/run-spec.json" "$tmp/runtime-binary-drift-run"; then
+    echo "calibration accepted a corpus binary change between embedding shards" >&2
+    exit 1
+fi
+[[ $(find "$tmp/runtime-binary-drift-run/embed" -maxdepth 1 -type f -name '*response.json' -size +0c | wc -l) -eq 1 ]]
+mv "$tmp/fake-corpus.pre-runtime-drift" "$tmp/fake-corpus"
+chmod +x "$tmp/fake-corpus"
+unset FAKE_MUTATE_BINARY_ONCE_MARKER
 
 costs_before_resume=$(sha256sum "$tmp/run/measured-costs.json" | cut -d' ' -f1)
 "$runner" --resume "$tmp/run-spec.json" "$tmp/run"

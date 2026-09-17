@@ -350,6 +350,28 @@ fi
 
 verify_hashed_json "$preseal_identity"
 preseal_run_id=$(jq -er '.run_id' "$preseal_identity")
+verify_runtime_identity() {
+    local label path field expected actual
+    while [[ $# -gt 0 ]]; do
+        label=$1
+        path=$2
+        field=$3
+        shift 3
+        expected=$(jq -er ".$field" "$preseal_identity")
+        actual=$(sha_file "$path")
+        if [[ "$actual" != "$expected" ]]; then
+            echo "runtime identity changed for $label: sealed=$expected actual=$actual" >&2
+            return 65
+        fi
+    done
+}
+verify_runtime_executables() {
+    verify_runtime_identity \
+        runner "$repo_root/kask/scripts/audit/calibrate-chunk-retrieval.sh" runner_sha256 \
+        host_call "$host_call" host_call_sha256 \
+        corpus_binary "$corpus_binary" corpus_binary_sha256
+}
+verify_runtime_executables
 mkdir -p "$checkpoint_dir"
 actual_model=
 if [[ -e "$model_identity" || -e "$model_identity.sha256" ]]; then
@@ -396,8 +418,15 @@ for policy in reference current fine; do
     verify_shards_reassemble "$representation" "$shard_dir"
     expected_total=$(wc -l < "$representation" | tr -d ' ')
     for shard in "$shard_dir"/shard-[0-9][0-9][0-9][0-9][0-9].jsonl; do
+        verify_runtime_executables
         shard_name=$(basename "$shard" .jsonl)
         shard_sha256=$(sha_file "$shard")
+        expected_shard_sha256=$(jq -er --arg policy "$policy" --arg shard "$shard_name" \
+            '.shards[$policy][] | select(.name == $shard) | .sha256' "$preseal_identity")
+        if [[ "$shard_sha256" != "$expected_shard_sha256" ]]; then
+            echo "runtime shard identity changed for $policy/$shard_name" >&2
+            exit 65
+        fi
         shard_expected=$(wc -l < "$shard" | tr -d ' ')
         checkpoint="$checkpoint_dir/$policy-$shard_name.json"
         if [[ -e "$checkpoint" || -e "$checkpoint.sha256" ]]; then
@@ -485,6 +514,7 @@ for policy in reference current fine; do
                 --arg model "$requested_model" --argjson batch_size "$batch_size" \
                 '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,model:$model,batch_size:$batch_size}' > "$arguments"
             started=$(now_ns)
+            verify_runtime_executables
             "$host_call" corpus_embed "$arguments" "$response" "$log"
             ended=$(now_ns)
             content=$(tool_content "$response")
@@ -635,6 +665,7 @@ evaluation_cost_rows=$(mktemp)
 trap 'rm -f "$evaluation_cost_rows"' EXIT
 fidelity_failure=false
 for policy in reference current fine; do
+    verify_runtime_executables
     case "$policy" in
         reference) mode=direct; representation=$reference_representation; index_db=$reference_db ;;
         current) mode=direct; representation=$current_representation; index_db=$current_db ;;

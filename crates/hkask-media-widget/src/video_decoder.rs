@@ -64,7 +64,6 @@ pub struct VideoPlayer {
     audio_consumed_at_play: Option<Duration>,
     playing_since: Option<std::time::Instant>,
     duration: Duration,
-    volume: f32,
     #[cfg(feature = "video")]
     decoder: Option<VideoDecoderInner>,
 }
@@ -79,7 +78,6 @@ impl VideoPlayer {
             #[cfg(feature = "video")]
             audio_consumed_at_play: None,
             duration: Duration::ZERO,
-            volume: 1.0,
             #[cfg(feature = "video")]
             decoder: None,
         }
@@ -297,23 +295,6 @@ impl VideoPlayer {
         Ok(None)
     }
 
-    /// Set volume (0.0 to 1.0+).
-    pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, 2.0);
-        #[cfg(feature = "video")]
-        {
-            if let Some(decoder) = &mut self.decoder {
-                decoder.set_audio_volume(self.volume);
-            }
-        }
-    }
-
-    /// Get the current volume.
-    #[must_use]
-    pub fn volume(&self) -> f32 {
-        self.volume
-    }
-
     /// Get the current playback position — the master clock. With live
     /// audio this is consumed-audio-derived (starvation-proof); without
     /// audio it is wall-time-derived.
@@ -413,7 +394,6 @@ pub(crate) struct WidgetVideoPlayer {
     state: PlaybackState,
     position: Duration,
     duration: Duration,
-    volume: f32,
     pending_error: Option<String>,
     generation: u64,
     last_sequence: u64,
@@ -472,7 +452,6 @@ enum VideoCommand {
         position: Duration,
         generation: u64,
     },
-    SetVolume(f32),
     Shutdown,
 }
 
@@ -504,7 +483,6 @@ struct VideoSnapshot {
     state: PlaybackState,
     position: Duration,
     duration: Duration,
-    volume: f32,
 }
 
 impl VideoSnapshot {
@@ -513,7 +491,6 @@ impl VideoSnapshot {
             state: player.state(),
             position: player.position(),
             duration: player.duration(),
-            volume: player.volume(),
         }
     }
 }
@@ -640,7 +617,6 @@ impl WidgetVideoPlayer {
             state: PlaybackState::Stopped,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             pending_error: None,
             generation: 0,
             last_sequence: 0,
@@ -696,11 +672,6 @@ impl WidgetVideoPlayer {
         });
     }
 
-    pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, 2.0);
-        self.send(VideoCommand::SetVolume(self.volume));
-    }
-
     #[must_use]
     pub fn is_playing(&self) -> bool {
         self.state == PlaybackState::Playing
@@ -714,11 +685,6 @@ impl WidgetVideoPlayer {
     #[must_use]
     pub fn duration(&self) -> Duration {
         self.duration
-    }
-
-    #[must_use]
-    pub fn volume(&self) -> f32 {
-        self.volume
     }
 
     pub fn poll(&mut self) -> WidgetVideoPoll {
@@ -843,7 +809,6 @@ impl WidgetVideoPlayer {
         self.state = snapshot.state;
         self.position = snapshot.position;
         self.duration = snapshot.duration;
-        self.volume = snapshot.volume;
     }
 
     fn send(&mut self, command: VideoCommand) {
@@ -1006,7 +971,6 @@ fn run_video_worker(
                     }
                 }
             }
-            Some(VideoCommand::SetVolume(volume)) => player.set_volume(volume),
             Some(VideoCommand::Shutdown) => break,
             None => match player.advance_and_decode(Duration::from_millis(33)) {
                 Ok(frame) => {
@@ -1282,12 +1246,6 @@ mod ffmpeg_impl {
         pub fn resume_audio(&mut self) {
             if let Some(audio) = &mut self.audio {
                 audio.player.play();
-            }
-        }
-
-        pub fn set_audio_volume(&mut self, volume: f32) {
-            if let Some(audio) = &mut self.audio {
-                audio.player.set_volume(volume);
             }
         }
 
@@ -1985,7 +1943,6 @@ mod tests {
                 state: PlaybackState::Playing,
                 position: Duration::ZERO,
                 duration: Duration::from_secs(1),
-                volume: 1.0,
             },
             1,
             1,
@@ -1997,7 +1954,6 @@ mod tests {
             state: PlaybackState::Playing,
             position: Duration::ZERO,
             duration: Duration::from_secs(1),
-            volume: 1.0,
             pending_error: None,
             generation: 1,
             last_sequence: 2,
@@ -2040,7 +1996,6 @@ mod tests {
             state: PlaybackState::Playing,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             pending_error: None,
             generation: 7,
             last_sequence: 0,
@@ -2074,7 +2029,6 @@ mod tests {
             state: PlaybackState::Playing,
             position: Duration::ZERO,
             duration: Duration::ZERO,
-            volume: 1.0,
             pending_error: None,
             generation: 0,
             last_sequence: 0,

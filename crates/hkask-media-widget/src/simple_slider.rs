@@ -1,15 +1,14 @@
 //! Lightweight GPUI-native slider — replaces the 618-dependency
 //! `gpui-component` crate for transport controls.
 //!
-//! Uses GPUI's drag system (`on_drag` / `on_drag_move` / `on_drop`) which
-//! provides precise element bounds during drag — no manual bounds tracking.
-//! Supports linear and logarithmic scales. Emits `Change` while dragging
-//! and `Release` on drop (seek-on-release semantics for media players).
+//! Uses GPUI's drag system (`on_drag` / `on_drag_move`) which provides precise
+//! element bounds during drag. Emits `Change` while dragging and `Release` on
+//! mouse-up, including mouse-up outside the narrow track.
 
 use gpui::{
     App, AppContext, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
-    relative,
+    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    div, px, relative,
 };
 use theme::ActiveTheme;
 
@@ -45,7 +44,6 @@ pub struct SimpleSlider {
     min: f32,
     max: f32,
     step: f32,
-    logarithmic: bool,
 }
 
 impl SimpleSlider {
@@ -56,13 +54,7 @@ impl SimpleSlider {
             min,
             max,
             step,
-            logarithmic: false,
         }
-    }
-
-    pub fn logarithmic(mut self) -> Self {
-        self.logarithmic = true;
-        self
     }
 
     pub fn set_value(&mut self, value: f32, cx: &mut Context<Self>) {
@@ -74,24 +66,12 @@ impl SimpleSlider {
         if (self.max - self.min).abs() < f32::EPSILON {
             return 0.0;
         }
-        if self.logarithmic && self.min > 0.0 && self.max > 0.0 {
-            let log_min = self.min.ln();
-            let log_max = self.max.ln();
-            ((self.value.ln() - log_min) / (log_max - log_min)).clamp(0.0, 1.0)
-        } else {
-            ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
-        }
+        ((self.value - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
     }
 
     fn value_from_fraction(&self, fraction: f32) -> f32 {
         let fraction = fraction.clamp(0.0, 1.0);
-        let raw = if self.logarithmic && self.min > 0.0 && self.max > 0.0 {
-            let log_min = self.min.ln();
-            let log_max = self.max.ln();
-            (log_min + fraction * (log_max - log_min)).exp()
-        } else {
-            self.min + fraction * (self.max - self.min)
-        };
+        let raw = self.min + fraction * (self.max - self.min);
         let stepped = (raw / self.step).round() * self.step;
         stepped.clamp(self.min, self.max)
     }
@@ -113,7 +93,8 @@ impl Render for SimpleSlider {
         let fill_color = theme.colors().text_accent;
         let thumb_color = theme.colors().scrollbar_thumb_background;
         let entity = cx.entity().downgrade();
-        let entity_drop = entity.clone();
+        let entity_release = entity.clone();
+        let entity_release_out = entity.clone();
 
         div()
             .id("simple-slider-track")
@@ -142,15 +123,23 @@ impl Render for SimpleSlider {
                     cx.notify();
                 });
             })
-            .on_drop::<SliderDrag>(move |drag, _window, cx| {
-                let Some(entity) = entity_drop.upgrade() else {
+            .on_mouse_up(MouseButton::Left, move |_, _window, cx| {
+                let Some(entity) = entity_release.upgrade() else {
                     return;
                 };
                 entity.update(cx, |slider, cx| {
                     cx.emit(SimpleSliderEvent::Release(slider.value));
                     cx.notify();
                 });
-                let _ = drag;
+            })
+            .on_mouse_up_out(MouseButton::Left, move |_, _window, cx| {
+                let Some(entity) = entity_release_out.upgrade() else {
+                    return;
+                };
+                entity.update(cx, |slider, cx| {
+                    cx.emit(SimpleSliderEvent::Release(slider.value));
+                    cx.notify();
+                });
             })
             .child(
                 div()

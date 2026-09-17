@@ -19,7 +19,6 @@ struct AudioInner {
     device_sink: Option<rodio::MixerDeviceSink>,
     player: Option<rodio::Player>,
     duration: Duration,
-    volume: f32,
 }
 
 impl AudioPlayer {
@@ -29,7 +28,6 @@ impl AudioPlayer {
                 device_sink: None,
                 player: None,
                 duration: Duration::ZERO,
-                volume: 1.0,
             }),
         }
     }
@@ -65,7 +63,8 @@ impl AudioPlayer {
         // would emit a sub-frame blip — exactly the unsolicited audio this
         // method exists to prevent.
         let player = rodio::Player::connect_new(mixer);
-        player.set_volume(inner.volume);
+        // Keep application gain at rodio's unity default. The operating
+        // system's default output device owns volume and mute.
         player.pause();
         player.append(source);
 
@@ -116,19 +115,6 @@ impl AudioPlayer {
         {
             log::warn!("hkask-media-widget: audio seek failed: {error}");
         }
-    }
-
-    pub fn set_volume(&self, volume: f32) {
-        let clamped = volume.clamp(0.0, 2.0);
-        let mut inner = self.inner.lock();
-        inner.volume = clamped;
-        if let Some(player) = &inner.player {
-            player.set_volume(clamped);
-        }
-    }
-
-    pub fn volume(&self) -> f32 {
-        self.inner.lock().volume
     }
 
     pub fn is_playing(&self) -> bool {

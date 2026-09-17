@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
-version: "0.41.0"
+last_updated: 2026-09-17
+version: "0.41.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -182,15 +182,15 @@ Regulation (Cybernetic Nervous System) spans are the primary observability primi
 
 Skills are measured by execution outcome, recorded at runtime: `SkillTool::run` fires `agent::record_skill_outcome(skill_id, success, error)` at its outcome points (rendered envelope → success; missing dependencies or unreadable body → failure). Not-found and authorization-denial are request errors, not skill outcomes — neither is recorded. The composition root (`crates/zed/src/main.rs`) wires the hook to `RegulationLedger::record_skill_span(skill_id, "outcome", payload)`, stored in the bounded `SkillSpanStore` (`kask/crates/hkask-regulation/src/runtime.rs`); the metacognition loop's `sense_feedback_drift` reads the store for per-skill success-rate decline and escalates drift. Pinned by `skill_outcome_recorder_records_and_is_replaceable` + `test_skill_tool_records_outcome` (agent crate).
 
-Skill outcomes and operator feedback both have live writers. `SkillTool::run` records activation outcomes; `record_skill_feedback` and successful skill-naming `curator_advice_mark_applied` calls feed the process-global operator-feedback recorder. The composition root forwards both channels into the shared `RegulationLedger` (`crates/zed/src/main.rs:914-1012`). The loop measures activation reliability and operator acceptance; it does not infer downstream work quality from activation alone.
+Skill outcomes and operator feedback both have live writers. `SkillTool::run` records activation outcomes in the bounded `RegulationLedger` working view (`crates/zed/src/main.rs:966-989`). Direct `record_skill_feedback` ratings and successful skill-naming `curator_advice_mark_applied` calls feed the operator-feedback recorder, whose composition-root implementation first persists a `reg.skill.<id>.operator_feedback` sense record synchronously to `RegulationArchive` and reports failure to the caller; only after persistence does it enqueue the live ledger update (`crates/zed/src/main.rs:1634-1692`; `kask/crates/kask_bridge/src/memory/curator_stores.rs:45-69`). Startup reloads valid archived observations chronologically into the bounded working view while malformed records remain archived but excluded from drift sensing (`curator_stores.rs:71-120`). The loop measures activation reliability and operator acceptance; it does not infer downstream work quality from activation alone.
 
 | Event surface | Actual emission | Regulation consumption |
 |---|---|---|
 | MCP tool body | `ToolSpanGuard` emits tracing target `reg.tool` with `tool`, `outcome`, `duration_ms`, `error_kind`, and caller (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`) | None directly: child stderr is observability and is not ingested by the Regulation loop (`tool_span.rs:128-131`) |
 | Governed MCP dispatch | `McpRuntime::invoke` charges the per-agent call cap and emits cap diagnostics at `reg.mcp.cap` (`kask/crates/hkask-mcp/src/runtime.rs:1499-1517`) | It persists one `RegulationRecord` with `SpanKind::ToolCompleted`; `reg.mcp` is the warning target if persistence fails (`runtime.rs:1534-1543`) |
-| Agent-path MCP outcome | Process-global recorder forwards server/tool success and error kind into the shared ledger (`crates/zed/src/main.rs:907-932`) | `ToolReliabilitySensor` reads the ledger outcome breakdown |
-| Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:957-976`) | Metacognition senses per-skill activation reliability |
-| Operator skill feedback | Direct rating and advice-apply bridge use the process-global feedback recorder (`crates/zed/src/main.rs:995-1012`) | Metacognition trends operator acceptance |
+| Agent-path MCP outcome | Process-global recorder forwards server/tool success and error kind into the shared ledger (`crates/zed/src/main.rs:922-953`) | `ToolReliabilitySensor` reads the ledger outcome breakdown |
+| Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:966-989`) | Metacognition senses per-skill activation reliability |
+| Operator skill feedback | Direct rating and advice-apply bridge use the process-global feedback recorder; its production implementation persists to `RegulationArchive` before acknowledging the write (`crates/zed/src/main.rs:1634-1692`; `kask/crates/kask_bridge/src/memory/curator_stores.rs:45-69`) | Startup hydration rebuilds the bounded ledger view from valid chronological archive records; metacognition trends operator acceptance (`curator_stores.rs:71-120`) |
 
 > **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 11 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
