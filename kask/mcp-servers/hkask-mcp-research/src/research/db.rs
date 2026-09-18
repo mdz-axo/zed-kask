@@ -449,22 +449,13 @@ pub(crate) fn edit_tags(
     // updated the subscription's label based on an entry's feed_id,
     // which silently relabeled every entry in that feed — not just the
     // requested entry. Per-entry labels require a schema change (a
-    // labels table keyed by entry_id) and are out of scope for this fix.
-    // The fields remain on EditTagRequest for backward-compatible
-    // deserialization but are now ignored. Warn so callers know.
-    if req.add_label.is_some() || req.remove_label.is_some() {
-        tracing::warn!(
-            target: "hkask.research.rss",
-            entry_ids = ?req.entry_ids,
-            "edit_tags: add_label/remove_label are deprecated and ignored — \
-             per-entry labels require a schema change. Use rss_list_subscriptions \
-             to manage subscription labels."
-        );
-    }
-
+    // labels table keyed by entry_id); the deprecated request fields were
+    // removed from the wire entirely under the no-backward-compatibility
+    // ruling (repair plan).
     // N3 (panic-safe): use rusqlite's Transaction guard so a panic between
     // BEGIN and COMMIT automatically rolls back.
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+
     for id in &req.entry_ids {
         let exists: bool = tx
             .query_row("SELECT COUNT(*) FROM entries WHERE id = ?1", [id], |row| {

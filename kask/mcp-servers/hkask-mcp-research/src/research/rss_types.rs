@@ -67,8 +67,6 @@ pub struct EditTagRequest {
     pub add_starred: Option<bool>,
     pub remove_read: Option<bool>,
     pub remove_starred: Option<bool>,
-    pub add_label: Option<String>,
-    pub remove_label: Option<String>,
 }
 
 // ── Synthetic feed request types ──
