@@ -215,6 +215,18 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// expect: "CI validates the actual governance inventory, not only synthetic fixtures" [P8]
+    #[test]
+    fn repository_inventory_is_structurally_valid() -> Result<()> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let text = std::fs::read_to_string(
+            root.join("kask/docs/architecture/principle-constraints.yaml"),
+        )?;
+        let reports = validate(&root, &text)?;
+        assert!(!reports.is_empty());
+        Ok(())
+    }
+
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }

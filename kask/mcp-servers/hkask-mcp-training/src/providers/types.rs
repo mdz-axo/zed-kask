@@ -345,6 +345,7 @@ impl LoraInit {
 }
 
 /// LoRA bias type (mirrors PEFT `bias`).
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LoraBias {

@@ -1465,6 +1465,122 @@ mod smoke {
 
     // ── Math-contract gate coverage (G-M3/G-M4/G-D1 through the tool seam) ──
 
+    /// expect: "Proof-cost refactors preserve ordered gate findings, diagnostics, and tool verdicts" [P8]
+    /// post: boundary configurations and every initializer/bias variant retain their public contract
+    #[tokio::test]
+    async fn validate_config_math_gate_characterization() -> anyhow::Result<()> {
+        use crate::providers::types::{LoraBias, LoraInit};
+        use sha2::{Digest, Sha256};
+        let server = make_server();
+        let initializers = [
+            None,
+            Some(LoraInit::Default),
+            Some(LoraInit::Gaussian),
+            Some(LoraInit::Pissa),
+            Some(LoraInit::PissaNiter(0)),
+            Some(LoraInit::PissaNiter(u32::MAX)),
+            Some(LoraInit::Loftq),
+            Some(LoraInit::Olora),
+            Some(LoraInit::Corda),
+            Some(LoraInit::Orthogonal),
+            Some(LoraInit::Eva),
+            Some(LoraInit::Random),
+        ];
+        let mut digest = Sha256::new();
+        let mut cases = 0;
+        for init in initializers {
+            for bias in [LoraBias::None, LoraBias::All, LoraBias::LoraOnly] {
+                for r in [0, 1, 64, 65, 128, 129, 256, 257, u32::MAX] {
+                    for alpha in [0, 1, u32::MAX] {
+                        for use_rslora in [false, true] {
+                            let mut params = TrainingParams::default();
+                            params.lora.init_lora_weights = init.clone();
+                            params.lora.bias = bias.clone();
+                            params.lora.r = r;
+                            params.lora.alpha = alpha;
+                            params.lora.use_rslora = use_rslora;
+                            let response = server
+                                .training_validate_config(Parameters(TrainValidateConfigRequest {
+                                    params,
+                                    dataset_path: None,
+                                    base_model: None,
+                                }))
+                                .await?;
+                            let content = unwrap_content(&response);
+                            let findings = content["findings"].as_array().expect("findings");
+                            let mut expected = Vec::new();
+                            if !matches!(init, None | Some(LoraInit::Default | LoraInit::Eva)) {
+                                expected.push(("G-M1", "warn"));
+                            }
+                            if matches!(
+                                init,
+                                Some(
+                                    LoraInit::Pissa
+                                        | LoraInit::PissaNiter(_)
+                                        | LoraInit::Loftq
+                                        | LoraInit::Olora
+                                        | LoraInit::Corda
+                                )
+                            ) {
+                                expected.push(("G-M1", "warn"));
+                            }
+                            if bias != LoraBias::None {
+                                expected.push(("G-M2", "warn"));
+                            }
+                            if r == 0 {
+                                expected.push(("G-M3", "refuse"));
+                            }
+                            if alpha == 0 {
+                                expected.push(("G-M3", "refuse"));
+                            }
+                            if r > 64 && !use_rslora {
+                                expected.push(("G-M3", "warn"));
+                            }
+                            if r > 128 {
+                                expected.push(("G-M4", "warn"));
+                            }
+                            if r > 256 {
+                                expected.push(("G-M4", "refuse"));
+                            }
+                            let actual: Vec<_> = findings
+                                .iter()
+                                .map(|f| {
+                                    (
+                                        f["gate_id"].as_str().expect("gate"),
+                                        f["severity"].as_str().expect("severity"),
+                                    )
+                                })
+                                .collect();
+                            assert_eq!(actual, expected);
+                            let refuses = r == 0 || alpha == 0 || r > 256;
+                            assert_eq!(content["has_refusals"], refuses);
+                            assert_eq!(
+                                content["verdict"],
+                                if refuses {
+                                    "fail"
+                                } else if expected.is_empty() {
+                                    "pass"
+                                } else {
+                                    "conditional"
+                                }
+                            );
+                            digest.update(serde_json::to_vec(&content)?);
+                            cases += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 1944);
+        // Captured from ff43b4e80c before extracting the decision core. Includes
+        // every ordered finding's message/source/remediation and the tool verdict.
+        assert_eq!(
+            format!("{:x}", digest.finalize()),
+            "ea9d10460a38b80097632971751ad1815aa19f166ff4c78d7b59b17f2af2d58e"
+        );
+        Ok(())
+    }
+
     /// The default config (r=16, alpha=32, bias=none) passes every static
     /// gate: verdict "pass", zero findings, no refusals.
     #[tokio::test]

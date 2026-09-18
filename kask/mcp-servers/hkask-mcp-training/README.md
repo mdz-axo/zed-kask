@@ -93,20 +93,30 @@ continue to refresh recall clocks.
 rechecks refusal findings before submission. This runtime behavior is distinct
 from formal verification. The `#[cfg(kani)]` harnesses in
 `src/lora_validation/param_gates.rs` are `gm3_refuse_iff_degenerate_scaling`,
-`gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`, and
-`safe_region_has_no_refusals`. Their existence is not a successful proof run.
+`gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`,
+`safe_region_has_no_refusals`, and `gm2_warns_iff_bias_breaks_merge`.
 
 The R2 pilot uses Kani **0.68.0**, CBMC **6.11.0**, and Kani's pinned
 `nightly-2026-08-21` toolchain. Ordinary Cargo builds do not type-check these
 cfg-excluded harnesses. Initial Kani compilation exposed missing `Arbitrary`
-support and a use-after-move in the harness; cfg-only fixes leave normal gate
-behavior unchanged. Verification results and resource limits are recorded in
+support and a use-after-move in the harness. Subsequent runs exhausted memory
+while verifying diagnostic allocation/formatting. Production validators now
+consume the allocation-free `math_decisions` core; all five harnesses checked
+that same core under 2 GiB/120-second bounds with safety/unwinding checks enabled.
+Reachability covers passed. A pre-refactor public-tool digest over 1,944
+configurations pins findings, messages, sources, remediations, and verdicts;
+it is unchanged after extraction. Source-bound results are recorded in
 `/home/mdz-axolotl/Clones/zed-kask/kask/docs/plans/goedel-gap-closure-plan.md` §9.
-No successful proof or continuous proof-enforcement claim is implied here.
+Proofs cover decision outputs/severities, not diagnostic rendering, allocation,
+MCP transport, training quality, or PEFT/provider behavior. The extraction is
+currently uncommitted; no continuous proof gate or global utility claim exists.
 
-After approved provisioning, run an individual harness with
-`cargo kani -p hkask-mcp-training --lib --harness gm3_refuse_iff_degenerate_scaling --default-unwind 12`
-under an explicit resource limit. Keep unwinding/safety checks enabled; timeout,
+After approved provisioning, run all five with
+`bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY`.
+The runner checks Kani 0.68.0, refuses to overwrite evidence, captures source
+hashes/diff, caps each run, and rejects stale source or missing successful
+harness summaries. Optional `CARGO_TARGET_DIR` selects the Kani build cache.
+Keep unwinding/safety checks enabled; timeout,
 unsupported analysis, or resource failure is unknown, not success. These
 obligations concern validation predicates, not training quality or useful
 self-rewriting. Do not add a crates.io `kani` runtime dependency.

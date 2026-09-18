@@ -2,7 +2,7 @@
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
 last_updated: 2026-09-18
-version: "0.39.1"
+version: "0.39.2"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, trust]
@@ -33,6 +33,17 @@ over config files and proposes regressions; the server enforces the static
 subset of gates at submit time and emits the `reg.lora.*` spans the skill's
 convergence-check phase consumes
 (`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:23-48`). Host selection and harness behavior are implemented under `kask/mcp-servers/hkask-mcp-training/src/providers/`; the default harness is Axolotl and per-job harness selection is honored at submit time.
+
+### Decision-core verification scope
+
+The production G-M1–G-M4 conditions and severities are computed by `math_decisions`
+in `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:38–78`.
+Five Kani 0.68.0 harnesses check that allocation-free core over symbolic integer/
+enum inputs. Formatting, allocation, serialization and provider behavior are
+outside those proofs. A public `training_validate_config` characterization test
+pins complete output across 1,944 boundary/enum configurations. Local proof
+results are source-hash-bound in the gap-closure plan's §9 execution record;
+they do not prove training quality or establish a continuous promotion gate.
 
 ## Method Catalog
 

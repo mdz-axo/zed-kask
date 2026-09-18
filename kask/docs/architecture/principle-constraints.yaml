@@ -35,18 +35,20 @@ principles:
           command: cargo test -p hkask-mcp-training axolotl_refuses_non_sft_training_method
       - id: ax-training-math-proofs
         assertion: >-
-          Kani 0.68.0 reaches verification after cfg-only compilation fixes.
-          All four bounded attempts exhausted the 2 GiB address-space limit
-          (CBMC status 6); results are unknown, not proofs or counterexamples.
-          Raw artifacts and commands are recorded in the gap-closure plan.
+          Five allocation-free production decision-core harnesses passed
+          locally with Kani 0.68.0 after the R2 extraction; diagnostic rendering
+          is separately regression-tested, not formally verified. Proof source
+          is currently uncommitted and no continuing proof gate is installed.
+          The remaining gap is committed evidence binding and broader boundary
+          coverage, not decision-core solver feasibility. See plan section 9.
         status: gap
-        scope: R2 validation-predicate proofs; no utility or training-quality theorem
+        scope: G-M1–G-M4 decision core locally checked; no rendering, utility, or training-quality theorem
         owner: formal-methods engineer
         enforced_at: kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
         check:
           path: kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
           symbol: gm3_refuse_iff_degenerate_scaling
-          command: cargo kani -p hkask-mcp-training --lib --harness gm3_refuse_iff_degenerate_scaling
+          command: bash kask/scripts/check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY
       - id: ax-regulation-set-points
         assertion: Regulation maps recognized deviations to actions.
         status: runtime_enforced

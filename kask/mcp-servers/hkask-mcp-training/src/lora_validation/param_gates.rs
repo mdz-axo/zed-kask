@@ -12,7 +12,8 @@
 //! gates are independent of dataset-format compatibility and runtime metrics).
 
 use crate::providers::types::{
-    LoraParams, QuantizationParams, TrainingHarnessId, TrainingMethod, TrainingParams,
+    LoraBias, LoraInit, LoraParams, QuantizationParams, TrainingHarnessId, TrainingMethod,
+    TrainingParams,
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ValidationSeverity {
@@ -32,6 +33,42 @@ impl ValidationSeverity {
             Self::Warn => "warn",
             Self::Info => "info",
         }
+    }
+}
+
+/// Allocation-free G-M1..G-M4 decisions shared by production rendering and Kani.
+/// Each slot carries the severity of one existing diagnostic, in emission order.
+struct MathDecisions {
+    non_noop: Option<ValidationSeverity>,
+    base_weights: Option<ValidationSeverity>,
+    merge: Option<ValidationSeverity>,
+    zero_rank: Option<ValidationSeverity>,
+    zero_alpha: Option<ValidationSeverity>,
+    rslora: Option<ValidationSeverity>,
+    rank_warning: Option<ValidationSeverity>,
+    rank_refusal: Option<ValidationSeverity>,
+}
+
+fn math_decisions(
+    r: u32,
+    alpha: u32,
+    use_rslora: bool,
+    init: Option<&LoraInit>,
+    bias: &LoraBias,
+) -> MathDecisions {
+    MathDecisions {
+        non_noop: init
+            .is_some_and(|init| !init.is_noop_at_init())
+            .then_some(ValidationSeverity::Warn),
+        base_weights: init
+            .is_some_and(LoraInit::modifies_base_weights)
+            .then_some(ValidationSeverity::Warn),
+        merge: bias.breaks_merge().then_some(ValidationSeverity::Warn),
+        zero_rank: (r == 0).then_some(ValidationSeverity::Refuse),
+        zero_alpha: (alpha == 0).then_some(ValidationSeverity::Refuse),
+        rslora: (r > 64 && !use_rslora).then_some(ValidationSeverity::Warn),
+        rank_warning: (r > 128).then_some(ValidationSeverity::Warn),
+        rank_refusal: (r > 256).then_some(ValidationSeverity::Refuse),
     }
 }
 
@@ -70,18 +107,26 @@ impl ValidationFinding {
 /// do not block submission.
 pub(crate) fn validate_training_params(params: &TrainingParams) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
+    let lora = &params.lora;
+    let decisions = math_decisions(
+        lora.r,
+        lora.alpha,
+        lora.use_rslora,
+        lora.init_lora_weights.as_ref(),
+        &lora.bias,
+    );
 
     // G-M1: No-op-at-init invariant.
-    validate_noop_at_init(&params.lora, &mut findings);
+    validate_noop_at_init(lora, &decisions, &mut findings);
 
     // G-M2: Merge equivalence.
-    validate_merge_equivalence(&params.lora, &mut findings);
+    validate_merge_equivalence(lora, &decisions, &mut findings);
 
     // G-M3: Scaling form.
-    validate_scaling_form(&params.lora, &mut findings);
+    validate_scaling_form(lora, &decisions, &mut findings);
 
     // G-M4: Rank budget.
-    validate_rank_budget(&params.lora, &mut findings);
+    validate_rank_budget(lora, &decisions, &mut findings);
 
     // G-Q1: Frozen base quantized (QLoRA mode only).
     validate_qlora_quantization(&params.quantization, &mut findings);
@@ -197,12 +242,16 @@ pub(crate) fn validate_paged_optimizer(
 /// PEFT default init and EVA both produce ΔW=0 at step 0 because B=0.
 /// Initializers that modify base weights (PiSSA, LoftQ, OLoRA, CorDA) require
 /// preprocessing calls (e.g., `preprocess_loraga`, `replace_lora_weights_loftq`).
-fn validate_noop_at_init(lora: &LoraParams, findings: &mut Vec<ValidationFinding>) {
+fn validate_noop_at_init(
+    lora: &LoraParams,
+    decisions: &MathDecisions,
+    findings: &mut Vec<ValidationFinding>,
+) {
     if let Some(ref init) = lora.init_lora_weights {
-        if !init.is_noop_at_init() {
+        if let Some(severity) = decisions.non_noop {
             findings.push(ValidationFinding {
                 gate_id: "G-M1",
-                severity: ValidationSeverity::Warn,
+                severity,
                 message: format!(
                     "init_lora_weights={:?} — adapter is NOT a no-op at step 0 (ΔW≠0)",
                     init
@@ -213,10 +262,10 @@ fn validate_noop_at_init(lora: &LoraParams, findings: &mut Vec<ValidationFinding
                         .to_string(),
             });
         }
-        if init.modifies_base_weights() {
+        if let Some(severity) = decisions.base_weights {
             findings.push(ValidationFinding {
                 gate_id: "G-M1",
-                severity: ValidationSeverity::Warn,
+                severity,
                 message: format!(
                     "init_lora_weights={:?} modifies base weights — requires preprocessing call and explicit save handling",
                     init
@@ -242,11 +291,15 @@ fn validate_noop_at_init(lora: &LoraParams, findings: &mut Vec<ValidationFinding
 /// bias='none' is the only safe setting for must-merge inference.
 /// bias='all' and bias='lora_only' break merge equivalence — the model
 /// will not produce the same output as the base model when adapters are disabled.
-fn validate_merge_equivalence(lora: &LoraParams, findings: &mut Vec<ValidationFinding>) {
-    if lora.bias.breaks_merge() {
+fn validate_merge_equivalence(
+    lora: &LoraParams,
+    decisions: &MathDecisions,
+    findings: &mut Vec<ValidationFinding>,
+) {
+    if let Some(severity) = decisions.merge {
         findings.push(ValidationFinding {
             gate_id: "G-M2",
-            severity: ValidationSeverity::Warn,
+            severity,
             message: format!(
                 "bias={:?} breaks merge equivalence — model will not match base model when adapter disabled",
                 lora.bias
@@ -262,30 +315,34 @@ fn validate_merge_equivalence(lora: &LoraParams, findings: &mut Vec<ValidationFi
 /// scaling = α/r (default) or α/√r (if use_rslora).
 /// Refuse if r=0 or alpha=0 (division by zero).
 /// Warn if r > 64 and use_rslora is false (should use rsLoRA for high rank).
-fn validate_scaling_form(lora: &LoraParams, findings: &mut Vec<ValidationFinding>) {
-    if lora.r == 0 {
+fn validate_scaling_form(
+    lora: &LoraParams,
+    decisions: &MathDecisions,
+    findings: &mut Vec<ValidationFinding>,
+) {
+    if let Some(severity) = decisions.zero_rank {
         findings.push(ValidationFinding {
             gate_id: "G-M3",
-            severity: ValidationSeverity::Refuse,
+            severity,
             message: "LoRA rank r=0 — division by zero in scaling α/r".to_string(),
             source: "LoRA paper §4.1 (α/r scaling); rsLoRA arXiv:2312.03732",
             remediation: "Set r to a positive integer (typical: 8–64)".to_string(),
         });
     }
-    if lora.alpha == 0 {
+    if let Some(severity) = decisions.zero_alpha {
         findings.push(ValidationFinding {
             gate_id: "G-M3",
-            severity: ValidationSeverity::Refuse,
+            severity,
             message: "LoRA alpha=0 — scaling factor is zero, adapter has no effect".to_string(),
             source: "LoRA paper §4.1 (α/r scaling)",
             remediation: "Set alpha to a positive integer (typical: 2×r)".to_string(),
         });
     }
     // rsLoRA recommendation for high rank.
-    if lora.r > 64 && !lora.use_rslora {
+    if let Some(severity) = decisions.rslora {
         findings.push(ValidationFinding {
             gate_id: "G-M3",
-            severity: ValidationSeverity::Warn,
+            severity,
             message: format!(
                 "LoRA rank r={} > 64 without use_rslora — scaling α/r underperforms α/√r at high rank",
                 lora.r
@@ -304,11 +361,15 @@ fn validate_scaling_form(lora: &LoraParams, findings: &mut Vec<ValidationFinding
 /// r should be < min(d_in, d_out). Without the model loaded we can't check
 /// the exact bound, but we warn on absurdly high r that defeats the low-rank
 /// premise.
-fn validate_rank_budget(lora: &LoraParams, findings: &mut Vec<ValidationFinding>) {
-    if lora.r > 128 {
+fn validate_rank_budget(
+    lora: &LoraParams,
+    decisions: &MathDecisions,
+    findings: &mut Vec<ValidationFinding>,
+) {
+    if let Some(severity) = decisions.rank_warning {
         findings.push(ValidationFinding {
             gate_id: "G-M4",
-            severity: ValidationSeverity::Warn,
+            severity,
             message: format!(
                 "LoRA rank r={} > 128 — defeats low-rank premise; consider full fine-tuning",
                 lora.r
@@ -318,10 +379,10 @@ fn validate_rank_budget(lora: &LoraParams, findings: &mut Vec<ValidationFinding>
                 .to_string(),
         });
     }
-    if lora.r > 256 {
+    if let Some(severity) = decisions.rank_refusal {
         findings.push(ValidationFinding {
             gate_id: "G-M4",
-            severity: ValidationSeverity::Refuse,
+            severity,
             message: format!(
                 "LoRA rank r={} > 256 — not low-rank; LoRA provides no benefit at this rank",
                 lora.r
@@ -458,112 +519,119 @@ pub(crate) fn has_refusals(findings: &[ValidationFinding]) -> bool {
         .any(|f| f.severity == ValidationSeverity::Refuse)
 }
 
-/// Kani proof harnesses for the math-contract gates (goedel-gap-closure
-/// plan slice S4, A-R2 pilot). Anchored to the gate catalog
-/// (`kask/docs/reference/lora-training-catalog.md`, G-M1..G-M4) and the
-/// `.agents/skills/lora-training/` skill's `audit-config` phase.
-///
-/// The `kani` library is provided by the Kani toolchain at `cargo kani`
-/// time; the crates.io `kani` crate is a 3-line placeholder and must NOT
-/// be added as a dependency. This module is `#[cfg(kani)]`-gated: regular
-/// builds never compile it, so there is no Cargo.toml or lockfile churn
-/// on the shared tree. Syntax is still checked by regular builds; the
-/// semantic proofs run only under `cargo kani -p hkask-mcp-training`
-/// (https://model-checking.github.io/kani/).
+/// Kani checks the allocation-free production decision core, not diagnostic
+/// strings, Vec allocation, MCP serialization, or provider behavior. The public
+/// characterization test pins that rendering boundary separately. No alternate
+/// cfg(kani) implementation or solver stubs are used.
 #[cfg(kani)]
 mod proofs {
     use super::*;
-    use crate::providers::types::LoraInit;
 
-    fn lora_with(r: u32, alpha: u32) -> LoraParams {
-        LoraParams {
-            r,
-            alpha,
-            ..LoraParams::default()
-        }
-    }
-
-    fn refuse_count(findings: &[ValidationFinding]) -> usize {
-        findings
-            .iter()
-            .filter(|f| f.severity == ValidationSeverity::Refuse)
-            .count()
-    }
-
-    /// G-M3: refuse fires exactly for degenerate scaling (r=0 or alpha=0).
     #[kani::proof]
     fn gm3_refuse_iff_degenerate_scaling() {
         let r: u32 = kani::any();
         let alpha: u32 = kani::any();
-        let lora = lora_with(r, alpha);
-        let mut findings = Vec::new();
-        validate_scaling_form(&lora, &mut findings);
+        let use_rslora: bool = kani::any();
+        let decisions = math_decisions(r, alpha, use_rslora, None, &LoraBias::None);
         assert_eq!(
-            refuse_count(&findings),
-            (r == 0) as usize + (alpha == 0) as usize,
-            "G-M3 must refuse exactly the degenerate-scaling configs"
+            decisions.zero_rank,
+            (r == 0).then_some(ValidationSeverity::Refuse)
         );
+        assert_eq!(
+            decisions.zero_alpha,
+            (alpha == 0).then_some(ValidationSeverity::Refuse)
+        );
+        assert_eq!(
+            decisions.rslora,
+            (r > 64 && !use_rslora).then_some(ValidationSeverity::Warn)
+        );
+        kani::cover!(r == 0 && alpha == 0);
+        kani::cover!(r > 64 && alpha > 0 && !use_rslora);
     }
 
-    /// G-M4: warn fires for r>128, refuse for r>256; both fire above 256.
     #[kani::proof]
     fn gm4_findings_follow_rank_thresholds() {
         let r: u32 = kani::any();
-        let lora = lora_with(r, 32);
-        let mut findings = Vec::new();
-        validate_rank_budget(&lora, &mut findings);
-        let expected = if r > 256 {
-            2
-        } else if r > 128 {
-            1
-        } else {
-            0
-        };
+        let decisions = math_decisions(r, 32, false, None, &LoraBias::None);
         assert_eq!(
-            findings.len(),
-            expected,
-            "G-M4 findings must track the 128/256 rank thresholds exactly"
+            decisions.rank_warning,
+            (r > 128).then_some(ValidationSeverity::Warn)
         );
+        assert_eq!(
+            decisions.rank_refusal,
+            (r > 256).then_some(ValidationSeverity::Refuse)
+        );
+        kani::cover!(r <= 128);
+        kani::cover!(r > 128 && r <= 256);
+        kani::cover!(r > 256);
     }
 
-    /// G-M1: no findings iff the initializer is unset or a step-0 no-op
-    /// (None, Default, or EVA — the catalog's no-op set).
     #[kani::proof]
     fn gm1_clean_iff_noop_init() {
         let init: Option<LoraInit> = kani::any();
-        let is_clean = matches!(init, None | Some(LoraInit::Default) | Some(LoraInit::Eva));
-        let lora = LoraParams {
-            init_lora_weights: init,
-            ..LoraParams::default()
-        };
-        let mut findings = Vec::new();
-        validate_noop_at_init(&lora, &mut findings);
-        assert_eq!(
-            findings.is_empty(),
-            is_clean,
-            "G-M1 must flag exactly the non-noop initializers"
+        let decisions = math_decisions(16, 32, false, init.as_ref(), &LoraBias::None);
+        let noop = matches!(init, None | Some(LoraInit::Default) | Some(LoraInit::Eva));
+        let modifies_base = matches!(
+            init,
+            Some(
+                LoraInit::Pissa
+                    | LoraInit::PissaNiter(_)
+                    | LoraInit::Loftq
+                    | LoraInit::Olora
+                    | LoraInit::Corda
+            )
         );
+        assert_eq!(
+            decisions.non_noop,
+            (!noop).then_some(ValidationSeverity::Warn)
+        );
+        assert_eq!(
+            decisions.base_weights,
+            modifies_base.then_some(ValidationSeverity::Warn)
+        );
+        assert_eq!(
+            decisions.non_noop.is_none() && decisions.base_weights.is_none(),
+            noop
+        );
+        kani::cover!(noop);
+        kani::cover!(modifies_base);
+        kani::cover!(matches!(init, Some(LoraInit::PissaNiter(u32::MAX))));
     }
 
-    /// Safe region: the documented standard config region
-    /// (r in 1..=128, alpha >= 1, default bias/init) produces zero
-    /// refusals across G-M1..G-M4.
     #[kani::proof]
     fn safe_region_has_no_refusals() {
         let r: u32 = kani::any();
         let alpha: u32 = kani::any();
         kani::assume(r >= 1 && r <= 128);
         kani::assume(alpha >= 1);
-        let lora = lora_with(r, alpha);
-        let mut findings = Vec::new();
-        validate_noop_at_init(&lora, &mut findings);
-        validate_merge_equivalence(&lora, &mut findings);
-        validate_scaling_form(&lora, &mut findings);
-        validate_rank_budget(&lora, &mut findings);
-        assert!(
-            !has_refusals(&findings),
-            "the safe config region must never produce a refuse finding"
+        let decisions = math_decisions(r, alpha, false, None, &LoraBias::None);
+        for decision in [
+            decisions.non_noop,
+            decisions.base_weights,
+            decisions.merge,
+            decisions.zero_rank,
+            decisions.zero_alpha,
+            decisions.rslora,
+            decisions.rank_warning,
+            decisions.rank_refusal,
+        ] {
+            assert_ne!(decision, Some(ValidationSeverity::Refuse));
+        }
+        kani::cover!(r == 128 && alpha == u32::MAX);
+    }
+
+    /// Additional coverage: the merge warning decision ranges over every bias.
+    #[kani::proof]
+    fn gm2_warns_iff_bias_breaks_merge() {
+        let bias: LoraBias = kani::any();
+        let decisions = math_decisions(16, 32, false, None, &bias);
+        assert_eq!(
+            decisions.merge,
+            (!matches!(bias, LoraBias::None)).then_some(ValidationSeverity::Warn)
         );
+        kani::cover!(matches!(bias, LoraBias::None));
+        kani::cover!(matches!(bias, LoraBias::All));
+        kani::cover!(matches!(bias, LoraBias::LoraOnly));
     }
 }
 
