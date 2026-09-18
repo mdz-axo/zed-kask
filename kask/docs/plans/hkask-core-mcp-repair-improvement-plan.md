@@ -2,8 +2,8 @@
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-18
-version: "0.1.0"
-status: "Proposed"
+version: "0.2.0"
+status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
 ---
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 ## 1. Status, authority, and desired outcome
 
-**This is a saved review and proposed execution plan, not an implementation record.** The operator authorized saving this document and composing a continuation prompt. No repairs were implemented by this review. Implementation starts only under a subsequent execution instruction.
+**Execution authorized on 2026-09-18; partially implemented.** The original review implemented no repairs. The subsequent operator instruction authorized bounded execution; §9 now records fresh evidence separately from the historical review. Unfinished packages remain open; this document is not a whole-system completion claim.
 
 **Operator decision: there are no backward-compatibility requirements.** Replace unsafe or misleading interfaces directly, update all callers together, and delete superseded paths. Do not add deprecated APIs, legacy adapters, compatibility flags, dual writes, or parallel implementations solely to preserve old behavior.
 
@@ -491,23 +491,80 @@ Ask for decisions only when they block a correct intervention. Resolve technical
 
 ## 9. Progress record and completion criteria
 
-At save time all packages are **not started**. Do not infer completion from the review's passing tests.
+At save time all packages were **not started**. The following execution record supersedes that snapshot, not the historical evidence in §7.
 
 | Package | Status | Finding disposition / evidence / commit |
 | --- | --- | --- |
-| P0 revalidation | Not started | Review snapshot only |
-| P1a host task authority | Not started | F1 |
-| P1b interruption | Not started | F2 |
-| P1c training input | Not started | F3 |
-| P1d filesystem/gallery policy | Not started | F4, F5 |
-| P2 invocation/outcome contract | Not started | F6, F7, R4; consolidate P1 seams |
-| P3 persistence/recovery | Not started | R2, R3, H1; R1 decision-gated |
-| P4 packaging/CI/docs | Not started | F8, O1 |
+| P0 revalidation | Baseline established | All finding dispositions below; source-only for unrepaired items |
+| P1a host task authority | Decision pending; not repaired | F1 upheld. Asked whether delegated work inherits restrictions and auto-runs or requires fresh human approval; recommendation: strictly inherited authority |
+| P1b interruption | Open; not repaired | F2 upheld; no cancellation/deadline implementation or behavioral test this session |
+| P1c training input | Repaired; focused verification passed | F3; changes observed in externally created commits `e21e3e5d2d` and `8a1bd7877b`; six fresh regression tests passed |
+| P1d filesystem/gallery policy | Partial | F5 repaired and lifecycle suite passed; F4 containment still open |
+| P2 invocation/outcome contract | Open; not repaired | F6, F7, R4 upheld; no replacement invocation contract yet |
+| P3 persistence/recovery | Open; not repaired | R2/R3 upheld; H1 source-supported, not dynamically tested; R1 decision-gated |
+| P4 packaging/CI/docs | Partial | F8 inventory/install checks repaired; reconnect suite wired but NOT executed. O1 partially repaired concurrently; remaining drift below |
 | P5 optional simplification/formalization | Deferred | O2; only after behavior is pinned |
 
 For each completed package record: current-source finding disposition; exact changed files; old paths deleted; test command and counts; failures/limitations; functional outcome; and commit hash if committed, otherwise explicitly “uncommitted.” Do not commit automatically or include another actor's staged work.
 
 Completion means repaired behavior demonstrated at the relevant boundary, no superseded unsafe route remaining, applicable invariants passing, current docs, and a truthful account of residual risk. A compile-only result, zero-test filter, mock that removes the capability under test, or an empty degraded result is not completion.
+
+### Execution baseline and finding dispositions — 2026-09-18
+
+Initial HEAD was `7f1c83e558df951eec7f74d43fb623b02717c945`; the index was empty. Existing unstaged work comprised the docs portal, six corpus implementation files (including `index.rs`), prediction-markets tests, the review task, and this untracked plan. Those changes were preserved. Offline locked metadata returned 299 members, 19 `kask/crates/` libraries and 12 MCP packages. Read current root/agent rules, AGENTS, the whole plan including §10, principles, charter, interaction specification, documentation standard, and applicable D3/D8/D23 seams. No upstream Rust files were edited by this session.
+
+Other actors advanced HEAD and staged/committed shared files during execution, including the repairs. The implementing agents issued **no stage or commit commands**. Initial verification base was `8a1bd7877b63f0cb2c71a57cc96ab84e69302f2a`, plus gallery/doc edits. Later observed HEAD `acbefb647bcb8011cfcf4dfc4ba4e1ad3d2d4d5e` contains the gallery repair and strengthened tests, externally committed alongside unrelated regulation work. The progress record, portal status and media-reference metadata remain **uncommitted**. Unrelated regulation/bridge changes and all index contents were left untouched. This is a moving-checkout record, not an assertion that every check ran on an immutable tree.
+
+Source citations below are relative to `/home/mdz-axolotl/Clones/zed-kask/`; they record execution-time inspection, not new exploit reproductions.
+
+| Item | Current disposition and evidence |
+| --- | --- |
+| F1 | Upheld: `kask/crates/kask_bridge/src/inference_ipc_server.rs:422–438,876–920` still enqueues/spawns without a parent host grant or closed-reply check; `delegation_grants.rs:64–74` only protects the separately checked tool path. Decision pending, no repair claimed. |
+| F2 | Upheld: `crates/agent/src/tools/context_server_registry.rs:574–592` still awaits the managed source without selecting cancellation; runtime call at `kask/crates/hkask-mcp/src/runtime.rs:1686–1698` has no execution deadline. |
+| F3 | Upheld at baseline, repaired below. Both providers use the repaired shared generator. Prior TRL removal was retained; only Axolotl/Ludwig are in scope. |
+| F4 | Upheld: `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:199–210` validates the directory then writes a leaf; shared `validation.rs:289–312` reconstructs missing suffixes before `tools/document.rs:72–89` writes. Existing relative-basename and QA-specific link fixes are not race-resistant publication and were not recreated. |
+| F5 | Reproduced and repaired below. Existing transcript-detachment and unlink-failure identity preservation were retained. |
+| F6 | Upheld: `kask/crates/hkask-mcp-server/src/server/transport.rs:91–118` retains anonymous startup fallback; `server/tool_span.rs:140–169` attributes process context; kanban task claim at `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:885–895` still uses `self.webid`. No cross-user compromise demonstrated. |
+| F7 | Upheld: `crates/agent/src/tools/context_server_registry.rs:986–1046` still retries non-timeout errors after possible delivery. Managed typed non-delivery behavior remains intact. |
+| F8 | Reproduced inventory failure; repaired inventory and CI wiring below. Fixture process tests remain permission-gated and unexecuted. |
+| R1 | Upheld by source-only inspection of the provisioning policy at `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `keychain.rs:402–424`; no keychain or deployed database inspected, no secret rotated. Onboarding/recovery decision remains open. |
+| R2 | Upheld: `kask/crates/hkask-storage/src/database/driver.rs:29–35,57–66` and `database/transaction.rs:19–38` retain the connectionless facade; production usage not established. Safe borrowed-connection transactions remain. |
+| R3 | Upheld design risk: `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,193–229` separates revision publication and direct receipt writes. No fault injection or power-loss guarantee established. |
+| R4 | Upheld: `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:428–460` still accepts caller confirmation assertions, not host approval receipts. |
+| H1 | Source-supported, dynamic test still outstanding: cached return at `kask/crates/hkask-spreadsheet/src/service.rs:502–525` precedes digest comparison; public `open` returns the supplied reference. Fresh apply independently verifies its base. |
+| O1 | Partially repaired by other actors: AGENTS/server-reference counts and missing reference improved. Remaining stale claims include launcher wording in `AGENTS.md:41` and `kask/docs/README.md:13`, plus 18/11 counts in `kask/docs/architecture/zed-host-architecture-plan.md:43`. The advertised `docs/ci/verify-docs.sh` is absent at both root and `kask/` locations. |
+| O2 | Deferred guidance, not a defect: preserve the spreadsheet actor and typed delivery outcomes; no fleet-wide service extraction undertaken. |
+
+### P1c / F3 — caller data is no longer shell source
+
+Changed files: `kask/mcp-servers/hkask-mcp-training/src/{providers/runpod.rs,providers/nebius.rs,huggingface.rs,tools/submit.rs,hkask_mcp_training.rs}` and `kask/registry/templates/training/{axolotl-lora.j2,ludwig-lora.j2}`. Deleted fixed config/unquoted manifest heredocs, manual cloud-init serialization, unquoted model scalars, and the ignored model-resolution-error path. Config bytes use octal transfer; argv values are encoded; static manifest metadata and cloud-init are serialized; both templates JSON-quote the model scalar. Invalid model identifiers fail before dataset/credential/provider effects. No legacy generator remains.
+
+Prediction: hostile delimiters, substitutions and quotes round-trip as data without marker execution. Delegated execution observed RED (three boundary tests failed; a separate submission test failed) then GREEN. Independent rerun: `timeout 180s cargo test --offline --locked -p hkask-mcp-training --lib f3_ --jobs 2 -- --test-threads=1` — **6 passed, 0 failed, 23 filtered**. Tests run only local transfer/argument-recorder snippets, never installation/training/upload commands. The delegated `manifest` filter additionally passed 2 tests (one overlaps F3; not counted as distinct here).
+
+Residual: no deployed provider/cloud-init test; identifier validity does not establish repository existence; octal encoding increases payload size. Upload-argument regression uses the shared Axolotl path; config/manifest transport tests cover both providers and both harnesses. No external service was contacted.
+
+### P1d / F5 — preservation modes now refuse original-file deletion
+
+Changed files: `kask/mcp-servers/hkask-mcp-media/src/{tools/gallery.rs,types.rs,hkask_mcp_media.rs}` and `kask/docs/reference/mcp-servers/media.md`. Replaced unconditional unlink with destructive-mode admission. Kept index-only deletion in every mode. After unlink, a database error explicitly states that the source was deleted and requests reconciliation; it never implies rollback. Removed the old read-only setup from the filesystem-failure test so it still exercises an authorized unlink failure.
+
+Prediction: all six mode × delete-flag cases preserve the specified source/index/transcript state; a seventh injected database failure exposes partial effects. RED: `gallery_lifecycle_tests::gallery_deletion_mode_matrix` executed **1 test, 1 failed**, because read-only deletion returned success with `file_deleted:true`. An earlier malformed patch caused a compile error, was corrected immediately, and is not counted as behavioral RED. GREEN: `timeout 240s cargo test --offline --locked -p hkask-mcp-media --lib gallery_lifecycle_tests --jobs 2 -- --test-threads=1` — **10 passed, 0 failed, 274 filtered**. The matrix includes exact retained source bytes, index presence, transcript linkage/availability, successful deletion and injected post-unlink failure. Final strengthened unlink-failure assertions are subject to the final verification entry below.
+
+Final rerun after adding source-path and transcript-availability assertions to the unlink-failure case used the same lifecycle command: **10 passed, 0 failed, 274 filtered**, exit **0**, 28.10 seconds of test execution. Observed in `acbefb647b` after external commit; no test or implementation remains half-applied.
+
+Residual: filesystem unlink and SQLite deletion are not one atomic transaction. This slice surfaces partial failure, not crash rollback. Containment races (F4), cross-process policy changes, and authenticated policy-setting (P2) are not solved by this local admission check.
+
+### P4 / F8 — packaging equality and explicit CI coverage
+
+Changed files: `kask/scripts/build/mcp-servers.txt` and `.github/workflows/kask-invariants.yml`; observed externally committed as `429812b116`. Added spreadsheet to the installer list and wired the existing equality checker/self-test plus an explicit serial `--features test-fixture --test reconnect_integration` CI command. No duplicate inventory or replacement test framework was added.
+
+Prediction/observation: existing `bash kask/scripts/check-mcp-servers.sh` failed with exit **1**, naming the missing spreadsheet binary, then passed with **12 matching servers**. `bash kask/scripts/check-mcp-servers-selftest.sh` passed **both negative cases** (drift and empty sets). `bash kask/scripts/build/check-zed-isolation.sh` passed a complete **12-server fake temporary installation**, rollback and confinement checks; it emitted a pre-existing missing `crates/auto_update/src/auto_update.rs` grep warning. No real installation or MCP process occurred. Reconnect CI wiring is inspected, not an executed/green CI claim; separate fixture-process permission remains required.
+
+### Cross-slice checks and next experiment
+
+- `timeout 240s env CARGO_NET_OFFLINE=true HKASK_BUILD_JOBS=2 HKASK_SCCACHE_DIR=/nonexistent GITHUB_ACTIONS=true ./script/clippy --offline --locked -p hkask-mcp-media -p hkask-mcp-training` — **exit 0**, all targets/features with warnings denied. `GITHUB_ACTIONS=true` skips optional local machete/buf extras; those are not claimed as run. No tools installed.
+- `bash kask/scripts/check-hkask-no-zed-deps.sh` — passed. Scoped `check-mcp-tool-tests.sh` over media/training — **0 violations, 0 gaps** (heuristic, not behavioral coverage). `bash -n kask/scripts/build/install-common.sh` and staged/unstaged `git diff --check` passed.
+- Focused static review found no blocker in inspected F3/F5 paths; a missing unlink-failure availability assertion was added. No compatibility paths, new dependencies, upstream Rust changes or broad refactors were introduced. Full workspace build/tests, live MCP, reconnect fixtures and deployed providers were not run.
+- Learning: data/source separation closes shell substitution independently of identifier validation; file policy needs assertions over persisted relationships and partial effects, not just the error return. Next priority is the P1a authority decision, P1b bounded Stop/unknown-outcome behavior, then F4 destination-handle containment. P2–P3 remain substantive unfinished work, not compiler-only follow-ups.
 
 ## 10. Continuation prompt
 

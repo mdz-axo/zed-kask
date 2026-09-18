@@ -1,8 +1,8 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.40.0"
+last_updated: 2026-09-18
+version: "0.40.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]

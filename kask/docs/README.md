@@ -22,7 +22,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Status and purpose |
 | --- | --- |
-| [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Proposed, operator-retained review findings and execution plan; no backward-compatibility requirements. Includes evidence, validation history, acceptance criteria, and a continuation prompt. Saving the plan does not authorize implementation. |
+| [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Active, operator-authorized repair plan; no backward-compatibility requirements. §9 separates verified training/gallery/packaging slices from unfinished authority, cancellation, containment, attribution and recovery work. |
 
 ## Architecture
 
