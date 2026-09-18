@@ -9409,6 +9409,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hkask-bridge-ontology",
+ "proptest",
  "rusqlite",
  "schemars 1.0.4",
  "serde",

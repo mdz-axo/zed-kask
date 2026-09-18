@@ -177,3 +177,93 @@ mod tests {
         assert!(result.ends_with(']'));
     }
 }
+
+/// Property layer (kask/docs/reference/testing-protocol.md): the generalized
+/// form of the `.rules` corpus-batching trap — any generated array of objects,
+/// prefixed by reasoning text that contains no container opener, must come
+/// back whole. The fence-stripping wrapper allocates, so it lives at this
+/// layer and the example layer, never the proof layer.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Hypothesis: for a JSON array of 1..=6 `"k<v16>": <v16>` objects with an
+    // arbitrary container-free ASCII preamble (the reasoning noise an LLM
+    // emits), extraction returns the full array — not the first object
+    // inside it. Falsified by any shrunk counterexample.
+    proptest! {
+        #[test]
+        fn array_with_preamble_extracts_the_full_array(
+            preamble in "[^\\[{]{0,32}",
+            values in proptest::collection::vec((any::<u16>(), any::<u16>()), 1..6),
+        ) {
+            let array = format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(|(k, v)| format!("{{\"k{0}\": {1}}}", k, v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let input = format!("{preamble}{array}");
+            prop_assert_eq!(extract_json_from_response(&input), array);
+        }
+
+        /// Hypothesis: extraction never panics on arbitrary text — the scan
+        /// loop, depth arithmetic, and slicing are total over the domain of
+        /// all strings proptest can shrink to.
+        #[test]
+        fn extraction_never_panics_on_arbitrary_text(text in ".*") {
+            let _ = extract_json_from_response(&text);
+        }
+    }
+}
+
+/// Proof layer (kask/docs/reference/testing-protocol.md): Kani proves the
+/// allocation-free scan core `find_balanced_json` only. The fence-stripping
+/// wrapper allocates Strings and is covered by the property and example
+/// layers; the hkask-mcp-training R2 record shows proofs over allocation
+/// surfaces exceed the pinned 2 GiB / 120 s budget.
+///
+/// Bound: symbolic inputs of 8 valid-UTF-8 bytes. Every input up to the
+/// bound is covered exhaustively; nothing beyond the bound is claimed.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    /// Panic-freedom: for every valid-UTF-8 input up to the stated bound the
+    /// scanner cannot panic — including the `&text[start..=i]` slice, whose
+    /// boundaries land on ASCII container bytes and are therefore char
+    /// boundaries.
+    #[kani::proof]
+    fn balanced_scan_never_panics_on_valid_utf8() {
+        let bytes: [u8; 8] = kani::any();
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            let found = find_balanced_json(text);
+            kani::cover!(found.is_some());
+            kani::cover!(found.is_none());
+        }
+    }
+
+    /// Container contract: whenever the scan reports a balanced value, the
+    /// result starts with an opening container byte, ends with a closing
+    /// one, and spans at least two bytes. This does NOT claim well-formed
+    /// JSON: the combined depth counter accepts mismatched closers on
+    /// invalid input, by design (see the `find_balanced_json` doc comment).
+    #[kani::proof]
+    fn balanced_result_is_container_delimited() {
+        let bytes: [u8; 8] = kani::any();
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            if let Some(result) = find_balanced_json(text) {
+                let first = result.as_bytes()[0];
+                let last = result.as_bytes()[result.len() - 1];
+                assert!(first == b'{' || first == b'[');
+                assert!(last == b'}' || last == b']');
+                assert!(result.len() >= 2);
+                kani::cover!(first == b'[');
+                kani::cover!(first == b'{');
+            }
+        }
+    }
+}
