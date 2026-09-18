@@ -2132,3 +2132,20 @@ mod tests {
         );
     }
 }
+
+// Pins the registered tool-surface count end-to-end against the router the
+// `#[tool_router(server_handler)]` block generates. Adding or removing a
+// curator tool is an intentional surface change — this pin catches
+// accidental drift (a dropped `#[tool]` attribute, a registration change)
+// instead of shipping as an undocumented surface change. Mirrors
+// `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::CuratorServer;
+
+    #[test]
+    fn tool_surface_is_exactly_20_registered_tools() {
+        let n = CuratorServer::tool_router().list_all().len();
+        assert_eq!(n, 20, "curator registered tool surface changed; got {n}");
+    }
+}
