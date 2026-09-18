@@ -2549,23 +2549,7 @@ impl Window {
     /// which automatically respects [`App::reduce_motion`]. When using this
     /// method directly for decorative motion, check [`App::reduce_motion`]
     /// and skip the frame request when it is set.
-    #[track_caller]
     pub fn request_animation_frame(&self) {
-        static REQUEST_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-        let request_count = REQUEST_COUNT
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .saturating_add(1);
-        if request_count % 120 == 0 {
-            let caller = std::panic::Location::caller();
-            log::info!(
-                "[DIAG-CPU-RAF] requests={request_count} caller={}:{}:{}",
-                caller.file(),
-                caller.line(),
-                caller.column()
-            );
-        }
-
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }

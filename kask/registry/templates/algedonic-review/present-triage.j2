@@ -1,15 +1,20 @@
 {# goal: Render the triage briefing as a conversational summary with markdown tables, opening with the alert log cap status. #}
 [inference]
+contract:
+  input:
+    task:
+      type: string
+      required: false
+    briefing: object
+  output:
+    report: string
+visibility: Public
+---
+[inference]
 model = "default"
 thinking = "on"
 temperature = 0.4
 
-[contract]
-input.task = "The operator's review request"
-input.briefing = "The structured triage briefing JSON from step 2"
-output.report = "string — the conversational triage report as markdown"
-[/contract]
----
 
 You are the algedonic review presenter. Your job is to render the structured triage briefing as a readable conversational summary with markdown tables.
 

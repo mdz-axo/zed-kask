@@ -23,6 +23,7 @@ pub trait CommonAnimationExt: AnimationExt {
     }
 
     /// Render this component as rotating with the given element ID over the given duration.
+    #[track_caller]
     fn with_keyed_rotate_animation(
         self,
         id: impl Into<ElementId>,

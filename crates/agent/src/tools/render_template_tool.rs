@@ -424,6 +424,17 @@ fn bind_registry_loader(env: &mut minijinja::Environment<'_>, base: &std::path::
 mod tests {
     use super::*;
 
+    fn registry_template_base() -> std::path::PathBuf {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates");
+        assert!(
+            base.is_dir(),
+            "registry template directory does not exist: {}",
+            base.display()
+        );
+        base
+    }
+
     #[test]
     fn test_strip_frontmatter_removes_yaml_header() {
         let input = "---\ntemplate_type: KnowAct\ncontract:\n  input: {}\n---\nHello {{ name }}!";
@@ -564,13 +575,7 @@ mod tests {
             Ok(())
         }
 
-        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../kask/registry/templates");
-        assert!(
-            base.is_dir(),
-            "registry template directory does not exist: {}",
-            base.display()
-        );
+        let base = registry_template_base();
         let mut templates = Vec::new();
         if let Err(error) = collect_templates(&base, &mut templates) {
             panic!("{error}");
@@ -586,8 +591,13 @@ mod tests {
             let Some(header) = template_metadata_header(&content) else {
                 continue;
             };
-            if let Err(error) = serde_yaml::from_str::<serde_yaml::Value>(header) {
-                parse_errors.push(format!("{}: {error}", path.display()));
+            match serde_yaml::from_str::<serde_yaml::Value>(header) {
+                Ok(metadata) if !metadata.is_mapping() => parse_errors.push(format!(
+                    "{}: metadata header must be a YAML mapping",
+                    path.display()
+                )),
+                Ok(_) => {}
+                Err(error) => parse_errors.push(format!("{}: {error}", path.display())),
             }
         }
         assert!(
@@ -599,10 +609,7 @@ mod tests {
 
     #[test]
     fn test_include_traversal_is_blocked() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
+        let base = registry_template_base();
         let mut env = minijinja::Environment::new();
         bind_registry_loader(&mut env, &base);
         // A traversal name resolves to not-found → render error, never a
@@ -613,30 +620,21 @@ mod tests {
 
     #[test]
     fn test_resolve_template_path_rejects_traversal() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
+        let base = registry_template_base();
         let result = resolve_template_path(&base, "../../etc/passwd");
         assert!(result.is_none(), "path traversal must be rejected");
     }
 
     #[test]
     fn test_resolve_template_path_accepts_valid_ref() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
+        let base = registry_template_base();
         let result = resolve_template_path(&base, "essentialist/essentialist-flow.j2");
         assert!(result.is_some(), "valid template ref must resolve");
     }
 
     #[test]
     fn test_read_template_file_finds_j2() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return;
-        }
+        let base = registry_template_base();
         let result = read_template_file(&base, "essentialist/essentialist-flow");
         assert!(
             result.is_ok(),
@@ -651,10 +649,7 @@ mod tests {
     // must resolve via the .j2 retry, not error out as "escapes base path".
     #[test]
     fn test_read_template_file_finds_j2_with_extensionless_ref() {
-        let base = std::path::PathBuf::from("kask/registry/templates");
-        if !base.is_dir() {
-            return; // skip in CI without the source tree
-        }
+        let base = registry_template_base();
         // This is the exact ref that failed during the prompt-enhance run.
         let result = read_template_file(&base, "prompt-enhance/enhance-classify");
         assert!(

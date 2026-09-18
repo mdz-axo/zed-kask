@@ -1,22 +1,30 @@
 {# goal: Produce the structured resolve/dismiss call list from the operator's decisions. #}
 [inference]
+contract:
+  input:
+    resolve_ids:
+      type: string
+      required: false
+    dismiss_ids:
+      type: string
+      required: false
+    resolution_note:
+      type: string
+      required: false
+    briefing: object
+  output:
+    decisions_executed: boolean
+    resolved: array
+    dismissed: array
+    summary: string
+    tool_calls: array
+visibility: Public
+---
+[inference]
 model = "default"
 thinking = "on"
 temperature = 0.2
 
-[contract]
-input.task = "The operator's review request"
-input.resolve_ids = "Comma-separated escalation IDs to resolve"
-input.dismiss_ids = "Comma-separated escalation IDs to dismiss"
-input.resolution_note = "Resolution note for each resolved/dismissed escalation"
-input.briefing = "The structured triage briefing JSON from step 2"
-output.decisions_executed = "boolean — true if any resolve/dismiss calls were made"
-output.resolved = "array of {id, success, error}"
-output.dismissed = "array of {id, success, error}"
-output.summary = "string — one-line summary of what was executed"
-output.tool_calls = "array of MCP tool call instructions for the agent to execute"
-[/contract]
----
 
 You are the algedonic review decision executor. Your job is to produce a structured list of MCP tool calls for the operator's resolve/dismiss decisions.
 
