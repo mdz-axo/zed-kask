@@ -167,14 +167,16 @@ pub trait AlertEscalationSink: Send + Sync {
     }
 
     /// Persist an alert to the reviewable escalation queue, reporting the
-    /// durable-write outcome — the reporting variant of `persist_alert`.
+    /// durable-write outcome.
+    ///
+    /// `output` is the human-readable alert message; `error_context` is a
+    /// serialized JSON blob carrying the structured alert fields (domain,
+    /// deficit, threshold, severity) for later triage; `confidence` is 1.0
+    /// for Critical, 0.5 for Warning.
     ///
     /// Returns `Ok(Confirmed(id))` when the write is verified (id when the
     /// sink can report one), `Ok(Attempted)` for best-effort sinks that
-    /// cannot report, and `Err` when the write failed. The default falls
-    /// back to best-effort `persist_alert` and returns `Ok(Attempted)`, so
-    /// existing sinks keep their contract; sinks backed by a durable queue
-    /// should override to report the truth.
+    /// cannot report, and `Err` when the write failed.
     ///
     /// Errors are logged by the caller and never propagated — alert
     /// persistence is best-effort, never a correctness path.
@@ -183,21 +185,7 @@ pub trait AlertEscalationSink: Send + Sync {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<AlertQueueOutcome, AlertPersistError> {
-        self.persist_alert(output, confidence, error_context);
-        Ok(AlertQueueOutcome::Attempted)
-    }
-
-    /// Persist an alert to the reviewable escalation queue.
-    ///
-    /// `output` is the human-readable alert message; `error_context` is a
-    /// serialized JSON blob carrying the structured alert fields (domain,
-    /// deficit, threshold, severity) for later triage. `confidence` is 1.0
-    /// for Critical, 0.5 for Warning.
-    ///
-    /// Errors are logged by the caller and never propagated — alert
-    /// persistence is best-effort, never a correctness path.
-    fn persist_alert(&self, output: &str, confidence: f64, error_context: &str);
+    ) -> Result<AlertQueueOutcome, AlertPersistError>;
 
     /// Check whether a pending alert with the same condition as `output`
     /// already exists in the escalation queue.

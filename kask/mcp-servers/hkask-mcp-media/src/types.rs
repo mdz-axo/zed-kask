@@ -637,7 +637,8 @@ pub struct GalleryDeleteImageRequest {
     #[serde(default)]
     pub image_id: Option<String>,
     /// Whether to also delete the file on disk (default: false — only removes
-    /// the gallery index entry, leaving the file untouched).
+    /// the gallery index entry, leaving the file untouched). Requires destructive
+    /// gallery mode; read-only and copy-on-write modes preserve originals.
     #[serde(default)]
     pub delete_file: bool,
 }

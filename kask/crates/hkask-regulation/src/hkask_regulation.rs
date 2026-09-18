@@ -16,10 +16,10 @@ pub(crate) mod metacognition;
 pub(crate) mod regulation_policy;
 pub(crate) mod set_points;
 
+pub(crate) mod extrapolation;
 pub(crate) mod loops;
 pub(crate) mod sensor_provider;
 pub(crate) mod strategy_evaluator;
-pub(crate) mod system_simulator;
 
 pub(crate) mod runtime;
 pub use algedonic::{

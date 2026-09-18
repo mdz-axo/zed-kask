@@ -33,7 +33,7 @@ The crate root declares the current inventory at
 | `loops` | shared loop, signal, deviation, and action types | `kask/crates/hkask-regulation/src/loops.rs:9-18` |
 | `sensor_provider` | sensor trait, registry, and built-in sensors | `kask/crates/hkask-regulation/src/sensor_provider.rs:27-71` |
 | `strategy_evaluator` | evidence-based strategy scoring | `kask/crates/hkask-regulation/src/strategy_evaluator.rs:16-104` |
-| `system_simulator` | moving-average metric prediction | `kask/crates/hkask-regulation/src/system_simulator.rs:16-66` |
+| `extrapolation` | moving-average metric prediction | `kask/crates/hkask-regulation/src/extrapolation.rs:12-117` |
 | `runtime` | ledger, variety/outcome trackers, and event sink | `kask/crates/hkask-regulation/src/runtime.rs:52-124,140-302,380-609` |
 
 ## Public surface

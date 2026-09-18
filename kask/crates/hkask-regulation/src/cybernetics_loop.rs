@@ -105,10 +105,10 @@ pub trait RolloutEventSource: Send + Sync {
 use crate::energy::{CallCapManager, CallMeterOutcome};
 use crate::sensor_provider::{SensorBus, VarietySensor};
 
+use crate::extrapolation::MovingAverageExtrapolator;
 use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
 use crate::strategy_evaluator::StrategyEvaluator;
-use crate::system_simulator::MovingAverageExtrapolator;
 
 use crate::loops::{ActionDecision, CurationInput, LoopMetrics, TriggerOrigin};
 
@@ -227,8 +227,8 @@ pub struct CyberneticsLoop {
     /// Statistical learner for per-tool cost distributions and reliability.
     /// Multi-model strategy evaluator (Fermi improvement-loop pattern).
     strategy_evaluator: Mutex<StrategyEvaluator>,
-    /// Predictive simulator for anticipatory regulation (Fermi dynamics pattern).
-    simulator: MovingAverageExtrapolator,
+    /// Trend extrapolator for anticipatory regulation (moving-average projection).
+    extrapolator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
     /// Optional rollout event source (event-substrate phase 6). When wired,
@@ -329,7 +329,7 @@ impl CyberneticsLoop {
             observations: parking_lot::Mutex::new(HashMap::new()),
 
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
-            simulator: MovingAverageExtrapolator::new(10),
+            extrapolator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
             rollout_events: None,
             context_server_health_source: None,

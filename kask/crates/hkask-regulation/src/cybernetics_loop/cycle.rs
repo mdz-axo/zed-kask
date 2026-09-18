@@ -427,9 +427,9 @@ impl super::CyberneticsLoop {
             ));
         }
 
-        // Feed observed values into the predictive simulator.
+        // Feed observed values into the trend extrapolator.
         for signal in &signals {
-            self.simulator.observe(signal.metric, signal.value);
+            self.extrapolator.observe(signal.metric, signal.value);
         }
 
         signals
@@ -440,9 +440,11 @@ impl super::CyberneticsLoop {
 
         // Predictive regulation: check if any metric is approaching its set-point.
         for dev in deviations {
-            let pred =
-                self.simulator
-                    .predict(dev.signal.metric, dev.signal.value, dev.signal.set_point);
+            let pred = self.extrapolator.predict(
+                dev.signal.metric,
+                dev.signal.value,
+                dev.signal.set_point,
+            );
             if let Some(ticks) = pred.ticks_to_threshold
                 && ticks <= 3
                 && pred.reliable
@@ -1235,7 +1237,12 @@ mod tests {
     }
 
     impl crate::AlertEscalationSink for RecordingEscalationSink {
-        fn persist_alert(&self, output: &str, _confidence: f64, error_context: &str) {
+        fn try_persist_alert(
+            &self,
+            output: &str,
+            _confidence: f64,
+            error_context: &str,
+        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
             self.persisted
                 .lock()
                 .expect("persisted lock")
@@ -1244,6 +1251,7 @@ mod tests {
                 .lock()
                 .expect("contexts lock")
                 .push(error_context.to_string());
+            Ok(crate::AlertQueueOutcome::Attempted)
         }
         fn auto_resolve_cleared(&self, output: &str, _resolution_note: &str) {
             self.auto_resolved
@@ -1285,13 +1293,6 @@ mod tests {
             )))
         }
 
-        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
-            self.persisted
-                .lock()
-                .expect("persisted lock")
-                .push(output.to_string());
-        }
-
         fn has_pending_alert(&self, _output: &str) -> bool {
             !self.persisted.lock().expect("persisted lock").is_empty()
         }
@@ -1316,11 +1317,17 @@ mod tests {
     }
 
     impl crate::AlertEscalationSink for LatchingEscalationSink {
-        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+        fn try_persist_alert(
+            &self,
+            output: &str,
+            _confidence: f64,
+            _error_context: &str,
+        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
             self.persisted
                 .lock()
                 .expect("persisted lock")
                 .push(output.to_string());
+            Ok(crate::AlertQueueOutcome::Attempted)
         }
         fn has_pending_alert(&self, _output: &str) -> bool {
             *self.pending.lock().expect("pending lock")
@@ -2764,7 +2771,14 @@ mod tests {
                 })
             }
 
-            fn persist_alert(&self, _output: &str, _confidence: f64, _error_context: &str) {}
+            fn try_persist_alert(
+                &self,
+                _output: &str,
+                _confidence: f64,
+                _error_context: &str,
+            ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+                Ok(crate::AlertQueueOutcome::Attempted)
+            }
 
             fn has_pending_alert(&self, _output: &str) -> bool {
                 true
@@ -2983,7 +2997,14 @@ mod tests {
     async fn unchanged_signal_telemetry_does_not_displace_later_novel_events() {
         struct PendingConditionSink;
         impl crate::AlertEscalationSink for PendingConditionSink {
-            fn persist_alert(&self, _output: &str, _confidence: f64, _error_context: &str) {}
+            fn try_persist_alert(
+                &self,
+                _output: &str,
+                _confidence: f64,
+                _error_context: &str,
+            ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+                Ok(crate::AlertQueueOutcome::Attempted)
+            }
 
             fn has_pending_alert(&self, _output: &str) -> bool {
                 true

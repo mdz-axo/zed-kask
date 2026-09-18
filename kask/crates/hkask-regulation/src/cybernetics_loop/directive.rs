@@ -717,35 +717,37 @@ mod tests {
     }
 
     impl crate::AlertEscalationSink for ScriptedEscalationSink {
-        fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
-            self.received
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push((output.to_string(), confidence, error_context.to_string()));
-        }
-
         fn try_persist_alert(
             &self,
             output: &str,
             confidence: f64,
             error_context: &str,
         ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
-            self.persist_alert(output, confidence, error_context);
+            self.received
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((output.to_string(), confidence, error_context.to_string()));
             self.result.clone()
         }
     }
 
-    /// Escalation sink that only implements the best-effort `persist_alert`
-    /// (the trait default `try_persist_alert`) — attempted, unconfirmed.
+    /// Escalation sink that records what it received and reports the
+    /// best-effort `Attempted` outcome — handed off, not confirmed.
     struct BestEffortEscalationSink(Mutex<Vec<(String, f64, String)>>);
 
     impl crate::AlertEscalationSink for BestEffortEscalationSink {
-        fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
+        fn try_persist_alert(
+            &self,
+            output: &str,
+            confidence: f64,
+            error_context: &str,
+        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
             self.0.lock().unwrap_or_else(|e| e.into_inner()).push((
                 output.to_string(),
                 confidence,
                 error_context.to_string(),
             ));
+            Ok(crate::AlertQueueOutcome::Attempted)
         }
     }
 

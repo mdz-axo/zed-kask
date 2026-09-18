@@ -287,8 +287,8 @@ impl BridgeAlertEscalationSink {
 }
 
 impl BridgeAlertEscalationSink {
-    /// The reporting core both `persist_alert` and `try_persist_alert`
-    /// delegate to. Supersede at the source: a pending escalation for the
+    /// The reporting core `try_persist_alert` delegates to. Supersede at
+    /// the source: a pending escalation for the
     /// same condition is updated in place (latest output/context,
     /// retry_count+1) instead of appending a duplicate row per re-sensed
     /// cycle. The condition key strips the per-cycle value
@@ -385,12 +385,6 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
         receipt: &hkask_regulation::AdviceReviewReceipt,
     ) -> Result<bool, hkask_regulation::AlertPersistError> {
         self.acknowledge_advice_review_at(receipt, chrono::Utc::now())
-    }
-
-    fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
-        // Best-effort: the outcome is logged inside the reporting core and
-        // discarded here — the legacy contract.
-        let _ = self.persist_alert_reporting(output, confidence, error_context);
     }
 
     fn try_persist_alert(

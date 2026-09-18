@@ -1380,7 +1380,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Delete an Asset from the gallery index. Linked transcripts are preserved and explicitly detached. By default the source file remains usable by those transcripts; delete_file=true removes it before deleting the gallery identity. Supply exactly one of image_index or image_id."
+        description = "Delete an Asset from the gallery index. Linked transcripts are preserved and explicitly detached. By default the source file remains usable by those transcripts. delete_file=true requires destructive gallery mode and removes the source before deleting the gallery identity; a later index failure reports that the source was already deleted. Supply exactly one of image_index or image_id."
     )]
     pub async fn gallery_delete_image(
         &self,
@@ -1414,6 +1414,11 @@ impl MediaServer {
                 crate::transcript_store::count_linked_transcripts(driver, &image.id)
                     .map_err(crate::tools::educt::map_store_error)?;
             if delete_file {
+                if ga.mode != GalleryMode::Destructive.as_str() {
+                    return Err(McpToolError::permission_denied(
+                        "Deleting an original file requires destructive gallery mode; use delete_file=false to remove only the index entry",
+                    ));
+                }
                 let path = std::path::Path::new(&image.absolute_path);
                 std::fs::remove_file(path).map_err(|error| {
                     map_media_error(MediaError::AssetPersistence(format!(
@@ -1424,7 +1429,16 @@ impl MediaServer {
             }
             self.gallery_store
                 .delete_image(&image.id)
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(|error| {
+                    if delete_file {
+                        map_media_error(MediaError::AssetPersistence(format!(
+                            "source file was deleted, but gallery index deletion failed for {}: {error}; reconcile the index before retrying",
+                            image.id
+                        )))
+                    } else {
+                        map_media_error(error.into())
+                    }
+                })?;
             Ok(serde_json::json!({
                 "deleted": true,
                 "image_id": image.id,

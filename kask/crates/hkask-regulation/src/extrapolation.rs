@@ -1,13 +1,10 @@
-//! Predictive regulation via a moving-average digital twin.
+//! Trend extrapolation for anticipatory regulation.
 //!
-//! Fermi's `dynamics` crate runs ODE-based simulations of coupled systems.
-//! `MovingAverageExtrapolator` predicts future metric values so the regulation
-//! loop can act *before* deviation, not after.
-//!
-//! ## Future (Fermi-style ODE models)
-//!
-//! - Energy budget model: `dE/dt = -consumption_rate + replenishment_rate`
-//! - Queue depth model: `dQ/dt = arrival_rate - processing_rate`
+//! `MovingAverageExtrapolator` fits a linear trend to the last N
+//! observations of a sensed metric and projects it forward, so the
+//! regulation loop can act before a deviation crosses its set-point,
+//! not after. Simple moving-average only — no learning, no
+//! configuration, always available as a baseline.
 
 use crate::loops::SignalMetric;
 

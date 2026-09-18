@@ -5522,66 +5522,124 @@ mod gallery_lifecycle_tests {
     }
 
     /// dcterms:identifier: `MediaServer::gallery_delete_image`
-    /// expect: Removing an Asset from the gallery preserves my transcript and leaves its source usable when I keep the file.
-    /// [P1] Motivating: Catalog cleanup never silently destroys transcript-based editorial work.
+    /// expect: Gallery policy preserves originals unless destructive mode permits deletion; transcripts survive success, refusal, and partial failure.
+    /// [P1] Motivating: Catalog cleanup respects the user's preservation policy.
     #[tokio::test]
-    async fn index_only_asset_deletion_detaches_transcript_and_keeps_source() -> TestResult {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root");
-        std::fs::create_dir(&root)?;
-        let source = root.join("source.wav");
-        std::fs::write(&source, b"source audio")?;
-        let server = server(
-            &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
-        );
-        organize(&server, &root, true).await?;
-        let gallery = server.access_gallery()?;
-        let asset = server.gallery_store.add_media(
-            &gallery.gallery_id,
-            source.to_str().ok_or("UTF-8 source path")?,
-            "source-hash",
-            0,
-            0,
-            "wav",
-            12,
-            "audio",
-        )?;
-        let bundle = crate::transcript::TranscriptBundle::new(
-            source.to_string_lossy().into_owned(),
-            1.0,
-            "source".to_string(),
-        );
-        let transcript = crate::transcript_store::store_transcript(
-            &**server.gallery_store.driver(),
-            &bundle,
-            Some(&asset.id),
-        )?;
+    async fn gallery_deletion_mode_matrix() -> TestResult {
+        for (mode, delete_file, fail_index) in [
+            ("read-only", false, false),
+            ("read-only", true, false),
+            ("copy-on-write", false, false),
+            ("copy-on-write", true, false),
+            ("destructive", false, false),
+            ("destructive", true, false),
+            ("destructive", true, true),
+        ] {
+            let fixture = tempfile::tempdir()?;
+            let root = fixture.path().join("root");
+            std::fs::create_dir(&root)?;
+            let source = root.join("source.wav");
+            std::fs::write(&source, b"source audio")?;
+            let server = server(
+                &fixture.path().join("gallery.sqlite"),
+                Arc::new(BarrierVision::new()),
+            );
+            server
+                .gallery_organize(Parameters(GalleryOrganizeRequest {
+                    path: root.to_string_lossy().into_owned(),
+                    mode: mode.into(),
+                    recursive: true,
+                    auto_analyze: false,
+                }))
+                .await?;
+            let gallery = server.access_gallery()?;
+            let asset = server.gallery_store.add_media(
+                &gallery.gallery_id,
+                source.to_str().ok_or("UTF-8 source path")?,
+                "source-hash",
+                0,
+                0,
+                "wav",
+                12,
+                "audio",
+            )?;
+            let bundle = crate::transcript::TranscriptBundle::new(
+                source.to_string_lossy().into_owned(),
+                1.0,
+                "source".to_string(),
+            );
+            let transcript = crate::transcript_store::store_transcript(
+                &**server.gallery_store.driver(),
+                &bundle,
+                Some(&asset.id),
+            )?;
 
-        let result = server
-            .gallery_delete_image(Parameters(GalleryDeleteImageRequest {
-                image_index: None,
-                image_id: Some(asset.id.clone()),
-                delete_file: false,
-            }))
-            .await?;
+            if fail_index {
+                server.gallery_store.driver().execute_batch(
+                    "CREATE TRIGGER refuse_delete BEFORE DELETE ON gallery_images
+                 BEGIN SELECT RAISE(ABORT, 'injected index failure'); END;",
+                )?;
+            }
+            let result = server
+                .gallery_delete_image(Parameters(GalleryDeleteImageRequest {
+                    image_index: None,
+                    image_id: Some(asset.id.clone()),
+                    delete_file,
+                }))
+                .await;
 
-        assert!(result.contains("\"transcripts_detached\":1"), "{result}");
-        assert!(result.contains("\"file_deleted\":false"), "{result}");
-        assert!(source.is_file());
-        let (summary, _) = crate::transcript_store::load_transcript(
-            &**server.gallery_store.driver(),
-            &transcript.id,
-        )?
-        .ok_or("transcript preserved")?;
-        assert_eq!(
-            summary.source_link,
-            crate::transcript_store::TranscriptSourceLink::Detached
-        );
-        assert_eq!(
-            summary.source_availability,
-            crate::transcript_store::TranscriptSourceAvailability::Available
-        );
+            let denied = delete_file && mode != "destructive";
+            let index_preserved = denied || fail_index;
+            if denied {
+                let error = result.expect_err("preserving mode must refuse file deletion");
+                assert!(error.message.contains("destructive"), "{error}");
+            } else if fail_index {
+                let error = result.expect_err("injected index failure");
+                assert!(error.message.contains("source file was deleted"), "{error}");
+                assert!(error.message.contains("injected index failure"), "{error}");
+            } else {
+                let value: serde_json::Value = serde_json::from_str(&result?)?;
+                assert_eq!(value["content"]["transcripts_detached"], 1);
+                assert_eq!(value["content"]["file_deleted"], delete_file);
+            }
+            let source_preserved = denied || !delete_file;
+            assert_eq!(source.exists(), source_preserved, "{mode}, {delete_file}");
+            if source_preserved {
+                assert_eq!(std::fs::read(&source)?, b"source audio");
+            }
+            assert_eq!(
+                server
+                    .gallery_store
+                    .get_by_id(&gallery.gallery_id, &asset.id)
+                    .is_ok(),
+                index_preserved
+            );
+            let (summary, _) = crate::transcript_store::load_transcript(
+                &**server.gallery_store.driver(),
+                &transcript.id,
+            )?
+            .ok_or("transcript preserved")?;
+            assert_eq!(
+                summary.gallery_asset_id.as_deref(),
+                index_preserved.then_some(asset.id.as_str())
+            );
+            assert_eq!(
+                summary.source_link,
+                if index_preserved {
+                    crate::transcript_store::TranscriptSourceLink::Linked
+                } else {
+                    crate::transcript_store::TranscriptSourceLink::Detached
+                }
+            );
+            assert_eq!(
+                summary.source_availability,
+                if source_preserved {
+                    crate::transcript_store::TranscriptSourceAvailability::Available
+                } else {
+                    crate::transcript_store::TranscriptSourceAvailability::Missing
+                }
+            );
+        }
         Ok(())
     }
 
@@ -5599,7 +5657,14 @@ mod gallery_lifecycle_tests {
             &fixture.path().join("gallery.sqlite"),
             Arc::new(BarrierVision::new()),
         );
-        organize(&server, &root, true).await?;
+        server
+            .gallery_organize(Parameters(GalleryOrganizeRequest {
+                path: root.to_string_lossy().into_owned(),
+                mode: "destructive".into(),
+                recursive: true,
+                auto_analyze: false,
+            }))
+            .await?;
         let gallery = server.access_gallery()?;
         let asset = server.gallery_store.add_media(
             &gallery.gallery_id,
@@ -5636,6 +5701,10 @@ mod gallery_lifecycle_tests {
         assert!(error.message.contains("delete source file"), "{error}");
         assert!(error.message.contains("source.wav"), "{error}");
         assert!(
+            source.is_dir(),
+            "failed unlink must leave the source path intact"
+        );
+        assert!(
             server
                 .gallery_store
                 .get_by_id(&gallery.gallery_id, &asset.id)
@@ -5650,6 +5719,10 @@ mod gallery_lifecycle_tests {
         assert_eq!(
             summary.source_link,
             crate::transcript_store::TranscriptSourceLink::Linked
+        );
+        assert_eq!(
+            summary.source_availability,
+            crate::transcript_store::TranscriptSourceAvailability::Missing
         );
         Ok(())
     }
