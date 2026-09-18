@@ -140,29 +140,6 @@ pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
 // database (curator, corpus, kanban, swarm memory, training, research).
 // The swarm memory DB has no separate passphrase; it opens with this one.
 
-// ── Passphrase rotation ──────────────────────────────────────────────────────
-
-/// Error type for passphrase rotation at the bridge layer.
-///
-/// Wraps the storage-layer `RotationError` and adds context about which DB
-/// was being rotated and what the old passphrase resolution path was.
-#[derive(Debug, thiserror::Error)]
-pub enum BridgeRotationError {
-    /// The storage-layer rotation failed.
-    #[error("Rotation failed for {db_path}: {source}")]
-    Storage {
-        db_path: String,
-        #[source]
-        source: hkask_storage::RotationError,
-    },
-    /// The old passphrase could not be resolved from the keychain.
-    #[error("Could not resolve old passphrase for {db_path}: {error}")]
-    OldPassphraseResolve { db_path: String, error: String },
-    /// The DB path could not be resolved (e.g., no agent provisioned).
-    #[error("Could not resolve DB path: {0}")]
-    PathResolve(String),
-}
-
 /// Resolve the curator DB path.
 ///
 /// `HKASK_CURATOR_DB` if set, else `agents/curator/curator.db` under the
@@ -194,92 +171,6 @@ fn resolve_swarm_memory_db_path() -> String {
             .to_string_lossy()
             .to_string()
     }
-}
-
-/// Rotate the passphrase of EVERY SQLCipher database that uses the shared
-/// `HKASK_DB_PASSPHRASE` — curator, swarm memory, kata-kanban, research,
-/// and training. The security UI calls this; previously it rotated only
-/// `curator.db` while its docs claimed corpus/kanban/swarm coverage, which
-/// left every other DB unopenable after a rotation.
-///
-/// Only DBs whose files exist are rotated (a fresh install with no kanban
-/// DB simply skips it). Corpus DBs are NOT covered: the corpus server takes
-/// caller-supplied per-workflow DB paths, so there is no fixed path to
-/// rotate — a corpus DB created before a rotation must be re-created or
-/// manually re-encrypted.
-///
-/// # Failure safety
-///
-/// Sequential rotation with best-effort rollback: if DB N fails, the DBs
-/// already rotated (1..N) are rotated back to the old passphrase. If a
-/// rollback itself fails, the error names the DB left on the NEW passphrase
-/// — the operator must not write the new passphrase to the keychain until
-/// every DB is consistent. On `Ok(())` the caller writes the keychain and
-/// nudges MCP servers; on `Err` the old passphrase remains in effect.
-pub fn rotate_all_kask_db_passphrases(new_passphrase: &str) -> Result<(), BridgeRotationError> {
-    let old_passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
-        .map_err(|e| BridgeRotationError::OldPassphraseResolve {
-            db_path: "<all kask DBs>".to_string(),
-            error: e.to_string(),
-        })?
-        .to_string();
-
-    let db_paths = kask_db_paths();
-    let mut rotated: Vec<&str> = Vec::new();
-
-    for (name, db_path) in &db_paths {
-        if !std::path::Path::new(db_path).exists() {
-            tracing::info!(
-                target: "hkask.identity",
-                db = %name,
-                path = %db_path,
-                "Skipping passphrase rotation — DB file does not exist"
-            );
-            continue;
-        }
-        tracing::info!(
-            target: "hkask.identity",
-            db = %name,
-            path = %db_path,
-            "Rotating kask DB passphrase"
-        );
-        match hkask_storage::rotate_passphrase(db_path, &old_passphrase, new_passphrase) {
-            Ok(()) => rotated.push(name),
-            Err(e) => {
-                // Roll back the DBs already moved to the new passphrase so
-                // the system is consistent on the OLD passphrase again.
-                let mut rollback_failures = Vec::new();
-                for rb_name in &rotated {
-                    let rb_path = db_paths
-                        .iter()
-                        .find(|(n, _)| n == rb_name)
-                        .map(|(_, p)| p.clone())
-                        .unwrap_or_default();
-                    if let Err(rb_e) =
-                        hkask_storage::rotate_passphrase(&rb_path, new_passphrase, &old_passphrase)
-                    {
-                        rollback_failures.push(format!("{rb_name}: {rb_e}"));
-                    }
-                }
-                let mut error = format!("rotation of {name} failed: {e}");
-                if !rollback_failures.is_empty() {
-                    error.push_str(&format!(
-                        " — ROLLBACK ALSO FAILED for {} \
-                         (these DBs are on the NEW passphrase; do NOT save it \
-                         until they are manually re-encrypted): {}",
-                        rotated.join(", "),
-                        rollback_failures.join("; ")
-                    ));
-                }
-                return Err(BridgeRotationError::Storage {
-                    db_path: db_path.clone(),
-                    source: hkask_storage::RotationError::InvalidNewPassphrase(error),
-                });
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// The fixed-path SQLCipher databases that share `HKASK_DB_PASSPHRASE`,

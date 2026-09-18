@@ -34,6 +34,7 @@ mod identity;
 mod inference_chat;
 mod inference_edit_prediction;
 mod inference_resilience;
+mod passphrase_rotation;
 pub use delegation_grants::revoke_delegation_grant;
 mod inference_embedding;
 mod inference_ipc_server;
@@ -49,10 +50,7 @@ pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 pub use hkask_types::agent_paths::{resolve_artifacts_dir, resolve_data_dir};
 
-pub use identity::{
-    BridgeRotationError, ProvisionError, ProvisionedAgent, agent_name_from_username,
-    provision_agent, rotate_all_kask_db_passphrases,
-};
+pub use identity::{ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent};
 pub use inference_chat::{
     LanguageModelInferencePort, NoModelInferencePort, global_inference_port,
     set_global_inference_port,
@@ -81,6 +79,11 @@ pub use memory::{
     persist_operator_feedback,
 };
 pub use model_resolution::resolve_model_names;
+pub use passphrase_rotation::{
+    PassphraseRotationError, PendingRotationState, cancel_pending_db_rotation,
+    read_pending_rotation_state, run_pending_db_passphrase_rotation,
+    schedule_db_passphrase_rotation,
+};
 pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
     KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
