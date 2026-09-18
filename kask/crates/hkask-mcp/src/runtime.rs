@@ -52,6 +52,7 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::context::TokioContext;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -140,10 +141,9 @@ const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 /// foreground or background thread pool) panics with "there is no reactor
 /// running", crashing the whole editor. Observed live 2026-08-31: a
 /// scenarios-server transport loss took zed-kask down on thread 'main'.
-/// Two dispatch call sites were already individually wrapped for this
-/// (`KaskServerTool::run`, `PanelToolInvoker::invoke_tool`); the reconnect
-/// must not depend on the caller's executor at all, so `try_reconnect`
-/// hops onto this runtime when it finds no reactor.
+/// Reconnect startup runs on a runtime worker. Dispatch instead uses
+/// `TokioContext` so timers are constructed/polled in this context without
+/// spawning a detached request or blocking the caller's executor.
 ///
 /// Re-settable (`ProcessGlobal`), matching the other process-global hooks
 /// (`set_memory_port`, `set_tool_invoker`).
@@ -1618,12 +1618,9 @@ impl hkask_tool_port::ToolPort for McpRuntime {
 impl McpRuntime {
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
     ///
-    /// Heals a lost connection rather than reporting it: when the server has no
-    /// live peer, or the dispatch itself fails because the transport closed under
-    /// it, this reconnects once (bounded by the reconnect cooldown) and retries.
-    /// Exactly one retry — a second transport failure is reported, because a
-    /// server that dies immediately after a successful handshake is broken, not
-    /// transiently unavailable, and retrying would spin.
+    /// Reconnects before sending when no live peer exists, or retries once after
+    /// proven non-delivery. A transport failure after handoff is interrupted,
+    /// never replayed: the remote effect may already have occurred.
     async fn call_tool_inner(
         &self,
         server: &str,
@@ -1701,33 +1698,39 @@ impl McpRuntime {
         }
 
         let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
-        // zed-kask: D-seam — F2/P1b. `rmcp`'s default request options carry no
-        // timeout, so a connected-but-silent server could otherwise block this
-        // await (and therefore `Thread::cancel`, which waits for the in-flight
-        // tool task) indefinitely. A deadline firing here is exactly the same
-        // uncertain-delivery case as a transport failure: the request was
-        // already handed to a live peer, so it may or may not have applied —
-        // `Interrupted` carries that, never a proven failure.
-        let result =
-            match tokio::time::timeout(self.config.call_timeout, peer.call_tool(params)).await {
-                Err(_) => {
-                    return Err(DispatchError::Interrupted(format!(
-                        "server '{server}' did not reply to '{tool}' within {:?}",
-                        self.config.call_timeout
-                    )));
-                }
-                Ok(Ok(result)) => result,
-                // The peer was live when we handed off, so we cannot distinguish
-                // "the send was rejected" from "the server died after receiving it."
-                // Report the outcome as unknown rather than assuming either.
-                Ok(Err(
-                    error @ (rmcp::service::ServiceError::TransportClosed
-                    | rmcp::service::ServiceError::TransportSend(_)),
-                )) => {
-                    return Err(DispatchError::Interrupted(error.to_string()));
-                }
-                Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
-            };
+        let handle = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(configured_spawn_runtime)
+            .ok_or_else(|| {
+                DispatchError::Failed("MCP dispatch requires a live Tokio runtime".into())
+            })?;
+        // Tokio's supported cross-executor adapter enters only for each poll.
+        // Construct the timer inside it; holding an EnterGuard across await is
+        // not safe. Caller drop destroys this request future and deadline: no
+        // detached worker keeps waiting. Remote effects remain unknown.
+        let call = TokioContext::new(
+            async { tokio::time::timeout(self.config.call_timeout, peer.call_tool(params)).await },
+            handle,
+        );
+        let result = match call.await {
+            Err(_) => {
+                return Err(DispatchError::Interrupted(format!(
+                    "server '{server}' did not reply to '{tool}' within {:?}",
+                    self.config.call_timeout
+                )));
+            }
+            Ok(Ok(result)) => result,
+            // The peer was live when we handed off, so we cannot distinguish
+            // "the send was rejected" from "the server died after receiving it."
+            // Report the outcome as unknown rather than assuming either.
+            Ok(Err(
+                error @ (rmcp::service::ServiceError::TransportClosed
+                | rmcp::service::ServiceError::TransportSend(_)),
+            )) => {
+                return Err(DispatchError::Interrupted(error.to_string()));
+            }
+            Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
+        };
         let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
             // kask servers set `is_error` natively (rmcp's Result handling +
@@ -2221,7 +2224,7 @@ mod reconnect_path_tests {
 // end-to-end (auto-register, ceiling, charged) without a DB.
 //
 // They do NOT exercise a live MCP server — the dispatch path is exercised by
-// the not-yet-restored `tests/reconnect_integration.rs`. They assert on the
+// feature-gated `tests/reconnect_integration.rs`. They assert on the
 // metering decisions and the error classification, which are the parts `invoke`
 // owns before dispatch.
 #[cfg(test)]

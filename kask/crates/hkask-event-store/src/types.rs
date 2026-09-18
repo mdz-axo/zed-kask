@@ -34,15 +34,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// | Variant | Trusted for task success? | Rationale |
 /// |---|---|---|
-/// | `DeterministicEvaluator` | Yes | Deterministic check (contains/regex/exit_code/file_exists). The only automated source trusted for the C0 `s` axis. |
+/// | `DeterministicEvaluator` | Yes | Pure response check (contains/not_contains/regex). Trusted for the C0 `s` axis, not proof of evaluator independence or task utility. |
 /// | `Operator` | Yes | Human ground truth (the operator or Curator stamped it). |
 /// | `LlmJudged` | No | An LLM judged the response. ORIENT must downgrade to a hypothesis — the determinism constraint forbids an LLM judging `task_success`. |
 /// | `RegulationImpact` | No (for task success) | The cybernetics loop's `verify_impact` produced this — a before/after measurement, not a task-success check. Trusted for regulation, not for `s`. |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictSource {
-    /// A deterministic evaluator (contains/not_contains/regex/exit_code/
-    /// file_exists) run against the response. The only automated source
+    /// A deterministic evaluator (contains/not_contains/regex)
+    /// run against the response. The only automated source
     /// trusted for the C0 `s` axis of the swarm-state distance.
     DeterministicEvaluator,
     /// A human (the operator or Curator) stamped the verdict. Ground truth.

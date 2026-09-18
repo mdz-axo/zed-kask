@@ -12,6 +12,20 @@
 
 ## Release identity — 0.40.0 (operator decision, 2026-09-10)
 
+**D3/D8 foundation repair — 2026-09-18:** managed MCP dispatch wraps its
+caller-owned deadline/request future in `tokio_util::context::TokioContext`.
+Off-runtime polls use the configured host runtime without blocking the caller
+or detaching request work; timeout remains an interrupted/unknown outcome,
+never a replay authorization. Pins: `foreground_progresses_during_reconnect`,
+`reconnect_from_a_non_tokio_executor_does_not_panic`, and
+`off_runtime_deadline_and_drop_do_not_replay_effects` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/tests/reconnect_integration.rs`.
+The bridge now includes cache-read/cache-write token categories in prompt and
+total usage; unrepresentable totals are unknown rather than truncated.
+Pinned by `completion_usage_includes_cached_tokens` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/inference_chat.rs`.
+These changes stay under `kask/`; no new upstream seam is introduced.
+
 D7: the `zed-kask` application (`crates/zed/Cargo.toml`, package `zed`) now
 inherits `[workspace.package].version` alongside the Kask crates. The release
 is **0.40.0**, based on upstream Zed **1.21.0** at `595d62863e`; upstream

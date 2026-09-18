@@ -63,49 +63,44 @@ fn validate_model_params(
     Ok(Some(overlay))
 }
 
-/// Run a deterministic evaluator check against a response. Shared by
-/// `swarm_evaluate_local` and `swarm_execute_plan_local` so the evaluation
-/// logic lives once — a bad evaluator spec or regex errors propagate to the
-/// caller rather than silently stamping `pass: false` (which would produce a
-/// false fault attribution: the agent gets blamed for a bad evaluator).
-async fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
-    match evaluator {
-        "contains" => Ok(response.contains(spec)),
-        "not_contains" => Ok(!response.contains(spec)),
-        "regex" => {
-            let re = regex::Regex::new(spec)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid regex spec: {e}")))?;
-            Ok(re.is_match(response))
+/// Pure response checks. Parsing performs no effects and can run before inference.
+/// Deterministic scoring is not proof of evaluator independence or task utility.
+enum ResponseEvaluator<'a> {
+    Contains(&'a str),
+    NotContains(&'a str),
+    Regex(regex::Regex),
+}
+
+impl<'a> ResponseEvaluator<'a> {
+    fn parse(kind: &str, spec: &'a str) -> Result<Self, McpToolError> {
+        if spec.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "evaluator spec must be non-empty",
+            ));
         }
-        // External ground-truth evaluators (Goodhart mitigation per the
-        // LLM-vs-LLM rule). The string-match evaluators above are the
-        // scoring function of a training loop — adapters can learn to game
-        // them by emitting the expected substring without solving the
-        // task. `exit_code` and `file_exists` check real-world effects,
-        // not response text, so gaming requires actually doing the work.
-        //
-        // The spec is trusted (operator-provided in the task definition),
-        // so running commands is acceptable in this context.
-        "exit_code" => {
-            let output = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(spec)
-                .env("RESPONSE", response)
-                .output()
-                .await
-                .map_err(|e| {
-                    McpToolError::internal(format!(
-                        "exit_code evaluator failed to run command: {e}"
-                    ))
-                })?;
-            Ok(output.status.success())
+        match kind {
+            "contains" => Ok(Self::Contains(spec)),
+            "not_contains" => Ok(Self::NotContains(spec)),
+            "regex" => regex::Regex::new(spec).map(Self::Regex).map_err(|error| {
+                McpToolError::invalid_argument(format!("invalid regex spec: {error}"))
+            }),
+            other => Err(McpToolError::invalid_argument(format!(
+                "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
+            ))),
         }
-        "file_exists" => Ok(std::path::Path::new(spec).exists()),
-        other => Err(McpToolError::invalid_argument(format!(
-            "evaluator must be 'contains', 'not_contains', 'regex', \
-             'exit_code', or 'file_exists'; got '{other}'"
-        ))),
     }
+
+    fn evaluate(&self, response: &str) -> bool {
+        match self {
+            Self::Contains(spec) => response.contains(spec),
+            Self::NotContains(spec) => !response.contains(spec),
+            Self::Regex(regex) => regex.is_match(response),
+        }
+    }
+}
+
+fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
+    Ok(ResponseEvaluator::parse(evaluator, spec)?.evaluate(response))
 }
 
 /// The event kind for one observed delegation edge — the fact that one
@@ -280,7 +275,6 @@ impl SwarmServer {
                     "agent_name and task must be non-empty".to_string(),
                 ));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
             // Look up the agent in the local registry.
             let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
                 McpToolError::not_found(format!(
@@ -288,6 +282,10 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
+            let evaluators = agent.capabilities.evaluators.iter()
+                .map(|declared| ResponseEvaluator::parse(&declared.evaluator, &declared.spec))
+                .collect::<Result<Vec<_>, _>>()?;
+            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
             // Rung 4 (Binding): check the request against the agent's declared
             // `accepts` labels. `None` = no accepts declared or non-text label
             // (absence ≠ contradiction, paper Rule 5.3). `Some(true)` = the
@@ -309,13 +307,8 @@ impl SwarmServer {
             if !agent.capabilities.evaluators.is_empty() {
                 let mut all_passed = true;
                 let mut detail_parts = Vec::new();
-                for declared in &agent.capabilities.evaluators {
-                    let passed = run_evaluator(
-                        &result.response,
-                        &declared.evaluator,
-                        &declared.spec,
-                    )
-                    .await?;
+                for (declared, evaluator) in agent.capabilities.evaluators.iter().zip(&evaluators) {
+                    let passed = evaluator.evaluate(&result.response);
                     detail_parts.push(format!(
                         "evaluator={}, spec_len={}, pass={}",
                         declared.evaluator,
@@ -2601,7 +2594,7 @@ impl SwarmServer {
     /// is downgraded by ORIENT (Gap S3). No ABW calls —
     /// evaluation is free.
     #[tool(
-        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex / exit_code / file_exists) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls — evaluation is free."
+        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls — evaluation is free."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,
@@ -2609,12 +2602,8 @@ impl SwarmServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_evaluate_local", async {
             let req = parameters.0;
-            if req.response.trim().is_empty() || req.spec.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "response and spec must be non-empty".to_string(),
-                ));
-            }
-            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec).await?;
+            // Empty output is a measurable response, not an evaluator failure.
+            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
             let detail = format!(
                 "evaluator={}, spec_len={}, pass={}",
                 req.evaluator,
@@ -2660,6 +2649,11 @@ impl SwarmServer {
                     "plan cap is {MAX_FANOUT} delegations, got {}",
                     req.delegations.len()
                 )));
+            }
+            for entry in &req.delegations {
+                if let Some(evaluator) = &entry.evaluator {
+                    ResponseEvaluator::parse(&evaluator.evaluator, &evaluator.spec)?;
+                }
             }
             let runtime = self
                 .local_runtime
@@ -2715,7 +2709,7 @@ impl SwarmServer {
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.
                         if let Some(ev) = &entry.evaluator {
-                            let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
+                            let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
                             r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
                                 pass,
                                 score: None,
@@ -2888,6 +2882,13 @@ impl SwarmServer {
                     req.cases.len()
                 )));
             }
+            for case in &req.cases {
+                for entry in &case.delegations {
+                    if let Some(evaluator) = &entry.evaluator {
+                        ResponseEvaluator::parse(&evaluator.evaluator, &evaluator.spec)?;
+                    }
+                }
+            }
             let runtime = self
                 .local_runtime
                 .get_or_init()
@@ -2940,8 +2941,7 @@ impl SwarmServer {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             case_tokens += r.tokens_used;
                             if let Some(ev) = &entry.evaluator {
-                                let pass =
-                                    run_evaluator(&r.response, &ev.evaluator, &ev.spec).await?;
+                                let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
                                 r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
                                     pass,
                                     score: None,
@@ -3104,7 +3104,7 @@ impl SwarmServer {
     /// rollout for that task — the harness measures end-to-end pass rate,
     /// which includes crashes, not just wrong answers.
     #[tool(
-        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex/exit_code/file_exists), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, old model_request bodies are stripped and very old rollouts are compacted (bodies_stripped/rollouts_compacted in the report)."
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, old model_request bodies are stripped and very old rollouts are compacted (bodies_stripped/rollouts_compacted in the report)."
     )]
     pub(crate) async fn swarm_eval_agent_local(
         &self,
@@ -3143,13 +3143,14 @@ impl SwarmServer {
                 // Validate every evaluator spec upfront: a bad regex must fail
                 // the whole call before any tokens are spent, not halfway
                 // through the run.
+                let mut evaluators = Vec::with_capacity(req.tasks.len());
                 for (index, task) in req.tasks.iter().enumerate() {
                     if task.task.trim().is_empty() {
                         return Err(McpToolError::invalid_argument(format!(
                             "tasks[{index}].task must be non-empty"
                         )));
                     }
-                    run_evaluator("", &task.evaluator.evaluator, &task.evaluator.spec).await?;
+                    evaluators.push(ResponseEvaluator::parse(&task.evaluator.evaluator, &task.evaluator.spec)?);
                 }
                 let runtime = self
                     .local_runtime
@@ -3193,7 +3194,7 @@ impl SwarmServer {
                 let mut task_reports = Vec::with_capacity(req.tasks.len());
                 let mut total_passes = 0usize;
                 let mut total_tokens = 0i64;
-                for (task_index, task) in req.tasks.iter().enumerate() {
+                for (task_index, (task, evaluator)) in req.tasks.iter().zip(&evaluators).enumerate() {
                     let mut passes = 0usize;
                     let mut errors = 0usize;
                     let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
@@ -3202,14 +3203,8 @@ impl SwarmServer {
                             Ok(result) => {
                                 total_tokens += result.tokens_used;
                                 latencies_ms.push(result.latency_ms);
-                                // The evaluator is deterministic, so a pass
-                                // here is a real verdict, not a sample.
-                                let passed = run_evaluator(
-                                    &result.response,
-                                    &task.evaluator.evaluator,
-                                    &task.evaluator.spec,
-                                )
-                                .await?;
+                                // A repeatable response score, not independent ground truth.
+                                let passed = evaluator.evaluate(&result.response);
                                 if passed {
                                     passes += 1;
                                 }
@@ -3534,28 +3529,20 @@ mod tests {
         assert!(report["mean_latency_ms"].is_null());
     }
 
-    #[tokio::test]
-    async fn run_evaluator_rejects_unknown_kind() {
-        let err = run_evaluator("resp", "jsonpath", "$.x").await.unwrap_err();
+    #[test]
+    fn run_evaluator_rejects_unknown_kind() {
+        let err = run_evaluator("resp", "jsonpath", "$.x").unwrap_err();
         assert!(err.to_string().contains("jsonpath"));
     }
 
-    #[tokio::test]
-    async fn run_evaluator_contains_and_regex() {
-        assert!(
-            run_evaluator("hello world", "contains", "world")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !run_evaluator("hello world", "not_contains", "world")
-                .await
-                .unwrap()
-        );
-        assert!(run_evaluator("a1b2", "regex", "[0-9]").await.unwrap());
+    #[test]
+    fn run_evaluator_contains_and_regex() {
+        assert!(run_evaluator("hello world", "contains", "world").unwrap());
+        assert!(!run_evaluator("hello world", "not_contains", "world").unwrap());
+        assert!(run_evaluator("a1b2", "regex", "[0-9]").unwrap());
         // Invalid regex must error, not stamp pass:false (false fault
         // attribution — the agent would be blamed for a bad evaluator).
-        assert!(run_evaluator("x", "regex", "(").await.is_err());
+        assert!(run_evaluator("x", "regex", "(").is_err());
     }
 
     #[test]
@@ -3582,94 +3569,15 @@ mod tests {
         assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
     }
 
-    #[tokio::test]
-    async fn run_evaluator_exit_code_passes_on_zero_exit() {
-        // `true` always exits 0 — the evaluator must report pass.
-        assert!(
-            run_evaluator("anything", "exit_code", "true")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_exit_code_fails_on_nonzero_exit() {
-        // `false` always exits 1 — the evaluator must report fail, not error.
-        assert!(
-            !run_evaluator("anything", "exit_code", "false")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_exit_code_receives_response_env() {
-        // The command can access $RESPONSE — this is how external ground-truth
-        // checks validate the agent's actual output rather than gaming it.
-        assert!(
-            run_evaluator("hello", "exit_code", "test \"$RESPONSE\" = hello")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !run_evaluator("wrong", "exit_code", "test \"$RESPONSE\" = hello")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_exit_code_fails_for_nonexistent_command() {
-        // A nonexistent command makes sh exit 127 — a non-zero exit. The
-        // evaluator must report Ok(false) (task did not pass), not Err
-        // (sh ran fine; the command it was told to run didn't exist). Err
-        // is reserved for when sh itself cannot be spawned (system failure).
-        assert!(
-            !run_evaluator("x", "exit_code", "/nonexistent/binary_xyz")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_file_exists_checks_real_filesystem() {
-        // A real file that exists in the test environment.
-        let path = std::env::temp_dir().join("hkask_eval_test_file_exists");
-        std::fs::write(&path, "test").unwrap();
-        assert!(
-            run_evaluator("x", "file_exists", path.to_str().unwrap())
-                .await
-                .unwrap()
-        );
-        std::fs::remove_file(&path).unwrap();
-        // After deletion, the file no longer exists.
-        assert!(
-            !run_evaluator("x", "file_exists", path.to_str().unwrap())
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_file_exists_fails_for_missing_file() {
-        assert!(
-            !run_evaluator("x", "file_exists", "/nonexistent/path_xyz_123")
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
+    #[test]
+    fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
         // The error message must name all valid evaluator kinds so the
         // operator knows what's available without reading the source.
-        let err = run_evaluator("resp", "bogus", "x").await.unwrap_err();
+        let err = run_evaluator("resp", "bogus", "x").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("contains"));
         assert!(msg.contains("not_contains"));
         assert!(msg.contains("regex"));
-        assert!(msg.contains("exit_code"));
-        assert!(msg.contains("file_exists"));
     }
 
     // ── Discriminative power probe (event-substrate item 4) ───────────
@@ -3818,15 +3726,11 @@ mod tests {
 
         // The good agent passes; the bad agent fails.
         assert!(
-            run_evaluator(&good_result.response, "contains", "42")
-                .await
-                .unwrap(),
+            run_evaluator(&good_result.response, "contains", "42").unwrap(),
             "good agent should produce the correct answer"
         );
         assert!(
-            !run_evaluator(&bad_result.response, "contains", "42")
-                .await
-                .unwrap(),
+            !run_evaluator(&bad_result.response, "contains", "42").unwrap(),
             "bad agent should NOT produce the correct answer"
         );
 
@@ -3834,26 +3738,6 @@ mod tests {
         assert!(
             call_count.load(Ordering::Relaxed) >= 2,
             "both agents must have called inference"
-        );
-    }
-
-    #[tokio::test]
-    async fn harness_exit_code_evaluator_distinguishes_correct_from_wrong_output() {
-        // The exit_code evaluator is external ground truth: it runs a command
-        // that checks the response, not the response text itself. This is the
-        // Goodhart-resistant evaluator — an adapter that learns to emit 42
-        // without solving the task cannot game an exit_code check that
-        // validates the answer against a real computation.
-        // Use grep instead of test to avoid shell quoting issues in the spec.
-        assert!(
-            run_evaluator("42", "exit_code", "echo $RESPONSE | grep -qx 42")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !run_evaluator("wrong", "exit_code", "echo $RESPONSE | grep -qx 42")
-                .await
-                .unwrap()
         );
     }
 

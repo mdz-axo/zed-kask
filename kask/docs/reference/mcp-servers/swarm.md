@@ -1,14 +1,35 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.38.0"
+last_updated: 2026-09-18
+version: "0.39.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
 ---
 
 # Swarm MCP Server Reference
+
+### Local evaluation boundary
+
+Local evaluation supports **contains, not_contains, regex** only. Shell execution
+and ambient file-existence checks have been removed, with no compatibility
+fallback. These are deterministic response scores, not proof of independent
+ground truth or useful improvement. Empty responses are scored; empty specs
+and malformed regexes are errors. The rollout harness parses evaluators once
+before inference and reuses them across repeats. Plans/suites validate supplied
+specs before any delegation; direct delegation validates card evaluators first.
+
+Implementation: `ResponseEvaluator` and `swarm_eval_agent_local` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`.
+Public contract tests `evaluator_admission_rejects_effectful_specs_before_agent_lookup`,
+`evaluator_specs_are_validated_before_every_batch`, and
+`response_evaluator_held_out_admission_matrix` live in
+`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
+This follows parse-before-execute separation; Rust's bounded regex engine is
+the existing implementation, not a shell-based oracle.[^response-regex]
+
+[^response-regex]: Rust regex contributors. *regex crate: performance and untrusted input*. https://docs.rs/regex/latest/regex/#untrusted-input. Parsing is effect-free; semantic validity and held-out acceptance remain operator responsibilities.
 
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
 **Tools:** 87 — 48 ABW cloud + 39 local-side, **both sets always exposed in either mode**.

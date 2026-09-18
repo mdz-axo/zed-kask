@@ -571,6 +571,99 @@ mod smoke_tests {
     }
     // ── Local-substrate contract tests (evaluator, credentials) ────────────
 
+    /// expect: "Evaluator specifications never execute shell or inspect ambient files" [P4]
+    #[tokio::test]
+    async fn evaluator_admission_rejects_effectful_specs_before_agent_lookup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::request_types::{EvalAgentLocalRequest, EvaluateLocalRequest};
+        let server = make_server();
+        let directory = tempfile::tempdir()?;
+        let marker = directory.path().join("must-not-exist");
+        let command = format!("touch '{}'", marker.display());
+        for kind in ["exit_code", "file_exists"] {
+            let result = server
+                .swarm_evaluate_local(Parameters(EvaluateLocalRequest {
+                    response: "anything".into(),
+                    evaluator: kind.into(),
+                    spec: command.clone(),
+                }))
+                .await;
+            assert!(
+                !marker.exists(),
+                "evaluator must never execute caller commands"
+            );
+            assert!(result.is_err(), "{kind} must be unsupported");
+            let request: EvalAgentLocalRequest = serde_json::from_value(serde_json::json!({
+                "agent_name": "missing-agent",
+                "tasks": [{"task":"test", "evaluator":{"evaluator":kind,"spec":command}}],
+                "repeats":1
+            }))?;
+            let result = server.swarm_eval_agent_local(Parameters(request)).await;
+            assert!(!marker.exists());
+            let error = result.expect_err("invalid evaluator must precede runtime/agent work");
+            assert!(error.to_string().contains("evaluator"), "{error}");
+        }
+        Ok(())
+    }
+
+    /// expect: "Bad evaluator specifications fail before plan/suite/harness inference begins" [P4]
+    #[tokio::test]
+    async fn evaluator_specs_are_validated_before_every_batch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = make_server();
+        let entry = serde_json::json!({"agent_name":"missing", "task":"test",
+            "evaluator":{"evaluator":"regex","spec":"("}});
+        let plan = server
+            .swarm_execute_plan_local(Parameters(serde_json::from_value(
+                serde_json::json!({"delegations":[entry.clone()]}),
+            )?))
+            .await
+            .expect_err("bad plan evaluator");
+        assert!(plan.to_string().contains("invalid regex"), "{plan}");
+        let suite = server
+            .swarm_eval_suite_local(Parameters(serde_json::from_value(
+                serde_json::json!({"cases":[{"name":"bad", "delegations":[entry]}]}),
+            )?))
+            .await
+            .expect_err("bad suite evaluator");
+        assert!(suite.to_string().contains("invalid regex"), "{suite}");
+        Ok(())
+    }
+
+    /// expect: "Held-out response scoring separates correct, wrong, and empty answers without effects" [P8]
+    #[tokio::test]
+    async fn response_evaluator_held_out_admission_matrix() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::request_types::EvaluateLocalRequest;
+        let server = make_server();
+        for (response, expected) in [
+            ("42", true),
+            (" 42 ", true),
+            ("42 is my guess", false),
+            ("wrong", false),
+            ("", false),
+        ] {
+            let result = server
+                .swarm_evaluate_local(Parameters(EvaluateLocalRequest {
+                    response: response.into(),
+                    evaluator: "regex".into(),
+                    spec: "^\\s*42\\s*$".into(),
+                }))
+                .await?;
+            assert_eq!(unwrap_content(&result)["pass"], expected);
+        }
+        let error = server
+            .swarm_evaluate_local(Parameters(EvaluateLocalRequest {
+                response: "42".into(),
+                evaluator: "contains".into(),
+                spec: "".into(),
+            }))
+            .await
+            .expect_err("empty substring must not manufacture a pass");
+        assert!(error.to_string().contains("non-empty"));
+        Ok(())
+    }
+
     /// Extract the `{"content": …}` success envelope from a tool output.
     fn unwrap_content(output: &str) -> Value {
         let parsed: Value = serde_json::from_str(output).expect("tool output must be valid JSON");

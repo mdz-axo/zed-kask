@@ -261,15 +261,13 @@ pub struct LocalAgentCapabilities {
 }
 
 /// A deterministic evaluator declared on an agent card. Same three kinds
-/// as `run_evaluator` (contains / not_contains / regex / exit_code / file_exists) — the card-declared
+/// as `run_evaluator` (contains / not_contains / regex) — the card-declared
 /// contract reuses the single evaluation implementation.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct DeclaredEvaluator {
-    /// The evaluator type: "contains", "not_contains", "regex", "exit_code",
-    /// or "file_exists".
+    /// The evaluator type: "contains", "not_contains", or "regex".
     pub evaluator: String,
-    /// The spec: substring (contains/not_contains), regex pattern, shell
-    /// command (exit_code), or file path (file_exists).
+    /// The spec: substring (contains/not_contains) or regex pattern.
     pub spec: String,
 }
 

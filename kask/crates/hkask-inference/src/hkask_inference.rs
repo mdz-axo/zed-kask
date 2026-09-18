@@ -528,15 +528,18 @@ struct ChatResponse {
 }
 
 /// Build [`hkask_types::InferenceUsage`] from the optional wire `usage`
-/// object. Absence is modeled per P8 (F10): a provider that omits `usage`
-/// yields `reported: false` with zeroed counts — "unreported", never a
-/// fabricated zero measurement.
+/// object. A total is reported only when supplied explicitly or derived from
+/// both components without overflow. Empty/partial reports are not measured zero.
 fn usage_from_wire(usage: Option<&ChatUsage>) -> hkask_types::InferenceUsage {
+    let total = usage.and_then(|u| {
+        u.total_tokens
+            .or_else(|| u.prompt_tokens?.checked_add(u.completion_tokens?))
+    });
     hkask_types::InferenceUsage {
         prompt_tokens: usage.and_then(|u| u.prompt_tokens).unwrap_or(0),
         completion_tokens: usage.and_then(|u| u.completion_tokens).unwrap_or(0),
-        total_tokens: usage.and_then(|u| u.total_tokens).unwrap_or(0),
-        reported: usage.is_some(),
+        total_tokens: total.unwrap_or(0),
+        reported: total.is_some(),
     }
 }
 
@@ -1216,5 +1219,29 @@ mod tests {
         assert_eq!(usage.total_tokens, 8);
         assert_eq!(usage.prompt_tokens, 3);
         assert_eq!(usage.completion_tokens, 5);
+    }
+
+    /// expect: "Partial wire usage is unknown unless a total or complete component sum exists" [P8]
+    #[test]
+    fn partial_usage_never_claims_measured_zero() {
+        for (wire, reported, total) in [
+            ("{}", false, 0),
+            (r#"{"prompt_tokens":3}"#, false, 0),
+            (r#"{"prompt_tokens":3,"completion_tokens":5}"#, true, 8),
+            (r#"{"total_tokens":0}"#, true, 0),
+            (
+                r#"{"prompt_tokens":4294967295,"completion_tokens":1}"#,
+                false,
+                0,
+            ),
+        ] {
+            let usage: ChatUsage = serde_json::from_str(wire).expect("usage fixture");
+            let result = usage_from_wire(Some(&usage));
+            assert_eq!(
+                (result.reported, result.total_tokens),
+                (reported, total),
+                "{wire}"
+            );
+        }
     }
 }

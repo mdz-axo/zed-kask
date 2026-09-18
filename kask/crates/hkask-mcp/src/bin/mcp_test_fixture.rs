@@ -22,6 +22,9 @@
 //!   Nth `tools/call`, simulating a server that dies mid-call.
 //! - `FIXTURE_MARKER` — echoed back in the `ping` result, so a test can tell a
 //!   reconnected (freshly-spawned) process from the original one.
+//! - `FIXTURE_CALLS_FILE` — record each accepted call count (observable effect).
+//! - `FIXTURE_WITHHOLD_FIRST_REPLY` — accept the first call without replying;
+//!   keep reading requests so later explicit calls can demonstrate no replay.
 //!
 //! Not a product surface: this is a dev-dependency-grade test fixture that
 //! happens to need its own binary because a child process is the thing under
@@ -96,6 +99,12 @@ fn main() {
             }),
             "tools/call" => {
                 call_count += 1;
+                if let Ok(path) = std::env::var("FIXTURE_CALLS_FILE") {
+                    std::fs::write(path, call_count.to_string()).expect("write call count");
+                }
+                if call_count == 1 && std::env::var_os("FIXTURE_WITHHOLD_FIRST_REPLY").is_some() {
+                    continue;
+                }
                 if exit_after_calls.is_some_and(|limit| call_count >= limit) {
                     // Die without responding: the client has already handed off a
                     // request, so this is the `Interrupted` (outcome-unknown)

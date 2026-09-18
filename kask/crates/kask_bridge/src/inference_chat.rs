@@ -332,14 +332,19 @@ impl StreamAccumulator {
                 );
             }
             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                let prompt = token_usage
+                    .input_tokens
+                    .checked_add(token_usage.cache_creation_input_tokens)
+                    .and_then(|n| n.checked_add(token_usage.cache_read_input_tokens));
+                let total = prompt
+                    .and_then(|n| n.checked_add(token_usage.output_tokens))
+                    .and_then(|n| u32::try_from(n).ok());
                 self.usage = InferenceUsage {
-                    prompt_tokens: token_usage.input_tokens as u32,
-                    completion_tokens: token_usage.output_tokens as u32,
-                    total_tokens: (token_usage.input_tokens + token_usage.output_tokens) as u32,
-                    // A UsageUpdate event IS the provider's usage report;
-                    // a stream that ends without one leaves the accumulator's
-                    // default (reported=false) — unreported, not zero.
-                    reported: true,
+                    prompt_tokens: prompt.and_then(|n| u32::try_from(n).ok()).unwrap_or(0),
+                    completion_tokens: u32::try_from(token_usage.output_tokens).unwrap_or(0),
+                    total_tokens: total.unwrap_or(0),
+                    // Unrepresentable totals are unknown, never wrapped or truncated.
+                    reported: total.is_some(),
                 };
                 self.cost_usd = token_usage.cost;
             }
@@ -1201,6 +1206,30 @@ mod tests {
             transient_failure_threshold: 3,
             open_duration: Duration::from_secs(30),
         }
+    }
+
+    /// expect: "Inference reports include cached prompt categories and preserve provider cost" [P8]
+    #[test]
+    fn completion_usage_includes_cached_tokens() {
+        let mut accumulator = super::StreamAccumulator::new("fixture".into());
+        accumulator
+            .process_event(Ok(
+                language_model_core::LanguageModelCompletionEvent::UsageUpdate(
+                    language_model_core::TokenUsage {
+                        input_tokens: 4,
+                        output_tokens: 7,
+                        cache_creation_input_tokens: 3,
+                        cache_read_input_tokens: 5,
+                        cost: Some(0.01),
+                    },
+                ),
+            ))
+            .expect("usage event");
+        let result = accumulator.into_result();
+        assert_eq!(result.usage.prompt_tokens, 12);
+        assert_eq!(result.usage.total_tokens, 19);
+        assert!(result.usage.reported);
+        assert_eq!(result.cost_usd, Some(0.01));
     }
 
     #[test]

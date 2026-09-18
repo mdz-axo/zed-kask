@@ -25,7 +25,9 @@ and no adapter ships without beating its baseline.
 - The problem is a prompt, skill-body, or tool-schema issue — fix that
   first (cheaper, faster, no GPU).
 - No deterministic evaluator exists for the tasks — the loop requires
-  contains/regex/exit_code/file_exists-style checks to stamp verdicts.
+  validated contains/not_contains/regex response checks to stamp verdicts.
+  These scores are not independent ground truth; use a separately controlled
+  acceptance protocol. Shell/file evaluators are not supported.
 - The operator has not accepted a PEFT configuration — the
   `lora-training` skill's gate output is the accepted config; do not
   substitute your own.
@@ -35,8 +37,9 @@ and no adapter ships without beating its baseline.
 ### Phase 1 — Measure (the rollout harness)
 
 1. Define the task set: 3-10 representative tasks, each with a
-   deterministic evaluator (contains / not_contains / regex /
-   exit_code / file_exists) and a credits_authorized budget.
+   deterministic response evaluator (contains / not_contains / regex)
+   and an operator-approved resource budget recorded outside the request
+   (the local harness has no credits_authorized parameter).
 2. Call `swarm_eval_agent_local` (swarm server) with the agent name,
    the task set, and repeats (2-3 for a first measurement). Read the
    per-task pass rates and standard error. This is the BASELINE —
@@ -77,8 +80,9 @@ and no adapter ships without beating its baseline.
    emits (train vs baseline loss).
 8. Call `training_evaluate` with the adapter id, a held-out test
    dataset, and the method matching your evaluator semantics
-   (exact_match / contains / semantic / benchmark). Note: evaluation
-   routes through the named model — the adapter must be deployed for
+   (exact_match / contains / semantic / benchmark). Semantic requires an
+   explicit judge_model and remains LLM-judged. Evaluation routes through
+   the named model — the adapter must be deployed for
    the evaluation to measure the adapter, not the base model. If it
    is not deployed, say so and treat the A/B loss as the only signal.
 

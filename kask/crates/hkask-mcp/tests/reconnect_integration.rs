@@ -49,6 +49,106 @@ fn fixture_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mcp-test-fixture"))
 }
 
+/// expect: "An off-runtime timed-out call is unknown, not replayed; dropping a call stops its local wait" [P4]
+#[test]
+fn off_runtime_deadline_and_drop_do_not_replay_effects() {
+    // Set configuration before creating any runtime threads; restore immediately.
+    let previous = std::env::var_os("HKASK_MCP_CALL_TIMEOUT_SECS");
+    // SAFETY: this fixture suite requires --test-threads=1; no workers exist yet.
+    unsafe {
+        std::env::set_var("HKASK_MCP_CALL_TIMEOUT_SECS", "1");
+    }
+    let runtime = McpRuntime::new();
+    unsafe {
+        match previous {
+            Some(value) => std::env::set_var("HKASK_MCP_CALL_TIMEOUT_SECS", value),
+            None => std::env::remove_var("HKASK_MCP_CALL_TIMEOUT_SECS"),
+        }
+    }
+    let owner = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    hkask_mcp::set_spawn_runtime(owner.handle().clone());
+    let mut fixture = Fixture::new("deadline-effect");
+    let calls = fixture._tmp.path().join("calls");
+    fixture.env.insert(
+        "FIXTURE_CALLS_FILE".into(),
+        calls.to_string_lossy().into_owned(),
+    );
+    fixture
+        .env
+        .insert("FIXTURE_WITHHOLD_FIRST_REPLY".into(), "1".into());
+    owner
+        .block_on(runtime.start_server_with_env(
+            "fixture",
+            fixture_binary().to_str().expect("binary"),
+            hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+        ))
+        .expect("start");
+    let started = std::time::Instant::now();
+    let result = futures::executor::block_on(runtime.invoke(
+        "fixture",
+        "ping",
+        serde_json::json!({}),
+        WebID::new(),
+    ));
+    assert!(
+        matches!(result, Err(ToolPortError::Interrupted(_))),
+        "{result:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(std::fs::read_to_string(&calls).expect("effect marker"), "1");
+    let second = futures::executor::block_on(runtime.invoke(
+        "fixture",
+        "ping",
+        serde_json::json!({}),
+        WebID::new(),
+    ))
+    .expect("next call");
+    assert_eq!(
+        second["calls"], 2,
+        "only an explicit second request may execute"
+    );
+    owner.block_on(runtime.shutdown_all());
+
+    // New peer: drop an in-flight caller after the server records its effect.
+    let runtime = McpRuntime::new();
+    owner
+        .block_on(runtime.start_server_with_env(
+            "fixture",
+            fixture_binary().to_str().expect("binary"),
+            hkask_types::ServerEnv::from_canonical(fixture.env),
+        ))
+        .expect("restart");
+    let future = runtime.invoke("fixture", "ping", serde_json::json!({}), WebID::new());
+    use futures::FutureExt;
+    let mut future = Box::pin(future);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            future.as_mut().now_or_never().is_none(),
+            "withheld reply must stay pending"
+        );
+        if std::fs::read_to_string(&calls).ok().as_deref() == Some("1") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(future);
+    let second = futures::executor::block_on(runtime.invoke(
+        "fixture",
+        "ping",
+        serde_json::json!({}),
+        WebID::new(),
+    ))
+    .expect("peer still usable");
+    assert_eq!(second["calls"], 2);
+    owner.block_on(runtime.shutdown_all());
+}
+
 /// A self-contained fixture launch context: a temp dir for the pid file, a
 /// unique marker, and the env map the runtime will hand to the child.
 struct Fixture {
