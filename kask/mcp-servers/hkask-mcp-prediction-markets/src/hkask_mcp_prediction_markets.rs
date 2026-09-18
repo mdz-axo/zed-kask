@@ -1932,3 +1932,24 @@ mod smoke {
         );
     }
 }
+
+// Pins the registered tool-surface count end-to-end: `combined_router()`
+// merges the core tools with the `economic_data_tools.rs` sub-router — a
+// missing merge arm silently drops those tools from the MCP tool list (the
+// seam the merge comment at the router documents). Adding or removing a
+// prediction-markets tool is an intentional surface change; this pin
+// catches accidental drift instead of shipping as an undocumented surface
+// change. Mirrors `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::PredictionMarketsServer;
+
+    #[test]
+    fn tool_surface_is_exactly_32_registered_tools() {
+        let n = PredictionMarketsServer::combined_router().list_all().len();
+        assert_eq!(
+            n, 32,
+            "prediction-markets registered tool surface changed; got {n}"
+        );
+    }
+}
