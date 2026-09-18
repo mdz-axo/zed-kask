@@ -21,7 +21,7 @@
 //! - G-D2: Eval protocol (advisory in preflight — Vicuna/MMLU not trustworthy)
 //! - G-D3: Lemon-pick analysis (advisory in preflight — report failure cases)
 //! - G-F1: Intruder dimension check (advisory in preflight — requires Python PEFT)
-//! - G-H1: Harness-method compatibility (axolotl=SFT/DPO/KTO/ORPO/GRPO/RM/FullFT via rl:; trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO)
+//! - G-H1: Harness-method compatibility (Axolotl=SFT; Ludwig=SFT/DPO/KTO/ORPO/GRPO)
 //!
 //! Gates NOT enforced (require runtime instrumentation in Python/training loop):
 //! - G-Q3: Gradient flow (needs backward pass — A.grad and B.grad must be non-None)
@@ -30,7 +30,7 @@
 //!
 //! Anchored to: LoRA (arXiv:2106.09685), QLoRA (arXiv:2305.14314),
 //! rsLoRA (arXiv:2312.03732), DoRA (arXiv:2402.09353), PiSSA (arXiv:2404.02948),
-//! Razin et al. (arXiv:2410.21228), PEFT v0.19.0, TRL v1.8.0.
+//! Razin et al. (arXiv:2410.21228), and PEFT v0.19.0.
 
 // ── LoRA-param validation gates — extracted to `lora_validation/param_gates.rs`
 mod param_gates;

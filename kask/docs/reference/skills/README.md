@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-09-16
+last_updated: 2026-09-17
 version: "0.39.0"
 status: "Active"
 domain: "Core"
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **77 skills** ship. **325 Jinja2 templates across 67
+> plus a markdown body of process instructions. **77 skills** ship. **323 Jinja2 templates across 67
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -53,7 +53,7 @@ carrier of the loop itself.
 | Surface | Count | Notes |
 |---------|-------|-------|
 | `SKILL.md` directories (`.agents/skills/*/`, repo root) | **77** | Every counted directory contains a `SKILL.md`; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **67** (**325** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
+| Template namespaces (`kask/registry/templates/*/`) | **67** (**323** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -207,8 +207,8 @@ read-only resources the skill body may reference via `render_template`.
 | Cross-Cutting & Audit | 11 |
 | **Total** | **77** |
 
-> **Filesystem reality (verified 2026-09-15):** `.agents/skills/` contains 77
+> **Filesystem reality (verified 2026-09-17):** `.agents/skills/` contains 77
 > `SKILL.md` directories, including `onto-anchor` and `writing-style`.
-> `kask/registry/templates/` contains 67 template namespaces holding 325 `.j2`
+> `kask/registry/templates/` contains 67 template namespaces holding 323 `.j2`
 > files. The registry counts are filesystem observations, not inferred from the
 > category table.

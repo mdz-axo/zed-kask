@@ -46,7 +46,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline. |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (87 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 77 skills, 67 template namespaces, and 325 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 77 skills, 67 template namespaces, and 323 `.j2` resources. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Published-vocabulary bridge, exact term resolver, and `onto_anchor` ladder. |

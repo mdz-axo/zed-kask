@@ -243,7 +243,7 @@ fn report_from_hint(hint: &str) -> Option<PortfolioReportBlock> {
         .strip_suffix("```")?
         .trim();
     let report: PortfolioReportBlock = serde_json::from_str(body).ok()?;
-    (report.viz == "portfolio").then_some(report)
+    (report.viz == "portfolio_report").then_some(report)
 }
 
 fn tab_for_kind(kind: &str) -> Option<ReportTab> {
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn report_hint_requires_portfolio_fence_and_discriminator() {
         let valid = report_from_hint(
-            "```portfolio\n{\"viz\":\"portfolio\",\"portfolio\":\"main\",\"report_kind\":\"contribution\",\"report\":{}}\n```",
+            "```portfolio\n{\"viz\":\"portfolio_report\",\"portfolio\":\"main\",\"report_kind\":\"contribution\",\"report\":{}}\n```",
         )
         .expect("valid portfolio report");
         assert_eq!(valid.portfolio, "main");

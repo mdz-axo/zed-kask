@@ -401,16 +401,17 @@ fn contribution_from_transactions(
     let total_profit = end.total_value - start.total_value - external_flows;
     let explained_profit: f64 = rows.iter().map(|row| row.profit).sum();
     let residual = total_profit - explained_profit;
-    if residual.abs() > RECONCILIATION_EPSILON {
-        rows.push(ContributionRow {
-            symbol: "Cash / unassigned".to_string(),
-            start_value: start.cash,
-            end_value: end.cash,
-            net_internal_cash_flow: 0.0,
-            profit: residual,
-            contribution_bps: residual / start.total_value * 10_000.0,
-        });
-    }
+    // Cash is an explicit attribution group even when its return is zero. If
+    // a dividend lacks a symbol or another ledger effect cannot be assigned to
+    // a security, its profit lands here instead of disappearing.
+    rows.push(ContributionRow {
+        symbol: "Cash / unassigned".to_string(),
+        start_value: start.cash,
+        end_value: end.cash,
+        net_internal_cash_flow: 0.0,
+        profit: residual,
+        contribution_bps: residual / start.total_value * 10_000.0,
+    });
     rows.sort_by(|left, right| {
         right
             .profit

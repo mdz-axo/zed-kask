@@ -56,6 +56,13 @@ mod tests {
         let parsed = block::parse_portfolio_body(graph).expect("json parses");
         assert_ne!(parsed.viz.as_deref(), Some("portfolio"));
 
+        // Panel-owned investor reports use the same portfolio fence but a
+        // distinct discriminator, so the legacy inline dashboard must not
+        // claim and misrender them.
+        let report = r#"{"viz":"portfolio_report","report_kind":"contribution","report":{}}"#;
+        let parsed = block::parse_portfolio_body(report).expect("json parses");
+        assert_ne!(parsed.viz.as_deref(), Some("portfolio"));
+
         // Plain text is not JSON → parse fails → renderer returns None.
         assert!(block::parse_portfolio_body("not json").is_err());
     }

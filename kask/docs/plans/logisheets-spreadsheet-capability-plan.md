@@ -22,7 +22,9 @@ Analytical MCP servers can present typed row-and-column results through one nati
 
 ### Initial scope
 
-The first proving slice is `portfolio_daily_returns`. Companies, scenarios, research, and other analytical producers follow through one-domain-at-a-time migration after the shared capability passes its admission and behavior gates.
+The first portfolio proving slice is investor-oriented portfolio analysis: current characteristics, absolute performance contribution, benchmark-relative performance attribution, and prospective or retrospective composition what-if reports. Daily holdings and returns may support accurate internal calculations, but daily-return monitoring is not a user-facing report or spreadsheet proving slice.
+
+The portfolio panel keeps its specialized report viewer. When the shared spreadsheet capability is implemented, its applicable role is to stage and inspect what-if portfolio-composition changes and their derived report deltas; spreadsheet edits never define the portfolio mathematics or mutate the authoritative ledger. Companies, scenarios, research, and other analytical producers still follow through one-domain-at-a-time migration after the shared capability passes its admission and behavior gates.
 
 ## 2. Ratified distinctions and boundaries
 
@@ -367,28 +369,28 @@ Register it in the built-in MCP server inventory, settings surface, tool-surface
 
 ### Phase 5 — Portfolio proving slice
 
-Extend `portfolio_daily_returns` in `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs` with an explicit presentation request.
+The portfolio domain first publishes its specialized reports through the portfolio viewer:
 
-Map its existing fields to AnalyticalTable:
+- `portfolio_characteristics` — composition, concentration, classifications, metric-specific aggregates, and coverage.
+- `portfolio_contribution` — absolute security/group profit contribution reconciling to portfolio return.
+- `portfolio_attribution` — benchmark-relative Brinson–Fachler allocation, selection, and separately reported interaction effects.
+- `portfolio_what_if` — prospective changes to current composition and resulting characteristic deltas.
+- `portfolio_historical_what_if` — retrospective opportunity-cost analysis using realized subsequent prices, explicitly labelled as hindsight.
 
-- `date`.
-- `market_value`.
-- `cash`.
-- `total`.
-- `daily_return`.
+The spreadsheet capability may subsequently present the hypothetical transaction set and report deltas as a `WorkbookWhatIf`. It consumes these portfolio-authoritative calculations; it does not reimplement them.
 
 Acceptance sequence:
 
-1. Materialize real daily returns from a test ledger.
-2. Request `WorkbookWhatIf` presentation.
-3. Receive a valid server-authored spreadsheet display hint.
-4. Render the workbook through the native widget.
-5. Add a cumulative-return formula.
-6. Commit through `spreadsheet_apply`.
-7. Reopen the returned immutable revision.
-8. Verify the calculated value.
-9. Verify the base workbook remains unchanged.
-10. Verify the portfolio ledger and materialized returns remain unchanged.
+1. Build an actual portfolio and explicit benchmark from test ledgers.
+2. Seed the dated prices required by both portfolios.
+3. Verify absolute contributions reconcile to portfolio return.
+4. Verify allocation, selection, and interaction reconcile to active return under the named model.
+5. Supply point-in-time company observations and verify each characteristic reports its aggregation method and data coverage.
+6. Stage current-composition hypothetical buys and sells and compare characteristic deltas.
+7. Stage historical hypothetical buys and sells and compare actual with counterfactual terminal value and return.
+8. Verify both what-if paths leave the authoritative portfolio ledger unchanged.
+9. Receive valid server-authored portfolio display hints and render them in the specialized upper viewer.
+10. When spreadsheet staging is added, verify immutable workbook revisions preserve the same non-write-through boundary.
 
 ### Phase 6 — Analytical expansion
 

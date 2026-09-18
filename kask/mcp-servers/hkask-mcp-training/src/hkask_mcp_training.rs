@@ -42,8 +42,8 @@
 //! Host selection: Runpod is the only cloud host. Harness default is Axolotl;
 //! per-job harness selection via `TrainingParams.harness` (operator-accepted
 //! from the lora-training skill's G6 gate) is honored at submit time.
-//! All harnesses support their full trainer taxonomy: Axolotl (SFT),
-//! TRL (SFT/DPO/KTO/ORPO/Reward), Ludwig (SFT/DPO/KTO/ORPO/GRPO).
+//! Retained harnesses are declarative YAML: Axolotl supports SFT; Ludwig
+//! supports SFT/DPO/KTO/ORPO/GRPO.
 //! Routed through the shared `hkask-services` config init. Host pluggability
 //! is via the `TrainingHost` trait, isolating the MCP surface from
 //! framework-specific details.

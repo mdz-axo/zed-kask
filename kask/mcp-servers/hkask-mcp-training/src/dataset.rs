@@ -6,10 +6,10 @@
 //!
 //! Two canonical output types:
 //! - `ChatConversation` — for SFT (messages array)
-//! - `PreferenceExample` — for DPO/KTO/ORPO/Reward (prompt + chosen + rejected)
+//! - `PreferenceExample` — for DPO/KTO/ORPO (prompt + chosen + rejected)
 //!
-//! Each provider adapter then translates the canonical output to its native
-//! format for cloud dispatch (axolotl YAML, TRL Python → Runpod).
+//! Each provider adapter translates the canonical output into declarative YAML
+//! for cloud dispatch.
 //! All training is cloud-only — there is no local training path.
 
 use serde::{Deserialize, Serialize};
@@ -30,10 +30,10 @@ pub(crate) struct ChatConversation {
 
 // ── Canonical preference types ────────────────────────────────────────────
 
-/// A preference example for DPO/KTO/ORPO/Reward training.
+/// A preference example for DPO/KTO/ORPO training.
 ///
-/// Canonical format for preference optimization — parallel to `ChatConversation`
-/// for SFT. TRL's preference trainers consume this format directly.
+/// Canonical format for preference optimization, parallel to `ChatConversation`
+/// for SFT.
 ///
 /// Fields:
 /// - `prompt`: optional prompt (string or conversational). Absent for ORPO
@@ -41,7 +41,7 @@ pub(crate) struct ChatConversation {
 /// - `chosen`: the preferred completion (string or conversational).
 /// - `rejected`: the dispreferred completion (string or conversational).
 /// - `label`: for KTO only — `true` if the completion is good, `false` if bad.
-///   Absent for DPO/ORPO/Reward (which use chosen/rejected pairs).
+///   Absent for DPO/ORPO (which use chosen/rejected pairs).
 ///
 /// References:
 /// - DPO: https://huggingface.co/docs/trl/main/en/dpo_trainer#expected-dataset-type-and-format
@@ -717,9 +717,8 @@ impl DatasetPipeline {
 
     /// Write normalized dataset to cache as JSONL.
     ///
-    /// SFT data is written as `ChatConversation` JSONL (same as before).
-    /// Preference data is written as `PreferenceExample` JSONL — the TRL
-    /// trainers consume this format directly.
+    /// SFT data is written as `ChatConversation` JSONL.
+    /// Preference data is written as `PreferenceExample` JSONL.
     fn cache(
         &self,
         path: &std::path::Path,

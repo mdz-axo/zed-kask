@@ -72,7 +72,7 @@ fn report_response(
     provenance: serde_json::Value,
 ) -> Result<serde_json::Value, McpToolError> {
     let block = serde_json::json!({
-        "viz": "portfolio",
+        "viz": "portfolio_report",
         "portfolio": portfolio,
         "report_kind": report_kind,
         "report": report,

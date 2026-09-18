@@ -1,8 +1,8 @@
 ---
 title: "Portfolio MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.39.0"
+last_updated: 2026-09-17
+version: "0.40.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle]
@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Portfolio MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-portfolio`
-**Tools:** 13 — `portfolio_create`, `portfolio_delete`, `portfolio_list`, `ledger_apply`, `ledger_read`, `portfolio_snapshot`, `portfolio_returns`, `ledger_import`, `ledger_export`, `portfolio_seed_price`, `portfolio_rebuild_views`, `portfolio_materialize_returns`, `portfolio_daily_returns`. (2026-09-03: `portfolio_roll` removed — it was a thin wrapper emitting one Roll transaction with hardcoded fields; emit the roll via `ledger_apply` with tx_type "roll" instead. `portfolio_seed_price` gained a batch `prices` array — one call instead of N per (symbol, date).)
+**Tools:** 18 — the 13 ledger/return tools plus `portfolio_contribution`, `portfolio_characteristics`, `portfolio_attribution`, `portfolio_what_if`, and `portfolio_historical_what_if`. (2026-09-17: investor reports moved into their authoritative portfolio server; daily-return data remains an internal calculation/materialization surface, not the portfolio panel's user experience.)
 **Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.portfolio=false` disables this server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-79,664-667`).
 
 The portfolio server is the general-purpose transaction-ledger portfolio store.
@@ -77,7 +77,8 @@ one over the guideline; each has a distinct purpose).
 |--------|------|
 | `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs` | Library root and generated tool-name pin |
 | `kask/mcp-servers/hkask-mcp-portfolio/src/store.rs` | `PortfolioStore` — ledger, holdings, returns, import/export |
-| `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs` | MCP server — 13 tools and live router |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/analysis.rs` | Provider-agnostic investor reports and counterfactual projections |
+| `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs` | MCP server — 18 tools and live router |
 | `kask/mcp-servers/hkask-mcp-portfolio/src/main.rs` | Binary entrypoint |
 
 ## Tool surface
@@ -91,6 +92,11 @@ one over the guideline; each has a distinct purpose).
 | `ledger_read` | Read transactions with optional filter (symbol, type, asset_type, date range) |
 | `portfolio_snapshot` | Materialized end-of-day holdings (cached) |
 | `portfolio_returns` | TWR + IRR for a date range (reads from price cache) |
+| `portfolio_contribution` | Absolute security profit contribution; includes trades, commissions, and symbol-assigned dividends and reconciles to portfolio return |
+| `portfolio_characteristics` | Composition, concentration, classifications, and supplied company metrics with metric-specific aggregation and coverage |
+| `portfolio_attribution` | Explicit-benchmark Brinson–Fachler allocation, selection, and separately reported interaction effects |
+| `portfolio_what_if` | Prospective same-date composition changes and characteristic comparison over cloned ledger state |
+| `portfolio_historical_what_if` | Retrospective opportunity-cost comparison using realized subsequent prices; explicitly not an ex-ante forecast |
 | `ledger_import` | Import CSV/JSON (auto-creates portfolio) |
 | `ledger_export` | Export CSV/JSON |
 | `portfolio_seed_price` | Seed the price cache for one (symbol, date) or a batch (`prices` array); invalidates materialized views from each seeded date forward |
@@ -114,8 +120,8 @@ materialize-then-seed never serves stale rows.
 - **`hkask-mcp-companies`** — shares the database for owner-scoped company research artifacts, but does not register portfolio analytics or ledger tools; the 40-tool pin keeps ownership with this server (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:482-492`).
 - **`hkask-mcp-prediction-markets`** — stores CMP indices as transaction-ledger
   portfolios via `market_cmp_index_store` and `market_cmp_portfolio_store`.
-- **`hkask-portfolio-widget`** — renders holdings + returns for any portfolio
-  type (stock, prediction-event, CMP index) via the `HoldingsBody` block field.
+- **`portfolio_panel`** — observes the active or resumed Steer thread and renders server-authored investor report display hints in its upper viewer.
+- **`hkask-portfolio-widget`** — preserves existing inline holdings + returns rendering for any portfolio type (stock, prediction-event, CMP index).
 
 ## Credential allowlist
 

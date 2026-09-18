@@ -551,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn all_registry_template_contract_headers_parse() {
+    fn all_registry_templates_conform() {
         fn collect_templates(
             directory: &std::path::Path,
             templates: &mut Vec<std::path::PathBuf>,
@@ -583,11 +583,19 @@ mod tests {
         assert!(!templates.is_empty(), "registry template census is empty");
 
         let mut parse_errors = Vec::new();
+        let mut python_templates = Vec::new();
         for path in templates {
             let content = match std::fs::read_to_string(&path) {
                 Ok(content) => content,
                 Err(error) => panic!("failed to read {}: {error}", path.display()),
             };
+            if content.lines().any(|line| {
+                line.starts_with("import ")
+                    || (line.starts_with("from ") && line.contains(" import "))
+            }) {
+                python_templates.push(path.display().to_string());
+            }
+
             let Some(header) = template_metadata_header(&content) else {
                 continue;
             };
@@ -604,6 +612,11 @@ mod tests {
             parse_errors.is_empty(),
             "failed to parse registry contract headers:\n{}",
             parse_errors.join("\n")
+        );
+        assert!(
+            python_templates.is_empty(),
+            "registry contains Python code templates:\n{}",
+            python_templates.join("\n")
         );
     }
 

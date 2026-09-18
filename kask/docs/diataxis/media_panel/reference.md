@@ -22,7 +22,7 @@ classDiagram
     class MediaPanel {
         +viewer: MediaViewer
         +director: SteerSurface
-        +steer_split_fraction: f32
+        +split: VerticalSplitState
     }
     class MediaViewer {
         +assets: Vec~MediaAsset~

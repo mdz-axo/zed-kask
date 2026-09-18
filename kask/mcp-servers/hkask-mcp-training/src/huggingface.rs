@@ -120,9 +120,8 @@ fn default_alert_level() -> String {
 /// Fetched by `training_status` to detect completion (the pod stays RUNNING for
 /// SSH debugging, so RunPod's desiredStatus alone cannot signal completion).
 ///
-/// v0.32.0: extended with `grad_norm`, `current_step`, `total_steps`, and
-/// `alerts` to support G-R1 (runtime alert gate). All new fields are
-/// `#[serde(default)]` for backward compatibility with existing manifests.
+/// Optional runtime metrics use `#[serde(default)]` because a harness may not
+/// emit every measurement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CompletionManifest {
     pub job_id: String,
@@ -134,7 +133,7 @@ pub(crate) struct CompletionManifest {
     /// Base model used for training.
     #[serde(default)]
     pub base_model: Option<String>,
-    /// Training harness used (axolotl, trl, ludwig).
+    /// Training harness used (`axolotl` or `ludwig`).
     #[serde(default)]
     pub harness: Option<String>,
     /// Training duration in seconds.
