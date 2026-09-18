@@ -2270,3 +2270,20 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
         ),
     ]
 }
+
+// Pins the registered tool-surface count end-to-end against the router the
+// `#[tool_router(server_handler)]` block generates. Adding or removing a
+// research tool is an intentional surface change — this pin catches
+// accidental drift (a dropped `#[tool]` attribute, a registration change)
+// instead of shipping as an undocumented surface change. Mirrors
+// `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::ResearchServer;
+
+    #[test]
+    fn tool_surface_is_exactly_26_registered_tools() {
+        let n = ResearchServer::tool_router().list_all().len();
+        assert_eq!(n, 26, "research registered tool surface changed; got {n}");
+    }
+}
