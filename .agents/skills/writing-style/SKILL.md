@@ -83,10 +83,9 @@ report), not just the tone.
    table above.
 2. Call `corpus_compose` with `config_path` set to the config, `author`
    set to the style name, and the `prompt` carrying the document brief.
-   `db_path` and `passphrase` connect to the corpus DB for exemplar
-   retrieval — use the standard corpus DB resolution (the corpus
-   server's own tools do this; for a direct call pass the corpus DB
-   path and passphrase from the session's credential context).
+   `db_path` connects to the corpus DB for exemplar retrieval — the
+   passphrase resolves server-side from the session's credential
+   context (never a model-supplied field).
 3. The tool runs the full pipeline: KNN exemplar retrieval → the
    config's system prompt → inference → centroid validation. Read the
    result: it carries the composed prose and the validation distance.

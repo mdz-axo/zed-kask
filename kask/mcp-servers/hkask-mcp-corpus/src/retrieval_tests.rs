@@ -1172,7 +1172,7 @@ async fn retrieval_origin_isolation_and_path_aliases() {
         )
         .await
         .expect("ephemeral index");
-    let mut request = query(
+    let request = query(
         Some(&directory.path().join("does-not-exist.db")),
         false,
         true,
@@ -1522,7 +1522,6 @@ async fn retrieval_replacement_error_survives_tool_boundary() {
                             tagged_jsonl: request.tagged_jsonl.clone(),
                             output: request.output.clone(),
                             db_path: request.db_path.clone(),
-                            passphrase: PASSPHRASE.into(),
                             prefix: request.prefix.clone(),
                             threshold: request.threshold,
                             concurrency: request.concurrency,

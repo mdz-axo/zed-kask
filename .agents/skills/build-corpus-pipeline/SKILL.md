@@ -56,7 +56,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `corpus_source`, source selection | Caller-selected folder and agreed file scope, including whether nested files are included; freshly inventory every selected file, including unsupported formats |
 | content scope policy | Confirm whether the canonical pre-chunk boilerplate filter matches the requested corpus: page-delimited books remove bounded blank/title/copyright/contents/index pages, and unpaged books use conservative section signals. Use `target_pages` only for an explicit source subset or OCR probe, not to duplicate routine book-furniture filtering |
 | `entity_ref_prefix` | One namespace; use `style:{author}` for an author corpus, with the exact same author identifier in compose/centroid calls |
-| `db_path`, `passphrase` | One corpus DB; resolve the current `HKASK_DB_PASSPHRASE` from authorized credentials, never invent or print it |
+| `db_path` | One corpus DB; the server resolves `HKASK_DB_PASSPHRASE` from authorized credentials — never invent, print, or pass it |
 | `max_tokens` | Optional approximate size target; absent uses `HKASK_CHUNK_MAX_TOKENS` / shared settings (code default 256), not a model tokenizer |
 | `overlap_tokens` | Default **64**, yielding **48 words**; explicit `0` disables repetition |
 | `multi_tier` | False for the directory QA substrate; per-file/text retrieval can request coarse/medium/fine tiers |
@@ -67,7 +67,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
 | `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses disposition proposal/review, then QA writing/review only when at least one merged level is supported |
 | `quality_adjudications_jsonl` | Required complete `prepared-qa-adjudication-v2` manifest: one identity-matched row per prepared prompt, with passage decision and level decisions exactly ordered to `qa_types`; there is no unadjudicated generation path, and v1 and partial manifests are invalid |
-| `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB and authorized passphrase |
+| `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB (the passphrase resolves server-side) |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
 | `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split for QA exports; never inherit another corpus's defaults |
@@ -351,7 +351,7 @@ these properties. Never change overlap or remove sources to hit an old count.
 
 ## Stage 3 — Persist all embeddings and provenance
 
-Call `corpus_embed(chunks_jsonl, tagged_jsonl=null, db_path, passphrase, model,
+Call `corpus_embed(chunks_jsonl, tagged_jsonl=null, db_path, model,
 batch_size)` for every chunk in the single corpus. Tags are optional here.
 The stored original `passage_text` and text h_mem `ontology.dc_source` support
 later context retrieval; vectors alone are insufficient.
@@ -420,7 +420,7 @@ marked not requested.
 
 ## Stage 5 — Optional style centroid and measured composition
 
-Call `corpus_centroid(author, db_path, passphrase)` after complete embedding.
+Call `corpus_centroid(author, db_path)` after complete embedding.
 It selects `style:{author}:` and stores `style:{author}:centroid`. Optional
 `refs_file` selects existing newline-delimited references without copying vectors;
 optional `dimension` stores `style:{author}:{dimension}:centroid`. Select subsets
@@ -450,7 +450,7 @@ Call `corpus_build_prompts` with `tagged_jsonl`, `output`, explicit `prefix`,
 `context_k`, approved `qa_pairs_per_chunk`, `type_distribution`, and
 `max_pairs=classified_count*qa_pairs_per_chunk` (or `0` for all). Default
 `context_k=0` is primary-only and requires no DB credential. Positive context
-requires the single `db_path` and authorized `passphrase`. No inference occurs.
+requires the single `db_path` (the passphrase resolves server-side). No inference occurs.
 
 The builder rejects nonclassified/duplicate refs, blank source/text and prefix
 mismatches. Positive KNN context reads complete-source passages and provenance,
@@ -617,7 +617,7 @@ and correction findings, not duplicate corpus versions.
    it, and rows whose answers are not byte-exact inside their own evidence are
    recorded honestly as `model_inference`. It authorizes nothing.
 2. Dry-run `corpus_ingest_qa(generated_jsonl, grounding_manifest,
-   source_chunks_jsonl, output, db_path, passphrase, dataset, owner,
+   source_chunks_jsonl, output, db_path, dataset, owner,
    dry_run=true)`. The gate runs before dedup, output, and DB access: it
    re-hashes the bundle, checks row bijection against the candidate file,
    recomputes the ontology resolutions, re-derives every claim, requires each
@@ -660,7 +660,7 @@ and correction findings, not duplicate corpus versions.
 ## Stage 10 — Verify and report actual state
 
 Clear the in-memory index before testing a different DB; query with explicit
-`db_path`, `passphrase`, `include_text=true` and a relevant question. DB hydration
+`db_path`, `include_text=true` and a relevant question. DB hydration
 occurs only when the index is empty; a nonempty index is not switched by `db_path`.
 Verify source/text identity and relevant retrieval, not merely a positive count.
 
