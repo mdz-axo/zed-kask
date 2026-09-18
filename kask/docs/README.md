@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-16
+last_updated: 2026-09-17
 version: "2.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -74,7 +74,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 63 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 65 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 
@@ -115,14 +115,20 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 | `diataxis/swarm_system/tutorial.md` | `diataxis/swarm_system/how-to.md` |
 | `plans/inference-regulation-loop-completion-plan.md` | Implemented inference-resilience behavior in `kask/crates/kask_bridge/src/inference_resilience.rs` and current operational explanation in `kask/docs/diataxis/hkask-regulation/explanation.md`. |
 
+### Deleted 2026-09-17 (point-in-time prediction-market reports)
+
+| Deleted artifact | Named successor |
+| --- | --- |
+| `reports/prediction-markets/` (5 files) | Current implementation and tool surface in `reference/mcp-servers/prediction-markets.md`; git history remains the research archive. |
+
 ### Verification gate
 
 - [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document.
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
-- [ ] Global internal-link gate is blocked by two pre-existing links outside this edit boundary: `kask/docs/diataxis/hkask-tool-port/explanation.md:147` and `kask/docs/diataxis/hkask-tool-port/reference.md:258` still target the deleted `tutorial.md`; both should target `reference.md` or omit the self-link in a separately authorized edit.
+- [x] Internal links in the previously blocked hkask-tool-port documents target retained reference/how-to documents.
 - [x] Diagram metadata has unique-ID/location registry parity.
 - [x] Edited citations use full repository-relative paths.
-- [x] Document count is 63 and remains fewer than 70.
+- [x] Document count is 65 and remains fewer than 70.
 
 ## See also
 

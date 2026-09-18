@@ -14,7 +14,7 @@
 //! | `agent_id` | D6 | Memory ingestion routing (Curator vs user) |
 //! | `agent_static_context` | D2 | Curator overlay / Steer mode system prompt |
 //! | `system_prompt_override` | D2 | System prompt override (Curator persona) |
-//! | `mcp_server_scope` | D2 | Per-tab MCP server scoping |
+
 //! | `tool_retry_tracker` | .rules | Tool retry death spiral prevention |
 //! | `deferred_tool_results` | — | Deferred tool result delivery across turn boundaries |
 //! | `last_completion_truncated` | D25 | Distinguish MaxTokens truncation from user cancel |
@@ -42,7 +42,6 @@ pub(crate) struct KaskThreadState {
     // System prompt overlays (D2)
     agent_static_context: Option<SharedString>,
     system_prompt_override: Option<SharedString>,
-    mcp_server_scope: Option<SharedString>,
 
     // Tool retry cap (.rules)
     tool_retry_tracker: Rc<RefCell<ToolRetryTracker>>,
@@ -64,7 +63,6 @@ impl KaskThreadState {
             agent_id: None,
             agent_static_context: None,
             system_prompt_override: None,
-            mcp_server_scope: None,
             tool_retry_tracker: Rc::new(RefCell::new(ToolRetryTracker::default())),
             deferred_tool_results: Vec::new(),
             last_completion_truncated: false,
@@ -247,26 +245,6 @@ impl KaskThreadState {
     pub fn set_static_context(&mut self, context: SharedString) {
         self.agent_static_context = Some(context);
         self.bust_system_prompt_cache();
-    }
-
-    // ── MCP server scoping (D2) ──────────────────────────────────────
-
-    /// When set, `enabled_tools` filters MCP tools to only this server.
-    pub fn mcp_server_scope(&self) -> Option<&SharedString> {
-        self.mcp_server_scope.as_ref()
-    }
-
-    /// Set the MCP server scope.
-    pub fn set_mcp_server_scope(&mut self, scope: Option<SharedString>) {
-        self.mcp_server_scope = scope;
-    }
-
-    /// Whether a context-server id passes the per-tab MCP scope.
-    /// `None` (upstream Zed and non-kask threads) passes every server.
-    pub fn mcp_server_in_scope(&self, server_id: &str) -> bool {
-        self.mcp_server_scope
-            .as_ref()
-            .is_none_or(|s| s.as_ref() == server_id)
     }
 
     // ── Agent identity (D6) ──────────────────────────────────────────

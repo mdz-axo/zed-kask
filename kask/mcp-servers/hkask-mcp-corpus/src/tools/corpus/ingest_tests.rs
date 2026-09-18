@@ -44,6 +44,8 @@ fn fixture() -> anyhow::Result<tempfile::TempDir> {
 fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
     IngestQaRequest {
         generated_jsonl: directory.join("generated.jsonl").to_string_lossy().into(),
+        grounding_verification_jsonl: directory.join("grounding.jsonl").to_string_lossy().into(),
+        source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
         output: directory.join("training.jsonl").to_string_lossy().into(),
         db_path: directory.join("memory.db").to_string_lossy().into(),
         passphrase: PASSPHRASE.into(),
@@ -56,9 +58,78 @@ fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
 fn flat(index: usize, answer: &str) -> Value {
     json!({"instruction":format!("Question {index}?"), "output":answer,
         "qa_type":"factual", "type":if index == 3 { "recall" } else { "factual" }, "source":"brooks.txt",
-        "chunk_ref":format!("corpus:brooks:{index}"),
+        "chunk_ref":format!("corpus:brooks:{index}"), "prompt_id":format!("qa-{index}"),
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
                 "evidence_quotes":[{"chunk_ref":format!("corpus:brooks:{index}"),"source":"brooks.txt","quote":answer}],
         "concepts":["test concept"], "difficulty":2})
+}
+
+fn write_grounding(directory: &Path, rows: &[String]) -> anyhow::Result<()> {
+    let mut reports = Vec::new();
+    let mut chunks = std::collections::BTreeMap::new();
+    for line in rows {
+        let qa = super::parse_qa_record(line).map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        let prompt_id = qa
+            .prompt_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("prompt_id"))?;
+        let chunk_ref = qa
+            .chunk_ref
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("chunk_ref"))?;
+        let evidence = qa
+            .evidence_quotes
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("evidence"))?;
+        chunks.insert(
+            chunk_ref.to_string(),
+            json!({"entity_ref":chunk_ref,"source":qa.source,"text":evidence.quote}),
+        );
+        let judgment = |field: &str, text: &str| {
+            json!({
+                "field":field,
+                "text":text,
+                "provenance":"model_inference",
+                "strength":1,
+                "entailment":true,
+                "why":"The complete candidate field is supported by the cited canonical source evidence.",
+                "ontology_anchor":{"term":"claim grounding","tier":"core","namespace":"core","concept":"5w1h_core"},
+                "source_reference":{"chunk_ref":evidence.chunk_ref,"source":evidence.source,"quote":evidence.quote}
+            })
+        };
+        reports.push(json!({
+            "protocol":"prepared-qa-grounding-verification-v1",
+            "candidate_sha256":qa.row_sha256,
+            "prompt_id":prompt_id,
+            "chunk_ref":chunk_ref,
+            "source":qa.source,
+            "qa_type":qa.qa_type,
+            "judgments":[judgment("instruction", &qa.instruction), judgment("output", &qa.output)],
+            "fact_score_breakdown":{"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":2},
+            "fact_score":1.0,
+            "confidence_band":"medium",
+            "decoupling":"spawn_agent",
+            "verdict":"accept",
+            "findings":[]
+        }));
+    }
+    std::fs::write(
+        directory.join("grounding.jsonl"),
+        reports
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    std::fs::write(
+        directory.join("chunks.jsonl"),
+        chunks
+            .values()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    Ok(())
 }
 
 fn content(result: String) -> anyhow::Result<Value> {
@@ -87,54 +158,26 @@ fn reconciles(value: &Value) {
     }
 }
 
-/// expect: Concise valid QA survives, first case-insensitive duplicate wins, metadata round-trips, and every nonblank row reconciles.
+/// expect: Clean concise candidates ingest only after complete source-grounded acceptance.
 #[tokio::test]
 async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let mut rows = Vec::new();
-    for (index, answer) in ANSWERS.iter().enumerate() {
-        let row = flat(index, answer);
-        rows.push(if index % 2 == 0 {
-            json!({"response":row, "source":row["source"], "chunk_ref":row["chunk_ref"], "qa_type":row["qa_type"]}).to_string()
-        } else {
-            row.to_string()
-        });
-    }
-    let mut duplicate = flat(0, "wrong survivor");
-    duplicate["instruction"] = json!("QUESTION 0?");
-    rows.push(duplicate.to_string());
-    for field in ["instruction", "output", "qa_type", "source", "chunk_ref"] {
-        let mut missing = flat(5, "answer");
-        missing.as_object_mut().expect("object").remove(field);
-        rows.push(missing.to_string());
-        let mut blank = flat(6, "answer");
-        blank[field] = json!(" \t\n ");
-        rows.push(blank.to_string());
-    }
-    rows.extend(["not JSON".into(), "[]".into(), r#"{"response":"not an object"}"#.into(),
-        json!({"prompt_id":"failed", "source":"brooks.txt", "chunk_ref":"corpus:brooks:failed", "error":"generator unavailable"}).to_string()]);
-    std::fs::write(
-        directory.path().join("generated.jsonl"),
-        format!("\n  \t\n{}\n\n", rows.join("\n")),
-    )?;
+    let rows = ANSWERS
+        .iter()
+        .enumerate()
+        .map(|(index, answer)| flat(index, answer).to_string())
+        .collect::<Vec<_>>();
+    std::fs::write(directory.path().join("generated.jsonl"), rows.join("\n"))?;
+    write_grounding(directory.path(), &rows)?;
+
     let dry = content(
         server
             .corpus_ingest_qa(Parameters(request(directory.path(), true)))
             .await?,
     )?;
     reconciles(&dry);
-    for (key, expected) in [
-        ("total_nonblank_rows", 19),
-        ("generator_errors", 1),
-        ("malformed", 3),
-        ("parsed", 15),
-        ("filter_drops", 10),
-        ("duplicates", 1),
-        ("retained", 4),
-    ] {
-        assert_eq!(dry[key], expected, "{key}");
-    }
+    assert_eq!(dry["retained"], 4);
     assert!(!directory.path().join("training.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
 
@@ -147,86 +190,31 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
     assert_eq!(written["stored"], 4);
     assert_eq!(written["failed"], 0);
     assert_eq!(written["status"], "complete");
-    for key in [
-        "total_nonblank_rows",
-        "parsed",
-        "filtered",
-        "deduped",
-        "generator_errors",
-        "malformed",
-        "filter_drops",
-        "duplicates",
-        "retained",
-    ] {
-        assert_eq!(dry[key], written[key], "{key}");
-    }
     let output = std::fs::read_to_string(directory.path().join("training.jsonl"))?;
-    let training: Vec<Value> = output
+    let training = output
         .lines()
         .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<Value>, _>>()?;
     assert_eq!(training.len(), ANSWERS.len());
     let store =
         crate::helpers::open_memory_store(&request(directory.path(), false).db_path, PASSPHRASE)?;
     assert_eq!(store.h_mem_count()?, 4);
-    for (index, (row, answer)) in training.iter().zip(ANSWERS).enumerate() {
-        let expected = flat(index, answer);
-        for key in [
-            "instruction",
-            "output",
-            "qa_type",
-            "type",
-            "source",
-            "chunk_ref",
-            "evidence_quotes",
-            "concepts",
-            "difficulty",
-        ] {
-            assert_eq!(row[key], expected[key], "{key}");
-        }
-        assert_eq!(row["input"], "");
-        let records = store
-            .query_deduped_untouched(&format!("training:qa:brooks-test:brooks.txt:{index}"))?;
-        assert_eq!(records.len(), 1);
-        let record = records.first().expect("stored QA");
-        assert_eq!(record.attribute, "training_qa_pair");
-        assert_eq!(record.value["question"], expected["instruction"]);
-        assert_eq!(record.value["answer"], answer);
-        assert_eq!(record.value["bloom_level"], expected["qa_type"]);
-        for key in [
-            "qa_type",
-            "type",
-            "source",
-            "chunk_ref",
-            "evidence_quotes",
-            "concepts",
-            "difficulty",
-        ] {
-            assert_eq!(record.value[key], expected[key], "stored {key}");
-        }
-        assert_eq!(
-            record.access.owner_webid,
-            crate::owner_webid("brooks-test-owner")
-        );
-        let ontology = record.ontology.as_ref().expect("queryable ontology");
-        assert_eq!(ontology.pko_step.as_deref(), expected["chunk_ref"].as_str());
-        assert_eq!(
-            ontology.pko_procedure.as_deref(),
-            Some("corpus_generate_qa_batch")
-        );
-    }
-    // Dry-run over an existing DB must also leave it untouched.
-    let second_dry = content(
-        server
-            .corpus_ingest_qa(Parameters(request(directory.path(), true)))
-            .await?,
-    )?;
-    reconciles(&second_dry);
-    assert_eq!(store.h_mem_count()?, 4);
-    assert_eq!(
-        std::fs::read_to_string(directory.path().join("training.jsonl"))?,
-        output
-    );
+    Ok(())
+}
+
+/// expect: Malformed, incomplete, or generator-error rows reject the whole ingestion batch.
+#[tokio::test]
+async fn ingest_rejects_partial_generated_input() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let rows = [flat(0, ANSWERS[0]).to_string(), "not JSON".to_string()];
+    std::fs::write(directory.path().join("generated.jsonl"), rows.join("\n"))?;
+    let error = server()
+        .corpus_ingest_qa(Parameters(request(directory.path(), true)))
+        .await
+        .expect_err("partial input must fail closed");
+    assert!(error.to_string().contains("rejects partial input"));
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
 

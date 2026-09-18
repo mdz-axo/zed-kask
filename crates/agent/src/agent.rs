@@ -476,10 +476,6 @@ pub struct NativeAgent {
     /// system prompt (NOT an override — the Zed Agent prompt stays).
     /// Used by the Curator overlay to inject regulatory context.
     curator_static_context: Option<SharedString>,
-    /// When set, new threads' context-server (MCP) tools are filtered to
-    /// this server only — the kask panel's per-tab scoping enforcement.
-    /// Applied via `Thread::set_mcp_server_scope` in `new_session`.
-    mcp_server_scope: Option<SharedString>,
 }
 
 #[derive(Default)]
@@ -700,7 +696,6 @@ impl NativeAgent {
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
                 curator_static_context: None,
-                mcp_server_scope: None,
             }
         })
     }
@@ -882,17 +877,6 @@ impl NativeAgent {
         self.curator_static_context = Some(context);
     }
 
-    /// Restrict all new threads' context-server (MCP) tools to one server.
-    ///
-    /// Used by the kask panel: each tab constructs its own
-    /// `CuratorAgentServer` with a per-tab scope, so the tab's thread
-    /// exposes only that MCP server's tools — enforcing the scoping the
-    /// per-tab system prompt declares. Called after
-    /// `set_curator_static_context`; independent of it.
-    pub fn set_mcp_server_scope(&mut self, server: SharedString) {
-        self.mcp_server_scope = Some(server);
-    }
-
     pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
         self.sibling_thread_host.clone()
     }
@@ -941,11 +925,6 @@ impl NativeAgent {
                 thread.add_tool(CuratorStatusTool);
                 thread.add_tool(CuratorDirectiveTool);
                 thread.add_tool(CuratorClearAlgedonicLogTool);
-            });
-        }
-        if let Some(ref scope) = self.mcp_server_scope {
-            thread.update(cx, |thread, cx| {
-                thread.set_mcp_server_scope(Some(scope.clone()), cx);
             });
         }
 

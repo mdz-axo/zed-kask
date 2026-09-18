@@ -128,17 +128,13 @@ fn format_state_block(snapshot: &serde_json::Value) -> String {
 ///
 /// The optional `extra_static_context` is appended to
 /// `CURATOR_STATIC_CONTEXT` when the connection establishes. This is used by
-/// the kask panel to inject a per-tab system prompt describing which MCP
-/// server's tools are in scope for the conversation.
+/// kask panels to inject a per-panel system prompt describing the panel's
+/// workflow while preserving the full cross-domain MCP tool surface.
 #[derive(Clone)]
 pub struct CuratorAgentServer {
     fs: Arc<dyn Fs>,
     thread_store: Entity<ThreadStore>,
     extra_static_context: Option<SharedString>,
-    /// Per-tab MCP server scope — when set, `connect` applies
-    /// `NativeAgent::set_mcp_server_scope`, filtering the thread's
-    /// context-server tools to this server only.
-    mcp_server_scope: Option<SharedString>,
 }
 
 impl CuratorAgentServer {
@@ -147,28 +143,16 @@ impl CuratorAgentServer {
             fs,
             thread_store,
             extra_static_context: None,
-            mcp_server_scope: None,
         }
     }
 
     /// Set extra static context appended to `CURATOR_STATIC_CONTEXT`.
     ///
-    /// Used by the kask panel to inject a per-tab system prompt that tells
-    /// the curator which MCP server's tools are in scope. The extra context
-    /// is rendered after the base curator context, so the curator sees both
-    /// its regulatory role AND the per-tab tool scope.
+    /// Used by kask panels to inject workflow context. The extra context is
+    /// rendered after the base curator context, so the curator sees both its
+    /// regulatory role and the panel-specific task framing.
     pub fn with_extra_static_context(mut self, context: SharedString) -> Self {
         self.extra_static_context = Some(context);
-        self
-    }
-
-    /// Restrict new sessions' MCP tools to one server — the enforcement
-    /// half of the per-tab scoping (the prompt is the declaration half).
-    ///
-    /// The name must match the server's `ContextServerId` (e.g.
-    /// `"companies"`). Kask panel passes the tab's server id.
-    pub fn with_mcp_server_scope(mut self, server: SharedString) -> Self {
-        self.mcp_server_scope = Some(server);
         self
     }
 }
@@ -191,7 +175,6 @@ impl AgentServer for CuratorAgentServer {
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let extra_context = self.extra_static_context.clone();
-        let mcp_server_scope = self.mcp_server_scope.clone();
         cx.spawn(async move |cx| {
             // Build the shared NativeAgent connection, then apply the curator
             // overlay before handing it back. The overlay is the only
@@ -229,9 +212,6 @@ impl AgentServer for CuratorAgentServer {
                         context = SharedString::from(format!("{context}\n\n{state_block}"));
                     }
                     agent.set_curator_static_context(context);
-                    if let Some(scope) = mcp_server_scope {
-                        agent.set_mcp_server_scope(scope);
-                    }
                 });
             });
             Ok(Rc::new(crate::NativeAgentConnection(

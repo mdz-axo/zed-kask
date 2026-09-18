@@ -27,7 +27,7 @@ pub(crate) mod clustering;
 #[cfg(test)]
 mod ingest_tests;
 mod lora_config;
-mod qa_parsing;
+pub(crate) mod qa_parsing;
 mod qa_types;
 
 pub(crate) use clustering::read_tagged_chunks;

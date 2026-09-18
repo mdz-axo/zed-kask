@@ -2312,29 +2312,11 @@ impl Thread {
         self.kask.agent_id()
     }
 
-    /// Restrict this thread's context-server (MCP) tools to a single server.
-    ///
-    /// Used by the kask panel's per-tab scoping: each tab's thread exposes
-    /// only the tools of the MCP server the tab is scoped to, so the
-    /// session-header instruction ("use only the `{server}` server's tools")
-    /// is enforced rather than advisory. `None` (the default) disables the
-    /// filter — upstream Zed threads are unaffected.
-    pub fn set_mcp_server_scope(&mut self, server: Option<SharedString>, cx: &mut Context<Self>) {
-        self.kask.set_mcp_server_scope(server);
-        cx.notify();
-    }
-
     /// The agent-set static context (e.g., the curator overlay's combined
     /// base + per-tab prompt), if any. Distinct from the memory-injected
     /// `static_context` — this is the agent's own contribution.
     pub fn agent_static_context(&self) -> Option<&SharedString> {
         self.kask.static_context()
-    }
-
-    /// The MCP server this thread is scoped to, if any. `None` for upstream
-    /// Zed threads and non-kask threads (all servers pass `enabled_tools`).
-    pub fn mcp_server_scope(&self) -> Option<&SharedString> {
-        self.kask.mcp_server_scope()
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
@@ -5077,12 +5059,6 @@ impl Thread {
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
-            // Kask panel per-tab scoping: when the thread is scoped to a
-            // specific MCP server, skip all other servers' tools.
-            // zed-kask: D2 — per-tab MCP server scoping
-            if !self.kask.mcp_server_in_scope(server_id.0.as_ref()) {
-                continue;
-            }
             // zed-kask: D6 — the curator memory-edit tools (memory_insert,
             // memory_update, memory_resolve_contradiction) were gated to
             // curator threads until 2026-09-01. Removed by operator
@@ -5134,8 +5110,7 @@ impl Thread {
         // "tool unavailable" reports (an agent denied `web_ping` existed
         // because that turn's routing hadn't selected it). The full
         // registered surface is presented every turn; tools hidden by the
-        // remaining layers (per-tab server scope, profile allowlists,
-        // feature flags) are named by the
+        // remaining layers (profile allowlists and feature flags) are named by the
         // system-prompt visibility marker (`mcp_tools_hidden`), and the
         // `list_mcp_tools` meta-tool lets the model enumerate the registered
         // surface on demand.
@@ -8618,36 +8593,6 @@ mod tests {
             events[0].output.get("goal_id").and_then(|v| v.as_str()),
             Some("g-current")
         );
-    }
-
-    // ── Kask panel per-tab MCP scoping ──────────────────────────────────
-
-    /// The scoping contract: no scope = all servers pass; a scope passes
-    /// only its exact server id. This pins the enforcement half of the kask
-    /// panel's per-tab tool scoping — the per-tab prompt declares "only the
-    /// `{server}` server's tools are available", and this predicate is what
-    /// makes that true in `enabled_tools`.
-    #[test]
-    fn mcp_server_scope_filters_to_named_server() {
-        use crate::kask_thread_state::KaskThreadState;
-
-        // No scope — upstream Zed behavior, everything passes.
-        let unscoped = KaskThreadState::new();
-        assert!(unscoped.mcp_server_in_scope("companies"));
-        assert!(unscoped.mcp_server_in_scope("curator"));
-        assert!(unscoped.mcp_server_in_scope("anything-else"));
-
-        // Scoped — exact match only.
-        let mut scoped = KaskThreadState::new();
-        scoped.set_mcp_server_scope(Some("companies".into()));
-        assert!(scoped.mcp_server_in_scope("companies"));
-        assert!(!scoped.mcp_server_in_scope("curator"));
-        assert!(!scoped.mcp_server_in_scope("Companies")); // case-sensitive
-        assert!(!scoped.mcp_server_in_scope("company"));
-
-        let mut kanban_scoped = KaskThreadState::new();
-        kanban_scoped.set_mcp_server_scope(Some("kata-kanban".into()));
-        assert!(!kanban_scoped.mcp_server_in_scope("kata_kanban"));
     }
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {

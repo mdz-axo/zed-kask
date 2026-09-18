@@ -81,7 +81,6 @@ impl Animation {
 /// scheduled.
 pub trait AnimationExt {
     /// Render this component or element with an animation
-    #[track_caller]
     fn with_animation(
         self,
         id: impl Into<ElementId>,
@@ -96,12 +95,10 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(move |this, _, value| animator(this, value)),
             animations: smallvec::smallvec![animation],
-            source_location: std::panic::Location::caller(),
         }
     }
 
     /// Render this component or element with a chain of animations
-    #[track_caller]
     fn with_animations(
         self,
         id: impl Into<ElementId>,
@@ -116,7 +113,6 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
-            source_location: std::panic::Location::caller(),
         }
     }
 
@@ -167,7 +163,6 @@ pub struct AnimationElement<E> {
     element: Option<E>,
     animations: SmallVec<[Animation; 1]>,
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
-    source_location: &'static std::panic::Location<'static>,
 }
 
 /// A GPUI element driven by a stateful spring.
@@ -470,22 +465,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                                 .detach();
                         }
                     }
-                    _ => {
-                        static REQUEST_COUNT: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let request_count = REQUEST_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            .saturating_add(1);
-                        if request_count % 120 == 0 {
-                            log::info!(
-                                "[DIAG-CPU-ANIMATION] requests={request_count} caller={}:{}:{}",
-                                self.source_location.file(),
-                                self.source_location.line(),
-                                self.source_location.column()
-                            );
-                        }
-                        window.request_animation_frame();
-                    }
+                    _ => window.request_animation_frame(),
                 }
             }
 
