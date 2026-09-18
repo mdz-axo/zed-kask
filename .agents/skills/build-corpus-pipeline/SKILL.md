@@ -66,6 +66,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
 | `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses disposition proposal/review, then QA writing/review only when at least one merged level is supported |
+| `quality_adjudications_jsonl` | Optional complete `prepared-qa-adjudication-v2` manifest: one identity-matched row per prepared prompt, with passage decision and level decisions exactly ordered to `qa_types`; v1 and partial manifests are invalid |
 | `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB and authorized passphrase |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
@@ -476,8 +477,10 @@ it preserves complete classified records and selects deterministic interior quan
 rather than silently treating each source's `:0` chunk as representative. Run Stage 8
 on that pilot before expanding to full production; a pilot is evidence for a gate,
 never a reduced completion scope. Call
-`corpus_generate_qa_batch(prompts_jsonl, output, concurrency, model)`.
-Preflight validates the whole prepared file/model before creating output. Record
+`corpus_generate_qa_batch(prompts_jsonl, quality_adjudications_jsonl, output,
+concurrency, model, verification_model)`. Pass null adjudications for the ordinary
+model-reviewed path. Preflight validates the whole prepared file, optional complete
+v2 manifest, and models before creating output. Record
 prompt-level tokens, provider responses, reported cost and cost completeness at
 every shard; null/incomplete cost is unknown and blocks paid expansion.
 Input/output aliases (including symlink and hard-link aliases) are rejected.
@@ -492,9 +495,13 @@ schema receives exactly one metered correction attempt; a second rejection fails
 the whole prompt without partial rows. There is one synchronous prepared-prompt
 transport; no provider-batch side path.
 
-The model returns exactly one disposition per requested level, in order. A
-supported level is a grounded QA tuple; an unsupported or contaminated level is an
-explicit quality skip:
+With no adjudication manifest, the model and distinct reviewer return exactly one
+disposition per requested level, in order. With a v2 manifest, reviewed passage skips
+write terminal rows before inference; reviewed admits bypass passage/disposition review
+and send the ordered level mandates to the generator. The server deterministically
+compares the plan to those mandates, sends the exact mismatch back once for generator
+correction, and fails the prompt on a second mismatch. A supported level is a grounded
+QA tuple; an unsupported or contaminated level is an explicit quality skip:
 
 ```json
 [["factual","What is the delay?","72 hours",["e0"]],["conceptual",null,"conceptual_support_absent",[]]]
@@ -510,7 +517,10 @@ not QA material. `non_substantive_passage` and `contaminated_or_garbled` are
 prompt-wide: every requested level must carry the same skip, even if another span
 appears usable. Use only the closed skip reasons `non_substantive_passage`,
 `contaminated_or_garbled`, or the requested level's `<level>_support_absent` reason.
-Malformed, ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
+For an admitted reviewed passage, factual must generate; conceptual generation requires
+one closed relation, while conceptual or later-level skips use the exact support-absent
+reason. Reviewed mandates cannot be re-litigated by the QA verifier. Malformed,
+ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
 Generated envelopes retain primary identity, candidate terms, QA type, canonical
 evidence and protocol/model provenance. Skip envelopes retain primary identity,
 requested QA type, closed reason and provenance but no response, and are never
@@ -521,8 +531,10 @@ still does not validate answer synthesis or cognitive difficulty.
 **Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
 all prepared IDs and require no unresolved failed prompts. Separately reconcile
 `qa_levels_requested = qa_rows_written + qa_levels_skipped` for accepted prompts,
-inspect `skip_reason_counts`, and require every physical row to be either an
-accepted QA envelope, explicit skip, or identified prompt failure. A prompt may
+inspect `skip_reason_counts`; for reviewed runs also reconcile
+`reviewed_passage_admits + reviewed_passage_skips = prompts_total` and
+`reviewed_level_generates + reviewed_level_skips = qa_levels_requested`. Require every
+physical row to be either an accepted QA envelope, explicit skip, or identified prompt failure. A prompt may
 yield multiple pairs and/or skips; QA row count is neither prompt nor requested-level
 coverage. Failure and skip rows are never training data. Before expansion, audit
 both retained QA and skip decisions: a model that generates factual recall under a

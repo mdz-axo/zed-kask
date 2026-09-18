@@ -327,8 +327,15 @@ pub(crate) fn render_disposition_plan_messages(
             })
         })
         .collect::<Vec<_>>();
-    let reviewed_level_mandates = reviewed.map(|reviewed| {
-        reviewed
+    let mut user = json!({
+        "disposition_protocol": QA_DISPOSITION_PROTOCOL,
+        "primary_passage": crate::guard_content(&prompt.primary().text),
+        "requested_levels": prompt.qa_types,
+        "level_requirements": level_requirements,
+        "evidence_candidates": evidence_candidates,
+    });
+    if let Some(reviewed) = reviewed {
+        let mandates = reviewed
             .levels()
             .iter()
             .zip(&prompt.qa_types)
@@ -346,17 +353,12 @@ pub(crate) fn render_disposition_plan_messages(
                     "reason": reason,
                 }),
             })
-            .collect::<Vec<_>>()
-    });
-    let user = serde_json::to_string(&json!({
-        "disposition_protocol": QA_DISPOSITION_PROTOCOL,
-        "primary_passage": crate::guard_content(&prompt.primary().text),
-        "requested_levels": prompt.qa_types,
-        "level_requirements": level_requirements,
-        "evidence_candidates": evidence_candidates,
-        "reviewed_level_mandates": reviewed_level_mandates,
-    }))
-    .map_err(|error| {
+            .collect::<Vec<_>>();
+        user.as_object_mut()
+            .ok_or_else(|| McpToolError::internal("Rendered disposition request is not an object"))?
+            .insert("reviewed_level_mandates".to_string(), json!(mandates));
+    }
+    let user = serde_json::to_string(&user).map_err(|error| {
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
     let mut system = format!(
@@ -1576,6 +1578,7 @@ mod tests {
         assert!(messages[0].content.contains("evidence IDs"));
         let user: serde_json::Value = serde_json::from_str(&messages[1].content)?;
         assert_eq!(user["evidence_candidates"][0]["id"], "e0");
+        assert!(user.get("reviewed_level_mandates").is_none());
         assert!(
             user["evidence_candidates"][0]["text"]
                 .as_str()

@@ -1,8 +1,4 @@
 [inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     forecasting_question: string
@@ -15,6 +11,12 @@ contract:
     model_weights: array
 visibility: Public
 ---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 {# goal: Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring to aggregate model judgments, steel-man dissenting views, and produce a synthesized probability. #}
 You are a synthesis analyst. Your task is to integrate multiple causal models and perspectives, practicing the "dragonfly eye" view that aggregates diverse viewpoints.

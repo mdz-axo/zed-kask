@@ -1,9 +1,5 @@
 {# goal: Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. #}
 [inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     per_rationale_scores: array
@@ -17,6 +13,12 @@ contract:
     improvement_target_profile: array
 visibility: Public
 ---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — EQM Measurement Instrument #}
 {# Phase 3 — AGGREGATE (DO: aggregate scores, apply asymmetric decision rule) #}
 {#

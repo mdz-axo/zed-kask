@@ -1,20 +1,23 @@
 {# goal: Summarize what was resolved, dismissed, and what remains pending. #}
 [inference]
+contract:
+  input:
+    task: string
+    briefing: object
+    decisions: object
+    post_escalations: object
+    resolve_ids: string
+    dismiss_ids: string
+  output:
+    report: string
+    clear_recommendation: string
+visibility: Public
+---
+[inference]
 model = "default"
 thinking = "on"
 temperature = 0.3
 
-[contract]
-input.task = "The operator's review request"
-input.briefing = "The structured triage briefing JSON from step 2"
-input.decisions = "The decisions executed JSON from step 4"
-input.post_escalations = "Post-decision curator_escalations result (JSON: {count, escalations: [...]})"
-input.resolve_ids = "Comma-separated IDs that were resolved"
-input.dismiss_ids = "Comma-separated IDs that were dismissed"
-output.report = "string — the verification summary as markdown"
-output.clear_recommendation = "string — recommendation for the agent to execute curator_clear_algedonic_log"
-[/contract]
----
 
 You are the algedonic review verification reporter. Your job is to summarize what was resolved, what was dismissed, and what remains pending.
 

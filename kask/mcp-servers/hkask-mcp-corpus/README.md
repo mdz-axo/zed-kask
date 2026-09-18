@@ -280,14 +280,14 @@ for reviewed mandates it cannot convert generation into a support skip. Any malf
 passage review, plan, writer response, or verification verdict rejects the whole prompt
 after its applicable single correction. Semantic QA still requires the separate Stage 8
 audit; exact evidence restoration does not certify answer entailment. Generated rows
-use `prepared-qa-staged-quality-v7`; reviewed rows additionally record
+use `prepared-qa-staged-quality-v8`; reviewed rows additionally record
 `adjudication_protocol=prepared-qa-adjudication-v2`. Existing prepared JSONL remains
 `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","adjudication_protocol":"prepared-qa-adjudication-v2","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v7","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","adjudication_protocol":"prepared-qa-adjudication-v2","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v8","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifiers above are illustrative, not configured defaults. Batch usage

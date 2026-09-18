@@ -71,25 +71,19 @@ impl ReviewedQaAdjudications {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(transparent)]
-struct RequiredNullableString(Option<String>);
-
-impl RequiredNullableString {
-    fn as_deref(&self) -> Option<&str> {
-        self.0.as_deref()
-    }
-
-    fn into_option(self) -> Option<String> {
-        self.0
-    }
+fn deserialize_required_nullable<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReviewedPassageRow {
     decision: String,
-    reason: RequiredNullableString,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -97,8 +91,10 @@ struct ReviewedPassageRow {
 struct ReviewedLevelRow {
     level: String,
     decision: String,
-    relation: RequiredNullableString,
-    reason: RequiredNullableString,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    relation: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,7 +128,7 @@ fn validate_admitted_level(
                     "Adjudication '{prompt_id}' generated level {index} must use null reason"
                 )));
             }
-            let relation = row.relation.into_option();
+            let relation = row.relation;
             if expected == QaType::Conceptual {
                 let relation_value = relation.as_deref().ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
@@ -447,6 +443,36 @@ mod tests {
             "reason":"conceptual_missing"
         });
         let path = write_rows(&directory, &[row])?;
+        assert!(read_complete_adjudications(&path, &prompts).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_duplicate_identity_and_incomplete_rows_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = fixture()?;
+        let prompts = [prompt("qa-1")];
+
+        let mut unknown = admit_row("qa-1");
+        unknown["levels"][1]["decision"] = json!("defer");
+        let path = write_rows(&directory, &[unknown])?;
+        assert!(read_complete_adjudications(&path, &prompts).is_err());
+
+        let duplicate = admit_row("qa-1");
+        let path = write_rows(&directory, &[duplicate.clone(), duplicate])?;
+        assert!(read_complete_adjudications(&path, &prompts).is_err());
+
+        let mut wrong_identity = admit_row("qa-1");
+        wrong_identity["source"] = json!("other.txt");
+        let path = write_rows(&directory, &[wrong_identity])?;
+        assert!(read_complete_adjudications(&path, &prompts).is_err());
+
+        let mut incomplete = admit_row("qa-1");
+        incomplete["levels"][0]
+            .as_object_mut()
+            .expect("level object")
+            .remove("reason");
+        let path = write_rows(&directory, &[incomplete])?;
         assert!(read_complete_adjudications(&path, &prompts).is_err());
         Ok(())
     }

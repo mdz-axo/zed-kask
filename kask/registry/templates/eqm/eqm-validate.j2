@@ -1,9 +1,5 @@
 {# goal: If realized_outcomes present: correlate EQM composite with accuracy (Brier), check directional-hypothesis match. If scores rose but accuracy didn't improve → gaming_suspected verdict. If outcomes absent → Undetermined (not Ready-with-empty). #}
 [inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     forecaster_level_composite: object
@@ -17,6 +13,12 @@ contract:
     validation_findings: array
 visibility: Public
 ---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — EQM Measurement Instrument #}
 {# Phase 4 — VALIDATE (CHECK: correlate EQM composite with accuracy) #}
 {#

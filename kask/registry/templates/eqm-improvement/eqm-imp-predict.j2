@@ -1,9 +1,5 @@
 {# goal: Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Carry confidence in [0,1] for Brier scoring. #}
 [inference]
-temperature = 0.4
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     target_condition: object
@@ -19,6 +15,12 @@ contract:
     confidence: number
 visibility: Public
 ---
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — EQM Improvement Instrument #}
 {# Phase 4 — PREDICT (PLAN: predict which intervention raises which marker) #}
 {#

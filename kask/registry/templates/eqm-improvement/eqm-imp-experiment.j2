@@ -1,9 +1,5 @@
 {# goal: Kata Step 5 (Experiment / Do): rewrite the rationale to address each failing marker, guided by the EQM description. Preserves forecast probability. Never fabricates evidence — delegates to superforecasting/research/falsifiability for real data. #}
 [inference]
-temperature = 0.5
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     rationale: string
@@ -19,6 +15,12 @@ contract:
     fabrication_check: object
 visibility: Public
 ---
+[inference]
+temperature = 0.5
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — EQM Improvement Instrument #}
 {# Phase 5 — EXPERIMENT (DO: rewrite rationale per failing marker) #}
 

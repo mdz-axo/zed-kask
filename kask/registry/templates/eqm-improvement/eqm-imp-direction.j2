@@ -1,9 +1,5 @@
 {# goal: Kata Step 1 (Direction): establish the improvement direction — improve EQM passage rate, prioritizing red-flag elimination over green-flag polish. Confirm forecast probability preservation (alignment invariant). #}
 [inference]
-temperature = 0.3
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "off"
 contract:
   input:
     rationale: string
@@ -17,6 +13,12 @@ contract:
     available_evidence_sources: array
 visibility: Public
 ---
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+
 {# hKask v0.39.0 — EQM Improvement Instrument #}
 {# Phase 1 — DIRECTION (PLAN: establish improvement direction) #}
 

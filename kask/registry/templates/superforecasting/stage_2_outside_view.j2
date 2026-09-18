@@ -1,8 +1,4 @@
 [inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 contract:
   input:
     forecasting_question: string
@@ -16,6 +12,12 @@ contract:
     starting_probability: float
 visibility: Public
 ---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 {# goal: Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. #}
 You are an outside view analyst. Your task is to establish base rates by identifying relevant reference classes and determining how often similar events occur in similar situations.

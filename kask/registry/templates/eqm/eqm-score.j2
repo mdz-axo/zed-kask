@@ -1,9 +1,5 @@
 {# goal: Score rationales via the market_score_rationale MCP tool. Collect per-rationale EqmResult: composite_score, scores, red_flags, green_flags. The MCP tool is the single source of truth for 12-EQM LLM scoring. #}
 [inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "off"
 contract:
   input:
     scoring_batch: array
@@ -13,6 +9,12 @@ contract:
     scoring_notes: string
 visibility: Public
 ---
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+
 {# hKask v0.39.0 — EQM Measurement Instrument #}
 {# Phase 2 — SCORE (DO: call market_score_rationale per rationale) #}
 {#

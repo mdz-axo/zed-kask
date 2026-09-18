@@ -1,9 +1,5 @@
 {# goal: Kata Step 2 (Grasp Current Condition): score the current rationale via market_score_rationale. Receive failing_markers, red_flag_screen, composite_score. Measure, don't assume. #}
 [inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "off"
 contract:
   input:
     rationale: string
@@ -18,6 +14,12 @@ contract:
     green_flag_endorsement: array
 visibility: Public
 ---
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+
 {# hKask v0.39.0 — EQM Improvement Instrument #}
 {# Phase 2 — GRASP CURRENT (PLAN: measure current EQM scores) #}
 {#

@@ -3,7 +3,8 @@
 //! Composition: a bounded recovery block informed by Self-Refine
 //! (arXiv:2303.17651) and Chain-of-Verification (arXiv:2309.11495). Review
 //! stages use a distinct configured model to mitigate LLM-judge self-enhancement
-//! bias documented by Zheng et al. (arXiv:2306.05685); Stage 8 remains external.
+//! bias documented by Zheng et al. (arXiv:2306.05685). The recovery block's
+//! acceptance test remains the external Stage 8 audit, not an internal model verdict.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;

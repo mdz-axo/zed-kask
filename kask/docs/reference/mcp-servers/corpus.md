@@ -254,7 +254,7 @@ audit.
 Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
 canonical evidence, distinct generation/verification model provenance,
 `prepared-qa-passage-quality-v1` admission provenance,
-`prepared-qa-staged-quality-v7` generation provenance, and optional
+`prepared-qa-staged-quality-v8` generation provenance, and optional
 `prepared-qa-adjudication-v2` provenance. Batch tokens and cost include
 every returned quality/review/planning/writing response and are not repeated on pair
 rows. Failed prompts carry primary identity and `error`, never an ingestible response.

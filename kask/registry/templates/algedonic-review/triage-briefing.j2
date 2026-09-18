@@ -1,20 +1,23 @@
 {# goal: Structure the two signal channels (escalations + algedonic) into a triage list with per-alert severity and recommended action. #}
 [inference]
+contract:
+  input:
+    task: string
+    escalations_result: object
+    algedonic_result: object
+  output:
+    triage_complete: boolean
+    escalation_triage: array
+    algedonic_digest: array
+    summary: object
+    briefing: string
+visibility: Public
+---
+[inference]
 model = "default"
 thinking = "on"
 temperature = 0.3
 
-[contract]
-input.task = "The operator's review request"
-input.escalations_result = "Pending escalations from curator_escalations (JSON: {count, escalations: [{id, output, confidence, error_context, created_at, status, ...}]})"
-input.algedonic_result = "Algedonic event log from curator_algedonic_log (JSON: {count, events: [{...}], window_hours})"
-output.triage_complete = "boolean — true when the triage briefing is complete"
-output.escalation_triage = "array of {id, domain, severity, created_at, recommended_action, description}"
-output.algedonic_digest = "array of {domain, event_count, latest_severity}"
-output.summary = "object with {total_pending, critical, warning, info}"
-output.briefing = "string — the full structured triage briefing as markdown"
-[/contract]
----
 
 You are the algedonic review triage synthesizer. Your job is to structure the alert backlog into a triage list that the operator can act on.
 
