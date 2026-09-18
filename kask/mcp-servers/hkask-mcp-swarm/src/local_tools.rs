@@ -259,11 +259,11 @@ impl SwarmServer {
     /// tool calls are dispatched through the zed IPC bridge's governed
     /// `McpRuntime` — the declared list is the allowlist.
     ///
-    /// **No budget, no consent token.** Local agents run on the operator's
-    /// own substrate (their machine, their inference credentials), so there
-    /// is nothing to authorize, fund, or reconcile.
+    /// No local token quota or ABW credit token. Inference uses configured
+    /// platform models and may incur cloud-provider charges; tool authority
+    /// and request deadlines remain enforced at their own boundaries.
     #[tool(
-        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud). Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). No ABW calls. No budget and no consent token — local agents run on the operator's own substrate. Returns the response, model, token usage, latency, and tool_calls summary."
+        description = "Delegate a task to an agent in the local registry using configured platform inference models, including cloud models. Declared capabilities.mcp_tools are allowlisted at host dispatch. No local token quota or ABW credit token; model-provider charges may apply. Returns response, model, observed token usage, latency, and tool_calls summary."
     )]
     pub(crate) async fn swarm_delegate_local(
         &self,

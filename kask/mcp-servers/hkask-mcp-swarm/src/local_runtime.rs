@@ -4,10 +4,9 @@
 //! construction to the first tool call (the `run_server` factory is sync).
 //! `LocalSwarmRuntime::delegate` runs a local agent: tool loop → measured
 //! result. The inference/skill/tool ports are resolved once at construction.
-//! There is no local budget: local agents run on the operator's own substrate
-//! (operator ruling 2026-09-04 — the budget concept is deprecated; timeouts
-//! are the enforcement/kill mechanism), so nothing is priced, gated, or
-//! reconciled here.
+//! Token usage is measured, not a budget or admission gate. Inference uses
+//! configured platform models, including cloud providers that may charge.
+//! Request deadlines and tool-loop bounds are separate execution controls.
 
 use std::time::Instant;
 
@@ -151,8 +150,8 @@ impl LazyLocalSwarmRuntime {
 ///
 /// The *agent-run* policy (skill execution, tool-loop orchestration) lives in
 /// `AgentExecutor`; the runtime measures the run (tokens, latency) and
-/// records per-agent stats. There is no spending policy: local agents run on
-/// the operator's own substrate, so nothing is priced or gated.
+/// records per-agent stats. It does not impose token quotas or debit a local
+/// account. Platform inference may use paid cloud providers.
 pub struct LocalSwarmRuntime {
     /// The agent-run policy (inference + tool dispatch + skill exec).
     /// Constructed once from the resolved IPC-bridge ports; the runtime
@@ -281,17 +280,6 @@ impl LocalSwarmRuntime {
         });
     }
 
-    /// Test-only constructor with injected dependencies. Mirrors the
-    /// `StubInferencePort` pattern: the production
-    /// `new(db_path)` resolves the inference port from env (zed IPC bridge or
-    /// MediaRouter fallback), which is unsuitable for unit tests. This
-    /// constructor accepts the three agent-run ports
-    /// (inference, tool dispatch, skill exec) which it composes into an
-    /// `AgentExecutor`, so tests can exercise the `delegate` logic without a
-    /// real backend.
-    ///
-    /// Ensures the operator account exists (same as `new`) so `balance`/
-    /// `fund`/`debit` work out of the box.
     /// The resolved local inference port. Exposed so the local knowledge tools
     /// (`swarm_generate_prompt_local` / `swarm_generate_ontology_local`) can do a
     /// one-shot generate via the same inference port the delegate loop uses —
@@ -305,12 +293,9 @@ impl LocalSwarmRuntime {
     /// text, model, token usage, latency, and a tool-call summary.
     ///
     /// The agent-run policy (skill execution, tool-loop orchestration) lives
-    /// in `AgentExecutor::run`; the runtime measures the run. There is no
-    /// budget: local agents run on the operator's own substrate (their
-    /// machine, their inference credentials), so there is nothing to price,
-    /// gate, or reconcile — funding gates belong on *cloud swarm* delegation,
-    /// where credits buy someone else's compute (`spend_gate.rs` + the ABW
-    /// consent token).
+    /// in `AgentExecutor::run`; the runtime measures the run without a token
+    /// quota. ABW credit consent is a distinct cloud-swarm operation and is
+    /// not a requirement for this path; model-provider billing still applies.
     ///
     /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
     /// the only tool set shown to the model AND the qualified list travels

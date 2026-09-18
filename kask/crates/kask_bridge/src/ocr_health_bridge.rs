@@ -61,8 +61,7 @@ impl hkask_regulation::OcrHealthSource for BridgeOcrHealthSource {
         let contents = match std::fs::read_to_string(&self.path) {
             Ok(contents) => contents,
             // A missing file is the legitimate "no OCR has run yet" state,
-            // not a broken sensor — Ok(0), matching `latest_run_metrics`'
-            // NotFound classification. Only a present-but-unreadable file
+            // not a broken sensor — Ok(0). Only a present-but-unreadable file
             // is an error (warned by the sensor, never collapsed to 0).
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => {

@@ -40,6 +40,12 @@ Read-only authoring aid by design (DR-S13a exempt class: documented single-pass)
 
 ## Instructions
 
+“Local swarm” describes execution location, not model tier. Leave the card
+model unset to inherit the same platform/curator defaults from Settings → Kask
+→ Models; approved cloud models remain the normal route. Do not invent a local
+provider class, cheaper fallback, or small-model requirement. Explicit model
+overrides are operator choices, not authoring defaults.
+
 The process is a single-step `select` that renders the
 `swarm-intelligence/swarm-compose-guide.j2` template with the operator's partial
 inputs and the surface/mode/action selectors. The template encodes:

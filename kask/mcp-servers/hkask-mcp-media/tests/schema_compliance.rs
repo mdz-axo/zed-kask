@@ -7,11 +7,12 @@
 //! (`400 cannot unmarshal bool into api.ToolProperty`). One bare boolean in
 //! any enabled tool's schema fails the whole chat-completion request.
 //!
-//! Layer 1 only — the `schema_clean_test!` macro asserts no request struct's
-//! JSON schema has a bare-boolean schema-valued position. Layer 2 (a
-//! `proptest!` deserialization-totality property) is intentionally omitted: it
-//! needs `proptest` dev-deps to guard a different invariant (P4
-//! deserialization totality) that is out of scope here.
+//! Layer 1 — the `schema_clean_test!` macro asserts no request struct's
+//! JSON schema has a bare-boolean schema-valued position. Layer 2 — the
+//! `deser_totality_test!` proptest deserialization-totality property — was
+//! intentionally omitted at first write; it is included since Batch 4 of
+//! the testing-protocol propagation plan
+//! (`tasks/kask-testing-propagation-plan.md`).
 
 use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,
@@ -152,5 +153,188 @@ schema_clean_test!(audio_trim_request_schema, AudioTrimRequest);
 schema_clean_test!(audio_concat_request_schema, AudioConcatRequest);
 schema_clean_test!(
     video_extract_frames_request_schema,
+    VideoExtractFramesRequest
+);
+
+// ── Layer 2: deserialization totality (proptest) ──────────────────────────
+// Closes the documented omission: arbitrary tool input must never panic a
+// request deserializer — it deserializes or returns a typed error. A panic
+// inside a `#[tool]` deserializer would crash the server on malformed input,
+// and strict-schema providers send exactly that.
+
+use proptest::prelude::*;
+
+fn arb_json(depth: u8) -> BoxedStrategy<serde_json::Value> {
+    let leaf = prop_oneof![
+        Just(serde_json::Value::Null),
+        any::<bool>().prop_map(serde_json::Value::Bool),
+        any::<i64>().prop_map(|n| serde_json::json!(n)),
+        (0.0f64..=1.0e6).prop_map(|n| serde_json::json!(n)),
+        ".{0,32}".prop_map(serde_json::Value::String),
+    ];
+    if depth == 0 {
+        return leaf.boxed();
+    }
+    prop_oneof![
+        leaf,
+        proptest::collection::vec(arb_json(depth - 1), 0..4).prop_map(serde_json::Value::Array),
+        proptest::collection::hash_map(".{0,12}", arb_json(depth - 1), 0..4)
+            .prop_map(|map| serde_json::Value::Object(map.into_iter().collect()),),
+    ]
+    .boxed()
+}
+
+macro_rules! deser_totality_test {
+    ($test_name:ident, $ty:ty) => {
+        proptest! {
+            #[test]
+            fn $test_name(input in arb_json(3)) {
+                let _ = serde_json::from_value::<$ty>(input);
+            }
+        }
+    };
+}
+
+deser_totality_test!(voice_design_request_deser_totality, VoiceDesignRequest);
+deser_totality_test!(
+    generate_speech_request_deser_totality,
+    GenerateSpeechRequest
+);
+deser_totality_test!(transcribe_request_deser_totality, TranscribeBundleRequest);
+deser_totality_test!(audio_capture_request_deser_totality, AudioCaptureRequest);
+deser_totality_test!(
+    record_and_transcribe_request_deser_totality,
+    RecordAndTranscribeRequest
+);
+deser_totality_test!(
+    gallery_organize_request_deser_totality,
+    GalleryOrganizeRequest
+);
+deser_totality_test!(gallery_search_request_deser_totality, GallerySearchRequest);
+deser_totality_test!(
+    gallery_add_media_request_deser_totality,
+    GalleryAddMediaRequest
+);
+deser_totality_test!(
+    gallery_refresh_request_deser_totality,
+    GalleryRefreshRequest
+);
+deser_totality_test!(describe_image_request_deser_totality, DescribeImageRequest);
+deser_totality_test!(
+    gallery_analyze_request_deser_totality,
+    GalleryAnalyzeRequest
+);
+deser_totality_test!(
+    gallery_name_face_request_deser_totality,
+    GalleryNameFaceRequest
+);
+deser_totality_test!(face_validate_request_deser_totality, FaceValidateRequest);
+deser_totality_test!(face_register_request_deser_totality, FaceRegisterRequest);
+deser_totality_test!(
+    face_scan_folder_request_deser_totality,
+    FaceScanFolderRequest
+);
+deser_totality_test!(face_list_request_deser_totality, FaceListRequest);
+deser_totality_test!(face_remove_request_deser_totality, FaceRemoveRequest);
+deser_totality_test!(
+    gallery_timeline_request_deser_totality,
+    GalleryTimelineRequest
+);
+deser_totality_test!(
+    gallery_record_generation_request_deser_totality,
+    GalleryRecordGenerationRequest
+);
+deser_totality_test!(
+    gallery_lineage_request_deser_totality,
+    GalleryLineageRequest
+);
+deser_totality_test!(
+    gallery_reproduce_request_deser_totality,
+    GalleryReproduceRequest
+);
+deser_totality_test!(generate_image_request_deser_totality, GenerateImageRequest);
+deser_totality_test!(
+    transform_image_request_deser_totality,
+    TransformImageRequest
+);
+deser_totality_test!(upscale_image_request_deser_totality, UpscaleImageRequest);
+deser_totality_test!(generate_video_request_deser_totality, GenerateVideoRequest);
+deser_totality_test!(expand_prompt_request_deser_totality, ExpandPromptRequest);
+deser_totality_test!(
+    remove_background_request_deser_totality,
+    RemoveBackgroundRequest
+);
+deser_totality_test!(apply_style_request_deser_totality, ApplyStyleRequest);
+deser_totality_test!(create_collage_request_deser_totality, CreateCollageRequest);
+deser_totality_test!(video_clip_request_deser_totality, VideoClipRequest);
+deser_totality_test!(video_to_gif_request_deser_totality, VideoToGifRequest);
+deser_totality_test!(image_to_video_request_deser_totality, ImageToVideoRequest);
+deser_totality_test!(
+    video_add_caption_request_deser_totality,
+    VideoAddCaptionRequest
+);
+deser_totality_test!(video_remix_request_deser_totality, VideoRemixRequest);
+deser_totality_test!(
+    video_from_images_request_deser_totality,
+    VideoFromImagesRequest
+);
+deser_totality_test!(video_concat_request_deser_totality, VideoConcatRequest);
+deser_totality_test!(video_caption_request_deser_totality, VideoCaptionRequest);
+deser_totality_test!(video_meme_request_deser_totality, VideoMemeRequest);
+deser_totality_test!(model_list_request_deser_totality, ModelListRequest);
+deser_totality_test!(model_info_request_deser_totality, ModelInfoRequest);
+deser_totality_test!(job_submit_request_deser_totality, JobSubmitRequest);
+deser_totality_test!(job_list_request_deser_totality, JobListRequest);
+deser_totality_test!(job_status_request_deser_totality, JobStatusRequest);
+deser_totality_test!(job_cancel_request_deser_totality, JobCancelRequest);
+deser_totality_test!(
+    gallery_list_assets_request_deser_totality,
+    GalleryListAssetsRequest
+);
+deser_totality_test!(
+    gallery_asset_detail_request_deser_totality,
+    GalleryAssetDetailRequest
+);
+deser_totality_test!(
+    gallery_create_album_request_deser_totality,
+    GalleryCreateAlbumRequest
+);
+deser_totality_test!(
+    gallery_move_to_album_request_deser_totality,
+    GalleryMoveToAlbumRequest
+);
+deser_totality_test!(
+    gallery_remove_from_album_request_deser_totality,
+    GalleryRemoveFromAlbumRequest
+);
+deser_totality_test!(
+    gallery_delete_album_request_deser_totality,
+    GalleryDeleteAlbumRequest
+);
+deser_totality_test!(
+    gallery_list_album_members_request_deser_totality,
+    GalleryListAlbumMembersRequest
+);
+deser_totality_test!(
+    gallery_delete_image_request_deser_totality,
+    GalleryDeleteImageRequest
+);
+deser_totality_test!(
+    image_edit_region_request_deser_totality,
+    ImageEditRegionRequest
+);
+deser_totality_test!(workflow_save_request_deser_totality, WorkflowSaveRequest);
+deser_totality_test!(workflow_load_request_deser_totality, WorkflowLoadRequest);
+deser_totality_test!(
+    workflow_delete_request_deser_totality,
+    WorkflowDeleteRequest
+);
+deser_totality_test!(video_info_request_deser_totality, VideoInfoRequest);
+deser_totality_test!(video_fetch_request_deser_totality, VideoFetchRequest);
+deser_totality_test!(youtube_search_request_deser_totality, YoutubeSearchRequest);
+deser_totality_test!(audio_trim_request_deser_totality, AudioTrimRequest);
+deser_totality_test!(audio_concat_request_deser_totality, AudioConcatRequest);
+deser_totality_test!(
+    video_extract_frames_request_deser_totality,
     VideoExtractFramesRequest
 );

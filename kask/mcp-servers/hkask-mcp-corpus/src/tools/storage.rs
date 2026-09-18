@@ -543,6 +543,52 @@ mod tests {
         let (_, _, _, _, gen_answer) = parse_lisp_query(expr).expect("should parse");
         assert!(gen_answer);
     }
+
+    // ── parse_lisp_query properties (testing protocol property layer, Batch 4) ──
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Hypothesis: every well-formed query alist round-trips — generated
+        /// query text, top-k, min-score, and true flags parse back exactly.
+        /// False flags are asserted through their documented default: `nil`
+        /// serializes to JSON null (a typed error), so false is expressed by
+        /// omission and defaults to false.
+        #[test]
+        fn parse_lisp_query_round_trips_generated_requests(
+            query in "[a-z ]{1,40}",
+            top_k in 1u64..=1000,
+            include_text in any::<bool>(),
+            gen_answer in any::<bool>(),
+            min_score in 0.0f64..=1.0,
+        ) {
+            let mut expr = format!(
+                "(list (list \"query\" \"{query}\") (list \"top-k\" {top_k}) (list \"min-score\" {min_score})"
+            );
+            if include_text {
+                expr.push_str(" (list \"include-text\" t)");
+            }
+            if gen_answer {
+                expr.push_str(" (list \"generate-answer\" t)");
+            }
+            expr.push(')');
+            let (q, k, inc, ms, generate) =
+                parse_lisp_query(&expr).expect("well-formed query alist parses");
+            prop_assert_eq!(q, query);
+            prop_assert_eq!(k, top_k as usize);
+            prop_assert_eq!(inc, include_text);
+            prop_assert_eq!(generate, gen_answer);
+            prop_assert!((ms - min_score as f32).abs() < 1e-5);
+        }
+
+        /// Hypothesis: parsing is total — arbitrary input either parses or
+        /// returns a typed error. The sandboxed evaluator's budgets bound
+        /// evaluation and the alist walker never panics.
+        #[test]
+        fn parse_lisp_query_is_total_over_arbitrary_text(input in ".*") {
+            let _ = parse_lisp_query(&input);
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

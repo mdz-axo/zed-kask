@@ -288,10 +288,10 @@ impl AgentExecutor {
 
     /// Run a local agent: execute declared skills, build the declared tool
     /// set, and run the multi-round inference/tool-dispatch loop. Returns the
-    /// raw result; the caller debits.
+    /// raw result and observed usage; there is no token-budget debit.
     ///
     /// `task_clean` is the already-stripped task (the runtime strips `@mentions`
-    /// before the funds check, then passes the clean task here).
+    /// before execution, then passes the clean task here).
     pub(crate) async fn run(
         &self,
         agent: &LocalAgentCard,

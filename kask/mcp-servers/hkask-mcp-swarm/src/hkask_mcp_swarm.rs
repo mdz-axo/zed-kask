@@ -573,18 +573,27 @@ mod smoke_tests {
 
     /// expect: "Local swarm is execution location, never an inferior-model provider tier" [P1]
     #[test]
-    fn local_agent_cards_inherit_platform_models_without_provider_tier() -> Result<(), Box<dyn std::error::Error>> {
-        let defaults = serde_json::to_value(crate::local_registry::LocalAgentCapabilities::default())?;
+    fn local_agent_cards_inherit_platform_models_without_provider_tier()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let defaults =
+            serde_json::to_value(crate::local_registry::LocalAgentCapabilities::default())?;
         assert_eq!(defaults["model"], "");
         assert!(defaults.get("min_provider_class").is_none());
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../agents/local/curated");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../agents/local/curated");
         let mut count = 0;
         for entry in std::fs::read_dir(root)? {
             let path = entry?.path().join("agent_card.json");
-            if !path.is_file() { continue; }
+            if !path.is_file() {
+                continue;
+            }
             let card: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
             assert_eq!(card["capabilities"]["model"], "", "{}", path.display());
-            assert!(card["capabilities"].get("min_provider_class").is_none(), "{}", path.display());
+            assert!(
+                card["capabilities"].get("min_provider_class").is_none(),
+                "{}",
+                path.display()
+            );
             count += 1;
         }
         assert!(count > 0, "seeded cards must actually be checked");

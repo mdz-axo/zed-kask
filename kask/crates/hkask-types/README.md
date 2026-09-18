@@ -52,7 +52,7 @@ capability types live in their owning domain crates.
 | `ObservableSpan`                                      | Trait for domain spans that emit Regulation events                 |
 | `InferencePort` / `MemoryPort` | Hexagonal port traits (implemented in downstream crates)           |
 | `ChatMessage`                                         | Foundation inference message type (`role` + `content`)             |
-| `LLMParameters`                                       | Temperature, top_p, max_tokens configuration                       |
+| `LLMParameters`                                       | Sampling, thinking, adapter and system-prompt parameters; no token-budget field |
 | `ToolTaint`                                           | FIDES IFC label for MCP tools (Source/Sink/Pure/Endorser)          |
 
 ## Usage

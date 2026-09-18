@@ -1111,6 +1111,87 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::sync::RwLock;
 
+    /// expect: "Unbound files cannot claim my code is healthy; real tool outcomes still inform regulation." [P1]
+    #[test]
+    fn unbound_metrics_cannot_become_quality_observations() {
+        const CHILD: &str = "HKASK_UNBOUND_METRICS_TEST_CHILD";
+        const COMPLETE: &str = "unbound-metrics-contract-exercised";
+        if std::env::var_os(CHILD).is_some() {
+            let trace = std::path::PathBuf::from(
+                std::env::var_os("HKASK_TRACE_DIR").expect("fixture path"),
+            );
+            let fixture: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(trace.join("unrelated-run/metrics.json"))
+                    .expect("forged metrics fixture"),
+            )
+            .expect("fixture JSON");
+            assert_eq!(fixture["coverage_pct"], 1.0);
+            assert_eq!(fixture["mutation_score"], 1.0);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async {
+                let regulation =
+                    CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+                for _ in 0..5 {
+                    regulation
+                        .record_outcome("evidence-control", true, None)
+                        .await;
+                }
+                let signals = regulation.sense().await;
+                assert!(
+                    signals.iter().any(|signal| {
+                        signal.metric.as_str() == "tool_reliability" && signal.value == 1.0
+                    }),
+                    "genuine outcomes must remain observable"
+                );
+                assert!(
+                    signals.iter().all(|signal| {
+                        !matches!(signal.metric.as_str(), "test_coverage" | "mutation_score")
+                    }),
+                    "unbound file became a quality observation: {signals:?}"
+                );
+            });
+            println!("{COMPLETE}");
+            return;
+        }
+
+        let directory = std::env::temp_dir().join(format!("hkask-unbound-{}", WebID::new()));
+        let run = directory.join("unrelated-run");
+        std::fs::create_dir_all(&run).expect("isolated trace directory");
+        std::fs::write(
+            run.join("metrics.json"),
+            r#"{"coverage_pct":1.0,"mutation_score":1.0}"#,
+        )
+        .expect("unbound metrics fixture");
+        // Process-local environment avoids races with other tests/runtime workers.
+        let mut child = tokio::process::Command::new(std::env::current_exe().expect("test executable"));
+        child
+            .args(["--exact", "cybernetics_loop::cycle::tests::unbound_metrics_cannot_become_quality_observations", "--nocapture"])
+            .env(CHILD, "1")
+            .env("HKASK_TRACE_DIR", &directory)
+            .kill_on_drop(true);
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("parent test runtime")
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(10), child.output()).await
+            });
+        std::fs::remove_dir_all(&directory).expect("remove isolated fixture");
+        let output = result.expect("child deadline").expect("child test execution");
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .any(|line| line.contains(COMPLETE)),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     /// A recorded `append_impact_verdict` call — exactly what the loop wrote back.
     #[derive(Debug, Clone, PartialEq)]
     struct RecordedVerdict {

@@ -141,7 +141,7 @@ This separation is critical because the paper identifies a key tension: "self-im
    - Intrinsic Demos: when the agent can synthesize high-quality training instances from its own priors.
    - Intrinsic Feedback: when the agent can judge candidate behavior through rubrics, consistency, or critique.
    - Extrinsic Experience: when the environment provides grounded feedback (unit tests, task success, rewards).
-4. Generate a concrete improvement plan: what operator 𝒰 will be applied, what signal 𝒮_t will drive it, what budget is allocated, and what acceptance criteria will gate the update.
+4. Generate a concrete improvement plan: what operator 𝒰 will be applied, what signal 𝒮_t will drive it, what experiment scope and explicitly authorized resource constraints apply, and what acceptance criteria will gate the update. Do not invent token quotas; token usage is measured, not budgeted.
 5. Respond with a JSON object containing `pathway` (θ or Σ), `scaffold_component` (if Σ: p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, and `acceptance_criteria`.
 
 ### si-execute-improvement (PDCA Do)
@@ -246,6 +246,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - All updates must pass verifier-gated checks before commitment.
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
+- Token budgets are not an implicit improvement gate. A `budget` record may describe explicitly approved experiment/time/compute/spending constraints, never an agent-invented token quota. Observed token use neither authorizes truncation nor a model downgrade.
+- Local swarm execution inherits the same configured platform/curator models (Settings → Kask → Models), including cloud models. “Local” never authorizes a smaller/local model downgrade. Use the host inference bridge; a model override requires operator approval. If approved routing is unavailable, stop the experiment rather than substitute a model.
 - Every improvement cycle registers a falsifiable outcome claim before PDCA Do: `kanban_goal_create` with the acceptance criteria as observable criteria and an honest intake prediction, and the executing task links the goal via `advances`. `si-commit-or-rollback` judges the goal (`kanban_goal_judge`) with the measured results — an improvement with no registered claim is a process violation, not an improvement.
 - Scaffold-side updates (p, m, 𝒯, Σ) require a before/after measurement through a deterministic harness (`swarm_eval_agent_local` supports pure contains/not_contains/regex response checks, not shell/file evaluators) and a `lisp_eval` convergence gate — improved pass rate at zero regressions — before `si-commit-or-rollback` may decide commit. Validate the evaluator independently; deterministic response scoring alone is not ground truth. When no suitable deterministic harness exists, `evaluation_method: "none_available"` blocks commitment (si-evaluate-improvement step 1).
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).

@@ -45,7 +45,7 @@ score = TF-IDF_average + structural_bonus + domain_saliency
 - **domain_saliency:** direct domain keyword match (0.3–0.5) + graph adjacency bonus (up to 0.5)
 
 ### flashrank
-Greedy marginal-utility selection under token budget. Balances relevance,
+Greedy marginal-utility selection under the profile's retained-line limit. Balances relevance,
 novelty, and brevity. Default for FileContents, StructuredData, Unknown.
 
 ## Ontology Anchoring (P5.4/P8.1)

@@ -61,18 +61,6 @@ pub(crate) const DEFAULT_STAGE_WORSENING_RATIO: f64 = 0.05;
 /// the (metric, action_type) pair is blocked until Curation intervenes.
 pub(crate) const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
 
-/// Default test coverage floor (0.70 = 70% coverage).
-///
-/// When the latest trace run's `coverage_pct` drops below this, the
-/// Cybernetics Loop's `TestCoverageSensor` produces a signal.
-pub(crate) const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
-
-/// Default mutation score floor (0.50 = 50% of mutants killed).
-///
-/// When the latest trace run's `mutation_score` drops below this, the
-/// Cybernetics Loop's `MutationScoreSensor` produces a signal.
-pub(crate) const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
-
 /// Default tool reliability threshold (0.80 = 80% success rate).
 ///
 /// When the aggregate tool success rate drops below this, the
@@ -150,15 +138,6 @@ pub struct SetPoints {
     /// hard-block an action (0.0–1.0). Default: 0.20.
     pub block_worsening_ratio: f64,
 
-    // ── Trace-derived quality floors (v0.32.0) ──
-    /// Minimum test coverage fraction before the Cybernetics Loop alerts.
-    /// Read from the latest trace run's `metrics.json` `coverage_pct`.
-    /// Default: 0.70.
-    pub coverage_floor: f64,
-    /// Minimum mutation score fraction before the Cybernetics Loop alerts.
-    /// Read from the latest trace run's `metrics.json` `mutation_score`.
-    /// Default: 0.50.
-    pub mutation_score_floor: f64,
     /// Minimum tool reliability (success rate) before the Cybernetics Loop
     /// escalates. Sensed from `RegulationLedger::outcome_breakdown` via the
     /// minimum-sample-floored aggregate (`aggregate_tool_reliability`).
@@ -213,8 +192,6 @@ pub(crate) struct SetPointsConfig {
     pub stage_worsening_ratio: Option<f64>,
     pub block_worsening_ratio: Option<f64>,
 
-    pub coverage_floor: Option<f64>,
-    pub mutation_score_floor: Option<f64>,
     pub tool_reliability_threshold: Option<f64>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
@@ -257,8 +234,6 @@ impl Default for SetPoints {
             stage_worsening_ratio: DEFAULT_STAGE_WORSENING_RATIO,
             block_worsening_ratio: DEFAULT_BLOCK_WORSENING_RATIO,
 
-            coverage_floor: DEFAULT_COVERAGE_FLOOR,
-            mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
@@ -309,10 +284,6 @@ impl SetPoints {
                 .block_worsening_ratio
                 .unwrap_or(defaults.block_worsening_ratio),
 
-            coverage_floor: config.coverage_floor.unwrap_or(defaults.coverage_floor),
-            mutation_score_floor: config
-                .mutation_score_floor
-                .unwrap_or(defaults.mutation_score_floor),
             tool_reliability_threshold: config
                 .tool_reliability_threshold
                 .unwrap_or(defaults.tool_reliability_threshold),
@@ -343,8 +314,6 @@ impl SetPoints {
     /// Validate set-point invariants.
     pub fn validate(&self) -> anyhow::Result<()> {
         for (name, value) in [
-            ("coverage_floor", self.coverage_floor),
-            ("mutation_score_floor", self.mutation_score_floor),
             ("outcome_warning_threshold", self.outcome_warning_threshold),
             (
                 "outcome_critical_threshold",

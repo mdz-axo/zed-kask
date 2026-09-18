@@ -87,13 +87,11 @@ pub enum SignalMetric {
     /// Fraction of successful evaluations in an externally observed rollout.
     /// This metric is supplied by `RolloutEventSource`, not a periodic sensor.
     PassRate,
-    /// Test coverage fraction (Cybernetics Loop 6).
-    /// Read from the latest trace run's `metrics.json` `coverage_pct`.
-    /// Set-point: coverage_floor (default 0.70).
+    /// Historical test-coverage records. No periodic producer: unbound trace
+    /// files are not evidence about the current artifact.
     TestCoverage,
-    /// Mutation score fraction (Cybernetics Loop 6).
-    /// Read from the latest trace run's `metrics.json` `mutation_score`.
-    /// Set-point: mutation_score_floor (default 0.50).
+    /// Historical mutation-score records; no periodic producer. Retained for
+    /// decoding persisted signals, not as a current quality measurement.
     MutationScore,
 }
 

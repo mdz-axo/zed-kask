@@ -36,10 +36,17 @@ and no adapter ships without beating its baseline.
 
 ### Phase 1 — Measure (the rollout harness)
 
+Model policy: “local swarm” means execution on the hKask substrate, not a local
+or smaller LLM. Inherit the platform/curator defaults from Settings → Kask →
+Models through the host inference bridge. Do not substitute an unapproved
+local/cheaper model to avoid provider cost; if approved routing is unavailable,
+surface that blocker. Only an explicit operator choice may override the model.
+
 1. Define the task set: 3-10 representative tasks, each with a
    deterministic response evaluator (contains / not_contains / regex)
-   and an operator-approved resource budget recorded outside the request
-   (the local harness has no credits_authorized parameter).
+   and an explicit experiment scope (tasks/repeats and any approved run
+   deadline). Token usage is observed evidence, not a quota. The local
+   harness has no credits_authorized or token-budget parameter.
 2. Call `swarm_eval_agent_local` (swarm server) with the agent name,
    the task set, and repeats (2-3 for a first measurement). Read the
    per-task pass rates and standard error. This is the BASELINE —

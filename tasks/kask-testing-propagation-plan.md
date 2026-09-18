@@ -1,88 +1,46 @@
-# kask testing-protocol propagation plan — Phase 3
+# kask testing-protocol propagation — completion ledger and remaining batches
 
-Status: **drafted, not executed.** Per the program charter (`tasks/enhanced-agent-task-kani-harness.md`), propagation is a separate, explicitly gated work item: each batch below starts only on operator confirmation. Ordering follows the Phase 0 gradient (loop-criticality × coverage gap; 2026-09-18 inventory: ~2,377 example tests, 5 property sites, 0 proofs at the time of inventory; 9/10 enumerated loops closed).
+**Status:** partially implemented; reconciled against git and source, not a fresh verification run. No tests, Clippy, Kani, or evidence-runner self-tests were run for this documentation pass. “Implemented” below means committed code exists, not that current tests or remote CI are green.
 
-Anchors: layer assignment rules live in `kask/docs/reference/testing-protocol.md` (commit 84f0ee2321). The pilot precedent (hkask-types, commit 553f7d38bc) sets the per-batch done-condition template: scoped `./script/clippy` green, full crate tests green, falsifiable tests added, pathspec-limited commit hash cited, and any deleted test carries a replaced-by mapping.
+**Governing acceptance:** [testing protocol](../kask/docs/reference/testing-protocol.md), especially expectation contracts and change authority. User-expected outcomes govern, not numeric test/property/proof quotas. Before each remaining batch, record context, functional role, relevant variables, allowed variation, independent oracle/falsifier, and user or explicitly delegated curator authority. Harmful behavior must fail; equivalent implementations must remain free to pass.
 
-## Batch 1 — hkask-mcp-companies: close the dropped forecast loop leg (loop-critical)
+**Historical baseline only:** the 2026-09-18 Phase 0 inventory reported ~2,377 example tests, 5 property sites, 0 proofs and 9/10 enumerated loops closed. Its crate counts and the original “dropped leg” diagnosis are not current coverage measurements or evidence of complete functional closure.
 
-**Gap (Phase 0 loop inventory, loop 5, DROPPED LEG):** `forecast_persist` → `forecast_record` → read has no closure test. The tool surface exists (`src/tools/valuation.rs:1094-1307`, `src/forecast.rs:3-66`, `src/types.rs:328-379`); the compute leg is well value-tested in `hkask-forecast`; price resolution is unit-tested (`src/forecast.rs` tests). Nothing drives the persistence loop end-to-end. The crate: 159 tests, 0 property, 0 proof.
+## Actual completion ledger
 
-**Layer:** loop-closure — real tool seam over in-memory stores per the MCP testing standard (`kask/docs/reference/mcp-servers/README.md:72`), following the curator/portfolio `tool_behavior.rs` pattern.
+| Slice | Implementation commits | Outcome covered in current source; limits |
+| --- | --- | --- |
+| Types pilot | `553f7d38bc` | JSON extraction properties plus Kani harnesses for panic freedom and container delimiters over symbolic **8-byte valid-UTF-8 inputs** (`kask/crates/hkask-types/src/json_extract.rs:186–269`). Not arbitrary-length proof, JSON validity, or proof of the allocating wrapper; not completion of Batch 6. |
+| Batch 1 — companies forecast loop | `75aa28750c`; fallback extension `aed279f660` | Real tool calls persist → get/list and record → read back outcomes scored against stored probability; missing forecasts error and empty lists remain empty. Missing probability is disclosed and the 0.7 fallback is pinned (`kask/mcp-servers/hkask-mcp-companies/src/forecast_loop_tests.rs:35–275`). This is committed regression coverage, not a claim that every forecast outcome is covered. |
+| Batch 2 — forecast calibration | `f137917dbf` | Generated Brier bounds/mean, Wilson bounds/narrowing, Fermi hull/neutral prior, isotonic monotonicity/bounds and empty-fit identity (`kask/crates/hkask-forecast/src/property_tests.rs:12–153`). The originally proposed piecewise-constant property is not in this suite. |
+| Batch 3 — portfolio ledger | `6cd9ce8648` | Generated buy/sell cash and quantity conservation, non-cash CMP transactions, ledger recall, snapshot cash/shares and deposits excluded from returns (`kask/mcp-servers/hkask-mcp-portfolio/src/property_tests.rs:41–260`). Batch-seed equivalence and daily/period compounding were proposed, not implemented here. The recall fold reuses `position_delta`; it checks persistence consistency, not an independent oracle for that math. |
+| Local test-evidence boundary | `23a73a44d4` | Runner binds declared source inputs, contract, oracle, evaluator and run identity to logs and pre/post hashes (`kask/scripts/evaluate-test-evidence.sh:35–77`). Checker distinguishes `evaluation_passed`, `corrective_work_required`, and `evidence_rejected` (`kask/crates/hkask-regulation/src/bin/check_test_evidence.rs:87–217`). Self-test covers failure → repair → remeasurement, equivalent implementation and invalid-evidence controls (`kask/scripts/evaluate-test-evidence-selftest.sh:17–103`); CI invokes it (`.github/workflows/kask-invariants.yml:137–140`). Wiring is not evidence of execution. |
 
-**Work:**
-1. `forecast_persist_records_and_reads_back` — persist, read back every field via the read tool.
-2. `forecast_record_closes_the_loop` — persist → record outcome → read shows the outcome recorded (scoreable).
-3. Degradation surfaced: `forecast_record` on an unknown forecast returns a typed error naming it (never a silent no-op); reading a symbol with no forecasts returns surfaced empty, never fabricated zeros.
+The evidence runner selects offline, serial **library tests with default features**, not the full crate suite. It is a trusted local evaluation boundary, not hostile-candidate containment, authenticated curator delegation, automatic correction, coverage/mutation measurement, sensor registration, or promotion authority. It does **not** complete Batch 5's Kani-runner generalization; see the protocol's [runner scope and limits](../kask/docs/reference/testing-protocol.md#running-the-local-evidence-boundary).
 
-**Acceptance (falsifiable):** the three tests pass; all existing companies tests green; `./script/clippy -p hkask-mcp-companies` green; commit hash cited. Falsifier: making `forecast_record` a silent no-op must fail tests 2-3. **If the closure test reveals a live bug in the loop, the bug is the deliverable** — report it, do not reshape the test around it.
+## Remaining batches (operator-gated)
 
-**Effort:** small (one test file; the construction pattern is established).
+### Batch 4 — corpus chunk/query behavior and media deserialization
 
-## Batch 2 — hkask-forecast: property suite over the calibration math
+Define the user's chunk-budget/overlap expectations and valid/invalid query behavior before generating inputs. Ground candidates in `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:395–431` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:313–380`. For media, address the explicitly omitted deserialization-totality property (`kask/mcp-servers/hkask-mcp-media/tests/schema_compliance.rs:10–14`): accepted requests deserialize, malformed requests surface errors rather than panics. Preserve the distinct schema-compatibility obligation; adding properties is not itself closure.
 
-**Gap:** 53 value-assert tests, 0 property sites. The math is exactly property-shaped (Phase 0 gradient rank 2).
+### Batch 5 — generalize the bounded-proof runner
 
-**Layer:** property (proptest dev-dep; precedent: hkask-types @ 553f7d38bc).
+`kask/scripts/check-bounded-proofs.sh:19–37` still fixes training sources and harnesses. Parameterize crate, sources and harnesses while preserving the training default, pinned Kani 0.68.0, 2 GiB / 120 s / unwind 12 budgets, default safety/unwind checks, refusal to overwrite, source recheck and evidence fields (`kask/scripts/check-bounded-proofs.sh:10–62`). Acceptance requires actual types-pilot evidence and training-compatibility checks plus shellcheck results, not a generic test-runner receipt. The originally cited manual pilot directory (`~/.local/state/zed-kask/verification/hkask-types-pilot-2026-09-18/`) is a historical pointer, not revalidated here.
 
-**Properties (finalize signatures against the crate at execution):**
-1. Brier penalty: quadratic and bounded for generated p in [0,1], o in {0,1}; multi-item mean exactness over generated vectors (nonempty, matching lengths).
-2. Wilson bounds: bracket the observed rate; width weakly decreases as n grows at fixed rate.
-3. Fermi aggregation: result stays within the [min, max] of the estimates; all-zero confidences → neutral prior (existing unit pin, generalized).
-4. Isotonic apply: monotone non-decreasing, piecewise constant (existing unit pins, generalized).
+### Batch 6 — types sibling invariants and Lisp budgets
 
-**Acceptance:** at least 4 properties pass with declared domains and shrinking; no existing test deleted; clippy green; commit hash cited. Falsifier: any shrunk counterexample is a finding — report it, do not suppress it.
+Candidates remain path confinement after sanitization, cell-coordinate round trips and max-preserving version selection. Existing example anchors: `kask/crates/hkask-types/src/agent_paths.rs:368`, `kask/crates/hkask-types/src/spreadsheet.rs:894`, `kask/crates/hkask-types/src/ytdlp.rs:100`. Define their domains from user expectations rather than freezing incidental representations.
 
-**Effort:** small-medium.
+For Lisp, test bounded generated programs for panic freedom and result-or-explicit-error behavior under declared step/depth budgets (`kask/crates/hkask-lisp/src/hkask_lisp.rs:505–527`). **Low Kani unwind is not inherently vacuous.** An insufficient unwind with unwinding assertions enabled fails to establish the proof; unreachable obligations or contradictory assumptions can cause vacuity. Assess bounded production decision cores independently, check reachability and retain safety/unwind checks. A small bounded proof may be useful but does not establish arbitrary-program termination; broader property tests and caller/consumer tests remain complementary.
 
-## Batch 3 — hkask-mcp-portfolio: ledger conservation properties
+### Follow-up review — implemented batches
 
-**Gap:** 59 tests, 0 property. The loop-closure layer is already this crate's strength (`create_apply_batch_seed_returns_materialize_loop`, attribution reconciliation, the `unwrap_or(0)` degradation pin) — do not touch it. The deficit is invariant coverage over generated transaction sequences.
+Review the ledger's uncovered candidates (isotonic piecewise constancy, batch-seed equivalence, compounding) against actual user expectations. Implement justified obligations or record an authorized retirement; do not silently mark them done or add tests merely to reach the old quotas. Review oracle independence and allowed-change controls for existing suites before treating them as complete expectation coverage.
 
-**Layer:** property. Candidate invariants (finalize against the crate's math at execution): batch seed equals the sum of single seeds (holdings conservation); buy-then-sell nets quantities exactly with no orphans; weight_adjust preserves total value under fixed prices; daily returns reconcile to the period return (compounding conservation).
+## Execution gates and scope
 
-**Acceptance:** at least 3 properties pass; loop-closure tests untouched and green; clippy green; commit hash cited.
-
-**Effort:** medium.
-
-## Batch 4 — hkask-mcp-corpus chunk policies + hkask-mcp-media documented omission
-
-**Gap:** corpus: 181 tests, 0 property (chunk policies, the Lisp query parser). media: 286 tests with a *documented intentionally omitted* proptest property (`tests/schema_compliance.rs:12`) — the informal omission register's only entry.
-
-**Layer:** property. Corpus candidates: chunk word-budgets honored over generated text (min/max bounds, overlap preserved); `parse_lisp_query` never panics over generated inputs (well-formed parses; malformed surface typed errors — unit pins exist, generalize). Media: close the omission — add the deserialization-totality property the file documents as deliberately missing.
-
-**Acceptance:** at least 3 corpus properties plus the media omission closed; all existing tests green; clippy green per crate; commit(s) cited.
-
-**Effort:** medium.
-
-## Batch 5 — generalize check-bounded-proofs.sh beyond the training crate
-
-**Gap:** `kask/scripts/check-bounded-proofs.sh` hardcodes the hkask-mcp-training sources and five harnesses. The hkask-types pilot reproduced its discipline by hand (evidence: `~/.local/state/zed-kask/verification/hkask-types-pilot-2026-09-18/`).
-
-**Layer:** protocol infrastructure (bash; project rule — no Python tooling).
-
-**Work:** parameterize per crate (crate name + sources + harness list), keeping the pinned version gate (Kani 0.68.0), per-harness budgets (2 GiB address space / 120 s wall / unwind 12), evidence fields (logs, exits, started/finished, source sha256, manifest, SHA256SUMS), and the refuse-to-overwrite evidence directory. Default invocation stays training-compatible.
-
-**Acceptance:** the script runs the hkask-types harnesses producing the same evidence fields as the pilot's manual run; shellcheck passes; the training invocation is unchanged; commit hash cited.
-
-**Effort:** small-medium.
-
-## Batch 6 — kask-core small property pins (pilot classification candidates)
-
-From the exhaustive hkask-types classification delivered with the pilot, generalized to sibling modules:
-
-1. `hkask-types/agent_paths`: sanitize property — generated names: no `/`, no `..`, traversal blocked; every sanitized name resolves under one root (unit pin `sanitize_name_blocks_path_traversal` exists — generalize).
-2. `hkask-types/spreadsheet`: generated-value cell coordinates round-trip beyond the fixed examples (`cell_coordinate_round_trips_exactly` exists — generalize over ranges).
-3. `hkask-types/ytdlp`: candidate retention is max-preserving over generated version lists (`equal_versions_retain_the_first_candidate` exists — generalize).
-4. `hkask-lisp`: budget totality — generated programs: evaluation never panics and always terminates in result-or-budget-error (step/depth budget unit pins exist — generalize). **Proof layer explicitly not proposed here:** the step budget is far beyond the pinned unwind 12, so Kani coverage would be vacuous; the property layer is the correct assignment (the protocol's unprovability statement in action).
-
-**Acceptance:** per crate: properties pass, existing tests green, clippy green, commit hash cited.
-
-**Effort:** medium, splittable per crate.
-
-## Gates, non-goals, scope
-
-- **Gates:** each batch is a separately gated work item — the operator confirms the start; done-conditions cite commit hashes. No batch starts while a predecessor's gate is open.
-- **Non-goals:** wholesale unit→property conversion (rejected by Phase 0 evidence); API changes; raising proof budgets; deletions without replaced-by mappings; weakening any check to make a target fit.
-- **Out of scope pending operator ruling:** the 12 zed-side widget crates (282 tests, `crates/hkask-*`) — D-seam territory.
-- **Home:** this plan lives in `tasks/` because `kask/docs/` is at 69/70 under the fewer-than-70 cap; promoting it into `kask/docs/plans/` requires an operator-approved fold or cap ruling.
+- Each remaining batch requires operator confirmation under `tasks/enhanced-agent-task-kani-harness.md`; re-check current code and evidence before starting. Resolve a predecessor's gate before proceeding unless the operator explicitly authorizes independent work.
+- Close a batch with expectation/falsifier evidence, declared domains and exclusions, actual scoped Clippy and full affected-crate test results, and implementation commit references. Report failures, shrunk counterexamples and budget limits; never weaken checks to fit a target. Evidence-runner receipts cover only their declared scope.
+- Do not freeze incidental internals or undertake wholesale unit-to-property conversion. Test deletion needs a preserved-obligation mapping or user/explicitly delegated curator authority to retire the obligation. API changes and raised proof budgets require separate scope approval.
+- Zed-side `crates/hkask-*` widget work remains out of scope pending operator ruling. This ledger stays in `tasks/`; no new documentation is required.

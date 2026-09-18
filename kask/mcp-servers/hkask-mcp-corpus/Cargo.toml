@@ -68,6 +68,9 @@ path = "src/hkask_mcp_corpus.rs"
 name = "hkask-mcp-corpus"
 path = "src/main.rs"
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true
 

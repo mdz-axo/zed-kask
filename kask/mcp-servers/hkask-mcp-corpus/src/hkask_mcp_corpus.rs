@@ -38,6 +38,9 @@ pub(crate) mod inference_svc;
 pub(crate) mod ocr;
 pub(crate) mod path_safety;
 #[cfg(test)]
+mod property_tests;
+
+#[cfg(test)]
 mod retrieval_tests;
 
 pub(crate) mod services;

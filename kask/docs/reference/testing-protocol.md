@@ -2,7 +2,7 @@
 title: "kask Testing Protocol: Expectation Contracts and Evidence"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-18
-version: "1.2.0"
+version: "1.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -21,12 +21,14 @@ governs the loop-closure layer's construction rules (real tool seam over
 in-memory stores, error-envelope specificity).
 
 The earlier Phase 0 inventory is a historical sample, not evidence that all
-feedback loops are closed. In particular, reading `coverage_pct` or
-`mutation_score` from a metrics file does not establish a completed evaluation
-of the candidate (`kask/crates/hkask-regulation/src/sensor_provider.rs`,
-`TestCoverageSensor::observe` at :232–277 and `MutationScoreSensor::observe`
-at :381–426). Test-layer counts must not substitute for inspection of functional
-outcomes and evidence.
+feedback loops are closed. The automatic coverage/mutation file sensors and
+their unused thresholds have been removed: an arbitrary `metrics.json` could
+previously become a fresh quality observation without identifying any tested
+artifact. The regression `unbound_metrics_cannot_become_quality_observations`
+in `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs` exercises this
+boundary and checks that genuine tool outcomes remain observable. Historical
+metric names remain decodable; no periodic sensor produces them. Test-layer
+counts must not substitute for inspection of functional outcomes and evidence.
 
 ## Expectation contract and change authority
 
@@ -157,8 +159,8 @@ by arbitrary providers or reversal of remote effects after cancellation.
 ## Evidence-loop acceptance protocol
 
 This is the acceptance standard, **not an automatic promotion system**.
-The local boundary below implements one test-evidence path; the editor's
-periodic coverage/mutation sensors are not wired to it. Each bounded experiment
+The local boundary below implements one test-evidence path; there is no automatic
+coverage/mutation sensing or promotion. Each bounded experiment
 must retain:
 
 - The user expectation, authorized contract version, objective, baseline,
@@ -227,6 +229,38 @@ and external effects require separate containment and fixture teardown. There
 is no memory/disk/process quota, automatic corrective edit, periodic-sensor
 registration, coverage/mutation measurement, or promotion path.
 Changing the oracle requires separate review and a new evaluator identity.
+
+### Reproducible local check
+
+This runs the runner's harmful-change, repair, and equivalent-change controls,
+then evaluates the regulation library. It writes into a new private evidence
+directory, not the repository. The declared source scope includes regulation,
+types, workspace configuration and lockfile; it is not a complete build closure.
+
+```bash
+set -euo pipefail
+root=/home/mdz-axolotl/Clones/zed-kask
+cd "$root"
+CARGO_BUILD_JOBS=2 cargo build --locked --offline -p hkask-regulation --bin check_test_evidence
+checker="$root/target/debug/check_test_evidence"
+bash "$root/kask/scripts/evaluate-test-evidence-selftest.sh" "$checker"
+umask 077
+out=$(mktemp -d "${TMPDIR:-/tmp}/hkask-evidence.XXXXXX")
+mapfile -d '' inputs < <(find "$root/kask/crates/hkask-regulation" \
+  "$root/kask/crates/hkask-types" "$root/.cargo" -type f -print0 | sort -z)
+sha256sum "${inputs[@]}" > "$out/oracle-inputs.sha256"
+bash "$root/kask/scripts/evaluate-test-evidence.sh" "$checker" \
+  "$root/Cargo.toml" hkask-regulation \
+  "$root/kask/docs/reference/testing-protocol.md" "$out/oracle-inputs.sha256" \
+  "$out/run" 120 "$root/rust-toolchain.toml" "${inputs[@]}"
+(cd "$out/run" && sha256sum --check SHA256SUMS)
+printf 'Evidence: %s\n' "$out"
+```
+
+When comparing candidates, keep the actual test/oracle inputs fixed and review
+their digests independently. This broad inventory example intentionally changes
+evaluator identity when any listed source changes; it is a single-run integrity
+check, not a claim of an independent before/after oracle.
 
 ## Provenance
 

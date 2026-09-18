@@ -36,7 +36,7 @@ Check the evaluation result against the acceptance criteria from the improvement
 - **Performance threshold**: Did the update improve performance on the held-out distribution?
 - **Regression tolerance**: Are regression rates within acceptable bounds?
 - **Safety constraints**: Are there any safety policy violations, goal drift, or reward hacking indicators?
-- **Budget compliance**: Is the cost within the allocated budget?
+- **Authorized constraints**: Were the explicitly approved experiment/time/compute/spending constraints respected? Token usage is accounting, not an implicit budget or a reason to downgrade models.
 
 ### 2. Decision: Commit or Rollback
 

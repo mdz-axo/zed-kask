@@ -11,7 +11,7 @@
 //! - **`algorithms`** — Three compression algorithms:
 //!   - `rtk_style` — head/tail preservation with ontology-aware split ratios
 //!   - `word_rank` — TF-IDF bag-of-words compression with structural bonus and ontology anchoring
-//!   - `flashrank` — greedy marginal-utility selection under token budget
+//!   - `flashrank` — greedy marginal-utility selection under profile line-retention limits
 //!     The `select_ontology_anchor` function (re-exported from `hkask-bridge-ontology`
 //!     via `types`) maps tool names to the 3-tier ontology hierarchy without
 //!     wire-protocol overhead — every MCP server links against the same bridge
