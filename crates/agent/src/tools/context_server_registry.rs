@@ -21,8 +21,7 @@ const MAX_INLINE_ARG_LEN: usize = 120;
 /// started): here the request may have reached the server, so the effect
 /// is unknown — never rollback, never success, never eligible for automatic
 /// retry. The caller must re-read state rather than resend the same call.
-const TOOL_CANCELED_OUTCOME_UNKNOWN: &str =
-    "Tool call cancelled while in flight — its effect on the server is unknown. \
+const TOOL_CANCELED_OUTCOME_UNKNOWN: &str = "Tool call cancelled while in flight — its effect on the server is unknown. \
      Re-check state before retrying; resending the same call could duplicate work.";
 
 /// Generates a tool ID for an MCP tool that can be used in settings.

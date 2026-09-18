@@ -613,14 +613,16 @@ found, beyond the removed `skills_dir`:
    reads), while the alert email runs in the editor process (sink wired from
    settings; password from the keychain into the editor's own env). The
    emission helper and both false pin assertions were deleted/flipped;
-   `kask-settings.md` corrected. **New functional finding surfaced for the
-   operator:** the `kask.curator.email` transport fields (`mxroute_server`,
-   `smtp_username`, `curator_email`) reach no consumer — the editor's
-   `send_email` reads them from the editor process env, which nothing
-   populates from settings (only the keychain password is set there). The
-   feature currently works only with shell-exported vars; wiring settings →
-   editor env (or migrating `send_email` to settings-based config) is an
-   operator decision.
+   `kask-settings.md` corrected. **Correction (retraction of an earlier
+   false finding):** a follow-up survey briefly recorded that the
+   `kask.curator.email` transport fields reach no consumer — that claim was
+   WRONG. The composition root already bridges settings → the editor process
+   env for all five non-secret email vars
+   (`crates/zed/src/main.rs:2108-2138`, alongside the keychain→env password
+   bridge at `:2140+`); the single-line grep that missed it cannot match
+   multi-line `set_var(` calls. The settings knobs are live end to end:
+   settings → editor env → `send_email`'s readers. Only the MCP-child delivery
+   was dead, and its removal stands.
 2. **`HKASK_CONDENSER_PERSONA_KEYWORDS` / `HKASK_CONDENSE_SALIENCY_WINDOW` —
    REMOVED end to end** (the `skills_dir` class): zero allowlist entries
    (filtered before any child) AND zero server readers AND zero editor
@@ -632,3 +634,39 @@ found, beyond the removed `skills_dir`:
 3. False positive for the record: `HKASK_SWARM_MEMORY_PASSPHRASE` matches only
    the comment documenting that it does NOT exist (the no-separate-passphrase
    invariant holds).
+
+**Follow-up pass 2 (2026-09-18, pre-existing blockers):** with the
+open-items program committed as `6054422cc3`, the full validation ladder was
+re-measured at HEAD. Findings and resolutions:
+
+1. **fmt gate — unblocked.** The concurrent stream had committed its dispatch,
+   call-timeout, and gather hardening work unformatted (3 files:
+   `context_server_registry.rs`, `hkask-mcp/runtime.rs`,
+   `hkask-mcp-corpus/tools/gather.rs`), leaving `cargo fmt --check` red on
+   committed code. Formatting-only fix applied (zero semantics; `cargo check`
+   green on agent/hkask-mcp/hkask-mcp-corpus; rustfmt's "let chains" parse
+   complaint on the registry file is a formatter-version limitation — the
+   let-chain is valid edition-2024 Rust and compiles).
+2. **Flaky test recorded — `hkask-mcp-media
+   tool_behavior_tests::video_remix_publishes_durable_asset_and_cleans_intermediates`.**
+   Failed once under the 8-crate parallel nextest sweep (heavy load); then
+   green in 11/11 subsequent runs (10 isolated runs, the tool_behavior
+   suite, and the full 8-crate re-sweep at 1141/1141). No reproduction, no
+   hypothesis — recorded rather than chased, owner: the media test owner.
+   A red signal without a defect is a fidelity problem in the validation
+   loop; if it recurs, the intermediate-cleanup timing under load is the
+   first suspect.
+3. **Retraction of the email settings→transport "gap"** (recorded above in the
+   audit disposition): the bridge exists; the finding was a survey-grep
+   artifact. The lesson is banked: single-line `set_var.*VAR` greps cannot see
+   multi-line `set_var(\n  "VAR",\n...)` calls — verify env producers by
+   function, not by line.
+4. **RR-0020 confirmed complete at HEAD:** both pre-dating violations
+   (`hkask-spreadsheet`, `hkask-steer-core` — zero-unsafe crates) carry
+   `#![forbid(unsafe_code)` and the gate passes; committed in `6054422cc3`.
+
+Ladder state at this pass's close: `cargo fmt --check` green,
+`./script/clippy` (kask scope) green, 8-crate nextest sweep 1141/1141 green,
+`cargo check -p zed` green, all 10 CI invariant scripts green, RR-0020 green,
+docs 68 < 70. Remaining tree state is the concurrent stream's staged work plus
+this record — commit hashes to be named by the committing stream.

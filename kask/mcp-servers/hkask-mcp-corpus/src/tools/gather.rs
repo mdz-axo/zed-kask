@@ -213,7 +213,9 @@ impl CorpusServer {
                 cache_dir
                     .join(format!("{}.txt", params.slug))
                     .to_str()
-                    .ok_or_else(|| McpToolError::invalid_argument("cache path is not valid UTF-8"))?,
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument("cache path is not valid UTF-8")
+                    })?,
             )?;
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {

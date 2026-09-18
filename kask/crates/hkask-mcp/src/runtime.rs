@@ -1708,27 +1708,26 @@ impl McpRuntime {
         // uncertain-delivery case as a transport failure: the request was
         // already handed to a live peer, so it may or may not have applied —
         // `Interrupted` carries that, never a proven failure.
-        let result = match tokio::time::timeout(self.config.call_timeout, peer.call_tool(params))
-            .await
-        {
-            Err(_) => {
-                return Err(DispatchError::Interrupted(format!(
-                    "server '{server}' did not reply to '{tool}' within {:?}",
-                    self.config.call_timeout
-                )));
-            }
-            Ok(Ok(result)) => result,
-            // The peer was live when we handed off, so we cannot distinguish
-            // "the send was rejected" from "the server died after receiving it."
-            // Report the outcome as unknown rather than assuming either.
-            Ok(Err(
-                error @ (rmcp::service::ServiceError::TransportClosed
-                | rmcp::service::ServiceError::TransportSend(_)),
-            )) => {
-                return Err(DispatchError::Interrupted(error.to_string()));
-            }
-            Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
-        };
+        let result =
+            match tokio::time::timeout(self.config.call_timeout, peer.call_tool(params)).await {
+                Err(_) => {
+                    return Err(DispatchError::Interrupted(format!(
+                        "server '{server}' did not reply to '{tool}' within {:?}",
+                        self.config.call_timeout
+                    )));
+                }
+                Ok(Ok(result)) => result,
+                // The peer was live when we handed off, so we cannot distinguish
+                // "the send was rejected" from "the server died after receiving it."
+                // Report the outcome as unknown rather than assuming either.
+                Ok(Err(
+                    error @ (rmcp::service::ServiceError::TransportClosed
+                    | rmcp::service::ServiceError::TransportSend(_)),
+                )) => {
+                    return Err(DispatchError::Interrupted(error.to_string()));
+                }
+                Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
+            };
         let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
             // kask servers set `is_error` natively (rmcp's Result handling +
