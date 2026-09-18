@@ -418,7 +418,7 @@ architecture-beta
     service tool_port(mcp)[ToolPort trait<br/>hkask-tool-port/src/tool_port.rs]
     service mcp_runtime(mcp)[McpRuntime<br/>hkask-mcp/src/runtime.rs]
     service call_cap(mcp)[CallCapManager<br/>hkask-regulation/src/energy.rs]
-    service servers(mcp)[11 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
+    service servers(mcp)[12 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
 
     service unwrap(agent)[unwrap_tool_envelope<br/>hkask-types/src/tool_response.rs]
 

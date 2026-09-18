@@ -178,8 +178,8 @@ Sizes below are counted directly from each descriptor in
 | `training` | 5 | 18 |
 | `media` | 2 | 10 |
 
-The media server's live router is pinned at 80 tools
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:456-467`).
+The media server's live router is pinned at 81 tools
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`).
 
 ## Child environment lifecycle
 

@@ -79,7 +79,7 @@ The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` +
 
 ### 1.4 Service and runtime subsystems
 
-**Crate:** `hkask-services-core` is the only surviving `hkask-services-*` crate, a thin shared library used by corpus and curator. The editor process owns one `McpRuntime`; it spawns the 11 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-506`). There is no daemon or `KaskCore` singleton.
+**Crate:** `hkask-services-core` is the only surviving `hkask-services-*` crate, a thin shared library used by corpus and curator. The editor process owns one `McpRuntime`; it spawns the 12 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-541`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -511,7 +511,7 @@ graph TD
         REG[Process-global Regulation ledger and loops]
         KEYSTORE[hkask-keystore via oo7]
     end
-    subgraph CHILDREN["11 MCP child processes over stdio"]
+    subgraph CHILDREN["12 MCP child processes over stdio"]
         MCP[MCP server binaries]
         LOCALINF[Child-local hkask-inference and MediaRouter]
     end

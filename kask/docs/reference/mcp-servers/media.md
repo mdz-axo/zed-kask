@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # Media MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-media`
-**Tools:** 80 — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:459-467`), which asserts `MediaServer::combined_router().list_all().len() == 80`. The count includes the 15 `educt_*` transcript-layer tools and the face-registry tools. The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80). The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:439-449`).
+**Tools:** 81 — pinned end-to-end by `tool_surface_is_exactly_81_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`), which asserts `MediaServer::combined_router().list_all().len() == 81`. The count includes the 15 `educt_*` transcript-layer tools and the face-registry tools. The 2026-09-03 consolidation merged `transcribe` into `transcribe_bundle`, `gallery_find_similar` into `gallery_search` (semantic mode), `gallery_add_video`+`gallery_add_audio` into `gallery_add_media`, and `generate_variants` into `generate_image` (num_images); `transcribe_and_store` was added 2026-09-04 (79→80). The test exists to catch silent registration drops: a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, silently registers nothing while `cargo check` passes (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:458-471`).
 **Registration:** built-in server `id: "media"`, `binary: "hkask-mcp-media"` in `BUILT_IN_MCP_SERVERS` (`kask/crates/kask_bridge/src/mcp_servers.rs:468-505`).
 
 Tool count and every tool name below were verified against `#[tool(...)]`-annotated
@@ -29,7 +29,7 @@ flowchart TD
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
     server["MediaServer<br/>8 state fields"]
-    router["combined_router<br/>9 sub-routers, 80 tools"]
+    router["combined_router<br/>9 sub-routers, 81 tools"]
     dispatch["execute_tool<br/>reg.tool.* outcome span"]
     sinks["Sinks: gallery.db rows,<br/>persisted assets, media_block hints"]
 
