@@ -262,18 +262,20 @@ pub fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json::Value
 }
 
 /// Extract the payload field from an ABW message envelope. ABW messages
-/// carry the agent's text under `content` or `response` (legacy); this reads
-/// either, preferring `content`. Shared by the run-status sanitizer and the
-/// delegate-response extractor so the two-key lookup lives in one place.
+/// carry the agent's text under `content`; the legacy `response` spelling
+/// was removed under the no-backward-compatibility ruling (2026-09-18) — a
+/// message still carrying only `response` extracts no content and sanitizes
+/// to the safe empty placeholder. Shared by the run-status sanitizer and
+/// the delegate-response extractor.
 pub fn unwrap_abw_envelope(msg: &serde_json::Value) -> Option<&serde_json::Value> {
-    msg.get("content").or_else(|| msg.get("response"))
+    msg.get("content")
 }
 
 /// Sanitize a single `swarm_run_status` message. Reads the text from
-/// `content` or `response`, wraps it in the `{content, source, trust}`
-/// container, and inserts it as `content`. The original `response` field
-/// is removed — it was read but not sanitized, leaving raw injection text
-/// in the message that a model reading `response` directly would see.
+/// `content`, wraps it in the `{content, source, trust}` container, and
+/// inserts it as `content`. A legacy `response` field is stripped without
+/// being read: an unsanitized key must not survive into output a model
+/// could read.
 pub fn sanitize_run_status_message(msg: &serde_json::Value) -> serde_json::Value {
     let sanitized = sanitize_abw_response(unwrap_abw_envelope(msg));
     let mut msg = msg.clone();
