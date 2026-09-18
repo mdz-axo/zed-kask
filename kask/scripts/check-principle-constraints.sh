@@ -24,14 +24,17 @@ if [ ! -f "$CONSTRAINTS_FILE" ]; then
     exit 0
 fi
 
-# Check if the file has any principles (empty array means no constraints yet)
+# Check if the file has any principles (empty array means no constraints yet).
+# No silent fallback: a python/YAML failure must fail the hook loudly —
+# a parse error reported as "no constraints" would green-light drift
+# (observed live 2026-09-18: an unparsable registry read as OK).
 PRINCIPLE_COUNT=$(python3 -c "
 import yaml, sys
 with open('$CONSTRAINTS_FILE') as f:
     data = yaml.safe_load(f)
 principles = data.get('principles', [])
 print(len(principles))
-" 2>/dev/null || echo "0")
+")
 
 if [ "$PRINCIPLE_COUNT" = "0" ]; then
     echo "OK: No principles in $CONSTRAINTS_FILE — nothing to verify."

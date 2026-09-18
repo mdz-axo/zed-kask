@@ -10,5 +10,96 @@
 # CI hook: kask/scripts/check-principle-constraints.sh verifies that
 # enforced constraints haven't drifted (code moved, test deleted).
 # Gap constraints are reported as warnings, not failures.
+#
+# The first entry (self-change-acceptance, 2026-09-18) is the axiom
+# layer named by kask/docs/plans/goedel-gap-closure-plan.md — the
+# trust basis for zed-kask's self-change machinery. Changes to this
+# registry, to any enforced_at path, or to the checking scripts
+# require explicit operator ratification.
 
-principles: []
+principles:
+  - id: self-change-acceptance
+    name: Self-Change Acceptance (Axiom Layer)
+    description: >-
+      The trust basis for every class of self-change in zed-kask — the
+      empirical analog of the Goedel machine's provable-utility
+      trigger. Registered by the Goedel-machine gap-closure plan
+      (kask/docs/plans/goedel-gap-closure-plan.md, goal
+      5e12d79e-5f9f-4314-8f94-5e5f165e58e4). The operator is the fixed
+      point: no self-change auto-promotes on a green gate.
+    date: 2026-09-18
+    source: >-
+      Goedel-machine deep-research report (2026-09-18) + operator
+      directive + refactor-architecture gap-closure plan
+    constraint_set:
+      - id: ax-training-math-gates
+        assertion: >-
+          Training-config self-changes are gated by the LoRA
+          math-contract gates; refuse-severity findings block job
+          submission.
+        status: enforced
+        enforced_at: kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
+        falsifier: validate_config_refuses_zero_rank
+      - id: ax-harness-refusal
+        assertion: >-
+          Unsupported harness/method combinations are refused, never
+          silently dropped.
+        status: enforced
+        enforced_at: kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
+        falsifier: axolotl_refuses_non_sft_training_method
+      - id: ax-training-math-proofs
+        assertion: >-
+          The G-M1..G-M4 iff-properties carry cfg-gated Kani proof
+          harnesses (gm3/gm4/gm1/safe-region). Semantic execution
+          requires the Kani toolchain, absent on host at registration
+          — parked operator decision (plan section 9, Q4).
+        status: gap
+        enforced_at: kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
+        falsifier: gm3_refuse_iff_degenerate_scaling
+      - id: ax-regulation-set-points
+        assertion: >-
+          The regulation loop senses its own health metrics against
+          explicit set points and escalates algedonic breaches to a
+          durable review queue.
+        status: enforced
+        enforced_at: kask/crates/hkask-regulation/src/set_points.rs
+        falsifier: build_regulation_action_produces_action_for_all_new_reasons
+      - id: ax-goal-outcome-claims
+        assertion: >-
+          Every improvement cycle registers a falsifiable outcome claim
+          (kanban goal with prediction, task linked via advances)
+          before executing, and judges it at commit/rollback; the goal
+          loop Brier-scores the prediction on operator confirmation.
+        status: enforced
+        enforced_at: .agents/skills/self-improvement/SKILL.md
+        falsifier: task_create_validates_goal_citations
+      - id: ax-scaffold-empirical-gate
+        assertion: >-
+          Scaffold-side self-changes (prompts, memory, tools, skills)
+          ship only with a before/after deterministic-harness
+          measurement passing the lisp_eval convergence gate.
+        status: enforced
+        enforced_at: .agents/skills/self-improvement/SKILL.md
+        falsifier: "MISSING: process gate - a scaffold-change verdict record must cite the harness run and the goal id"
+      - id: ax-skill-corpus-gates
+        assertion: >-
+          Skill-body changes pass the skill-corpus structural gates
+          (S9/S10 sweeps, template prescreen) before shipping, and
+          material process changes carry a measured eval delta.
+        status: enforced
+        enforced_at: kask/scripts/audit/skill-corpus-s9-s10-sweep.sh
+        falsifier: "MISSING: bash sweep - run kask/scripts/audit/skill-corpus-s9-s10-sweep.sh"
+      - id: ax-commit-message-gate
+        assertion: >-
+          Every commit passes the commit-msg hook (no fenced
+          messages) - the merge-boundary check on repo self-changes.
+        status: enforced
+        enforced_at: kask/githooks/commit-msg
+        falsifier: "MISSING: githook - enforced at commit time by kask/githooks/commit-msg"
+      - id: ax-port-typing
+        assertion: >-
+          Agent-port labels resolve to registered types at admission;
+          schema validation treats unsupported keywords as not-a-pass.
+        status: enforced
+        enforced_at: kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs
+        falsifier: "MISSING: admission typing - enforced in hkask-mcp-swarm port_registry.rs and schema_validate.rs"

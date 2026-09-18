@@ -539,22 +539,23 @@ per finding, not inferred from subject).
 | F7 — system_simulator rename | repaired | `acbefb647b` | symbol sweep: zero `system_simulator`/`digital twin` refs; module now `extrapolation`, field `extrapolator`; diataxis row re-measured |
 | F8 — persist_alert collapse | repaired | `acbefb647b`, `c86faf6a59` | `try_persist_alert_reports_confirmed_insert_and_supersede`; bridge tests now assert Confirmed(id)/Confirmed(None)/Attempted outcomes explicitly; legacy-path test deleted as subsumed |
 | F9 — NEBIUS classification | repaired | `a7c54681f6` | `training_allowlist_matches_actual_reads` extended: both IDs must be absent from credentials and present in config_env |
-| F10 — InferenceUsage absence | **deferred — functional question** | — | — |
+| F10 — InferenceUsage absence | repaired (follow-up pass) | see notes below | `usage_absence_is_not_zero` (hkask-inference) — omitted wire usage → `reported: false`, present → `reported: true` |
 | F11 — silent status write | repaired | `a7c54681f6` | both failure layers (db + join) `warn!` naming `feed_id`; tool error unchanged |
 | F12 — reserved-for-future params | repaired | `a7c54681f6` | sweep: zero `reserved for future` silencing sites; orphaned `content_type` locals swept |
 | F13 — nine expect sites | repaired | `a7c54681f6` | `insert_optional_field` helper (typed internal error, never a panic); grep: zero `just constructed object` sites; wire payloads byte-identical |
 
-**F10 deferral (functional question for the operator):** the minimal honest
-shape — an absence flag alongside the u32 fields, mirroring the regulation
-layer's own absence-vs-zero vocabulary — ripples beyond `hkask-types` +
-`hkask-inference` (~14 `InferenceUsage` construction sites across kask_bridge,
-corpus, swarm, curator and media fixtures, plus summing/serializing readers in
-corpus tagging ops and swarm agent_executor/local_runtime). Per the execution
-rule this is surfaced rather than implemented. Decision needed: should
-"provider omitted usage" be distinguishable from a genuine zero at the type
-level — and if so, as a `reported` flag (fields stay u32; mechanical
-constructor updates; readers unchanged unless they opt in; recommended) or as
-per-field `Option<u32>` (every reader must choose skip-vs-zero)?
+**F10 resolution (follow-up pass, 2026-09-18):** implemented the
+recommended shape after the operator's go-ahead — `InferenceUsage` gained a
+`reported: bool` field (serde-defaulted; `false` = the token counts are
+placeholders, nothing was measured), mirroring `InferenceResult`'s
+`cost_usd: Option<f64>` absence precedent (D20). The wire producer
+(`usage_from_wire` in hkask-inference) sets it from wire `usage` presence;
+the bridge's stream accumulator sets `true` on a `UsageUpdate` event (a
+stream that ends without one leaves the default — unreported, not zero).
+All ~18 fixture constructions across corpus/swarm/curator/media set the
+flag honestly (nonzero fixtures → true, zero fixtures → false). Summing
+readers (corpus tagging ops, swarm agent_executor) are unchanged — they
+opt in to the flag only if future accounting needs it.
 
 **Gate unblock outside findings:** 4 pre-existing `clippy::redundant_clone`
 errors in corpus `services/qa_pipeline.rs` (present at review HEAD
@@ -569,9 +570,28 @@ one failing test in `tools/gather.rs` introduced by the concurrent stream's own
 gather hardening in `a7c54681f6` (their active work, not a repair regression —
 corpus was 179/179 at the repair state); `cargo check -p zed` green; `cargo fmt
 --check` clean except the concurrent stream's unstaged
-`crates/agent/src/tools/context_server_registry.rs`. Pre-existing OCR test env
+`crates/agent/src/tools/context_server_registry.rs`. OCR test env
 precondition: corpus OCR executor tests require `HKASK_TEMPLATE_ROOT` pointing
 at the registry (`HKASK_TEMPLATE_ROOT=$PWD/kask/registry`).
+
+**Follow-up pass (2026-09-18, open-items program):** the OCR precondition is
+now resolved — the affected nine corpus tests seed the registry root
+themselves via `helpers::seed_registry_template_root()` (per `template.rs`'s
+own "repository tests must set it explicitly" contract; the corpus crate
+adopted the repo-precedented `#![cfg_attr(not(test), forbid(unsafe_code))]`
+posture to permit the one-shot test `set_var`), and the full corpus suite is
+green with the variable unset. The commit-msg hook was hardened against the
+placeholder-subject class (inline-fence subjects, "No changes were
+provided"/"Here are the changes"/refusal prefaces), pinned by
+`kask/scripts/check-commit-msg-selftest.sh` (9 cases, all green). The
+gather-path test failure was root-caused to the committed test's fixture
+nesting its "outside" target inside an allowed root — the stream's working-tree
+correction (standalone system tempdir) is right and passes under both
+harnesses; an independent probe confirmed the hardened containment rejects a
+leaf symlink pointing outside the allowed roots. Two RR-0020 violations
+pre-dating this work (`hkask-spreadsheet`, `hkask-steer-core` missing the
+unsafe-gating attribute; both zero-unsafe crates) were fixed with
+`#![forbid(unsafe_code)]`.
 
 **Commit hygiene observations for the operator:** (1) commit `c86faf6a59`
 landed on main with a malformed placeholder subject ("No changes were
@@ -581,26 +601,34 @@ subjects describe unrelated stream work (e.g. F3 inside "Register spreadsheet
 MCP server and add CI gates", Batch E inside "Harden MCP tool dispatch and
 cache path safety") — content verified per finding via `git log -S`.
 
-**Dead-knob audit (operator-gated extension, report-only):** the
-setting → `mcp_env` emission → allowlist → server-reader sweep found, beyond
-the removed `skills_dir`:
+**Dead-knob audit (operator-gated extension) — dispositioned in the follow-up
+pass:** the setting → `mcp_env` emission → allowlist → server-reader sweep
+found, beyond the removed `skills_dir`:
 
-1. **Email-escalation family** — `HKASK_ALERT_EMAIL`, `HKASK_MXROUTE_SERVER`,
-   `HKASK_CURATOR_EMAIL`, `HKASK_SMTP_USERNAME` (plus `HKASK_AUTHORIZED_EMAILS`,
-   `HKASK_CURATOR_WEBID`, `HKASK_WEBID`): emitted into the curator child env
-   and allowlisted there, but all direct readers live editor-side
-   (`hkask-email`, `crates/zed/src/main.rs`). `hkask-mcp-curator` links
-   `hkask-regulation` (which names `HKASK_SMTP_USERNAME` at
-   `cybernetics_loop.rs:399`), so a transitive server-side reader is possible
-   — the D1-documented class a plain grep cannot settle. Triage needed: if no
-   server-side path executes, the emissions + allowlist entries are the same
-   dead-knob class as skills_dir.
-2. **`HKASK_CONDENSER_PERSONA_KEYWORDS` / `HKASK_CONDENSE_SALIENCY_WINDOW`** —
-   live settings knobs (settings.rs:306/:310, settings_content.rs:1804-1805,
-   settings-UI controls) emitted by `mcp_env` but with **zero allowlist
-   entries** (filtered out before any child) and zero server readers. The
-   emissions are provably dead surface (never reach a child process); the
-   in-process condenser consumes the settings directly.
+1. **Email-escalation family — REMOVED.** `HKASK_ALERT_EMAIL`,
+   `HKASK_MXROUTE_SERVER`, `HKASK_CURATOR_EMAIL`, `HKASK_SMTP_USERNAME`,
+   `HKASK_AUTHORIZED_EMAILS` (config_env) and `HKASK_SMTP_PASSWORD`
+   (credentials) were removed from the curator server entry: the server has
+   no email sink (links `hkask-regulation`, not `hkask-email`; zero env
+   reads), while the alert email runs in the editor process (sink wired from
+   settings; password from the keychain into the editor's own env). The
+   emission helper and both false pin assertions were deleted/flipped;
+   `kask-settings.md` corrected. **New functional finding surfaced for the
+   operator:** the `kask.curator.email` transport fields (`mxroute_server`,
+   `smtp_username`, `curator_email`) reach no consumer — the editor's
+   `send_email` reads them from the editor process env, which nothing
+   populates from settings (only the keychain password is set there). The
+   feature currently works only with shell-exported vars; wiring settings →
+   editor env (or migrating `send_email` to settings-based config) is an
+   operator decision.
+2. **`HKASK_CONDENSER_PERSONA_KEYWORDS` / `HKASK_CONDENSE_SALIENCY_WINDOW` —
+   REMOVED end to end** (the `skills_dir` class): zero allowlist entries
+   (filtered before any child) AND zero server readers AND zero editor
+   readers — the `condenser.persona_keywords` and `condenser.saliency_window`
+   settings fed only the dead emission (the live condenser fields
+   `profile`/`auto_compress_tool_results` are consumed in-process from
+   settings and stay). Settings fields, content-schema fields, emission fn,
+   UI controls + dispatcher arm, doc rows, and the vacuous test pin deleted.
 3. False positive for the record: `HKASK_SWARM_MEMORY_PASSPHRASE` matches only
    the comment documenting that it does NOT exist (the no-separate-passphrase
    invariant holds).

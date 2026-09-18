@@ -12,9 +12,9 @@
 //! `mcp_servers`, the single canonical path.
 
 use crate::settings::{
-    KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskGeneralSettings,
-    KaskMediaSettings, KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings,
-    KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
+    KaskCompaniesSettings, KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings,
+    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
