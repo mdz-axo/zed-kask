@@ -1,6 +1,6 @@
 //! Property layer for the kask-core small pins
 //! (`kask/docs/reference/testing-protocol.md`). Batch 6 of the propagation
-//! plan (`tasks/kask-testing-propagation-plan.md`): the unit pins for these
+//! plan (`kask/docs/reference/testing-protocol.md`): the unit pins for these
 //! seams exist (`sanitize_name_blocks_path_traversal`,
 //! `cell_coordinate_round_trips_exactly`,
 //! `equal_versions_retain_the_first_candidate`); the properties generalize

@@ -1,6 +1,6 @@
 //! Property layer for the corpus chunking contract
 //! (`kask/docs/reference/testing-protocol.md`). Batch 4 of the propagation
-//! plan (`tasks/kask-testing-propagation-plan.md`): Phase 0 measured 181
+//! plan (`kask/docs/reference/testing-protocol.md`): Phase 0 measured 181
 //! value-assert tests and zero property sites in this crate. The properties
 //! pin the shared window engine's documented contract (hkask-memory
 //! `text_chunking`: "positive overlap repeats exactly overlap_words from the

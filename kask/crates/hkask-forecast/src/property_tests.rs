@@ -1,6 +1,6 @@
 //! Property layer for the calibration math
 //! (`kask/docs/reference/testing-protocol.md`). Batch 2 of the propagation
-//! plan (`tasks/kask-testing-propagation-plan.md`): Phase 0 measured 53
+//! plan (`kask/docs/reference/testing-protocol.md`): Phase 0 measured 53
 //! value-assert tests and zero property sites in this crate — the math is
 //! exactly property-shaped. Each property states a falsifiable hypothesis
 //! with its declared input domain; a shrunk counterexample is a finding to

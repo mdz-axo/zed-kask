@@ -1,6 +1,6 @@
 //! Property layer for the portfolio ledger math
 //! (`kask/docs/reference/testing-protocol.md`). Batch 3 of the propagation
-//! plan (`tasks/kask-testing-propagation-plan.md`): Phase 0 measured 59
+//! plan (`kask/docs/reference/testing-protocol.md`): Phase 0 measured 59
 //! value-assert tests and zero property sites here. The loop-closure layer
 //! (`create_apply_batch_seed_returns_materialize_loop`, attribution
 //! reconciliation, the missing-price degradation pins) is this crate's

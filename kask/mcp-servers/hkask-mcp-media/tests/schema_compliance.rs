@@ -12,7 +12,7 @@
 //! `deser_totality_test!` proptest deserialization-totality property — was
 //! intentionally omitted at first write; it is included since Batch 4 of
 //! the testing-protocol propagation plan
-//! (`tasks/kask-testing-propagation-plan.md`).
+//! (`kask/docs/reference/testing-protocol.md`).
 
 use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,

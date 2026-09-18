@@ -6,7 +6,7 @@
 //! store, with degradation surfaced, never empty-equals-success. Phase 0
 //! found this persistence loop implemented but untested (a write path with no
 //! recall-path test is a loop silently dropped); this suite is Batch 1 of the
-//! propagation plan (`tasks/kask-testing-propagation-plan.md`).
+//! propagation plan (`kask/docs/reference/testing-protocol.md`).
 
 use super::acquisition_tests::server;
 use super::*;
