@@ -62,10 +62,11 @@ fn qa_completion(response: InferenceResult, completed: Result<String, String>) -
     }
 }
 
-async fn infer_with_retry(
+async fn infer_with_retry_using(
     router: &Arc<dyn InferencePort>,
     limiter: &AdaptiveLimiter,
     selected_model: &str,
+    parameters: hkask_types::template::LLMParameters,
     messages: &[ChatMessage],
     prompt_id: &str,
     phase: &str,
@@ -81,12 +82,7 @@ async fn infer_with_retry(
             async {
                 let slot = limiter.acquire().await;
                 let response = router
-                    .generate_with_messages(
-                        messages,
-                        &qa_llm_parameters(),
-                        Some(selected_model),
-                        None,
-                    )
+                    .generate_with_messages(messages, &parameters, Some(selected_model), None)
                     .await;
                 match &response {
                     Ok(_) => slot.report_success(),
@@ -103,6 +99,48 @@ async fn infer_with_retry(
     })
 }
 
+async fn infer_with_retry(
+    router: &Arc<dyn InferencePort>,
+    limiter: &AdaptiveLimiter,
+    selected_model: &str,
+    messages: &[ChatMessage],
+    prompt_id: &str,
+    phase: &str,
+) -> Result<InferenceResult, QaCompletionError> {
+    infer_with_retry_using(
+        router,
+        limiter,
+        selected_model,
+        qa_llm_parameters(),
+        messages,
+        prompt_id,
+        phase,
+    )
+    .await
+}
+
+async fn verify_with_retry(
+    router: &Arc<dyn InferencePort>,
+    limiter: &AdaptiveLimiter,
+    selected_model: &str,
+    messages: &[ChatMessage],
+    prompt_id: &str,
+    phase: &str,
+) -> Result<InferenceResult, QaCompletionError> {
+    let mut parameters = qa_llm_parameters();
+    parameters.thinking_allowed = true;
+    infer_with_retry_using(
+        router,
+        limiter,
+        selected_model,
+        parameters,
+        messages,
+        prompt_id,
+        phase,
+    )
+    .await
+}
+
 async fn verify_qa_draft(
     router: &Arc<dyn InferencePort>,
     limiter: &AdaptiveLimiter,
@@ -113,7 +151,7 @@ async fn verify_qa_draft(
     plan: &QaDispositionPlan,
     prior_responses: &mut Vec<QaResponseMetadata>,
 ) -> Result<(InferenceResult, Result<QaVerificationVerdicts, String>), QaCompletionError> {
-    let mut response = infer_with_retry(
+    let mut response = verify_with_retry(
         router,
         limiter,
         selected_verification_model,
@@ -130,7 +168,7 @@ async fn verify_qa_draft(
         correction_messages[0].content.push_str(&format!(
             " Your verdict failed the strict typed schema: {error}. Return one corrected verdict array only; never output QA content."
         ));
-        response = infer_with_retry(
+        response = verify_with_retry(
             router,
             limiter,
             selected_verification_model,
@@ -364,7 +402,7 @@ impl QaBatchService {
                             }
                         };
                         prior_responses.push(response_metadata(&quality_response));
-                        let mut review_response = match infer_with_retry(
+                        let mut review_response = match verify_with_retry(
                             &router,
                             &limiter,
                             &selected_verification_model,
@@ -386,7 +424,7 @@ impl QaBatchService {
                             correction_messages[0].content.push_str(&format!(
                                 " Your reviewed passage quality failed the typed schema: {error}. Return one corrected decision only."
                             ));
-                            review_response = match infer_with_retry(
+                            review_response = match verify_with_retry(
                                 &router,
                                 &limiter,
                                 &selected_verification_model,
@@ -469,7 +507,7 @@ impl QaBatchService {
                         }
                     };
                     prior_responses.push(response_metadata(&planning_response));
-                    planning_response = match infer_with_retry(
+                    planning_response = match verify_with_retry(
                         &router,
                         &limiter,
                         &selected_verification_model,
@@ -499,7 +537,7 @@ impl QaBatchService {
                         correction_messages[0].content.push_str(&format!(
                             " Your reviewed plan failed the typed schema: {error}. Return one corrected plan only."
                         ));
-                        planning_response = match infer_with_retry(
+                        planning_response = match verify_with_retry(
                             &router,
                             &limiter,
                             &selected_verification_model,
@@ -733,14 +771,11 @@ impl QaBatchService {
                                 final_verdicts.apply_terminal_skips(&corrected_completed, &plan),
                             )),
                         ),
-                        Ok(final_verdicts) => (
+                        Ok(_final_verdicts) => (
                             prior_responses,
                             Ok(qa_completion(
                                 final_review_response,
-                                Err(format!(
-                                    "corrected QA rejected by final verification: {}",
-                                    final_verdicts.correction_summary()
-                                )),
+                                Err("corrected QA rejected by final verification".to_string()),
                             )),
                         ),
                         Err(error) => (
@@ -868,7 +903,6 @@ mod tests {
         ) -> Reply<'_> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             assert_eq!(messages.len(), 2);
-            assert!(!parameters.thinking_allowed);
             let is_quality = messages[0].content.contains("focused passage-quality gate");
             let is_quality_review = is_quality
                 && messages[0]
@@ -885,6 +919,7 @@ mod tests {
                 .content
                 .contains("single bounded refinement step");
             let verification_call = is_quality_review || is_review || is_qa_verification;
+            assert_eq!(parameters.thinking_allowed, verification_call);
             assert_eq!(
                 model,
                 Some(if verification_call {
@@ -1183,10 +1218,10 @@ mod tests {
         Ok(())
     }
 
-    /// expect: A second correct verdict exhausts the bounded recovery block and
-    /// fails the entire prompt without leaking either generator draft.
+    /// expect: A second correct verdict exhausts bounded recovery and becomes a
+    /// terminal support-absent skip without leaking either generator draft.
     #[tokio::test]
-    async fn second_correct_verdict_fails_prompt_without_partial_rows()
+    async fn second_correct_verdict_becomes_terminal_skips()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_directory, request) = fixture(&[prompt("qa-1")])?;
         let output = request.output.clone();
@@ -1194,19 +1229,16 @@ mod tests {
         let summary = QaBatchService::new(port.clone())
             .generate_qa_batch(request)
             .await?;
-        assert_eq!(summary["prompts_succeeded"], 0);
-        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["qa_levels_skipped"], 2);
         assert_eq!(summary["provider_responses"], 8);
         assert_eq!(port.calls.load(Ordering::SeqCst), 8);
         let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].get("response").is_none());
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("corrected QA rejected by final verification"))
-        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row["status"] == "skipped"));
+        assert!(rows.iter().all(|row| row.get("response").is_none()));
         Ok(())
     }
 

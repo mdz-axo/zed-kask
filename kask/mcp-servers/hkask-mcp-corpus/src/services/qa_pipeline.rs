@@ -17,7 +17,7 @@ use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response}
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
 const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v6";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v7";
 const QA_VERIFICATION_PROTOCOL: &str = "prepared-qa-verification-verdict-v1";
 const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
@@ -648,15 +648,6 @@ impl QaVerificationVerdicts {
         self.levels
             .iter()
             .any(|level| level.verdict == PreparedQaVerdictKind::Correct)
-    }
-
-    pub fn correction_summary(&self) -> String {
-        self.levels
-            .iter()
-            .filter(|level| level.verdict == PreparedQaVerdictKind::Correct)
-            .map(|level| format!("{}: {}", level.level, level.findings.join("; ")))
-            .collect::<Vec<_>>()
-            .join(" | ")
     }
 
     pub fn apply_terminal_skips(
@@ -1861,6 +1852,23 @@ mod tests {
             ])
             .to_string()
         );
+
+        let final_correction = json!([
+            {
+                "level":"factual","verdict":"accept","subject":true,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":[]
+            },
+            {
+                "level":"conceptual","verdict":"correct","subject":true,"condition":true,
+                "premise":false,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":["The corrected question still assumes an unstated distinction."]
+            }
+        ])
+        .to_string();
+        let final_verdicts = parse_planned_qa_verdicts(&final_correction, &conceptual_plan)
+            .expect("valid final correction verdict");
+        assert!(final_verdicts.requires_correction());
 
         for invalid in [
             json!([{
