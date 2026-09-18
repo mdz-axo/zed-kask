@@ -1545,7 +1545,7 @@ mod tests {
         let error = parse_disposition_plan_response(&response, &prompt)
             .err()
             .expect("missing conceptual relation must be rejected");
-        assert!(error.contains("needs a relation"));
+        assert!(error.to_string().contains("needs a relation"));
     }
 
     /// expect: Every closed conceptual relation kind is accepted and no private label is admitted.
