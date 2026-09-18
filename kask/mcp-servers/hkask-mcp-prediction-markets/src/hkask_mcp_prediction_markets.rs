@@ -11,7 +11,7 @@
 //! with reliability covariates, calibration metadata, volatility annotation,
 //! and a dual-axis ontology mapping (PKO process axis + Dublin Core state
 //! axis) so forecasting consumers never receive a bare probability.
-//! See docs/reports/prediction-markets/02-zed-kask-integration.md §4.
+//! See `kask/docs/reference/mcp-servers/prediction-markets.md`.
 
 use std::collections::HashSet;
 

@@ -1,7 +1,7 @@
 //! Media Panel — a Steer-only surface for the `hkask-mcp-media` MCP server.
 //!
-//! Like the portfolio panel, this panel deliberately has **no browse forms** —
-//! the media server exposes 80 tools spanning gallery management, image/video
+//! This panel deliberately has **no browse forms** — the media server exposes
+//! 80 tools spanning gallery management, image/video
 //! generation, voice synthesis, transcription, and face recognition. A
 //! hand-written management UI for all of these would be impractical and would
 //! duplicate the Steer conversation's chat-driven workflow. The panel's sole
@@ -175,10 +175,6 @@ impl MediaPanel {
         self.ensure_steer(window, cx);
         cx.notify();
     }
-
-    /// Apply a divider drag to the split. `event.bounds` is the panel root
-    /// (the element carrying `on_drag_move`) — the reference frame the
-    /// fraction is taken against.
 
     /// The split divider: a 1px rule with an invisible grab area. Drag to
     /// resize the panes; double-click to reset the split. The same handle

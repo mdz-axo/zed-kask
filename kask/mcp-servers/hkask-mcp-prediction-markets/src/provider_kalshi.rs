@@ -1,7 +1,5 @@
 //! Kalshi Predictions REST provider (read-only public market data, no auth).
 //!
-//! Field shapes pinned against live responses in T0
-//! (docs/reports/prediction-markets/00-api-shape-spike.md §2).
 //! Conventions handled here: all numerics are fixed-point strings
 //! (`*_dollars`, `*_fp`) — never bare f64 serde. The documented
 //! forecast-percentile-history endpoint 404'd live at T0; candlesticks are

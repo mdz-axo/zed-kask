@@ -191,6 +191,11 @@ impl CorpusServer {
                 generator_errors,
                 "Parsed QA input"
             );
+            if malformed > 0 || generator_errors > 0 {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Grounding-gated ingestion rejects partial input: {malformed} malformed and {generator_errors} non-QA rows"
+                )));
+            }
 
             // Structural admission only: concise answers are not low-quality answers.
             let filtered: Vec<&ParsedQa> = qas
@@ -210,6 +215,17 @@ impl CorpusServer {
                 filtered.len(),
                 qas.len() - filtered.len()
             );
+            if filtered.len() != qas.len() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Grounding-gated ingestion rejects {} structurally incomplete QA rows",
+                    qas.len() - filtered.len()
+                )));
+            }
+            crate::services::qa_grounding::verify_complete_grounding(
+                &req.grounding_verification_jsonl,
+                &req.source_chunks_jsonl,
+                &qas,
+            )?;
 
             // Exact-match dedup (case-insensitive on instruction).
             //
@@ -623,8 +639,12 @@ fn default_type_distribution() -> String {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IngestQaRequest {
-    /// Path to generated QAs JSONL (from corpus_generate_qa_batch).
+    /// Path to generated QA candidates JSONL (from corpus_generate_qa_batch).
     pub generated_jsonl: String,
+    /// Complete identity-bound `prepared-qa-grounding-verification-v1` JSONL.
+    pub grounding_verification_jsonl: String,
+    /// Canonical chunk JSONL used to verify every grounding evidence quote.
+    pub source_chunks_jsonl: String,
     /// Output path for training JSONL (instruction/input/output plus QA evidence metadata).
     pub output: String,
     /// Path to the SQLCipher memory DB for QA h_mem storage (no embeddings generated).

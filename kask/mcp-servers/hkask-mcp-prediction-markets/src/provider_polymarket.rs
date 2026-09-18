@@ -1,8 +1,6 @@
 //! Polymarket Gamma API provider (read-only, no auth).
 //!
-//! Field shapes pinned against live responses in T0
-//! (docs/reports/prediction-markets/00-api-shape-spike.md §1).
-//! Quirk handled here: Gamma embeds several collections as JSON-encoded
+//! Gamma embeds several collections as JSON-encoded
 //! strings inside JSON (`outcomes`, `outcomePrices`, `clobTokenIds`) — the
 //! parser double-decodes them.
 

@@ -3,6 +3,7 @@
 
 use hkask_types::corpus::QaEvidence;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 pub(crate) struct ParsedQa {
     pub instruction: String,
@@ -16,6 +17,7 @@ pub(crate) struct ParsedQa {
     pub evidence_quotes: Vec<QaEvidence>,
     pub prompt_id: Option<String>,
     pub provenance: Option<serde_json::Value>,
+    pub row_sha256: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -100,6 +102,7 @@ pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
         evidence_quotes: body.evidence_quotes,
         prompt_id: metadata.prompt_id,
         provenance: metadata.provenance,
+        row_sha256: format!("{:x}", Sha256::digest(line.as_bytes())),
     })
 }
 
