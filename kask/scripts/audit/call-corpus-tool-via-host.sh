@@ -104,8 +104,15 @@ fi
 if [[ -n "$required_model_var" ]]; then
     required_model=${!required_model_var:-}
 fi
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
-    echo "$tool_name requires HKASK_INFERENCE_SOCKET and $required_model_var" >&2
+if [[ -n "$required_secondary_model_var" ]]; then
+    required_secondary_model=${!required_secondary_model_var:-}
+fi
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model || ( -n $required_secondary_model_var && -z $required_secondary_model ) ) ]]; then
+    if [[ -n "$required_secondary_model_var" ]]; then
+        echo "$tool_name requires HKASK_INFERENCE_SOCKET, $required_model_var, and $required_secondary_model_var" >&2
+    else
+        echo "$tool_name requires HKASK_INFERENCE_SOCKET and $required_model_var" >&2
+    fi
     exit 69
 fi
 if [[ "$tool_name" == corpus_tag_chunks && -z ${HKASK_TEMPLATE_ROOT:-} ]]; then

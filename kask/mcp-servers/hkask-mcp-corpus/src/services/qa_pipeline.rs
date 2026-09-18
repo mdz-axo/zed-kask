@@ -611,6 +611,7 @@ struct PreparedQaDraft {
 enum PreparedQaVerdictKind {
     Accept,
     Correct,
+    Skip,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -657,6 +658,43 @@ impl QaVerificationVerdicts {
             .collect::<Vec<_>>()
             .join(" | ")
     }
+
+    pub fn apply_terminal_skips(
+        &self,
+        completed: &str,
+        plan: &QaDispositionPlan,
+    ) -> Result<String, String> {
+        let mut rows: Vec<Value> = serde_json::from_str(completed)
+            .map_err(|error| format!("invalid completed QA before verification skips: {error}"))?;
+        if rows.len() != plan.levels.len() {
+            return Err(format!(
+                "completed QA has {} levels but the disposition plan has {}",
+                rows.len(),
+                plan.levels.len()
+            ));
+        }
+        let mut verdicts = self.levels.iter();
+        for (index, planned) in plan.levels.iter().enumerate() {
+            let PlannedQaLevel::Generate { bloom_level, .. } = planned else {
+                continue;
+            };
+            let verdict = verdicts
+                .next()
+                .ok_or_else(|| format!("verification omitted generated level {index}"))?;
+            if verdict.verdict == PreparedQaVerdictKind::Skip {
+                rows[index] = json!([
+                    bloom_level,
+                    null,
+                    format!("{bloom_level}_support_absent"),
+                    []
+                ]);
+            }
+        }
+        if verdicts.next().is_some() {
+            return Err("verification returned more levels than the disposition plan".to_string());
+        }
+        Ok(Value::Array(rows).to_string())
+    }
 }
 
 /// Render independent checks only. Self-Refine (arXiv:2303.17651) supplies
@@ -673,7 +711,7 @@ pub(crate) fn render_planned_qa_review_messages(
         McpToolError::internal("Cannot review QA when the disposition plan has no generated levels")
     })?;
     messages[0].content = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept or correct. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
+        "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept, correct, or skip. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings when the fixed evidence can support a corrected QA at the planned level. skip is allowed only when subject, condition, premise, entailment, and completeness are true but actual_difficulty is false because the fixed evidence cannot support the planned level; include a specific nonblank finding. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
     );
     let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
         McpToolError::internal(format!("Cannot parse rendered QA writer request: {error}"))
@@ -737,6 +775,14 @@ pub(crate) fn parse_planned_qa_verdicts(
                 if level.all_checks_pass() && level.findings.is_empty() => {}
             PreparedQaVerdictKind::Correct
                 if !level.all_checks_pass() && !level.findings.is_empty() => {}
+            PreparedQaVerdictKind::Skip
+                if level.subject
+                    && level.condition
+                    && level.premise
+                    && level.entailment
+                    && level.completeness
+                    && !level.actual_difficulty
+                    && !level.findings.is_empty() => {}
             PreparedQaVerdictKind::Accept => {
                 return Err(format!(
                     "verification level {index} accept requires all checks true and no findings"
@@ -745,6 +791,11 @@ pub(crate) fn parse_planned_qa_verdicts(
             PreparedQaVerdictKind::Correct => {
                 return Err(format!(
                     "verification level {index} correct requires a false check and nonempty findings"
+                ));
+            }
+            PreparedQaVerdictKind::Skip => {
+                return Err(format!(
+                    "verification level {index} skip requires only actual_difficulty false and nonempty findings"
                 ));
             }
         }
@@ -1763,6 +1814,52 @@ mod tests {
             parse_planned_qa_verdicts(&correction, &plan)
                 .expect("valid correction")
                 .requires_correction()
+        );
+
+        let mut conceptual_prompt = prepared();
+        conceptual_prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
+        let conceptual_plan = parse_disposition_plan_response(
+            &json!([
+                "clean",
+                [
+                    {"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},
+                    {"level":"conceptual","disposition":"generate","relation":"mechanism","reason":null,"evidence_ids":["e0"]}
+                ]
+            ])
+            .to_string(),
+            &conceptual_prompt,
+        )
+        .expect("valid conceptual plan");
+        let terminal_skip = json!([
+            {
+                "level":"factual","verdict":"accept","subject":true,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":true,"findings":[]
+            },
+            {
+                "level":"conceptual","verdict":"skip","subject":true,"condition":true,
+                "premise":true,"entailment":true,"completeness":true,
+                "actual_difficulty":false,"findings":["The fixed evidence cannot support the planned mechanism."]
+            }
+        ])
+        .to_string();
+        let terminal_verdicts = parse_planned_qa_verdicts(&terminal_skip, &conceptual_plan)
+            .expect("valid terminal support skip");
+        assert!(!terminal_verdicts.requires_correction());
+        let completed = json!([
+            ["factual", "What is grounded?", "The answer.", ["e0"]],
+            ["conceptual", "How does it work?", "It works.", ["e0"]]
+        ])
+        .to_string();
+        assert_eq!(
+            terminal_verdicts
+                .apply_terminal_skips(&completed, &conceptual_plan)
+                .expect("apply support skip"),
+            json!([
+                ["factual", "What is grounded?", "The answer.", ["e0"]],
+                ["conceptual", null, "conceptual_support_absent", []]
+            ])
+            .to_string()
         );
 
         for invalid in [

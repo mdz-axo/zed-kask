@@ -647,7 +647,10 @@ impl QaBatchService {
                     if !verdicts.requires_correction() {
                         return (
                             prior_responses,
-                            Ok(qa_completion(review_response, Ok(writer_completed))),
+                            Ok(qa_completion(
+                                review_response,
+                                verdicts.apply_terminal_skips(&writer_completed, &plan),
+                            )),
                         );
                     }
 
@@ -725,7 +728,10 @@ impl QaBatchService {
                     match final_verdicts {
                         Ok(final_verdicts) if !final_verdicts.requires_correction() => (
                             prior_responses,
-                            Ok(qa_completion(final_review_response, Ok(corrected_completed))),
+                            Ok(qa_completion(
+                                final_review_response,
+                                final_verdicts.apply_terminal_skips(&corrected_completed, &plan),
+                            )),
                         ),
                         Ok(final_verdicts) => (
                             prior_responses,
