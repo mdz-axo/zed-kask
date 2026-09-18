@@ -226,19 +226,23 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. A complete reviewed adjudication manifest, when supplied,
-is authoritative: reviewed skips write prompt-wide rows without inference, while
-reviewed admits bypass only probabilistic passage-quality classification. Otherwise
-the generation model proposes one focused whole-passage quality decision. A proposed
-skip short-circuits immediately. A proposed clean decision is independently reviewed
-by the distinct verification model; reviewed skip short-circuits, reviewed clean
-continues, and a malformed review receives one correction before failing closed.
-The disposition planner then sees the complete guarded primary passage and evidence
-candidates and returns one ordered plan per requested level. A separate focused pass
-using the verification model reviews that proposal. A schema-valid reviewed plan is
-authoritative; the valid proposal is retained only when the review and its single
-correction remain invalid. A generated level fixes
-one to three evidence IDs before any question or answer is written; conceptual
+local IDs `e0`, `e1`, etc. An optional complete `prepared-qa-adjudication-v2` manifest
+binds one passage decision and one ordered level mandate to every prepared prompt's
+`prompt_id`, `chunk_ref`, and `source`. V1, partial, duplicate, unknown, reordered, or
+identity-mismatched rows fail before output creation. A reviewed passage skip writes
+all mandated prompt-wide terminal rows without inference. A reviewed admit bypasses
+both passage-quality and disposition review: the generator receives the level mandates,
+selects evidence for mandated generation, and its parsed plan is compared to the
+mandates deterministically. One mismatch receives one generator-owned correction with
+the exact error; a second mismatch fails the prompt.
+
+Without a manifest, the generation model proposes one focused whole-passage quality
+decision. A proposed skip short-circuits immediately. A proposed clean decision is
+independently reviewed by the distinct verification model; reviewed skip short-circuits,
+reviewed clean continues, and a malformed review receives one correction before failing
+closed. The disposition planner then returns one ordered plan per requested level, and
+a separate focused verification-model pass reviews that proposal. A generated level
+fixes one to three evidence IDs before any question or answer is written; conceptual
 generation also fixes one closed relation
 kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
 `framework`, or `transferable_principle`). An unsupported level records its canonical
@@ -269,26 +273,29 @@ fragment or short legible factual passage is not contamination merely because it
 short, begins mid-sentence, contains notation or lacks conceptual support.
 
 `non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
-Closed level reasons remain the requested level's `<level>_support_absent`. Any
-malformed passage review, plan, writer response, or verification verdict rejects the
-whole prompt before rows are written after its applicable single schema correction.
-The semantic decisions remain model-mediated and require the
-separate Stage 8 audit; exact evidence restoration does not certify answer
-entailment. Generated rows use `prepared-qa-staged-quality-v6` with
-`passage_quality_protocol=prepared-qa-passage-quality-v1` and
-`disposition_plan_protocol=prepared-qa-disposition-plan-v1`; existing prepared JSONL
-remains `prepared-qa-local-evidence-v1` and does not need rebuilding.
+For an admitted passage, factual must generate; each other level either generates
+(`conceptual` with one closed relation, all others with null relation) or skips with
+its exact `<level>_support_absent` reason. The QA verifier judges generated QA only:
+for reviewed mandates it cannot convert generation into a support skip. Any malformed
+passage review, plan, writer response, or verification verdict rejects the whole prompt
+after its applicable single correction. Semantic QA still requires the separate Stage 8
+audit; exact evidence restoration does not certify answer entailment. Generated rows
+use `prepared-qa-staged-quality-v7`; reviewed rows additionally record
+`adjudication_protocol=prepared-qa-adjudication-v2`. Existing prepared JSONL remains
+`prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 One accepted pair becomes one ingestible envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v6","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","adjudication_protocol":"prepared-qa-adjudication-v2","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v7","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifiers above are illustrative, not configured defaults. Batch usage
 and cost totals include every actual quality, review, planning, writing, correction,
 and re-verification provider response; they are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
-`qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`. A skip writes
+`qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`, and report
+`reviewed_passage_admits`, `reviewed_passage_skips`, `reviewed_level_generates`, and
+`reviewed_level_skips` when a v2 manifest is present. A skip writes
 primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and
 protocol provenance, with no response. A failed prompt writes primary `prompt_id`,
 `chunk_ref`, `source`, `error`, provider `completion_tokens`, and provider

@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
+use crate::services::qa_adjudication::{ReviewedLevelDecision, ReviewedQaAdjudication};
 use crate::tools::corpus::{QaType, qa_type_instruction};
 
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
@@ -17,7 +18,7 @@ use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response}
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
 const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v7";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v8";
 const QA_VERIFICATION_PROTOCOL: &str = "prepared-qa-verification-verdict-v1";
 const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
@@ -51,6 +52,7 @@ enum PlannedQaLevel {
 #[derive(Clone)]
 pub(crate) struct QaDispositionPlan {
     levels: Vec<PlannedQaLevel>,
+    reviewed_mandates: bool,
 }
 
 pub(crate) enum PassageQuality {
@@ -63,22 +65,6 @@ impl QaDispositionPlan {
         self.levels
             .iter()
             .any(|level| matches!(level, PlannedQaLevel::Generate { .. }))
-    }
-
-    fn global_skip_reason(&self) -> Option<&str> {
-        let mut reasons = self.levels.iter().map(|level| match level {
-            PlannedQaLevel::Skipped { reason, .. }
-                if matches!(
-                    reason.as_str(),
-                    "contaminated_or_garbled" | "non_substantive_passage"
-                ) =>
-            {
-                Some(reason.as_str())
-            }
-            _ => None,
-        });
-        let first = reasons.next()??;
-        reasons.all(|reason| reason == Some(first)).then_some(first)
     }
 }
 
@@ -209,7 +195,7 @@ struct PreparedQaPlanLevel {
     evidence_ids: Vec<String>,
 }
 
-fn conceptual_relation_is_supported(relation: &str) -> bool {
+pub(crate) fn conceptual_relation_is_supported(relation: &str) -> bool {
     matches!(
         relation,
         "mechanism"
@@ -313,11 +299,13 @@ pub(crate) fn prompt_wide_skip_plan(prompt: &PreparedQaPrompt, reason: &str) -> 
                 reason: reason.to_string(),
             })
             .collect(),
+        reviewed_mandates: false,
     }
 }
 
 pub(crate) fn render_disposition_plan_messages(
     prompt: &PreparedQaPrompt,
+    reviewed: Option<&ReviewedQaAdjudication>,
 ) -> Result<[ChatMessage; 2], McpToolError> {
     prompt.validate()?;
     let level_requirements = prompt
@@ -339,19 +327,46 @@ pub(crate) fn render_disposition_plan_messages(
             })
         })
         .collect::<Vec<_>>();
+    let reviewed_level_mandates = reviewed.map(|reviewed| {
+        reviewed
+            .levels()
+            .iter()
+            .zip(&prompt.qa_types)
+            .map(|(decision, qa_type)| match decision {
+                ReviewedLevelDecision::Generate { relation } => json!({
+                    "level": qa_type,
+                    "decision": "generate",
+                    "relation": relation,
+                    "reason": null,
+                }),
+                ReviewedLevelDecision::Skip { reason } => json!({
+                    "level": qa_type,
+                    "decision": "skip",
+                    "relation": null,
+                    "reason": reason,
+                }),
+            })
+            .collect::<Vec<_>>()
+    });
     let user = serde_json::to_string(&json!({
         "disposition_protocol": QA_DISPOSITION_PROTOCOL,
         "primary_passage": crate::guard_content(&prompt.primary().text),
         "requested_levels": prompt.qa_types,
         "level_requirements": level_requirements,
         "evidence_candidates": evidence_candidates,
+        "reviewed_level_mandates": reviewed_level_mandates,
     }))
     .map_err(|error| {
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
-    let system = format!(
+    let mut system = format!(
         "{CONTENT_GUARD_INSTRUCTION}{PASSAGE_QUALITY_POLICY} Return one typed disposition plan before any QA is written. Prompt-wide quality reasons override all level dispositions. For a clean passage return [\"clean\",[{{\"level\":\"factual\",\"disposition\":\"generate\",\"relation\":null,\"reason\":null,\"evidence_ids\":[\"e0\"]}},{{\"level\":\"conceptual\",\"disposition\":\"skip\",\"relation\":null,\"reason\":\"conceptual_support_absent\",\"evidence_ids\":[]}}]], with exactly one ordered object per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Never emit a generate disposition with an empty evidence list: copy the supporting eN IDs, or use the level's support-absent skip when no candidate supports it. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A stated threshold or sufficiently large parameter connected to infeasibility is a supported relationship without requiring an unstated mechanism. A characterization followed by how a subject treats its stated faults is a supported characterization relationship. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; a statement that someone urges an action to produce an outcome is explicit purpose and should be retained. Adjacent future actions, hopes, or preferences alone do not establish why an action is taken. An explicit condition, decision, action, and resulting configuration supports mechanism and must not be skipped merely because each step is directly stated. A passage that merely asserts a relation with phrases such as useful, enables, or shows, without explaining how the relation works, does not support mechanism or causal_relationship. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
     );
+    if reviewed.is_some() {
+        system.push_str(
+            " The supplied reviewed_level_mandates are authoritative. Copy every mandated decision and conceptual relation exactly; select evidence IDs only for mandated generate levels. Do not re-evaluate passage quality or level support.",
+        );
+    }
     Ok([
         ChatMessage {
             role: "system".to_string(),
@@ -369,7 +384,7 @@ pub(crate) fn render_disposition_review_messages(
     proposed_plan: &str,
     validation_error: Option<&str>,
 ) -> Result<[ChatMessage; 2], McpToolError> {
-    let mut messages = render_disposition_plan_messages(prompt)?;
+    let mut messages = render_disposition_plan_messages(prompt, None)?;
     messages[0].content.push_str(
         " Independently review the proposed disposition against the complete passage. Correct missed contamination, false prompt-wide skips, false level skips, recall mislabeled as conceptual, missing evidence IDs, and unsupported relation labels. The proposed plan is not authoritative. Return one complete corrected plan in the same typed schema and nothing else.",
     );
@@ -421,6 +436,7 @@ pub(crate) fn parse_disposition_plan_response(
                         reason: reason.clone(),
                     })
                     .collect(),
+                reviewed_mandates: false,
             })
         }
         [Value::String(decision), Value::Array(raw_levels)] if decision == "clean" => {
@@ -527,7 +543,10 @@ pub(crate) fn parse_disposition_plan_response(
                     }
                 }
             }
-            Ok(QaDispositionPlan { levels })
+            Ok(QaDispositionPlan {
+                levels,
+                reviewed_mandates: false,
+            })
         }
         _ => Err("QA disposition plan must be one canonical prompt-wide skip or a clean ordered level plan".to_string()),
     }
@@ -655,6 +674,23 @@ impl QaVerificationVerdicts {
         completed: &str,
         plan: &QaDispositionPlan,
     ) -> Result<String, String> {
+        self.apply_terminal_verdicts(completed, plan, false)
+    }
+
+    pub fn apply_final_rejections_as_skips(
+        &self,
+        completed: &str,
+        plan: &QaDispositionPlan,
+    ) -> Result<String, String> {
+        self.apply_terminal_verdicts(completed, plan, true)
+    }
+
+    fn apply_terminal_verdicts(
+        &self,
+        completed: &str,
+        plan: &QaDispositionPlan,
+        skip_corrections: bool,
+    ) -> Result<String, String> {
         let mut rows: Vec<Value> = serde_json::from_str(completed)
             .map_err(|error| format!("invalid completed QA before verification skips: {error}"))?;
         if rows.len() != plan.levels.len() {
@@ -672,7 +708,9 @@ impl QaVerificationVerdicts {
             let verdict = verdicts
                 .next()
                 .ok_or_else(|| format!("verification omitted generated level {index}"))?;
-            if verdict.verdict == PreparedQaVerdictKind::Skip {
+            if verdict.verdict == PreparedQaVerdictKind::Skip
+                || skip_corrections && verdict.verdict == PreparedQaVerdictKind::Correct
+            {
                 rows[index] = json!([
                     bloom_level,
                     null,
@@ -704,6 +742,11 @@ pub(crate) fn render_planned_qa_review_messages(
     messages[0].content = format!(
         "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept, correct, or skip. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings when the fixed evidence can support a corrected QA at the planned level. skip is allowed only when subject, condition, premise, entailment, and completeness are true but actual_difficulty is false because the fixed evidence cannot support the planned level; include a specific nonblank finding. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
     );
+    if plan.reviewed_mandates {
+        messages[0].content.push_str(
+            " Level support and relation were externally adjudicated. Judge only the generated QA; verdict skip is forbidden. Use correct for repairable QA defects and accept only when the generated QA passes every check.",
+        );
+    }
     let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
         McpToolError::internal(format!("Cannot parse rendered QA writer request: {error}"))
     })?;
@@ -759,6 +802,11 @@ pub(crate) fn parse_planned_qa_verdicts(
         {
             return Err(format!(
                 "verification level {index} contains a blank finding"
+            ));
+        }
+        if plan.reviewed_mandates && level.verdict == PreparedQaVerdictKind::Skip {
+            return Err(format!(
+                "verification level {index} cannot re-litigate an externally reviewed generate mandate as skip"
             ));
         }
         match level.verdict {
@@ -839,12 +887,69 @@ pub(crate) fn render_planned_qa_correction_messages(
     Ok(messages)
 }
 
-pub(crate) fn enforce_reviewed_admit(plan: QaDispositionPlan) -> Result<QaDispositionPlan, String> {
-    if let Some(reason) = plan.global_skip_reason() {
+pub(crate) fn enforce_reviewed_adjudication(
+    mut plan: QaDispositionPlan,
+    reviewed: &ReviewedQaAdjudication,
+) -> Result<QaDispositionPlan, String> {
+    if plan.levels.len() != reviewed.levels().len() {
         return Err(format!(
-            "reviewed admit cannot be replaced by prompt-wide model skip '{reason}'"
+            "reviewed adjudication has {} levels but generator plan has {}",
+            reviewed.levels().len(),
+            plan.levels.len()
         ));
     }
+    for (index, (planned, mandate)) in plan.levels.iter().zip(reviewed.levels()).enumerate() {
+        match (planned, mandate) {
+            (
+                PlannedQaLevel::Generate { relation, .. },
+                ReviewedLevelDecision::Generate {
+                    relation: mandated_relation,
+                },
+            ) if relation == mandated_relation => {}
+            (
+                PlannedQaLevel::Generate { relation, .. },
+                ReviewedLevelDecision::Generate {
+                    relation: mandated_relation,
+                },
+            ) => {
+                return Err(format!(
+                    "reviewed mandate for level {index} requires generate relation {:?}, generator returned relation {:?}",
+                    mandated_relation, relation
+                ));
+            }
+            (
+                PlannedQaLevel::Skipped { reason, .. },
+                ReviewedLevelDecision::Skip {
+                    reason: mandated_reason,
+                },
+            ) if reason == mandated_reason => {}
+            (
+                PlannedQaLevel::Skipped { reason, .. },
+                ReviewedLevelDecision::Skip {
+                    reason: mandated_reason,
+                },
+            ) => {
+                return Err(format!(
+                    "reviewed mandate for level {index} requires skip reason '{mandated_reason}', generator returned skip reason '{reason}'"
+                ));
+            }
+            (PlannedQaLevel::Generate { .. }, ReviewedLevelDecision::Skip { reason }) => {
+                return Err(format!(
+                    "reviewed mandate for level {index} requires skip reason '{reason}', generator returned generate"
+                ));
+            }
+            (
+                PlannedQaLevel::Skipped { reason, .. },
+                ReviewedLevelDecision::Generate { relation },
+            ) => {
+                return Err(format!(
+                    "reviewed mandate for level {index} requires generate relation {:?}, generator returned skip reason '{reason}'",
+                    relation
+                ));
+            }
+        }
+    }
+    plan.reviewed_mandates = true;
     Ok(plan)
 }
 
@@ -901,7 +1006,7 @@ pub(crate) fn merge_disposition_plans(
 #[derive(Deserialize)]
 struct PreparedQaPair(String, Option<String>, String, Vec<String>);
 
-fn support_absent_reason(qa_type: QaType) -> &'static str {
+pub(crate) fn support_absent_reason(qa_type: QaType) -> &'static str {
     match qa_type {
         QaType::Factual => "factual_support_absent",
         QaType::Conceptual => "conceptual_support_absent",
@@ -1098,8 +1203,10 @@ pub(crate) struct QaOutput<W: Write> {
     reported_cost_usd: f64,
     verification_model: Option<String>,
     adjudication_protocol: Option<String>,
-    adjudicated_admits: usize,
-    adjudicated_skips: usize,
+    reviewed_passage_admits: usize,
+    reviewed_passage_skips: usize,
+    reviewed_level_generates: usize,
+    reviewed_level_skips: usize,
 }
 
 impl<W: Write> QaOutput<W> {
@@ -1123,8 +1230,10 @@ impl<W: Write> QaOutput<W> {
             reported_cost_usd: 0.0,
             verification_model: None,
             adjudication_protocol: None,
-            adjudicated_admits: 0,
-            adjudicated_skips: 0,
+            reviewed_passage_admits: 0,
+            reviewed_passage_skips: 0,
+            reviewed_level_generates: 0,
+            reviewed_level_skips: 0,
         }
     }
 
@@ -1132,10 +1241,19 @@ impl<W: Write> QaOutput<W> {
         self.verification_model = Some(model.to_string());
     }
 
-    pub fn set_reviewed_adjudications(&mut self, protocol: &str, admits: usize, skips: usize) {
+    pub fn set_reviewed_adjudications(
+        &mut self,
+        protocol: &str,
+        passage_admits: usize,
+        passage_skips: usize,
+        level_generates: usize,
+        level_skips: usize,
+    ) {
         self.adjudication_protocol = Some(protocol.to_string());
-        self.adjudicated_admits = admits;
-        self.adjudicated_skips = skips;
+        self.reviewed_passage_admits = passage_admits;
+        self.reviewed_passage_skips = passage_skips;
+        self.reviewed_level_generates = level_generates;
+        self.reviewed_level_skips = level_skips;
     }
 
     fn write_record(&mut self, record: &serde_json::Value) -> Result<(), McpToolError> {
@@ -1315,7 +1433,9 @@ impl<W: Write> QaOutput<W> {
         }
         let outcome = BatchOutcome::from_counts(self.prompts_failed, self.prompts_total);
         outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
-        let expected_inferred_prompts = self.prompts_total.saturating_sub(self.adjudicated_skips);
+        let expected_inferred_prompts = self
+            .prompts_total
+            .saturating_sub(self.reviewed_passage_skips);
         let cost_reporting_complete = self.provider_responses >= expected_inferred_prompts
             && self.cost_reports == self.provider_responses;
         let reported_cost_usd = cost_reporting_complete.then_some(self.reported_cost_usd);
@@ -1332,9 +1452,11 @@ impl<W: Write> QaOutput<W> {
             "qa_levels_skipped": self.qa_levels_skipped,
             "skip_reason_counts": self.skip_reason_counts,
             "verification_model": self.verification_model,
-            "passage_adjudication_protocol": self.adjudication_protocol,
-            "adjudicated_admits": self.adjudicated_admits,
-            "adjudicated_skips": self.adjudicated_skips,
+            "adjudication_protocol": self.adjudication_protocol,
+            "reviewed_passage_admits": self.reviewed_passage_admits,
+            "reviewed_passage_skips": self.reviewed_passage_skips,
+            "reviewed_level_generates": self.reviewed_level_generates,
+            "reviewed_level_skips": self.reviewed_level_skips,
             "tokens_used": self.tokens_used,
             "completion_tokens_used": self.completion_tokens_used,
             "completion_token_reporting_complete": completion_token_reporting_complete,
@@ -1393,7 +1515,7 @@ fn qa_result_envelope(
         "provenance": {
             "generator_model": model,
             "verification_model": verification_model,
-            "passage_adjudication_protocol": adjudication_protocol,
+            "adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
@@ -1422,7 +1544,7 @@ fn qa_skip_envelope(
         "provenance": {
             "generator_model": model,
             "verification_model": verification_model,
-            "passage_adjudication_protocol": adjudication_protocol,
+            "adjudication_protocol": adjudication_protocol,
             "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
@@ -1449,7 +1571,7 @@ mod tests {
     #[test]
     fn prepared_prompt_uses_guarded_evidence_candidates() -> Result<(), Box<dyn std::error::Error>>
     {
-        let messages = render_disposition_plan_messages(&prepared())?;
+        let messages = render_disposition_plan_messages(&prepared(), None)?;
         assert!(messages[0].content.contains(CONTENT_GUARD_INSTRUCTION));
         assert!(messages[0].content.contains("evidence IDs"));
         let user: serde_json::Value = serde_json::from_str(&messages[1].content)?;
@@ -1902,7 +2024,7 @@ mod tests {
     fn prepared_contract_advertises_quality_gated_skips() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages = render_disposition_plan_messages(&prompt).expect("render");
+        let messages = render_disposition_plan_messages(&prompt, None).expect("render");
         let rendered = messages
             .iter()
             .map(|message| message.content.as_str())
@@ -1932,7 +2054,7 @@ mod tests {
     fn staged_contract_restores_verified_canonical_evidence() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages = render_disposition_plan_messages(&prompt).expect("render");
+        let messages = render_disposition_plan_messages(&prompt, None).expect("render");
         let rendered = messages
             .iter()
             .map(|message| message.content.as_str())

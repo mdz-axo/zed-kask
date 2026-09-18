@@ -191,14 +191,15 @@ from rendered model messages.
 
 `max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
 pairs. One compact prepared request per chunk carries the selected level rotation.
-A complete reviewed adjudication manifest, when supplied, deterministically admits
-or skips every prompt. Otherwise the generation model proposes a focused
-whole-passage decision: proposed skip short-circuits, while proposed clean receives
-an authoritative review from the distinct verification model and fails closed after
-one malformed-review correction. Reviewed-clean passages proceed through disposition
-proposal and verification-model review, with the valid reviewed plan authoritative
-and the proposal used only if review correction remains invalid. Writer and focused
-draft-review calls run when at least one reviewed level is supported. Summary separates
+A complete `prepared-qa-adjudication-v2` manifest, when supplied, binds passage and
+ordered per-level mandates to every prompt identity. Reviewed passage skips write
+terminal rows before inference. Reviewed admits bypass passage and disposition review;
+the generator receives the mandates, and its plan gets one exact-error correction
+before a second mismatch fails the prompt. Without a manifest, the generation model
+proposes a focused whole-passage decision: proposed skip short-circuits, while proposed
+clean receives an authoritative review from the distinct verification model and fails
+closed after one malformed-review correction. Writer and focused generated-QA review
+calls run when at least one level is mandated or planned for generation. Summary separates
 `prompts_written` from `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
@@ -216,13 +217,18 @@ and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived fro
 source, chunk ref, ordered level set and ordinal zero, stable across partitions.
 The whole input is validated before inference/output creation.
 
-Generation uses typed passage-quality, disposition, and writer contracts. Without a
-reviewed adjudication manifest, the generation model's passage gate returns `clean`
-or a prompt-wide skip. Proposed clean receives an independent verification-model
-review in the same schema before planning. For reviewed-clean passages, the
-disposition planner returns an ordered level plan and another focused verification
-pass returns the same schema. A schema-valid review replaces the proposal; the
-proposal is a fallback only when disposition-review correction remains invalid:
+Generation uses typed passage-quality, disposition, and writer contracts. A v2
+adjudication row has exactly `protocol`, `prompt_id`, `chunk_ref`, `source`, `passage`,
+and `levels`. `passage` is `admit` with null reason or `skip` with one canonical
+prompt-wide reason. `levels` exactly follows `qa_types`; a passage skip repeats the
+same skip reason at every level, while an admitted passage mandates factual generation
+and either generation or exact support-absent skips for later levels. Conceptual
+generation names one closed relation. V1, unknown fields/values, duplicate identities,
+wrong order/count/reason/relation, and incomplete coverage are rejected.
+
+Without a reviewed manifest, the generation model's passage gate returns `clean` or a
+prompt-wide skip. Proposed clean receives independent passage and disposition reviews
+before writing. Both paths use the same generator plan schema:
 
 ```json
 ["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
@@ -236,17 +242,20 @@ receives only planned generated levels and fixed evidence, then returns:
 ```
 
 The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,
-conceptual generation without a relation, or any writer deviation from the plan. A
-focused draft review checks subjects, conditions, categories, negation, modality,
-premises and answer completeness before final parsing.
+conceptual generation without a relation, mandate mismatches, or any writer deviation
+from the plan. A reviewed-plan mismatch receives one generator correction containing
+the exact deterministic error; a second mismatch fails the prompt. A focused typed QA
+verifier checks subjects, conditions, categories, negation, modality, premises and
+answer completeness, but cannot re-litigate reviewed level support or relations.
 It then restores canonical `QaEvidence {chunk_ref, source, quote}`. The planner and
 writer are model-mediated; semantic answer entailment remains a separate Stage 8
 audit.
 
 Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
 canonical evidence, distinct generation/verification model provenance,
-`prepared-qa-passage-quality-v1` admission provenance, and
-`prepared-qa-staged-quality-v6` generation provenance. Batch tokens and cost include
+`prepared-qa-passage-quality-v1` admission provenance,
+`prepared-qa-staged-quality-v7` generation provenance, and optional
+`prepared-qa-adjudication-v2` provenance. Batch tokens and cost include
 every returned quality/review/planning/writing response and are not repeated on pair
 rows. Failed prompts carry primary identity and `error`, never an ingestible response.
 

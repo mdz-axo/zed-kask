@@ -22,9 +22,11 @@ contract:
       description: inline = return in code block (default); file = write to disk; both = inline + file
     output_path:
       type: string
+      required: false
       description: Optional explicit file path for file/both output. If omitted, a default is derived.
     context:
       type: object
+      required: false
       description: Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any
     task:
       type: string
@@ -62,7 +64,7 @@ contract:
       description: 3-5 synthesized representative inputs for medium/high tiers; empty at low tier
     routing:
       type: object
-      description: Which phases to run given type + effort (phase: bool map)
+      description: 'Which phases to run given type + effort (phase: bool map)'
     risks:
       type: array
       description: Type-specific risks surfaced for Phase 2 attention

@@ -67,6 +67,10 @@ jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v7" | .provenance
 cat "$WORK/base.jsonl" "$WORK/v7.jsonl" > "$WORK/mixed.jsonl"
 check 'valid reviewed staged-v7 skip requires adjudication provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v8" | del(.provenance.passage_adjudication_protocol) | .provenance.adjudication_protocol="prepared-qa-adjudication-v2"' "$WORK/v7.jsonl" > "$WORK/v8.jsonl"
+cat "$WORK/base.jsonl" "$WORK/v8.jsonl" > "$WORK/mixed.jsonl"
+check 'valid reviewed staged-v8 skip requires adjudication provenance' 0 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==1 and .rows[1].data_gaps==[]'
 jq -c '.provenance.verification_model=.provenance.generator_model' "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
 check 'staged-v6 skip rejects identical generation and verification models' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1'
@@ -88,6 +92,9 @@ check 'valid staged-v6 QA requires distinct generation and verification provenan
 jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v7" | .provenance.passage_adjudication_protocol="prepared-qa-passage-adjudication-v1"' \
     "$WORK/v6.jsonl" > "$WORK/v7.jsonl"
 check 'valid reviewed staged-v7 QA requires adjudication provenance' 0 "$WORK/v7.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v8" | del(.provenance.passage_adjudication_protocol) | .provenance.adjudication_protocol="prepared-qa-adjudication-v2"' "$WORK/v7.jsonl" > "$WORK/v8.jsonl"
+check 'valid reviewed staged-v8 QA requires adjudication provenance' 0 "$WORK/v8.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
 jq -c '.provenance.verification_model=.provenance.generator_model' "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
 check 'staged-v6 QA rejects identical generation and verification models' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \

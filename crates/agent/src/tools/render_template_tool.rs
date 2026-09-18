@@ -592,6 +592,55 @@ mod tests {
     }
 
     #[test]
+    fn all_prompt_enhance_contract_headers_parse() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates/prompt-enhance");
+        assert!(
+            base.is_dir(),
+            "prompt-enhance template directory does not exist: {}",
+            base.display()
+        );
+
+        let entries = match std::fs::read_dir(&base) {
+            Ok(entries) => entries,
+            Err(error) => panic!("failed to read {}: {error}", base.display()),
+        };
+        let mut template_count = 0;
+        let mut parse_errors = Vec::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => panic!("failed to read an entry in {}: {error}", base.display()),
+            };
+            let path = entry.path();
+            if !path.extension().is_some_and(|extension| extension == "j2") {
+                continue;
+            }
+            template_count += 1;
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) => panic!("failed to read {}: {error}", path.display()),
+            };
+            let Some(header) = template_metadata_header(&content) else {
+                continue;
+            };
+            if let Err(error) = serde_yaml::from_str::<serde_yaml::Value>(header) {
+                parse_errors.push(format!("{}: {error}", path.display()));
+            }
+        }
+
+        assert!(
+            template_count > 0,
+            "prompt-enhance template census is empty"
+        );
+        assert!(
+            parse_errors.is_empty(),
+            "failed to parse prompt-enhance contract headers:\n{}",
+            parse_errors.join("\n")
+        );
+    }
+
+    #[test]
     fn test_include_traversal_is_blocked() {
         let base = std::path::PathBuf::from("kask/registry/templates");
         if !base.is_dir() {

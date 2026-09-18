@@ -20,17 +20,18 @@ use crate::batch::{
 };
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_adjudication::{
-    PASSAGE_ADJUDICATION_PROTOCOL, ReviewedPassageAdjudications, ReviewedPassageDecision,
+    QA_ADJUDICATION_PROTOCOL, ReviewedPassageDecision, ReviewedQaAdjudications,
     read_complete_adjudications,
 };
 use crate::services::qa_pipeline::{
     PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaDispositionPlan, QaOutput,
-    QaResponseMetadata, QaVerificationVerdicts, enforce_reviewed_admit, merge_disposition_plans,
-    parse_disposition_plan_response, parse_passage_quality_response, parse_planned_qa_verdicts,
-    prompt_wide_skip_plan, qa_llm_parameters, read_prompts, render_disposition_plan_messages,
-    render_disposition_review_messages, render_passage_quality_messages,
-    render_passage_quality_review_messages, render_planned_qa_correction_messages,
-    render_planned_qa_messages, render_planned_qa_review_messages,
+    QaResponseMetadata, QaVerificationVerdicts, enforce_reviewed_adjudication,
+    merge_disposition_plans, parse_disposition_plan_response, parse_passage_quality_response,
+    parse_planned_qa_verdicts, prompt_wide_skip_plan, qa_llm_parameters, read_prompts,
+    render_disposition_plan_messages, render_disposition_review_messages,
+    render_passage_quality_messages, render_passage_quality_review_messages,
+    render_planned_qa_correction_messages, render_planned_qa_messages,
+    render_planned_qa_review_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -293,9 +294,11 @@ impl QaBatchService {
         completions.set_verification_model(&selected_verification_model);
         if let Some(adjudications) = adjudications.as_ref() {
             completions.set_reviewed_adjudications(
-                PASSAGE_ADJUDICATION_PROTOCOL,
-                adjudications.admits(),
-                adjudications.skips(),
+                QA_ADJUDICATION_PROTOCOL,
+                adjudications.passage_admits(),
+                adjudications.passage_skips(),
+                adjudications.level_generates(),
+                adjudications.level_skips(),
             );
         }
         self.generate_prepared(
@@ -314,7 +317,7 @@ impl QaBatchService {
     async fn generate_prepared<W: Write>(
         &self,
         prompts: Vec<PreparedQaPrompt>,
-        adjudications: Option<ReviewedPassageAdjudications>,
+        adjudications: Option<ReviewedQaAdjudications>,
         selected_model: &str,
         selected_verification_model: &str,
         limiter: AdaptiveLimiter,
@@ -327,23 +330,27 @@ impl QaBatchService {
             let mut tasks = tokio::task::JoinSet::new();
             let mut pending = HashMap::with_capacity(prompts.len());
             for prompt in prompts {
-                let reviewed_decision = adjudications
+                let reviewed_adjudication = adjudications
                     .as_ref()
                     .and_then(|adjudications| adjudications.decision(&prompt.prompt_id))
                     .cloned();
-                if let Some(ReviewedPassageDecision::Skip(reason)) = reviewed_decision.as_ref() {
+                if let Some(reviewed) = reviewed_adjudication.as_ref()
+                    && let ReviewedPassageDecision::Skip(reason) = reviewed.passage()
+                {
                     completions.complete_reviewed_skip(&prompt, reason, selected_model)?;
                     continue;
                 }
-                let reviewed_admit =
-                    matches!(reviewed_decision, Some(ReviewedPassageDecision::Admit));
+                let reviewed_admit = reviewed_adjudication.is_some();
                 let router = Arc::clone(&self.inference_router);
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
                 let selected_verification_model = selected_verification_model.to_owned();
                 let task_lease = Arc::clone(&lease);
                 let quality_messages = render_passage_quality_messages(&prompt)?;
-                let planning_messages = render_disposition_plan_messages(&prompt)?;
+                let planning_messages = render_disposition_plan_messages(
+                    &prompt,
+                    reviewed_adjudication.as_ref(),
+                )?;
                 let worker_prompt = prompt.clone();
                 let prompt_id = prompt.prompt_id.clone();
                 let task = tasks.spawn(async move {
@@ -483,95 +490,122 @@ impl QaBatchService {
                     };
                     let proposed_response =
                         crate::extract_json_from_response(&planning_response.text);
-                    let proposed_plan =
-                        parse_disposition_plan_response(&proposed_response, &worker_prompt)
-                            .and_then(|plan| {
-                                if reviewed_admit {
-                                    enforce_reviewed_admit(plan)
-                                } else {
-                                    Ok(plan)
-                                }
-                            });
-                    let proposal_error = proposed_plan.as_ref().err().map(String::as_str);
-                    let review_messages = match render_disposition_review_messages(
-                        &worker_prompt,
-                        &proposed_response,
-                        proposal_error,
-                    ) {
-                        Ok(messages) => messages,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(planning_response, Err(error.to_string()))),
-                            );
+                    let plan = if let Some(reviewed) = reviewed_adjudication.as_ref() {
+                        let mut plan = parse_disposition_plan_response(
+                            &proposed_response,
+                            &worker_prompt,
+                        )
+                        .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
+                        if let Err(error) = &plan {
+                            let exact_error = error.clone();
+                            prior_responses.push(response_metadata(&planning_response));
+                            let mut correction_messages = planning_messages.clone();
+                            correction_messages[0].content.push_str(&format!(
+                                " Your plan violated the reviewed mandate: {exact_error}. Return one corrected plan only."
+                            ));
+                            planning_response = match infer_with_retry(
+                                &router,
+                                &limiter,
+                                &selected_model,
+                                &correction_messages,
+                                &prompt_id,
+                                "QA disposition mandate correction",
+                            )
+                            .await
+                            {
+                                Ok(response) => response,
+                                Err(error) => return (prior_responses, Err(error)),
+                            };
+                            plan = parse_disposition_plan_response(
+                                &crate::extract_json_from_response(&planning_response.text),
+                                &worker_prompt,
+                            )
+                            .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
                         }
-                    };
-                    prior_responses.push(response_metadata(&planning_response));
-                    planning_response = match verify_with_retry(
-                        &router,
-                        &limiter,
-                        &selected_verification_model,
-                        &review_messages,
-                        &prompt_id,
-                        "QA disposition review",
-                    )
-                    .await
-                    {
-                        Ok(response) => response,
-                        Err(error) => return (prior_responses, Err(error)),
-                    };
-                    let mut plan = parse_disposition_plan_response(
-                        &crate::extract_json_from_response(&planning_response.text),
-                        &worker_prompt,
-                    )
-                    .and_then(|plan| {
-                        if reviewed_admit {
-                            enforce_reviewed_admit(plan)
-                        } else {
-                            Ok(plan)
+                        match plan {
+                            Ok(plan) => plan,
+                            Err(error) => {
+                                return (
+                                    prior_responses,
+                                    Ok(qa_completion(
+                                        planning_response,
+                                        Err(format!(
+                                            "QA disposition mandate rejected: {error}"
+                                        )),
+                                    )),
+                                );
+                            }
                         }
-                    });
-                    if let Err(error) = &plan {
+                    } else {
+                        let proposed_plan =
+                            parse_disposition_plan_response(&proposed_response, &worker_prompt);
+                        let proposal_error = proposed_plan.as_ref().err().map(String::as_str);
+                        let review_messages = match render_disposition_review_messages(
+                            &worker_prompt,
+                            &proposed_response,
+                            proposal_error,
+                        ) {
+                            Ok(messages) => messages,
+                            Err(error) => {
+                                return (
+                                    prior_responses,
+                                    Ok(qa_completion(planning_response, Err(error.to_string()))),
+                                );
+                            }
+                        };
                         prior_responses.push(response_metadata(&planning_response));
-                        let mut correction_messages = review_messages.clone();
-                        correction_messages[0].content.push_str(&format!(
-                            " Your reviewed plan failed the typed schema: {error}. Return one corrected plan only."
-                        ));
                         planning_response = match verify_with_retry(
                             &router,
                             &limiter,
                             &selected_verification_model,
-                            &correction_messages,
+                            &review_messages,
                             &prompt_id,
-                            "QA disposition review schema correction",
+                            "QA disposition review",
                         )
                         .await
                         {
                             Ok(response) => response,
                             Err(error) => return (prior_responses, Err(error)),
                         };
-                        plan = parse_disposition_plan_response(
+                        let mut plan = parse_disposition_plan_response(
                             &crate::extract_json_from_response(&planning_response.text),
                             &worker_prompt,
-                        )
-                        .and_then(|plan| {
-                            if reviewed_admit {
-                                enforce_reviewed_admit(plan)
-                            } else {
-                                Ok(plan)
-                            }
-                        });
-                    }
-                    let plan = match plan {
-                        Ok(plan) => plan,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(
-                                    planning_response,
-                                    Err(format!("QA disposition review rejected: {error}")),
-                                )),
+                        );
+                        if let Err(error) = &plan {
+                            prior_responses.push(response_metadata(&planning_response));
+                            let mut correction_messages = review_messages.clone();
+                            correction_messages[0].content.push_str(&format!(
+                                " Your reviewed plan failed the typed schema: {error}. Return one corrected plan only."
+                            ));
+                            planning_response = match verify_with_retry(
+                                &router,
+                                &limiter,
+                                &selected_verification_model,
+                                &correction_messages,
+                                &prompt_id,
+                                "QA disposition review schema correction",
+                            )
+                            .await
+                            {
+                                Ok(response) => response,
+                                Err(error) => return (prior_responses, Err(error)),
+                            };
+                            plan = parse_disposition_plan_response(
+                                &crate::extract_json_from_response(&planning_response.text),
+                                &worker_prompt,
                             );
+                        }
+                        match plan {
+                            Ok(plan) => plan,
+                            Err(error) => {
+                                return (
+                                    prior_responses,
+                                    Ok(qa_completion(
+                                        planning_response,
+                                        Err(format!("QA disposition review rejected: {error}")),
+                                    )),
+                                );
+                            }
                         }
                     };
                     let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
@@ -771,11 +805,14 @@ impl QaBatchService {
                                 final_verdicts.apply_terminal_skips(&corrected_completed, &plan),
                             )),
                         ),
-                        Ok(_final_verdicts) => (
+                        Ok(final_verdicts) => (
                             prior_responses,
                             Ok(qa_completion(
                                 final_review_response,
-                                Err("corrected QA rejected by final verification".to_string()),
+                                final_verdicts.apply_final_rejections_as_skips(
+                                    &corrected_completed,
+                                    &plan,
+                                ),
                             )),
                         ),
                         Err(error) => (
@@ -867,6 +904,9 @@ mod tests {
         QaCorrectionThenAccept,
         QaCorrectionRejected,
         VerifierWritesQa,
+        ReviewedGenerateMismatchOnce,
+        ReviewedGenerateMismatchAlways,
+        ReviewedVerifierSkips,
         Pending,
     }
 
@@ -918,6 +958,9 @@ mod tests {
             let is_qa_correction = messages[0]
                 .content
                 .contains("single bounded refinement step");
+            let is_mandate_correction = messages[0]
+                .content
+                .contains("Your plan violated the reviewed mandate:");
             let verification_call = is_quality_review || is_review || is_qa_verification;
             assert_eq!(parameters.thinking_allowed, verification_call);
             assert_eq!(
@@ -939,6 +982,16 @@ mod tests {
                         .contains("Do not output question, answer")
                 );
                 assert!(user.get("proposed_qa").is_some());
+            }
+            if is_mandate_correction
+                && matches!(
+                    mode,
+                    Mode::ReviewedGenerateMismatchOnce | Mode::ReviewedGenerateMismatchAlways
+                )
+            {
+                assert!(messages[0].content.contains(
+                    "reviewed mandate for level 1 requires generate relation Some(\"mechanism\"), generator returned skip reason 'conceptual_support_absent'"
+                ));
             }
             if is_qa_correction {
                 assert_eq!(user["planned_levels"][0]["evidence"][0]["id"], "e0");
@@ -980,7 +1033,10 @@ mod tests {
                 } else if is_planning {
                     let skip_conceptual = matches!(mode, Mode::SkipConceptual)
                         || matches!(mode, Mode::ReviewSkipsConceptual) && is_review
-                        || matches!(mode, Mode::ReviewGeneratesConceptual) && !is_review;
+                        || matches!(mode, Mode::ReviewGeneratesConceptual) && !is_review
+                        || matches!(mode, Mode::ReviewedGenerateMismatchAlways)
+                        || matches!(mode, Mode::ReviewedGenerateMismatchOnce)
+                            && !is_mandate_correction;
                     let conceptual = if skip_conceptual {
                         json!({"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]})
                     } else {
@@ -1001,6 +1057,28 @@ mod tests {
                         "answer":"Verifier-authored QA"
                     }])
                     .to_string()
+                } else if is_qa_verification && matches!(mode, Mode::ReviewedVerifierSkips) {
+                    user["proposed_qa"]
+                        .as_array()
+                        .expect("proposed QA array")
+                        .iter()
+                        .map(|draft| {
+                            json!({
+                                "level":draft["level"],
+                                "verdict":"skip",
+                                "subject":true,
+                                "condition":true,
+                                "premise":true,
+                                "entailment":true,
+                                "completeness":true,
+                                "actual_difficulty":false,
+                                "findings":["The fixed evidence cannot support this level."]
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .collect::<serde_json::Value>()
+                        .to_string()
                 } else if is_qa_verification {
                     let proposed = user["proposed_qa"].as_array().expect("proposed QA array");
                     let corrected = proposed
@@ -1130,24 +1208,67 @@ mod tests {
             .collect()
     }
 
+    fn attach_adjudication_row(
+        directory: &tempfile::TempDir,
+        request: &mut QaBatchRequest,
+        row: serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = directory.path().join("adjudications.jsonl");
+        std::fs::write(&path, format!("{}\n", serde_json::to_string(&row)?))?;
+        request.quality_adjudications_jsonl = Some(path.to_string_lossy().into_owned());
+        Ok(())
+    }
+
     fn attach_adjudication(
         directory: &tempfile::TempDir,
         request: &mut QaBatchRequest,
         decision: &str,
         reason: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let path = directory.path().join("adjudications.jsonl");
-        let row = json!({
-            "protocol": PASSAGE_ADJUDICATION_PROTOCOL,
-            "prompt_id": "qa-1",
-            "chunk_ref": "chunk-qa-1",
-            "source": "source.txt",
-            "decision": decision,
-            "reason": reason,
-        });
-        std::fs::write(&path, format!("{}\n", serde_json::to_string(&row)?))?;
-        request.quality_adjudications_jsonl = Some(path.to_string_lossy().into_owned());
-        Ok(())
+        let levels = if decision == "skip" {
+            json!([
+                {"level":"factual","decision":"skip","relation":null,"reason":reason},
+                {"level":"conceptual","decision":"skip","relation":null,"reason":reason}
+            ])
+        } else {
+            json!([
+                {"level":"factual","decision":"generate","relation":null,"reason":null},
+                {"level":"conceptual","decision":"generate","relation":"mechanism","reason":null}
+            ])
+        };
+        attach_adjudication_row(
+            directory,
+            request,
+            json!({
+                "protocol": QA_ADJUDICATION_PROTOCOL,
+                "prompt_id": "qa-1",
+                "chunk_ref": "chunk-qa-1",
+                "source": "source.txt",
+                "passage": {"decision":decision,"reason":reason},
+                "levels": levels,
+            }),
+        )
+    }
+
+    fn attach_conceptual_skip_adjudication(
+        directory: &tempfile::TempDir,
+        request: &mut QaBatchRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        attach_adjudication_row(
+            directory,
+            request,
+            json!({
+                "protocol": QA_ADJUDICATION_PROTOCOL,
+                "prompt_id": "qa-1",
+                "chunk_ref": "chunk-qa-1",
+                "source": "source.txt",
+                "passage": {"decision":"admit","reason":null},
+                "levels": [
+                    {"level":"factual","decision":"generate","relation":null,"reason":null},
+                    {"level":"conceptual","decision":"skip","relation":null,"reason":"conceptual_support_absent"}
+                ],
+            }),
+        )
     }
 
     /// expect: Typed accept verdicts admit only the generator's named-object drafts,
@@ -1363,19 +1484,23 @@ mod tests {
         assert_eq!(summary["qa_rows_written"], 0);
         assert_eq!(summary["qa_levels_skipped"], 2);
         assert_eq!(summary["provider_responses"], 0);
-        assert_eq!(summary["adjudicated_skips"], 1);
+        assert_eq!(summary["reviewed_passage_skips"], 1);
+        assert_eq!(summary["reviewed_level_generates"], 0);
+        assert_eq!(summary["reviewed_level_skips"], 2);
         assert_eq!(port.calls.load(Ordering::SeqCst), 0);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| {
-            row["provenance"]["passage_adjudication_protocol"] == PASSAGE_ADJUDICATION_PROTOCOL
-        }));
+        assert!(
+            rows.iter().all(|row| {
+                row["provenance"]["adjudication_protocol"] == QA_ADJUDICATION_PROTOCOL
+            })
+        );
         Ok(())
     }
 
-    /// expect: A reviewed admit bypasses probabilistic passage rejection but preserves downstream QA controls.
+    /// expect: A reviewed admit bypasses passage and disposition review while preserving QA verification.
     #[tokio::test]
-    async fn reviewed_admit_bypasses_only_passage_quality_inference()
+    async fn reviewed_admit_bypasses_passage_and_disposition_reviews()
     -> Result<(), Box<dyn std::error::Error>> {
         let (directory, mut request) = fixture(&[prompt("qa-1")])?;
         attach_adjudication(&directory, &mut request, "admit", None)?;
@@ -1386,11 +1511,116 @@ mod tests {
             .await?;
         assert_eq!(summary["qa_rows_written"], 2);
         assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["adjudicated_admits"], 1);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["reviewed_passage_admits"], 1);
+        assert_eq!(summary["reviewed_level_generates"], 2);
+        assert_eq!(summary["reviewed_level_skips"], 0);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.get("response").is_some()));
+        Ok(())
+    }
+
+    /// expect: A generator plan cannot turn a reviewed conceptual generate mandate into a skip;
+    /// the exact deterministic mismatch is returned once for generator-owned correction.
+    #[tokio::test]
+    async fn reviewed_conceptual_generate_mismatch_is_corrected_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_adjudication(&directory, &mut request, "admit", None)?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewedGenerateMismatchOnce));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_succeeded"], 1);
+        assert_eq!(summary["qa_rows_written"], 2);
+        assert_eq!(summary["qa_levels_skipped"], 0);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        let rows = records(&output)?;
+        assert!(rows.iter().all(|row| row.get("response").is_some()));
+        Ok(())
+    }
+
+    /// expect: The QA verifier judges generated content but cannot re-litigate an
+    /// externally reviewed generate mandate as a support-absent terminal skip.
+    #[tokio::test]
+    async fn reviewed_conceptual_generate_cannot_become_verifier_skip()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_adjudication(&directory, &mut request, "admit", None)?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewedVerifierSkips));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["qa_levels_skipped"], 0);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("cannot re-litigate"))
+        );
+        Ok(())
+    }
+
+    /// expect: Repeating the same reviewed-mandate mismatch exhausts the single
+    /// generator correction and fails the prompt without terminal skip rows.
+    #[tokio::test]
+    async fn second_reviewed_generate_mismatch_fails_prompt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_adjudication(&directory, &mut request, "admit", None)?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::ReviewedGenerateMismatchAlways));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["qa_levels_skipped"], 0);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("QA disposition mandate rejected"))
+        );
+        Ok(())
+    }
+
+    /// expect: A reviewed conceptual skip mandate cannot be converted into generation;
+    /// repeated generator disagreement fails before writer or QA-verifier calls.
+    #[tokio::test]
+    async fn reviewed_conceptual_skip_cannot_generate() -> Result<(), Box<dyn std::error::Error>> {
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_conceptual_skip_adjudication(&directory, &mut request)?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(Mode::Success));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        assert_eq!(summary["prompts_failed"], 1);
+        assert_eq!(summary["qa_rows_written"], 0);
+        assert_eq!(summary["qa_levels_skipped"], 0);
+        assert_eq!(summary["reviewed_level_generates"], 1);
+        assert_eq!(summary["reviewed_level_skips"], 1);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        let rows = records(&output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0]["error"].as_str().is_some_and(|error| {
+            error.contains("requires skip reason 'conceptual_support_absent'")
+        }));
         Ok(())
     }
 

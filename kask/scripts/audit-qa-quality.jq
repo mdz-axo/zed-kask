@@ -46,7 +46,15 @@ def generation_protocol_ok($r):
       and ($r.provenance.verification_model | nonblank)
       and $r.provenance.generator_model != $r.provenance.verification_model
       and (($r.provenance.passage_adjudication_protocol // null) == null
-        or $r.provenance.passage_adjudication_protocol == "prepared-qa-passage-adjudication-v1"));
+        or $r.provenance.passage_adjudication_protocol == "prepared-qa-passage-adjudication-v1"))
+    or ($r.provenance.prompt_protocol == "prepared-qa-staged-quality-v8"
+      and $r.provenance.passage_quality_protocol == "prepared-qa-passage-quality-v1"
+      and $r.provenance.disposition_plan_protocol == "prepared-qa-disposition-plan-v1"
+      and ($r.provenance.generator_model | nonblank)
+      and ($r.provenance.verification_model | nonblank)
+      and $r.provenance.generator_model != $r.provenance.verification_model
+      and (($r.provenance.adjudication_protocol // null) == null
+        or $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2")));
 def identify($index; $ref):
   (if $ref.chunk_ref | nonblank then ($index[$ref.chunk_ref] // []) else [] end) as $matches
   | if ($ref.chunk_ref | nonblank | not) or ($ref.source | nonblank | not) then "missing_source_metadata"

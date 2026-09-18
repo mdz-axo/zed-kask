@@ -135,12 +135,21 @@ mod identity_tests {
         wrong_request.requested_model = "other/request".to_string();
         assert!(state.observe("requested/model", &wrong_request).is_err());
     }
+
+    #[test]
+    fn qa_request_schema_documents_complete_v2_adjudication() {
+        let schema = schemars::schema_for!(GenerateQaBatchRequest);
+        let rendered = serde_json::to_string(&schema).expect("serialize request schema");
+        assert!(rendered.contains("prepared-qa-adjudication-v2"));
+        assert!(rendered.contains("exact qa_types order"));
+        assert!(rendered.contains("V1 and partial manifests fail"));
+    }
 }
 
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. One provider call may produce several pairs. Canonical identities are restored only after exact quote verification. Old rendered-message files are rejected. Output contains ingest-compatible QA or identified error rows; summary includes prompt outcomes, QA rows, and prompt-level token usage."
+        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. An optional complete prepared-qa-adjudication-v2 JSONL binds passage and per-level mandates to every prompt; reviewed skips are terminal and reviewed admits bypass passage/disposition model review. Canonical identities are restored only after exact quote verification. Old rendered-message and adjudication-v1 files are rejected. Output contains ingest-compatible QA, terminal skips, or identified error rows; summary includes prompt outcomes, QA rows, reviewed decision counts, and prompt-level token usage."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -526,11 +535,12 @@ impl CorpusServer {
 /// Request for generating QA from a canonical prepared-prompt JSONL file.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GenerateQaBatchRequest {
-    /// Canonical JSONL: prompt_id, chunk_ref, source, concepts, salience, qa_type, system, user.
-    /// IDs must be unique, 1–64 ASCII letters/digits/hyphens/underscores. No legacy aliases.
+    /// Canonical prepared JSONL: prompt_id, protocol, passages, candidate_terms,
+    /// and ordered qa_types. IDs must be unique, 1–64 provider-safe ASCII characters.
     pub prompts_jsonl: String,
-    /// Optional complete Stage-8-reviewed passage decisions. Every prepared prompt
-    /// must appear exactly once with matching prompt_id, chunk_ref and source.
+    /// Optional complete `prepared-qa-adjudication-v2` JSONL. Every prepared prompt
+    /// appears exactly once with matching prompt_id, chunk_ref, source, one passage
+    /// decision, and level decisions in exact qa_types order. V1 and partial manifests fail.
     #[serde(default)]
     pub quality_adjudications_jsonl: Option<String>,
     /// Output path for generated QAs JSONL.
@@ -543,8 +553,8 @@ pub(crate) struct GenerateQaBatchRequest {
     /// no active-chat or training-base fallback. Must accept non-thinking requests.
     #[serde(default)]
     pub model: Option<String>,
-    /// Optional provider-prefixed verification model for disposition and draft
-    /// review. It must differ from the generator and has no generator fallback.
+    /// Optional provider-prefixed verification model for unreviewed passage/disposition
+    /// review and generated-QA verdicts. It must differ from the generator and has no fallback.
     #[serde(default)]
     pub verification_model: Option<String>,
 }
