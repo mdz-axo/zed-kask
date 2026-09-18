@@ -50,7 +50,7 @@ proptest! {
         col in 0usize..MAX_SHEET_COLS,
     ) {
         let coordinate =
-            CellCoordinate::new(sheet.clone(), row, col).expect("in-bounds coordinate validates");
+            CellCoordinate::new(sheet, row, col).expect("in-bounds coordinate validates");
         let round: CellCoordinate = serde_json::from_value(
             serde_json::to_value(&coordinate).expect("coordinate serializes"),
         )
@@ -69,7 +69,7 @@ proptest! {
         over in 0usize..1000,
     ) {
         prop_assert!(CellCoordinate::new(sheet.clone(), MAX_SHEET_ROWS + over, 0).is_err());
-        prop_assert!(CellCoordinate::new(sheet.clone(), 0, MAX_SHEET_COLS + over).is_err());
+        prop_assert!(CellCoordinate::new(sheet, 0, MAX_SHEET_COLS + over).is_err());
         prop_assert!(CellCoordinate::new(String::new(), 0, 0).is_err());
     }
 
