@@ -8725,6 +8725,7 @@ dependencies = [
 name = "hkask-forecast"
 version = "0.40.0"
 dependencies = [
+ "proptest",
  "serde",
  "thiserror 2.0.17",
 ]
