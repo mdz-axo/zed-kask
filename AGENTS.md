@@ -38,11 +38,11 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 ## MCP Servers
 
-hKask ships **10 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
+hKask ships **12 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
-- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training.
-- **Catalog + per-tool contracts:** `kask/docs/reference/mcp-servers/README.md` (server catalog) + `kask/docs/qa/per-tool-contracts.md` (per-tool input struct, output shape, LLM I/O boundary).
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training.
+- **Catalog + per-tool behavior:** `kask/docs/reference/mcp-servers/README.md` (server catalog with per-server tool-surface pin tests); per-tool behavior is enforced by the tool-behavior contract-test standard (`kask/scripts/check-mcp-tool-tests.sh` + the Testing standard section of the catalog README), not by a per-tool contracts doc.
 - **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8).
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
 
@@ -87,10 +87,10 @@ For the current skill catalog, see `.agents/skills/` (project-local) and `~/.loc
 |---|---|---|
 | No visual-UI / monitoring infra (grafana/prometheus) | `grep` scan | Review-enforced (was inline in the removed `kask-ci.yml`) |
 | No hardcoded secrets | Env vars / keystore only | Review-enforced (was inline in the removed `kask-ci.yml`) |
-| No `Result<_, String>` | `thiserror` enums | `scripts/check-string-errors.sh` |
+| No `Result<_, String>` | `thiserror` enums | `kask/scripts/check-string-errors.sh` |
 | No unused crate dependencies | `cargo machete` (kask/ scope) | `script/clippy` (local) |
-| MCP servers: tool-behavior contract tests | `Parameters(` seam | `scripts/check-mcp-tool-tests.sh` |
-| Regulation namespace invariant (`reg.*` → `CANONICAL_NAMESPACES`) | Canonical span check | `scripts/check-reg-canonical.sh` |
+| MCP servers: tool-behavior contract tests | `Parameters(` seam | `kask/scripts/check-mcp-tool-tests.sh` |
+| Regulation namespace invariant (`reg.*` → `CANONICAL_NAMESPACES`) | Canonical span check | `kask/scripts/check-reg-canonical.sh` |
 
 Only #1 partially CI-gated; #2–#4 enforced by review.
 
@@ -99,16 +99,15 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 ## Build & Test
 
 - Build: `cargo build`
-- Test: `cargo test`
-- Docs health: `docs/ci/verify-docs.sh`
+- Test: `cargo test` (CI runs the kask subtree serially: `cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1`)
 
 ---
 
 ## Tooling Policy
 
 - Rust only. Python is **not** an acceptable dependency (ad-hoc exploration OK, delete before commit).
-- Preferred: `bash` under `scripts/`, Rust binaries, `build.rs`.
-- Generated artifacts: remove one-off files; keep `docs/generated/`.
+- Preferred: `bash` under `kask/scripts/`, Rust binaries, `build.rs`.
+- Generated artifacts: remove one-off files before commit.
 
 ---
 
@@ -135,12 +134,10 @@ For low-confidence regimes: `metacognition` → `falsifiability` → `improv`. L
 
 ## Key Operational Scripts
 
-- `.github/workflows/ci.yml` — CI pipeline
-- `.github/workflows/audit.yml` — Weekly dependency audit
-- `scripts/check-string-errors.sh` — `Result<_, String>` guard
-- `docs/ci/verify-docs.sh` — Documentation health
+- `.github/workflows/kask-invariants.yml` — CI pipeline: invariant checks on every push/PR (§13.1 deps, zed isolation, desktop collision, fmt, dead-code allows, string errors, MCP tool tests, reg namespaces), serial `cargo test` over `hkask-*` + `kask_bridge`, and the full `cargo check -p zed` on main pushes
+- `kask/scripts/check-string-errors.sh` — `Result<_, String>` guard
 
-> Full reference: `docs/reference/` · Design: `docs/explanation/` · How-to: `docs/how-to/` · Tutorial: `docs/tutorial/`
+> Docs map: `kask/docs/README.md` · Reference: `kask/docs/reference/` · Architecture: `kask/docs/architecture/` · Diataxis: `kask/docs/diataxis/`
 
 ---
 
