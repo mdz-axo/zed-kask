@@ -631,6 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_error_failures_open_the_breaker() {
+        crate::helpers::seed_registry_template_root();
         let executor = LlmOcrExecutor::new(Arc::new(HttpErrorVisionPort));
         let image = DynamicImage::new_rgb8(8, 8);
         for _ in 0..5 {

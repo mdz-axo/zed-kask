@@ -257,3 +257,9 @@ Template context variables (from each template's [inference] contract):
   of the same name is the live contract), `convergence_signal`,
   `input_mapping`, `on_failure`, `ordinal:`, `category:`.
 - Core skills (`core: true`) must have names in `CORE_SKILL_NAMES`.
+- Material SKILL.md process changes are self-changes and ship only
+  with a measured eval delta: a before/after `swarm_eval_agent_local`
+  run (or the governing server's deterministic harness), recorded as a
+  `memory_insert` verdict citing the evidence h_mem. An edit that
+  cannot name a measurable behavior change is a documentation edit —
+  label it as such.

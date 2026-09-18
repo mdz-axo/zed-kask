@@ -299,15 +299,6 @@ pub struct KaskCondenserSettings {
     /// Whether to automatically compress tool results before they enter
     /// the message history. When false, tool results are stored verbatim.
     pub auto_compress_tool_results: bool,
-
-    /// Persona keywords for saliency scoring (comma-separated in settings.json).
-    /// Used by the condenser's word_rank algorithm to prioritize lines
-    /// relevant to the user's domain.
-    pub persona_keywords: Vec<String>,
-
-    /// Saliency window multiplier for thread summarization.
-    /// Controls the max_tokens budget: saliency_window * 100, clamped [150, 2000].
-    pub saliency_window: u32,
 }
 
 impl Default for KaskCondenserSettings {
@@ -315,8 +306,6 @@ impl Default for KaskCondenserSettings {
         Self {
             profile: "normal".to_string(),
             auto_compress_tool_results: false,
-            persona_keywords: Vec::default(),
-            saliency_window: 5,
         }
     }
 }
@@ -753,7 +742,6 @@ impl KaskSettings {
         crate::mcp_env::emit_general_env(&self.general, &mut env);
         crate::mcp_env::emit_curator_webid_env(&mut env);
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
-        crate::mcp_env::emit_condenser_env(&self.condenser, &mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         crate::mcp_env::emit_companies_env(&self.companies, &mut env);
         crate::mcp_env::emit_portfolio_env(&mut env);
@@ -766,7 +754,6 @@ impl KaskSettings {
         crate::mcp_env::emit_training_env(&self.training, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
-        crate::mcp_env::emit_curator_email_env(&self.curator.email, &mut env);
         crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
         crate::mcp_env::emit_operator_override_env(&mut env);
         env
@@ -896,8 +883,6 @@ impl From<KaskCondenserSettingsContent> for KaskCondenserSettings {
             auto_compress_tool_results: c
                 .auto_compress_tool_results
                 .unwrap_or(default.auto_compress_tool_results),
-            persona_keywords: c.persona_keywords.unwrap_or(default.persona_keywords),
-            saliency_window: c.saliency_window.unwrap_or(default.saliency_window),
         }
     }
 }

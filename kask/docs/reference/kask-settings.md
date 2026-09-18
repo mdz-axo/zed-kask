@@ -185,17 +185,22 @@ Providers, find the provider, and add models via its configuration sub-page.
 ### Curator Email (`KaskCuratorEmailSettings`)
 
 Non-secret fields. The SMTP password is stored in the OS keychain under
-`kask://credentials/hkask_smtp_password`, not here. The composition root reads
-it from the keychain and injects it as `HKASK_SMTP_PASSWORD` into MCP server
-child processes.
+`kask://credentials/hkask_smtp_password`, not here. The composition root
+reads it from the keychain into the EDITOR process env (the alert email
+sink runs in-process there, wired from settings via
+`CuratorAlertEmailSink::try_from_settings`); MCP server children receive no
+email vars — no server reads them. `alert_email`/`smtp_username` select the
+alert recipient; the SMTP transport itself (`hkask-email`'s `send_email`)
+reads its remaining configuration (`HKASK_MXROUTE_SERVER`,
+`HKASK_SMTP_USERNAME`, `HKASK_CURATOR_EMAIL`) from the editor process env.
 
-| Field | Type | Default | Env var injected |
-|-------|------|---------|-------------------|
-| `mxroute_server` | `String` | `""` | `HKASK_MXROUTE_SERVER` |
-| `smtp_username` | `String` | `""` | `HKASK_SMTP_USERNAME` |
-| `curator_email` | `String` | `""` | `HKASK_CURATOR_EMAIL` (defaults to `HKASK_SMTP_USERNAME`) |
-| `alert_email` | `String` | `""` | `HKASK_ALERT_EMAIL` (defaults to `HKASK_SMTP_USERNAME`) |
-| `authorized_emails` | `Vec<String>` | `[]` | `HKASK_AUTHORIZED_EMAILS` (comma-joined) |
+| Field | Type | Default | Consumed |
+|-------|------|---------|-----------|
+| `mxroute_server` | `String` | `""` | settings→transport note above |
+| `smtp_username` | `String` | `""` | alert-recipient fallback; note above |
+| `curator_email` | `String` | `""` | settings→transport note above |
+| `alert_email` | `String` | `""` | alert recipient (falls back to `smtp_username`) |
+| `authorized_emails` | `Vec<String>` | `[]` | settings→transport note above |
 | `inbox_poll_interval_secs` | `u64` | `0` | `HKASK_INBOX_POLL_INTERVAL_SECS` (0 = disabled; reserved for future IMAP) |
 | `digest_interval_secs` | `u64` | `0` | `HKASK_DIGEST_INTERVAL_SECS` (0 = disabled; reserved for future digest) |
 
@@ -227,8 +232,6 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 |-------|------|---------|-------|
 | `profile` | `String` | `"normal"` | `"heavy"` (10% retention, 30 max lines), `"normal"` (20%, 80), `"soft"` (60%, 200), `"light"` (95%, no max) |
 | `auto_compress_tool_results` | `bool` | `false` | Compress tool results before message history |
-| `persona_keywords` | `Vec<String>` | `[]` | Saliency scoring keywords |
-| `saliency_window` | `u32` | `5` | Max tokens budget: `saliency_window * 100`, clamped [150, 2000] |
 
 ## Research (`KaskResearchSettings`)
 
@@ -504,11 +507,16 @@ not an OpenAI-compatible chat endpoint).
 
 ### Curator Email
 
+Read by `hkask-email` in the EDITOR process (the in-process alert email
+transport); not delivered to MCP server children and not keychain entries
+(except the password, which the composition root reads from the keychain
+into the editor process env).
+
 | Env Var | Service |
 |---------|--------|
 | `HKASK_MXROUTE_SERVER` | MXroute server hostname |
 | `HKASK_SMTP_USERNAME` | SMTP auth + From header |
-| `HKASK_SMTP_PASSWORD` | SMTP password (keychain only) |
+| `HKASK_SMTP_PASSWORD` | SMTP password (keychain → editor process env) |
 | `HKASK_CURATOR_EMAIL` | From address (defaults to `HKASK_SMTP_USERNAME`) |
 | `HKASK_ALERT_EMAIL` | Alert recipient (defaults to `HKASK_SMTP_USERNAME`) |
 | `HKASK_AUTHORIZED_EMAILS` | Authorized sender allowlist (comma-separated) |
@@ -524,8 +532,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
 | `HKASK_INVESTOR_REQUIRED_RETURN` | companies | `companies.investor_required_return` |
 | `HKASK_TRANSACTIONS_DIR` | portfolio | derived from the artifacts dir as `portfolio-mcp/transactions/` |
-| `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
-| `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
 | `HKASK_TEMPLATE_ROOT` | corpus, swarm | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |

@@ -204,6 +204,11 @@ impl CorpusServer {
             // below) would redirect the write outside the allowed root.
             // Re-run containment on the full joined path so the leaf's own
             // symlink chain is resolved and checked, not just its parent's.
+            // This closes the "existing symlink leaf" case; it does not by
+            // itself close the TOCTOU race where a symlink is planted in the
+            // gap between this check and the `std::fs::write` below — that
+            // requires a symlink-resistant atomic open (O_NOFOLLOW), tracked
+            // as follow-up scope, not claimed fixed here.
             let cache_path = crate::path_safety::contain_for_write(
                 cache_dir
                     .join(format!("{}.txt", params.slug))
@@ -550,10 +555,12 @@ mod gather_path_safety_tests {
     async fn existing_symlink_leaf_is_rejected_not_followed() {
         let fixture = fixture();
         let cache_dir = fixture.path().join("cache");
-        let outside_dir = fixture.path().join("outside");
         std::fs::create_dir(&cache_dir).expect("cache dir");
-        std::fs::create_dir(&outside_dir).expect("outside dir");
-        let outside_target = outside_dir.join("planted.txt");
+        // Genuinely outside every allowed root (CWD, data dir, artifacts
+        // dir): a standalone system tempdir, not one nested under the
+        // crate's CWD the way `fixture()` (and therefore `cache_dir`) is.
+        let outside_dir = tempfile::tempdir().expect("standalone outside dir");
+        let outside_target = outside_dir.path().join("planted.txt");
         std::fs::write(&outside_target, "pre-existing outside content").expect("plant target");
 
         // Plant a symlink at the exact leaf `corpus_cache_work` will compute

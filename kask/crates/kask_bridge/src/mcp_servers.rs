@@ -171,8 +171,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-curator",
         description: "Curator — regulation cascade and algedonic signals",
         credentials: Some(&[
-            // SMTP password — read by the curator email sink for algedonic alerts.
-            "HKASK_SMTP_PASSWORD",
             // SQLCipher passphrase for the curator's sovereign `curator.db`.
             // Without this, `open_curator_stores` cannot decrypt the DB under
             // governed launch and every store-backed tool returns
@@ -183,11 +181,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
-            "HKASK_MXROUTE_SERVER",
-            "HKASK_SMTP_USERNAME",
-            "HKASK_CURATOR_EMAIL",
-            "HKASK_ALERT_EMAIL",
-            "HKASK_AUTHORIZED_EMAILS",
+            // NOTE: no email-transport vars here. The curator MCP server has
+            // no email sink (it links `hkask-regulation`, not `hkask-email`,
+            // and never reads `HKASK_SMTP_*`/`HKASK_MXROUTE_*`/etc.) — the
+            // algedonic alert email runs in the EDITOR process
+            // (`CuratorAlertEmailSink`, wired from settings at the composition
+            // root; the SMTP password comes from the keychain via the
+            // editor's own process env). The former child-delivery of these
+            // vars was dead surface: zero server-side readers.
             // Curator DB path — injected by the deferred task after
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/curator.db` the agent writes curator copies to.
@@ -1142,8 +1143,10 @@ mod tests {
         );
     }
 
-    // The curator server should only receive the SMTP password, not data
-    // service API keys. This pins the blast-radius reduction.
+    // The curator server should receive only the DB passphrase, no data
+    // service API keys and no SMTP password (it has no email sink — the
+    // alert email runs in the editor process). This pins the blast-radius
+    // reduction.
     #[test]
     fn curator_credentials_do_not_include_data_service_keys() {
         let all_credentials: Vec<(String, String)> = [
@@ -1158,8 +1161,8 @@ mod tests {
         let filtered = filter_credentials_for_server("curator", &all_credentials);
         let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(
-            env_vars.contains(&"HKASK_SMTP_PASSWORD"),
-            "curator should receive HKASK_SMTP_PASSWORD"
+            !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
+            "curator has no email sink — it must not receive HKASK_SMTP_PASSWORD"
         );
         assert!(
             !env_vars.contains(&"HKASK_EODHD_API_KEY"),
@@ -1182,9 +1185,11 @@ mod tests {
         assert!(filtered.is_empty());
     }
 
-    // The curator server should receive its email config.
+    // The curator server must NOT receive email config vars — it has no
+    // email sink (no server-side reader); the alert email runs in the
+    // editor process. The former delivery was dead surface.
     #[test]
-    fn curator_config_env_includes_email_settings() {
+    fn curator_config_env_excludes_email_settings() {
         let mut config_env = std::collections::HashMap::new();
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
@@ -1195,8 +1200,14 @@ mod tests {
             "mail.example.com".to_string(),
         );
         let filtered = filter_config_env_for_server("curator", &config_env);
-        assert!(filtered.contains_key("HKASK_SMTP_USERNAME"));
-        assert!(filtered.contains_key("HKASK_MXROUTE_SERVER"));
+        assert!(
+            !filtered.contains_key("HKASK_SMTP_USERNAME"),
+            "curator has no email sink — email transport vars must not reach it"
+        );
+        assert!(
+            !filtered.contains_key("HKASK_MXROUTE_SERVER"),
+            "curator has no email sink — email transport vars must not reach it"
+        );
     }
 
     // Unknown server IDs fail closed: no config env is injected.
@@ -1391,14 +1402,18 @@ mod tests {
     #[test]
     fn curator_allowlist_matches_actual_reads() {
         let s = server_by_id("curator");
-        // Secret reads: ctx.credentials.get("HKASK_SMTP_PASSWORD") (email sink)
-        // and ctx.credentials.get("HKASK_DB_PASSPHRASE") (SQLCipher curator.db).
-        // The passphrase has no std::env::var fallback in the curator's `run()`,
-        // so the allowlist is the only delivery path under governed launch.
+        // Secret reads: ctx.credentials.get("HKASK_DB_PASSPHRASE")
+        // (SQLCipher curator.db) — the only credential the server reads.
+        // The curator MCP server has NO email sink (it links
+        // `hkask-regulation`, not `hkask-email`); the algedonic alert email
+        // runs in the editor process, whose sink is wired from settings and
+        // reads the SMTP password from the keychain via the editor's own
+        // process env — never from MCP child delivery.
         let creds = s.credentials.unwrap();
         assert!(
-            creds.contains(&"HKASK_SMTP_PASSWORD"),
-            "curator must receive HKASK_SMTP_PASSWORD for algedonic email alerts"
+            !creds.contains(&"HKASK_SMTP_PASSWORD"),
+            "the curator server has no email sink — it must not receive \
+             HKASK_SMTP_PASSWORD (secrets are granted only where read)"
         );
         assert!(
             creds.contains(&"HKASK_DB_PASSPHRASE"),
@@ -1408,8 +1423,8 @@ mod tests {
         );
         assert!(
             !s.config_env.unwrap().is_empty(),
-            "curator config_env should not be empty — the server reads SMTP host/port \
-             and curator settings from it"
+            "curator config_env should not be empty — the server reads the curator \
+             DB path, memory-life and distillation model settings from it"
         );
         // HKASK_MEMORY_LIFE_DAYS: read by `memory_life_days_from_env` at
         // `open_curator_stores` (hkask_mcp_curator.rs) — the decay constant

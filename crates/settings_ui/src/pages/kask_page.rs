@@ -478,15 +478,6 @@ pub(crate) fn kask_string_input(
                                 kask.models.get_or_insert_default().rerank_model =
                                     Some(parsed.clone());
                             }
-                            ("condenser", "persona_keywords") => {
-                                let keywords: Vec<String> = parsed
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-                                kask.condenser.get_or_insert_default().persona_keywords =
-                                    Some(keywords);
-                            }
                             ("portfolio", "transactions_dir") => {
                                 // No-op — portfolio has no per-server path field.
                                 // The transactions dir is derived from the

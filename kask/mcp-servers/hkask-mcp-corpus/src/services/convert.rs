@@ -1602,6 +1602,7 @@ mod ocr_guards {
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    reported: false,
                 },
                 finish_reason: "stop".to_string(),
                 tool_calls: vec![],
@@ -1654,6 +1655,7 @@ mod ocr_guards {
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    reported: false,
                 },
                 finish_reason: "stop".to_string(),
                 tool_calls: vec![],
@@ -1755,6 +1757,7 @@ mod ocr_guards {
 
     #[tokio::test]
     async fn vision_ocr_bytes_empty_output_is_a_typed_error() {
+        crate::helpers::seed_registry_template_root();
         let port = VisionMockPort {
             vision_text: String::new(),
         };
@@ -1770,6 +1773,7 @@ mod ocr_guards {
 
     #[tokio::test]
     async fn vision_ocr_bytes_nonempty_output_passes_through() {
+        crate::helpers::seed_registry_template_root();
         let port = VisionMockPort {
             vision_text: "real text".to_string(),
         };
@@ -1787,6 +1791,7 @@ mod ocr_guards {
     /// breaker as a success.
     #[tokio::test]
     async fn llm_executor_empty_output_is_a_typed_error_and_trips_the_breaker() {
+        crate::helpers::seed_registry_template_root();
         let port: Arc<dyn InferencePort> = Arc::new(VisionMockPort {
             vision_text: String::new(),
         });
@@ -1826,6 +1831,7 @@ mod ocr_guards {
     /// `signal_count=0` during an OCR silent-failure storm.
     #[tokio::test]
     async fn llm_executor_with_recorder_publishes_silent_failures_to_the_health_file() {
+        crate::helpers::seed_registry_template_root();
         let health_path = std::env::temp_dir().join(format!(
             "ocr-guards-health-{}-{}.json",
             std::process::id(),
@@ -1857,6 +1863,7 @@ mod ocr_guards {
     /// 32-worker endpoint).
     #[tokio::test]
     async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
+        crate::helpers::seed_registry_template_root();
         let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
         let port = Arc::new(MutableVisionPort {
             vision_text: std::sync::Mutex::new("---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\nextracted page text".to_string()),

@@ -55,6 +55,20 @@ continue to refresh recall clocks.
 - `training_record_invocation`, `training_curate_feedback` (data curation, not training)
 - `training_recommend_model` (can be done offline)
 
+## Gate verification
+
+The math-contract gates are enforced twice. `training_validate_config`
+runs them on every config (runtime enforcement for the
+`.agents/skills/lora-training/` `audit-config` phase), and the gate
+functions in `src/lora_validation/param_gates.rs` carry `#[cfg(kani)]`
+proof harnesses (`gm3_refuse_iff_degenerate_scaling`,
+`gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`,
+`safe_region_has_no_refusals`) proving the G-M1..G-M4 iff-properties
+exhaustively over the symbolic config space. Run them with
+`cargo kani -p hkask-mcp-training` (requires the Kani toolchain;
+regular builds never compile the module, so there is no dependency
+churn).
+
 ## Providers
 
 Two cloud hosts: **Runpod** (primary, with completion detection via

@@ -12,9 +12,9 @@
 //! `mcp_servers`, the single canonical path.
 
 use crate::settings::{
-    KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings, KaskModelsSettings,
-    KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
+    KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskGeneralSettings,
+    KaskMediaSettings, KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings,
+    KaskResearchSettings, KaskSwarmSettings, KaskTrainingSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -100,25 +100,6 @@ pub(crate) fn emit_mcp_server_ids_env(env: &mut std::collections::HashMap<String
         "HKASK_MCP_SERVER_IDS".to_string(),
         crate::builtin_mcp_server_ids().join(","),
     );
-}
-
-pub(crate) fn emit_condenser_env(
-    condenser: &KaskCondenserSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    let condenser_default = KaskCondenserSettings::default();
-    if !condenser.persona_keywords.is_empty() {
-        env.insert(
-            "HKASK_CONDENSER_PERSONA_KEYWORDS".to_string(),
-            condenser.persona_keywords.join(","),
-        );
-    }
-    if condenser.saliency_window != condenser_default.saliency_window {
-        env.insert(
-            "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
-            condenser.saliency_window.to_string(),
-        );
-    }
 }
 
 pub(crate) fn emit_research_env(
@@ -466,46 +447,6 @@ pub(crate) fn emit_models_env(
     }
 }
 
-pub(crate) fn emit_curator_email_env(
-    email: &KaskCuratorEmailSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    // ── Curator email (non-secret) ──
-    // The SMTP password is injected separately by `build_mcp_server_env`
-    // from the keychain entry `kask://credentials/hkask_smtp_password`.
-    if !email.mxroute_server.is_empty() {
-        env.insert(
-            "HKASK_MXROUTE_SERVER".to_string(),
-            email.mxroute_server.clone(),
-        );
-    }
-    if !email.smtp_username.is_empty() {
-        env.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            email.smtp_username.clone(),
-        );
-        // `HKASK_CURATOR_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
-        // email crate; only inject when explicitly set.
-        if !email.curator_email.is_empty() {
-            env.insert(
-                "HKASK_CURATOR_EMAIL".to_string(),
-                email.curator_email.clone(),
-            );
-        }
-        // `HKASK_ALERT_EMAIL` defaults to `HKASK_SMTP_USERNAME` in the
-        // email crate; only inject when explicitly set.
-        if !email.alert_email.is_empty() {
-            env.insert("HKASK_ALERT_EMAIL".to_string(), email.alert_email.clone());
-        }
-    }
-    if !email.authorized_emails.is_empty() {
-        env.insert(
-            "HKASK_AUTHORIZED_EMAILS".to_string(),
-            email.authorized_emails.join(","),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::settings::{KaskSettings, SwarmModeConfig};
@@ -601,10 +542,6 @@ mod tests {
             env.get("HKASK_MEDIA_VISION_MODEL").map(String::as_str),
             Some(hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL),
             "default settings emit the code-default vision model"
-        );
-        assert!(
-            !env.contains_key("HKASK_CONDENSE_SALIENCY_WINDOW"),
-            "default saliency_window must not be emitted"
         );
         // The per-server data-dir env vars are now always emitted (resolved
         // from `data_dir` per the Standardized Artifact Storage layout), so

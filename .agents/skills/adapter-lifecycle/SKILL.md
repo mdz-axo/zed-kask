@@ -41,7 +41,10 @@ and no adapter ships without beating its baseline.
    the task set, and repeats (2-3 for a first measurement). Read the
    per-task pass rates and standard error. This is the BASELINE —
    record it (it is also recorded as model_request + verdict events in
-   the event store).
+   the event store). Register the acceptance claim in the same step:
+   `kanban_goal_create` with the baseline and target pass rates as
+   observable criteria and your intake prediction, linking this task
+   to the goal via `advances`.
 
 ### Phase 2 — Build the dataset
 
@@ -100,6 +103,11 @@ and no adapter ships without beating its baseline.
     and the evidence h_mem id from the eval. The training server does
     not persist A/B verdicts itself — this step is what closes the
     loop.
+11. Judge the registered goal — call `kanban_goal_judge` against the
+    goal's criteria with a verdict and per-criterion results from the
+    measured pass rates. When the operator confirms the outcome,
+    `kanban_goal_score` Brier-scores the intake prediction — the
+    scored acceptance record for this adapter change.
 
 ## Constraints
 

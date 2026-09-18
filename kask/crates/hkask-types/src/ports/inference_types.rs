@@ -72,12 +72,23 @@ pub enum InferenceError {
     Auth(String),
 }
 
-/// Token usage statistics
+/// Token usage statistics.
+///
+/// `reported` distinguishes "the provider did not report usage" from a
+/// genuine zero-token call (P8: absence must never be recorded as zero).
+/// A provider that omits the `usage` wire field yields `reported: false`
+/// with zeroed counts — readers that care about token/cost accounting
+/// check the flag before trusting the numbers. Mirrors `InferenceResult`'s
+/// `cost_usd: Option<f64>` absence modeling (D20).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InferenceUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    /// Whether the provider actually reported usage for this call. `false`
+    /// means the token counts are placeholders — nothing was measured.
+    #[serde(default)]
+    pub reported: bool,
 }
 
 /// OpenAI-compatible tool definition sent to models that support native function calling.

@@ -336,6 +336,10 @@ impl StreamAccumulator {
                     prompt_tokens: token_usage.input_tokens as u32,
                     completion_tokens: token_usage.output_tokens as u32,
                     total_tokens: (token_usage.input_tokens + token_usage.output_tokens) as u32,
+                    // A UsageUpdate event IS the provider's usage report;
+                    // a stream that ends without one leaves the accumulator's
+                    // default (reported=false) — unreported, not zero.
+                    reported: true,
                 };
                 self.cost_usd = token_usage.cost;
             }

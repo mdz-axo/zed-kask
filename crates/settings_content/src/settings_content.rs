@@ -1801,8 +1801,6 @@ pub struct KaskMemorySettingsContent {
 pub struct KaskCondenserSettingsContent {
     pub profile: Option<String>,
     pub auto_compress_tool_results: Option<bool>,
-    pub persona_keywords: Option<Vec<String>>,
-    pub saliency_window: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

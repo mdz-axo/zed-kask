@@ -246,6 +246,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - All updates must pass verifier-gated checks before commitment.
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
+- Every improvement cycle registers a falsifiable outcome claim before PDCA Do: `kanban_goal_create` with the acceptance criteria as observable criteria and an honest intake prediction, and the executing task links the goal via `advances`. `si-commit-or-rollback` judges the goal (`kanban_goal_judge`) with the measured results — an improvement with no registered claim is a process violation, not an improvement.
+- Scaffold-side updates (p, m, 𝒯, Σ) require a before/after measurement through a deterministic harness (`swarm_eval_agent_local` with contains/regex/exit_code/file_exists evaluators) and a `lisp_eval` convergence gate — improved pass rate at zero regressions — before `si-commit-or-rollback` may decide commit. When no deterministic harness exists, `evaluation_method: "none_available"` blocks commitment (si-evaluate-improvement step 1).
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
 - Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
 - `decision` field must be exactly "commit" or "rollback" (lowercase).

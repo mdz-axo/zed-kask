@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! hkask-steer-core — the zed-free half of the Steer prompt surface.
 //!
 //! Steer-mode panels advertise their MCP server's tools inside the system

@@ -164,6 +164,7 @@ impl InferencePort for VisionPort {
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    reported: false,
                 },
                 finish_reason: "stop".into(),
                 tool_calls: vec![],
@@ -177,6 +178,7 @@ impl InferencePort for VisionPort {
 /// expect: [P7] OCR preserves transcribed text and reports model figure annotations separately, never as created files or source quotations.
 #[tokio::test]
 async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
     let dir = fixture()?;
     let input = dir.path().join("control.png");
     image::DynamicImage::new_rgb8(8, 8).save(&input)?;
@@ -239,6 +241,7 @@ async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()
 /// expect: [P4] A rejected page response cannot create a purported extraction file.
 #[tokio::test]
 async fn ocr_protocol_rejects_bad_page_before_output() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
     let dir = fixture()?;
     let input = dir.path().join("control.png");
     image::DynamicImage::new_rgb8(8, 8).save(&input)?;
@@ -301,6 +304,7 @@ async fn ocr_page_rendering_preserves_color_with_pixel_bound() -> anyhow::Result
 /// expect: [P7] A real OCR execution persists its report and resumes without paying for OCR again.
 #[tokio::test]
 async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
     let dir = fixture()?;
     let sources = dir.path().join("sources");
     let output = dir.path().join("extracted");

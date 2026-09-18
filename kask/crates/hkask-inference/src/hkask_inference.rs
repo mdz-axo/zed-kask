@@ -502,6 +502,44 @@ impl DirectEmbeddingPort {
     }
 }
 
+/// Wire shape of an OpenAI-compatible chat response (used by
+/// `DirectEmbeddingPort::generate_with_model`).
+#[derive(serde::Deserialize)]
+struct ChatChoice {
+    message: ChatMessageContent,
+    finish_reason: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct ChatMessageContent {
+    content: Option<String>,
+    reasoning: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct ChatUsage {
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+}
+#[derive(serde::Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+    usage: Option<ChatUsage>,
+    model: Option<String>,
+}
+
+/// Build [`hkask_types::InferenceUsage`] from the optional wire `usage`
+/// object. Absence is modeled per P8 (F10): a provider that omits `usage`
+/// yields `reported: false` with zeroed counts — "unreported", never a
+/// fabricated zero measurement.
+fn usage_from_wire(usage: Option<&ChatUsage>) -> hkask_types::InferenceUsage {
+    hkask_types::InferenceUsage {
+        prompt_tokens: usage.and_then(|u| u.prompt_tokens).unwrap_or(0),
+        completion_tokens: usage.and_then(|u| u.completion_tokens).unwrap_or(0),
+        total_tokens: usage.and_then(|u| u.total_tokens).unwrap_or(0),
+        reported: usage.is_some(),
+    }
+}
+
 impl hkask_types::InferencePort for DirectEmbeddingPort {
     fn generate(
         &self,
@@ -671,29 +709,6 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 )));
             }
 
-            #[derive(serde::Deserialize)]
-            struct ChatChoice {
-                message: ChatMessageContent,
-                finish_reason: Option<String>,
-            }
-            #[derive(serde::Deserialize)]
-            struct ChatMessageContent {
-                content: Option<String>,
-                reasoning: Option<String>,
-            }
-            #[derive(serde::Deserialize)]
-            struct ChatUsage {
-                prompt_tokens: Option<u32>,
-                completion_tokens: Option<u32>,
-                total_tokens: Option<u32>,
-            }
-            #[derive(serde::Deserialize)]
-            struct ChatResponse {
-                choices: Vec<ChatChoice>,
-                usage: Option<ChatUsage>,
-                model: Option<String>,
-            }
-
             let parsed: ChatResponse = response.json().await.map_err(|e| {
                 hkask_types::InferenceError::Connection(format!(
                     "failed to parse chat response: {e}"
@@ -706,23 +721,10 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
 
             let text = choice.message.content.unwrap_or_default();
             let model = parsed.model.unwrap_or_default();
-            let usage = hkask_types::InferenceUsage {
-                prompt_tokens: parsed
-                    .usage
-                    .as_ref()
-                    .and_then(|u| u.prompt_tokens)
-                    .unwrap_or(0),
-                completion_tokens: parsed
-                    .usage
-                    .as_ref()
-                    .and_then(|u| u.completion_tokens)
-                    .unwrap_or(0),
-                total_tokens: parsed
-                    .usage
-                    .as_ref()
-                    .and_then(|u| u.total_tokens)
-                    .unwrap_or(0),
-            };
+            // Absence modeled per P8 (F10): a provider that omits the
+            // `usage` wire field yields reported=false — never a fabricated
+            // zero measurement.
+            let usage = usage_from_wire(parsed.usage.as_ref());
 
             Ok(hkask_types::InferenceResult {
                 text,
@@ -1183,5 +1185,36 @@ mod tests {
                 panic!("unexpected rerank error variant from the lazy port: {other:?}");
             }
         }
+    }
+
+    /// F10 pin: a provider that omits the `usage` wire field must read as
+    /// unreported (`reported: false`), never as a genuine zero-token call —
+    /// absence is not zero (P8). A reported usage object carries its counts
+    /// and `reported: true`.
+    #[test]
+    fn usage_absence_is_not_zero() {
+        let without_usage: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"hi"},"finish_reason":null}]}"#,
+        )
+        .expect("wire response without usage parses");
+        let usage = usage_from_wire(without_usage.usage.as_ref());
+        assert!(
+            !usage.reported,
+            "an omitted usage field must read as unreported, not zero"
+        );
+        assert_eq!(usage.total_tokens, 0);
+
+        let with_usage: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"hi"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#,
+        )
+        .expect("wire response with usage parses");
+        let usage = usage_from_wire(with_usage.usage.as_ref());
+        assert!(
+            usage.reported,
+            "a reported usage object must read as reported"
+        );
+        assert_eq!(usage.total_tokens, 8);
+        assert_eq!(usage.prompt_tokens, 3);
+        assert_eq!(usage.completion_tokens, 5);
     }
 }

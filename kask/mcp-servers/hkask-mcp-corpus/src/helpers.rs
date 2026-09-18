@@ -472,6 +472,31 @@ pub(crate) fn seed_test_passphrase() {
     }
 }
 
+/// Point `HKASK_TEMPLATE_ROOT` at the repository's shipped template registry
+/// for this test process. `render_docproc_template` refuses to fall back to
+/// the working directory or the build checkout — its contract is "repository
+/// tests must set it explicitly" — so tests exercising the OCR executor and
+/// docproc rendering paths seed the root themselves. Idempotent per process
+/// (the guard makes the one-shot write single); a pre-existing value from the
+/// environment is respected, never overridden.
+#[cfg(test)]
+pub(crate) fn seed_registry_template_root() {
+    static TEMPLATE_ROOT_SEEDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if TEMPLATE_ROOT_SEEDED.set(()).is_ok()
+        && std::env::var_os("HKASK_TEMPLATE_ROOT")
+            .filter(|root| !root.is_empty())
+            .is_none()
+    {
+        let registry = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry");
+        // SAFETY: test-only single write of a constant value, guarded by the
+        // OnceLock above — the same accepted pattern as the media server's
+        // artifacts-dir test fixtures. Under nextest each test runs in its
+        // own process; under plain `cargo test` the guard makes this exactly
+        // one write for the whole process.
+        unsafe { std::env::set_var("HKASK_TEMPLATE_ROOT", registry) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

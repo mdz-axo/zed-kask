@@ -1,4 +1,10 @@
-#![forbid(unsafe_code)]
+#![cfg_attr(not(test), forbid(unsafe_code))]
+// Test builds allow `unsafe` for the one-shot `env::set_var` in the test
+// seams (HKASK_TEMPLATE_ROOT registry seeding in `helpers.rs` —
+// `render_docproc_template` has no deployment fallback, so OCR-executor and
+// docproc tests must set the root explicitly). Production still forbids
+// unsafe outright. Same pattern as hkask-mcp-curator, hkask-mcp-media,
+// hkask-email, hkask-inference, hkask-keystore.
 #![warn(clippy::let_underscore_future)]
 //! hKask MCP Corpus — Unified corpus MCP server.
 //!

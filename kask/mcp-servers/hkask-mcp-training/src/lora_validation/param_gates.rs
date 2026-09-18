@@ -458,6 +458,115 @@ pub(crate) fn has_refusals(findings: &[ValidationFinding]) -> bool {
         .any(|f| f.severity == ValidationSeverity::Refuse)
 }
 
+/// Kani proof harnesses for the math-contract gates (goedel-gap-closure
+/// plan slice S4, A-R2 pilot). Anchored to the gate catalog
+/// (`kask/docs/reference/lora-training-catalog.md`, G-M1..G-M4) and the
+/// `.agents/skills/lora-training/` skill's `audit-config` phase.
+///
+/// The `kani` library is provided by the Kani toolchain at `cargo kani`
+/// time; the crates.io `kani` crate is a 3-line placeholder and must NOT
+/// be added as a dependency. This module is `#[cfg(kani)]`-gated: regular
+/// builds never compile it, so there is no Cargo.toml or lockfile churn
+/// on the shared tree. Syntax is still checked by regular builds; the
+/// semantic proofs run only under `cargo kani -p hkask-mcp-training`
+/// (https://model-checking.github.io/kani/).
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+    use crate::providers::types::LoraInit;
+
+    fn lora_with(r: u32, alpha: u32) -> LoraParams {
+        LoraParams {
+            r,
+            alpha,
+            ..LoraParams::default()
+        }
+    }
+
+    fn refuse_count(findings: &[ValidationFinding]) -> usize {
+        findings
+            .iter()
+            .filter(|f| f.severity == ValidationSeverity::Refuse)
+            .count()
+    }
+
+    /// G-M3: refuse fires exactly for degenerate scaling (r=0 or alpha=0).
+    #[kani::proof]
+    fn gm3_refuse_iff_degenerate_scaling() {
+        let r: u32 = kani::any();
+        let alpha: u32 = kani::any();
+        let lora = lora_with(r, alpha);
+        let mut findings = Vec::new();
+        validate_scaling_form(&lora, &mut findings);
+        assert_eq!(
+            refuse_count(&findings),
+            (r == 0) as usize + (alpha == 0) as usize,
+            "G-M3 must refuse exactly the degenerate-scaling configs"
+        );
+    }
+
+    /// G-M4: warn fires for r>128, refuse for r>256; both fire above 256.
+    #[kani::proof]
+    fn gm4_findings_follow_rank_thresholds() {
+        let r: u32 = kani::any();
+        let lora = lora_with(r, 32);
+        let mut findings = Vec::new();
+        validate_rank_budget(&lora, &mut findings);
+        let expected = if r > 256 {
+            2
+        } else if r > 128 {
+            1
+        } else {
+            0
+        };
+        assert_eq!(
+            findings.len(),
+            expected,
+            "G-M4 findings must track the 128/256 rank thresholds exactly"
+        );
+    }
+
+    /// G-M1: no findings iff the initializer is unset or a step-0 no-op
+    /// (None, Default, or EVA — the catalog's no-op set).
+    #[kani::proof]
+    fn gm1_clean_iff_noop_init() {
+        let init: Option<LoraInit> = kani::any();
+        let lora = LoraParams {
+            init_lora_weights: init,
+            ..LoraParams::default()
+        };
+        let mut findings = Vec::new();
+        validate_noop_at_init(&lora, &mut findings);
+        let is_clean = matches!(init, None | Some(LoraInit::Default) | Some(LoraInit::Eva));
+        assert_eq!(
+            findings.is_empty(),
+            is_clean,
+            "G-M1 must flag exactly the non-noop initializers"
+        );
+    }
+
+    /// Safe region: the documented standard config region
+    /// (r in 1..=128, alpha >= 1, default bias/init) produces zero
+    /// refusals across G-M1..G-M4.
+    #[kani::proof]
+    fn safe_region_has_no_refusals() {
+        let r: u32 = kani::any();
+        let alpha: u32 = kani::any();
+        kani::assume(r >= 1 && r <= 128);
+        kani::assume(alpha >= 1);
+        let lora = lora_with(r, alpha);
+        let mut findings = Vec::new();
+        validate_noop_at_init(&lora, &mut findings);
+        validate_merge_equivalence(&lora, &mut findings);
+        validate_scaling_form(&lora, &mut findings);
+        validate_rank_budget(&lora, &mut findings);
+        assert!(
+            !has_refusals(&findings),
+            "the safe config region must never produce a refuse finding"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

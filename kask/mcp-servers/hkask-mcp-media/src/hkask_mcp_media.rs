@@ -3727,6 +3727,7 @@ mod tool_behavior_tests {
                     prompt_tokens: 1,
                     completion_tokens: 1,
                     total_tokens: 2,
+                    reported: true,
                 },
                 finish_reason: "stop".to_string(),
                 tool_calls: Vec::new(),

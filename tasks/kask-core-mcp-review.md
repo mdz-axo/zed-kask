@@ -518,3 +518,89 @@ Crates marked *bounded* received sweeps + partial reads, not full-file reads —
 recorded per crate, per the mission's bounded-pass allowance. No upstream-direct
 edits are proposed; the zed-side findings (F3's `runtime.rs` citations are kask
 crates; `board_picker.rs` is an observation) stay on the kask side of the seam.
+---
+
+## Repair record (2026-09-18 execution)
+
+Executed under the continuation prompt with this report as spec. Repairs were
+committed by the operator's stream, interleaved with concurrent work; hashes
+name the commits carrying each repair (commit subjects sometimes describe the
+stream's own headline work folded alongside staged repairs — content verified
+per finding, not inferred from subject).
+
+| Finding | State | Commit(s) | Pin |
+|---|---|---|---|
+| F1 — corpus passphrase fail-closed | repaired | `cc602605a8` | `open_memory_store_refuses_empty_passphrase_before_any_db_open` (permission_denied + no DB file created); `seeded_resolution_never_returns_an_empty_passphrase` |
+| F2 — model-facing passphrase fields | repaired | `cc602605a8`, `8b7af7598f`, `1a0d5f5b68` | `no_tool_schema_exposes_a_passphrase_property` (walks all 26 tool schemas) |
+| F3 — doc drift | repaired | `429812b116` (report-named sites) + stream doc-syncs `59798ddd23`, `d31881eff0`, `8399d39c85`, `f0a8692bc9`, `8e15e03ed7` | acceptance greps: 12 server dirs; `hkask-ledger` zero in manifest + member lists; `crates/hkask-cli` absent, zero refs; `DEGRADED` zero hits in runtime.rs; docs 67 < 70; DIVERGENCE.md member lists re-verified against root Cargo.toml (19 kask/crates members) |
+| F4 — regex recompilation | repaired | `e21e3e5d2d` | conversion + screener suites green post-change (338/338); compile failures surfaced via `warn!` in `compiled()` instead of silent `.ok()` skip |
+| F5 — dead skills_dir knob | repaired | `8a1bd7877b` | `mcp_env` emission tests updated; full-repo symbol sweep: zero `HKASK_SKILLS_DIR`/knob refs (settings_content, bridge settings/mcp_env/mcp_servers, settings_ui kask_page, 4 doc tables) |
+| F6 — startup_timeout constant | repaired | `8a1bd7877b` | `startup_timeout_default_is_the_dedicated_sixty_second_constant` (runtime.rs config_tests) |
+| F7 — system_simulator rename | repaired | `acbefb647b` | symbol sweep: zero `system_simulator`/`digital twin` refs; module now `extrapolation`, field `extrapolator`; diataxis row re-measured |
+| F8 — persist_alert collapse | repaired | `acbefb647b`, `c86faf6a59` | `try_persist_alert_reports_confirmed_insert_and_supersede`; bridge tests now assert Confirmed(id)/Confirmed(None)/Attempted outcomes explicitly; legacy-path test deleted as subsumed |
+| F9 — NEBIUS classification | repaired | `a7c54681f6` | `training_allowlist_matches_actual_reads` extended: both IDs must be absent from credentials and present in config_env |
+| F10 — InferenceUsage absence | **deferred — functional question** | — | — |
+| F11 — silent status write | repaired | `a7c54681f6` | both failure layers (db + join) `warn!` naming `feed_id`; tool error unchanged |
+| F12 — reserved-for-future params | repaired | `a7c54681f6` | sweep: zero `reserved for future` silencing sites; orphaned `content_type` locals swept |
+| F13 — nine expect sites | repaired | `a7c54681f6` | `insert_optional_field` helper (typed internal error, never a panic); grep: zero `just constructed object` sites; wire payloads byte-identical |
+
+**F10 deferral (functional question for the operator):** the minimal honest
+shape — an absence flag alongside the u32 fields, mirroring the regulation
+layer's own absence-vs-zero vocabulary — ripples beyond `hkask-types` +
+`hkask-inference` (~14 `InferenceUsage` construction sites across kask_bridge,
+corpus, swarm, curator and media fixtures, plus summing/serializing readers in
+corpus tagging ops and swarm agent_executor/local_runtime). Per the execution
+rule this is surfaced rather than implemented. Decision needed: should
+"provider omitted usage" be distinguishable from a genuine zero at the type
+level — and if so, as a `reported` flag (fields stay u32; mechanical
+constructor updates; readers unchanged unless they opt in; recommended) or as
+per-field `Option<u32>` (every reader must choose skip-vs-zero)?
+
+**Gate unblock outside findings:** 4 pre-existing `clippy::redundant_clone`
+errors in corpus `services/qa_pipeline.rs` (present at review HEAD
+`c9ecc55fd4`) were removed (folded into `a7c54681f6`) so the full kask-scope
+`./script/clippy` gate is green at final state.
+
+**Validation at final state:** `./script/clippy` (kask scope incl. machete)
+green; `cargo nextest` green for hkask-mcp-companies, kask_bridge, hkask-mcp,
+hkask-regulation, hkask-mcp-research, hkask-mcp-prediction-markets,
+hkask-mcp-swarm, hkask-mcp-training (884/884); hkask-mcp-corpus green except
+one failing test in `tools/gather.rs` introduced by the concurrent stream's own
+gather hardening in `a7c54681f6` (their active work, not a repair regression —
+corpus was 179/179 at the repair state); `cargo check -p zed` green; `cargo fmt
+--check` clean except the concurrent stream's unstaged
+`crates/agent/src/tools/context_server_registry.rs`. Pre-existing OCR test env
+precondition: corpus OCR executor tests require `HKASK_TEMPLATE_ROOT` pointing
+at the registry (`HKASK_TEMPLATE_ROOT=$PWD/kask/registry`).
+
+**Commit hygiene observations for the operator:** (1) commit `c86faf6a59`
+landed on main with a malformed placeholder subject ("No changes were
+provided…") while carrying real F8 bridge test rework — the `commit-msg` hook
+missed this class; (2) several repair slices were folded into commits whose
+subjects describe unrelated stream work (e.g. F3 inside "Register spreadsheet
+MCP server and add CI gates", Batch E inside "Harden MCP tool dispatch and
+cache path safety") — content verified per finding via `git log -S`.
+
+**Dead-knob audit (operator-gated extension, report-only):** the
+setting → `mcp_env` emission → allowlist → server-reader sweep found, beyond
+the removed `skills_dir`:
+
+1. **Email-escalation family** — `HKASK_ALERT_EMAIL`, `HKASK_MXROUTE_SERVER`,
+   `HKASK_CURATOR_EMAIL`, `HKASK_SMTP_USERNAME` (plus `HKASK_AUTHORIZED_EMAILS`,
+   `HKASK_CURATOR_WEBID`, `HKASK_WEBID`): emitted into the curator child env
+   and allowlisted there, but all direct readers live editor-side
+   (`hkask-email`, `crates/zed/src/main.rs`). `hkask-mcp-curator` links
+   `hkask-regulation` (which names `HKASK_SMTP_USERNAME` at
+   `cybernetics_loop.rs:399`), so a transitive server-side reader is possible
+   — the D1-documented class a plain grep cannot settle. Triage needed: if no
+   server-side path executes, the emissions + allowlist entries are the same
+   dead-knob class as skills_dir.
+2. **`HKASK_CONDENSER_PERSONA_KEYWORDS` / `HKASK_CONDENSE_SALIENCY_WINDOW`** —
+   live settings knobs (settings.rs:306/:310, settings_content.rs:1804-1805,
+   settings-UI controls) emitted by `mcp_env` but with **zero allowlist
+   entries** (filtered out before any child) and zero server readers. The
+   emissions are provably dead surface (never reach a child process); the
+   in-process condenser consumes the settings directly.
+3. False positive for the record: `HKASK_SWARM_MEMORY_PASSPHRASE` matches only
+   the comment documenting that it does NOT exist (the no-separate-passphrase
+   invariant holds).

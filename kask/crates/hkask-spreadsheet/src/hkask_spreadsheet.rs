@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `hkask-spreadsheet` — the LogiSheets-backed spreadsheet deep module
 //! (plan `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` §5.1).
 //!

@@ -1,25 +1,60 @@
 #!/usr/bin/env bash
-# commit-msg guard — rejects fence-leaked commit messages.
+# commit-msg guard — rejects chat-presentation artifacts passed as commit
+# messages.
 #
-# The external commit flow has passed chat-fenced text to `git commit`
-# verbatim 97 times on main between 2026-07-23 and 2026-09-09 (the
-# subject renders as "``` <title>" in git log --oneline). A message whose
-# first line or last non-empty line is a bare ``` fence is a
-# chat-presentation artifact, never intended message content.
+# Two artifact classes, both observed on main:
+#
+#   1. Markdown fences: the external commit flow passed chat-fenced text to
+#      `git commit` verbatim 97 times on main between 2026-07-23 and
+#      2026-09-09 (the subject renders as "``` <title>" in git log --oneline;
+#      e.g. 33240e9109 also carried inline fences around the subject).
+#   2. Placeholder subjects: an agent's commit-message generator failed and
+#      emitted its meta-response as the message (c86faf6a59 — "No changes
+#      were provided — the diff content ... is missing"). A subject that
+#      begins with a chat meta-preamble or a model refusal is never
+#      intended message content.
 #
 # Wiring (once per clone — without this the hook is inert):
 #   git config core.hooksPath kask/githooks
+#
+# Self-test: kask/scripts/check-commit-msg-selftest.sh pins every rejection
+# class and the pass-through case.
 #
 # Contract: git passes the message file path as $1 (NOT on stdin — reading
 # stdin here silently accepts every message, the bug the first version had).
 msg="$(cat "$1")"
 first_line="$(printf '%s\n' "$msg" | head -1)"
 last_line="$(printf '%s\n' "$msg" | sed -e '/^[[:space:]]*$/d' | tail -1)"
-if [ "$first_line" = '```' ] || [ "$last_line" = '```' ]; then
-    echo "commit-msg: rejected — the message is wrapped in a markdown code fence." >&2
-    echo "The first or last line is a bare \`\`\`. Pass the message CONTENT" >&2
-    echo "(between the fences) to git commit, never the fenced block. If a" >&2
-    echo "script assembles the message from agent chat output, strip bare" >&2
-    echo "fence lines first, e.g.: sed '/^\`\`\`$/d'." >&2
+reject() {
+    echo "commit-msg: rejected — $1" >&2
+    echo "The commit message is a chat-presentation artifact, never intended" >&2
+    echo "message content. Pass the message CONTENT to git commit: strip bare" >&2
+    echo "fence lines (sed '/^\`\`\`$/d') and never use a model meta-response or" >&2
+    echo "refusal as the subject. If an agent assembled the message, assert the" >&2
+    echo "assembled subject is not a placeholder before committing." >&2
     exit 1
+}
+if [ "$first_line" = '```' ] || [ "$last_line" = '```' ]; then
+    reject "the message is wrapped in a markdown code fence."
 fi
+# Inline fences around the subject: "``` Title```" / "```Title ```" variants.
+case "$first_line" in
+    '```'*) reject "the subject is fenced (starts with a markdown fence)." ;;
+esac
+case "$last_line" in
+    *'```') reject "the message ends in a markdown fence." ;;
+esac
+# Placeholder / refusal subjects — an agent meta-response leaked as the subject.
+subject="$(printf '%s' "$first_line")"
+case "$subject" in
+    [Nn]o\ changes\ were\ provided*)
+        reject "the subject is a placeholder (starts with 'No changes were provided')." ;;
+esac
+case "$subject" in
+    [Hh]ere\ are\ the\ changes*)
+        reject "the subject is a meta-preamble (starts with 'Here are the changes')." ;;
+esac
+case "$subject" in
+    "I'm sorry"*|"I am sorry"*|"I can't"*|"I cannot"*|"I couldn't"*)
+        reject "the subject is a model refusal/apology (starts with 'I'm sorry'/'I cannot'/...)." ;;
+esac

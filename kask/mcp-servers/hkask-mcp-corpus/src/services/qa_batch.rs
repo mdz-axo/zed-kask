@@ -580,6 +580,7 @@ mod tests {
                         prompt_tokens: 4,
                         completion_tokens: 6,
                         total_tokens: 10,
+                        reported: true,
                     },
                     finish_reason: "stop".into(),
                     tool_calls: Vec::new(),

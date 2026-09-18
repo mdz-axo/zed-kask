@@ -1973,7 +1973,18 @@ mod tests {
     /// claim rollback or invite an automatic retry — the effect on the
     /// (fake) server is genuinely unknown at cancellation time.
     #[gpui::test]
-    async fn kask_server_tool_cancellation_does_not_block_forever(cx: &mut TestAppContext) {
+    async fn kask_server_tool_cancellation_does_not_block_forever(cx: &mut gpui::TestAppContext) {
+        // `run` authorizes via `authorize_third_party_tool`, which consults
+        // the tool-permission settings — default allow, matching the
+        // dispatch test above.
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
         let descriptor = KaskToolDescriptor {
             server_id: "kask-test".to_string(),
             // FakeKaskToolSource::invoke keys on this exact name to select
@@ -1989,7 +2000,7 @@ mod tests {
         let tool = std::sync::Arc::new(KaskServerTool { source, descriptor });
         let (mut sender, input) = ToolInput::<serde_json::Value>::test();
         sender.send_full(serde_json::json!({}));
-        let (event_stream, _rx, cancellation_tx) =
+        let (event_stream, _rx, mut cancellation_tx) =
             crate::thread::ToolCallEventStream::test_with_cancellation();
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
         // Cancel promptly, then await the task directly. GPUI's test
@@ -1998,7 +2009,10 @@ mod tests {
         // and this `.await` blocks forever on the pending fake dispatch,
         // failing the test by hanging rather than by a wrong assertion.
         cancellation_tx.send(true).expect("send cancellation");
-        let output = task.await.expect("cancellation is reported as Ok, not a tool error");
+        let output = match task.await {
+            Ok(output) => output,
+            Err(_) => panic!("cancellation is reported as Ok, not a tool error"),
+        };
         assert!(
             output.llm_output.iter().any(|content| matches!(
                 content,
