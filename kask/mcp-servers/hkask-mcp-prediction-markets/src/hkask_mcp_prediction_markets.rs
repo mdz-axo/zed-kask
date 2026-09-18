@@ -289,14 +289,10 @@ impl PredictionMarketsServer {
                 self.record_call("market_subscribe_resolutions");
                 let max = req.max_resolutions.unwrap_or(1).max(1);
                 let ingested = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-                let store = std::sync::Arc::clone(&self.calibration_store);
-                let path = self.calibration_path.clone();
                 let bucket = req.bucket.clone();
                 let ingested_clone = std::sync::Arc::clone(&ingested);
 
                 streaming::subscribe_market(&req.asset_ids, move |event| {
-                    let store = std::sync::Arc::clone(&store);
-                    let path = path.clone();
                     let _bucket = bucket.clone();
                     let ingested = std::sync::Arc::clone(&ingested_clone);
                     async move {
@@ -317,7 +313,6 @@ impl PredictionMarketsServer {
                                 "market resolved: outcome={} — call market_record_resolution                                  with the pre-resolution probability to feed the calibration loop",
                                 if outcome { "yes" } else { "no" }
                             );
-                            let _ = (&store, &path); // reserved for a future price-snapshot join
                             ingested.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                     }

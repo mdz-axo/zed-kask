@@ -91,6 +91,19 @@ const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
 /// Override: `HKASK_MCP_STARTUP_TIMEOUT_SECS` env var.
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Deadline for one already-dispatched tool call. zed-kask: D-seam — F2/P1b.
+/// `rmcp`'s default request options carry no timeout, so a connected server
+/// that never replies could block `dispatch` (and therefore `Thread::cancel`,
+/// which awaits the in-flight tool task) indefinitely. Independent of
+/// `DEFAULT_STARTUP_TIMEOUT` — this bounds a call already past handshake, not
+/// the handshake itself. Firing this deadline is reported as
+/// [`DispatchError::Interrupted`] (the request may already have been applied
+/// server-side; a timeout proves no non-delivery), never as a proven failure
+/// or an invitation to retry.
+///
+/// Override: `HKASK_MCP_CALL_TIMEOUT_SECS` env var.
+const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Interval between proactive health checks. The supervisor checks each
 /// server's transport liveness and, if closed, removes the dead connection
 /// and attempts a restart. The restart is the proactive self-healing path —
@@ -219,6 +232,7 @@ struct McpRuntimeConfig {
     startup_max_backoff: Duration,
     health_check_interval: Duration,
     max_consecutive_health_failures: u32,
+    call_timeout: Duration,
 }
 
 impl Default for McpRuntimeConfig {
@@ -251,6 +265,10 @@ impl Default for McpRuntimeConfig {
             max_consecutive_health_failures: resolve_u32_env(
                 "HKASK_MCP_MAX_HEALTH_FAILURES",
                 DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES,
+            ),
+            call_timeout: resolve_duration_env_secs(
+                "HKASK_MCP_CALL_TIMEOUT_SECS",
+                DEFAULT_CALL_TIMEOUT,
             ),
         }
     }
@@ -1683,18 +1701,33 @@ impl McpRuntime {
         }
 
         let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
-        let result = match peer.call_tool(params).await {
-            Ok(result) => result,
+        // zed-kask: D-seam — F2/P1b. `rmcp`'s default request options carry no
+        // timeout, so a connected-but-silent server could otherwise block this
+        // await (and therefore `Thread::cancel`, which waits for the in-flight
+        // tool task) indefinitely. A deadline firing here is exactly the same
+        // uncertain-delivery case as a transport failure: the request was
+        // already handed to a live peer, so it may or may not have applied —
+        // `Interrupted` carries that, never a proven failure.
+        let result = match tokio::time::timeout(self.config.call_timeout, peer.call_tool(params))
+            .await
+        {
+            Err(_) => {
+                return Err(DispatchError::Interrupted(format!(
+                    "server '{server}' did not reply to '{tool}' within {:?}",
+                    self.config.call_timeout
+                )));
+            }
+            Ok(Ok(result)) => result,
             // The peer was live when we handed off, so we cannot distinguish
             // "the send was rejected" from "the server died after receiving it."
             // Report the outcome as unknown rather than assuming either.
-            Err(
+            Ok(Err(
                 error @ (rmcp::service::ServiceError::TransportClosed
                 | rmcp::service::ServiceError::TransportSend(_)),
-            ) => {
+            )) => {
                 return Err(DispatchError::Interrupted(error.to_string()));
             }
-            Err(e) => return Err(DispatchError::Failed(e.to_string())),
+            Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
         };
         let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
@@ -2481,6 +2514,25 @@ mod config_tests {
             McpRuntimeConfig::default().startup_timeout,
             DEFAULT_STARTUP_TIMEOUT,
             "the config default must carry DEFAULT_STARTUP_TIMEOUT, not a borrowed interval"
+        );
+        // zed-kask: D-seam — F2/P1b pin. The per-call execution deadline is
+        // its own mechanism, independent of the startup handshake deadline:
+        // a call that already passed handshake must not inherit (or silently
+        // share) the startup timeout's tuning.
+        assert_eq!(
+            DEFAULT_CALL_TIMEOUT,
+            Duration::from_secs(300),
+            "the per-call execution deadline must stay a dedicated constant"
+        );
+        assert_eq!(
+            McpRuntimeConfig::default().call_timeout,
+            DEFAULT_CALL_TIMEOUT,
+            "the config default must carry DEFAULT_CALL_TIMEOUT"
+        );
+        assert_ne!(
+            McpRuntimeConfig::default().call_timeout,
+            McpRuntimeConfig::default().startup_timeout,
+            "the call deadline and the startup deadline must remain independently tunable"
         );
         // The two mechanisms remain independently overridable and documented;
         // the health interval keeps its own default, unchanged by this seam.

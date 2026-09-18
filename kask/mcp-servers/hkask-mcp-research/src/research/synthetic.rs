@@ -130,9 +130,8 @@ impl From<SyntheticError> for hkask_mcp_server::server::McpToolError {
 
 /// Extract items from a fetched page/API response.
 ///
-/// The `body` is the raw response bytes. The `content_type` is used to
-/// decide whether to parse as HTML or JSON when the extractor kind doesn't
-/// imply it (e.g. `css` always parses as HTML, `json_path` always as JSON,
+/// The `body` is the raw response bytes. Each extractor kind implies its
+/// own parsing (e.g. `css` parses as HTML, `json_path` as JSON,
 /// `diff_hash` doesn't parse at all).
 ///
 /// For `llm_schema`, this function does NOT perform the LLM extraction —
@@ -143,9 +142,7 @@ pub fn extract(
     spec: &ExtractorSpec,
     source_url: &str,
     body: &[u8],
-    content_type: &str,
 ) -> Result<Vec<ExtractedItem>, SyntheticError> {
-    let _ = content_type; // reserved for future content-type-based dispatch
     match kind {
         ExtractorKind::Css => {
             let html = std::str::from_utf8(body)

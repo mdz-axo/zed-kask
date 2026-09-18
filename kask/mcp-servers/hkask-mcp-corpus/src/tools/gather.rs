@@ -197,7 +197,19 @@ impl CorpusServer {
             }
 
             let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
-            let cache_path = cache_dir.join(format!("{}.txt", params.slug));
+            // zed-kask: D-seam — F4. Containing only `cache_dir` and then
+            // joining the leaf afterward leaves the leaf itself unvalidated:
+            // an existing symlink at `{slug}.txt` (planted earlier, or the
+            // ancestor directory retargeted between this check and the write
+            // below) would redirect the write outside the allowed root.
+            // Re-run containment on the full joined path so the leaf's own
+            // symlink chain is resolved and checked, not just its parent's.
+            let cache_path = crate::path_safety::contain_for_write(
+                cache_dir
+                    .join(format!("{}.txt", params.slug))
+                    .to_str()
+                    .ok_or_else(|| McpToolError::invalid_argument("cache path is not valid UTF-8"))?,
+            )?;
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 return Err(map_corpus_io_error(
@@ -471,6 +483,126 @@ impl CorpusServer {
             })
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod gather_path_safety_tests {
+    use super::*;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    /// `corpus_cache_work` touches only the filesystem; this port is never
+    /// called, so it fails loudly if that assumption ever stops holding.
+    struct UnusedInferencePort;
+    impl hkask_types::InferencePort for UnusedInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            unreachable!("corpus_cache_work must never call the inference port")
+        }
+    }
+
+    /// A minimal server construction sufficient for `corpus_cache_work`,
+    /// which touches only the filesystem — no database or inference port.
+    fn server() -> CorpusServer {
+        crate::helpers::seed_test_passphrase();
+        let port: std::sync::Arc<dyn hkask_types::InferencePort> =
+            std::sync::Arc::new(UnusedInferencePort);
+        let ocr = std::sync::Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
+        CorpusServer::new(
+            hkask_types::WebID::new(),
+            None,
+            port,
+            Default::default(),
+            ocr,
+        )
+    }
+
+    /// Isolated fixture directory under the real crate CWD — `contain_for_write`
+    /// reads `std::env::current_dir()` directly and has no injectable override,
+    /// so the fixture must sit under it rather than an unrelated tempdir.
+    fn fixture() -> tempfile::TempDir {
+        let directory = std::env::current_dir()
+            .expect("cwd")
+            .join("target/gather-test");
+        std::fs::create_dir_all(&directory).expect("fixture directory");
+        tempfile::tempdir_in(directory).expect("isolated fixture")
+    }
+
+    /// F4: an existing symlink at the exact `{slug}.txt` leaf must not
+    /// redirect the write outside the cache directory. Before this fix,
+    /// `corpus_cache_work` ran `contain_for_write` on `cache_dir` only, then
+    /// joined the leaf afterward and wrote through it unvalidated — a leaf
+    /// symlink pointing outside the cache dir would redirect the write with
+    /// no rejection. The corrected call re-validates the joined leaf path.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_symlink_leaf_is_rejected_not_followed() {
+        let fixture = fixture();
+        let cache_dir = fixture.path().join("cache");
+        let outside_dir = fixture.path().join("outside");
+        std::fs::create_dir(&cache_dir).expect("cache dir");
+        std::fs::create_dir(&outside_dir).expect("outside dir");
+        let outside_target = outside_dir.join("planted.txt");
+        std::fs::write(&outside_target, "pre-existing outside content").expect("plant target");
+
+        // Plant a symlink at the exact leaf `corpus_cache_work` will compute
+        // for this slug, pointing outside the cache directory.
+        let leaf = cache_dir.join("escape.txt");
+        std::os::unix::fs::symlink(&outside_target, &leaf).expect("plant symlink leaf");
+
+        let server = server();
+        let result = server
+            .corpus_cache_work(Parameters(CacheWorkRequest {
+                slug: "escape".to_string(),
+                cache_dir: cache_dir.to_string_lossy().into_owned(),
+                content: "attacker-controlled content".to_string(),
+            }))
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a symlink leaf pointing outside the cache dir must be rejected, not followed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_target).expect("outside target still readable"),
+            "pre-existing outside content",
+            "the outside file must be unchanged — the write must never have followed the symlink"
+        );
+    }
+
+    /// Control: an ordinary, non-symlinked leaf inside the cache dir still
+    /// writes normally — the fix must not break the common case.
+    #[tokio::test]
+    async fn ordinary_leaf_still_writes() {
+        let fixture = fixture();
+        let cache_dir = fixture.path().join("cache");
+        std::fs::create_dir(&cache_dir).expect("cache dir");
+
+        let server = server();
+        let result = server
+            .corpus_cache_work(Parameters(CacheWorkRequest {
+                slug: "ordinary".to_string(),
+                cache_dir: cache_dir.to_string_lossy().into_owned(),
+                content: "ordinary content".to_string(),
+            }))
+            .await
+            .expect("ordinary write succeeds");
+        assert!(result.contains("ordinary"), "{result}");
+        assert_eq!(
+            std::fs::read_to_string(cache_dir.join("ordinary.txt")).expect("written file"),
+            "ordinary content"
+        );
     }
 }
 

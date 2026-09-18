@@ -465,7 +465,7 @@ pub(crate) fn parse_disposition_plan_response(
                     return Err(QaDispositionPlanError::LevelMismatch {
                         index,
                         expected: expected.as_str().to_string(),
-                        received: level.clone(),
+                        received: level,
                     });
                 }
                 match disposition.as_str() {
@@ -719,7 +719,7 @@ pub(crate) fn merge_disposition_plans(
                     return Err(QaEnvelopeError::WriterLevelMismatch {
                         index,
                         expected: bloom_level.to_string(),
-                        received: level.clone(),
+                        received: level,
                     });
                 }
                 if question.trim().is_empty() || answer.trim().is_empty() {
@@ -779,7 +779,7 @@ fn parse_prepared_qa_response(
                     return Err(QaEnvelopeError::PairLevelMismatch {
                         index,
                         expected: expected.as_str().to_string(),
-                        received: level.clone(),
+                        received: level,
                     });
                 }
                 let Some(question) = question else {
@@ -813,10 +813,7 @@ fn parse_prepared_qa_response(
                 let mut evidence_quotes = Vec::with_capacity(evidence_ids.len());
                 for evidence_id in evidence_ids {
                     if !seen.insert(evidence_id.clone()) {
-                        return Err(QaEnvelopeError::RepeatedPairEvidence {
-                            index,
-                            evidence_id: evidence_id.clone(),
-                        });
+                        return Err(QaEnvelopeError::RepeatedPairEvidence { index, evidence_id });
                     }
                     let candidate = candidates_by_id.get(evidence_id.as_str()).ok_or(
                         QaEnvelopeError::UnknownPairEvidence {

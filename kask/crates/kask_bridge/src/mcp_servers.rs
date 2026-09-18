@@ -428,8 +428,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Training — LoRA training configuration and audit",
         credentials: Some(&[
             "RUNPOD_API_KEY",
-            "NEBIUS_PROJECT_ID",
-            "NEBIUS_SUBNET_ID",
             "HF_TOKEN",
             // DB encryption passphrase — read by the training server for its
             // job/adapter SQLite DB. Without this, the DB falls back to a
@@ -465,6 +463,18 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "RUNPOD_DOCKER_ARGS",
             "HKASK_PODS_FILE",
             // Nebius operator overrides — read by providers.rs and nebius.rs.
+            // NEBIUS_PROJECT_ID and NEBIUS_SUBNET_ID moved here from
+            // `credentials` (same reclassification as RUNPOD_TEMPLATE_ID
+            // above): they are non-secret infrastructure IDs — a project
+            // identifier and a subnet identifier — not keys. Both are read
+            // via plain `std::env::var` (hkask_mcp_training.rs, providers.rs),
+            // the config-var access pattern, and no keychain tier is
+            // consulted for them. Carrying IDs on the credentials allowlist
+            // violated the file's own classification rule (credentials mean
+            // secrets) and logged spurious missing-credential warnings at
+            // launch.
+            "NEBIUS_PROJECT_ID",
+            "NEBIUS_SUBNET_ID",
             "NEBIUS_GPU_PLATFORM",
             "NEBIUS_GPU_PRESET",
             "NEBIUS_IMAGE_FAMILY",
@@ -1524,6 +1534,22 @@ mod tests {
              it must be in the config_env allowlist so the operator override \
              survives the governed launch's env_clear"
         );
+        // NEBIUS_PROJECT_ID/NEBIUS_SUBNET_ID follow the same RUNPOD_TEMPLATE_ID
+        // rule: non-secret infrastructure IDs (project + subnet identifiers),
+        // read via std::env::var — config vars, not credentials.
+        for id in ["NEBIUS_PROJECT_ID", "NEBIUS_SUBNET_ID"] {
+            assert!(
+                !creds.contains(&id),
+                "{id} is a non-secret infrastructure ID, not a key — \
+                 it must not be in the credentials allowlist"
+            );
+            assert!(
+                s.config_env.unwrap().contains(&id),
+                "{id} was reclassified from credentials to config_env — \
+                 it must be in the config_env allowlist so the operator override \
+                 survives the governed launch's env_clear"
+            );
+        }
         assert!(
             !s.config_env.unwrap().is_empty(),
             "training config_env should not be empty — it reads cache dir, host, \

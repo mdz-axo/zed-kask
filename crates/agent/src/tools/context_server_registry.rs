@@ -15,6 +15,16 @@ use util::{ResultExt, markdown::MarkdownEscaped};
 /// collapsed tool-call header. Longer values are truncated with an ellipsis.
 const MAX_INLINE_ARG_LEN: usize = 120;
 
+/// zed-kask: D-seam — F2/P1b. Model-facing text for a managed MCP tool call
+/// cancelled while its request was in flight. Deliberately distinct from
+/// `crate::thread::TOOL_CANCELED_MESSAGE` (which means the call never
+/// started): here the request may have reached the server, so the effect
+/// is unknown — never rollback, never success, never eligible for automatic
+/// retry. The caller must re-read state rather than resend the same call.
+const TOOL_CANCELED_OUTCOME_UNKNOWN: &str =
+    "Tool call cancelled while in flight — its effect on the server is unknown. \
+     Re-check state before retrying; resending the same call could duplicate work.";
+
 /// Generates a tool ID for an MCP tool that can be used in settings.
 ///
 /// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
@@ -595,7 +605,24 @@ impl AnyAgentTool for KaskServerTool {
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            match source.invoke(&server_id, &tool_name, input).await {
+            // zed-kask: D-seam — F2/P1b. Race the managed dispatch against user
+            // cancellation so `Thread::cancel` can complete even when the child
+            // never replies. Cancellation here means "the request may or may not
+            // have applied its effect" — never a claim of rollback or success.
+            let dispatch = source.invoke(&server_id, &tool_name, input);
+            let outcome = futures::select! {
+                result = dispatch.fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Ok(AgentToolOutput {
+                        raw_output: serde_json::Value::String(TOOL_CANCELED_OUTCOME_UNKNOWN.into()),
+                        llm_output: vec![LanguageModelToolResultContent::Text(
+                            TOOL_CANCELED_OUTCOME_UNKNOWN.into(),
+                        )],
+                    });
+                }
+            };
+
+            match outcome {
                 Ok(value) => {
                     let text = match &value {
                         serde_json::Value::String(string) => string.clone(),
@@ -950,7 +977,11 @@ impl ContextServerTool {
                             store.trigger_server_maintenance(cx);
                         });
                     });
-                    // Wait for the server to come back (up to 30s)
+                    // Wait for the server to come back (up to 30s). Selected
+                    // against cancellation (zed-kask: D-seam F2/P1b) so `Stop`
+                    // is not blocked on a restart wait that never started any
+                    // effect — this wait precedes dispatch, so cancelling it
+                    // is a genuine no-op, not an uncertain outcome.
                     let mut elapsed = 0u64;
                     let server = loop {
                         if elapsed >= 30_000 {
@@ -959,9 +990,17 @@ impl ContextServerTool {
                                 server_id.0
                             ).into());
                         }
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_millis(500))
-                            .await;
+                        futures::select! {
+                            _ = cx.background_executor()
+                                .timer(std::time::Duration::from_millis(500))
+                                .fuse() => {}
+                            _ = event_stream.cancelled_by_user().fuse() => {
+                                return Err(anyhow::anyhow!(
+                                    "Context server '{}' restart wait cancelled by user before dispatch",
+                                    server_id.0
+                                ).into());
+                            }
+                        }
                         elapsed += 500;
                         if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
                             break s;
@@ -1024,7 +1063,11 @@ impl ContextServerTool {
                                 store.trigger_server_maintenance(cx);
                             });
                         });
-                        // Wait for restart (up to 30s)
+                        // Wait for restart (up to 30s). The original request
+                        // already failed with a transport error at this point
+                        // (`DispatchError`-equivalent non-delivery, per the doc
+                        // above), so cancelling this wait is a no-op, not an
+                        // uncertain outcome (zed-kask: D-seam F2/P1b).
                         let mut elapsed = 0u64;
                         let retried_server = loop {
                             if elapsed >= 30_000 {
@@ -1033,9 +1076,17 @@ impl ContextServerTool {
                                     server_id.0, e
                                 ).into());
                             }
-                            cx.background_executor()
-                                .timer(std::time::Duration::from_millis(500))
-                                .await;
+                            futures::select! {
+                                _ = cx.background_executor()
+                                    .timer(std::time::Duration::from_millis(500))
+                                    .fuse() => {}
+                                _ = event_stream.cancelled_by_user().fuse() => {
+                                    return Err(anyhow::anyhow!(
+                                        "Context server '{}' restart wait cancelled by user after a non-delivered request",
+                                        server_id.0
+                                    ).into());
+                                }
+                            }
                             elapsed += 500;
                             if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
                                 break s;
@@ -1565,8 +1616,15 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(record);
             let is_failing = tool == "failing_tool";
+            // zed-kask: D-seam — F2/P1b test fixture. A tool name that never
+            // resolves, so cancellation tests prove the race actually fires
+            // rather than passing because the fake happened to be fast.
+            let never_replies = tool == "never_replies_tool";
             Box::pin(async move {
-                if is_failing {
+                if never_replies {
+                    std::future::pending::<()>().await;
+                    unreachable!("pending future never resolves");
+                } else if is_failing {
                     Err("[unavailable] upstream is down".to_string())
                 } else {
                     Ok(serde_json::json!({"status": "ok"}))
@@ -1903,6 +1961,53 @@ mod tests {
                 "[unavailable] upstream is down".into(),
             )],
             "the source's Err(text) must surface verbatim as the error text"
+        );
+    }
+
+    /// F2/P1b: a managed kask tool call that never replies must not block
+    /// user cancellation forever. `KaskServerTool::run` races the dispatch
+    /// against `event_stream.cancelled_by_user()`; the never-resolving fake
+    /// proves the race actually fires (a real reply would make this pass
+    /// trivially even without the fix). The cancelled outcome must be
+    /// distinct model-facing text from an ordinary tool error, and must not
+    /// claim rollback or invite an automatic retry — the effect on the
+    /// (fake) server is genuinely unknown at cancellation time.
+    #[gpui::test]
+    async fn kask_server_tool_cancellation_does_not_block_forever(cx: &mut TestAppContext) {
+        let descriptor = KaskToolDescriptor {
+            server_id: "kask-test".to_string(),
+            // FakeKaskToolSource::invoke keys on this exact name to select
+            // the never-resolving fixture path.
+            name: "never_replies_tool".to_string(),
+            description: "A governed kask tool that never replies".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        };
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: vec![descriptor.clone()],
+            invocations: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        });
+        let tool = std::sync::Arc::new(KaskServerTool { source, descriptor });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let (event_stream, _rx, cancellation_tx) =
+            crate::thread::ToolCallEventStream::test_with_cancellation();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        // Cancel promptly, then await the task directly. GPUI's test
+        // executor is deterministic (no real wall-clock wait needed): if
+        // the fix regresses, `run` never selects on `cancelled_by_user()`
+        // and this `.await` blocks forever on the pending fake dispatch,
+        // failing the test by hanging rather than by a wrong assertion.
+        cancellation_tx.send(true).expect("send cancellation");
+        let output = task.await.expect("cancellation is reported as Ok, not a tool error");
+        assert!(
+            output.llm_output.iter().any(|content| matches!(
+                content,
+                LanguageModelToolResultContent::Text(text)
+                    if text.contains("unknown") && !text.contains("upstream is down")
+            )),
+            "cancellation must report an unknown-effect outcome distinct from an ordinary \
+             tool failure, got: {:?}",
+            output.llm_output
         );
     }
 

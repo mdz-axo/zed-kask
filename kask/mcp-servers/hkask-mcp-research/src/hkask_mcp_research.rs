@@ -1086,12 +1086,6 @@ impl ResearchServer {
                 .send()
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
-            let content_type = response
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_string();
             let status = response.status();
             if !status.is_success() {
                 return Err(McpToolError::unavailable(format!(
@@ -1186,7 +1180,6 @@ impl ResearchServer {
                         &spec,
                         &source_url,
                         &body,
-                        &content_type,
                     )
                     .map_err(McpToolError::from)?;
                     let entries = crate::research::synthetic::items_to_entries(items, &title);
@@ -1320,22 +1313,34 @@ impl ResearchServer {
             .send()
             .await
             .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
         let status = response.status();
         if !status.is_success() {
             // Record the error.
             let err_msg = format!("source returned HTTP {status}");
             let feed_id = synth.feed_id;
             let err_for_db = err_msg.clone();
-            let _ = spawn_db(db.clone(), move |conn| {
+            // Best-effort status write: the tool error below is the caller's
+            // answer, but a lost status write must be observable — a later
+            // feed listing would otherwise show a stale status with no trace.
+            match spawn_db(db.clone(), move |conn| {
                 update_synthetic_status(conn, feed_id, 0, None, Some(&err_for_db))
             })
-            .await;
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(db_error)) => tracing::warn!(
+                    target: "hkask.web",
+                    feed_id,
+                    error = %db_error,
+                    "synthetic-feed error-status write failed — the feed record will show a stale status"
+                ),
+                Err(join_error) => tracing::warn!(
+                    target: "hkask.web",
+                    feed_id,
+                    error = %join_error,
+                    "synthetic-feed error-status write was lost — the feed record will show a stale status"
+                ),
+            }
             return Err(McpToolError::unavailable(err_msg));
         }
         let body = response
@@ -1414,14 +1419,8 @@ impl ResearchServer {
                 }
                 _ => {
                     // css or json_path — sync extraction.
-                    crate::research::synthetic::extract(
-                        kind,
-                        &spec,
-                        &synth.source_url,
-                        &body,
-                        &content_type,
-                    )
-                    .map_err(McpToolError::from)?
+                    crate::research::synthetic::extract(kind, &spec, &synth.source_url, &body)
+                        .map_err(McpToolError::from)?
                 }
             };
 

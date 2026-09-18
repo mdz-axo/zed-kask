@@ -102,6 +102,28 @@ pub fn map_catalogue_agent(a: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+/// Insert `key: value` into a just-constructed `json!` object payload when
+/// `value` is `Some` — the single shared point for the merge-optional-request-
+/// fields pattern (replacing nine per-site copies of the by-construction
+/// `expect`). The payload is built by the `json!` macro one line above, so
+/// the object case always holds; a non-object payload is a typed internal
+/// error, never a panic.
+fn insert_optional_field(
+    payload: &mut serde_json::Value,
+    key: &str,
+    value: Option<impl Into<serde_json::Value>>,
+) -> Result<(), McpToolError> {
+    if let Some(value) = value {
+        let object = payload.as_object_mut().ok_or_else(|| {
+            McpToolError::internal(format!(
+                "payload for optional field '{key}' must merge into a JSON object"
+            ))
+        })?;
+        object.insert(key.to_string(), value.into());
+    }
+    Ok(())
+}
+
 /// Recursively scan a JSON value for "accepts" and "produces" arrays of
 /// strings, returning any labels that do not resolve in the PortRegistry.
 /// Used by  to catch decorative port labels in composed
@@ -333,32 +355,19 @@ impl SwarmServer {
                 ));
             }
             let mut payload = serde_json::json!({});
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.description {
-                obj.insert("description".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.system_prompt {
-                obj.insert("system_prompt".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.tags {
-                obj.insert("tags".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.model {
-                obj.insert("model".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.temperature {
-                obj.insert("temperature".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.accepts {
-                obj.insert("accepts".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.produces {
-                obj.insert("produces".into(), serde_json::json!(v));
-            }
-            if let Some(valence) = &req.valence {
-                obj.insert("valence".into(), valence_payload(valence));
-            }
-            if obj.is_empty() {
+            insert_optional_field(&mut payload, "description", req.description)?;
+            insert_optional_field(&mut payload, "system_prompt", req.system_prompt)?;
+            insert_optional_field(&mut payload, "tags", req.tags)?;
+            insert_optional_field(&mut payload, "model", req.model)?;
+            insert_optional_field(&mut payload, "temperature", req.temperature)?;
+            insert_optional_field(&mut payload, "accepts", req.accepts)?;
+            insert_optional_field(&mut payload, "produces", req.produces)?;
+            insert_optional_field(
+                &mut payload,
+                "valence",
+                req.valence.as_ref().map(valence_payload),
+            )?;
+            if payload.as_object().is_none_or(|o| o.is_empty()) {
                 return Err(McpToolError::invalid_argument(
                     "no fields to update — supply at least one of description, \
                      system_prompt, tags, model, temperature, accepts, produces, valence"
@@ -2055,40 +2064,17 @@ impl SwarmServer {
             let mut payload = serde_json::json!({
                 "slug": req.slug,
             });
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.name {
-                obj.insert("name".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.tagline {
-                obj.insert("tagline".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.description {
-                obj.insert("description".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.homepage_url {
-                obj.insert("homepage_url".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.icon_url {
-                obj.insert("icon_url".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.composition_slug {
-                obj.insert("composition_slug".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.schema_slug {
-                obj.insert("schema_slug".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.schema_json {
-                obj.insert("schema_json".into(), v.into());
-            }
-            if let Some(v) = req.workspace_template {
-                obj.insert("workspace_template".into(), v.into());
-            }
-            if let Some(v) = req.metadata {
-                obj.insert("metadata".into(), v.into());
-            }
-            if let Some(v) = req.visibility {
-                obj.insert("visibility".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "name", req.name)?;
+            insert_optional_field(&mut payload, "tagline", req.tagline)?;
+            insert_optional_field(&mut payload, "description", req.description)?;
+            insert_optional_field(&mut payload, "homepage_url", req.homepage_url)?;
+            insert_optional_field(&mut payload, "icon_url", req.icon_url)?;
+            insert_optional_field(&mut payload, "composition_slug", req.composition_slug)?;
+            insert_optional_field(&mut payload, "schema_slug", req.schema_slug)?;
+            insert_optional_field(&mut payload, "schema_json", req.schema_json)?;
+            insert_optional_field(&mut payload, "workspace_template", req.workspace_template)?;
+            insert_optional_field(&mut payload, "metadata", req.metadata)?;
+            insert_optional_field(&mut payload, "visibility", req.visibility)?;
             let data = self
                 .client
                 .post("/apps", &payload)
@@ -2121,40 +2107,17 @@ impl SwarmServer {
                 ));
             }
             let mut payload = serde_json::json!({});
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.name {
-                obj.insert("name".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.tagline {
-                obj.insert("tagline".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.homepage_url {
-                obj.insert("homepage_url".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.icon_url {
-                obj.insert("icon_url".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.composition_slug {
-                obj.insert("composition_slug".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.schema_slug {
-                obj.insert("schema_slug".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.schema_json {
-                obj.insert("schema_json".into(), v.into());
-            }
-            if let Some(v) = req.workspace_template {
-                obj.insert("workspace_template".into(), v.into());
-            }
-            if let Some(v) = req.description {
-                obj.insert("description".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.metadata {
-                obj.insert("metadata".into(), v.into());
-            }
-            if let Some(v) = req.visibility {
-                obj.insert("visibility".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "name", req.name)?;
+            insert_optional_field(&mut payload, "tagline", req.tagline)?;
+            insert_optional_field(&mut payload, "homepage_url", req.homepage_url)?;
+            insert_optional_field(&mut payload, "icon_url", req.icon_url)?;
+            insert_optional_field(&mut payload, "composition_slug", req.composition_slug)?;
+            insert_optional_field(&mut payload, "schema_slug", req.schema_slug)?;
+            insert_optional_field(&mut payload, "schema_json", req.schema_json)?;
+            insert_optional_field(&mut payload, "workspace_template", req.workspace_template)?;
+            insert_optional_field(&mut payload, "description", req.description)?;
+            insert_optional_field(&mut payload, "metadata", req.metadata)?;
+            insert_optional_field(&mut payload, "visibility", req.visibility)?;
             let data = self
                 .client
                 .request(
@@ -2269,25 +2232,12 @@ impl SwarmServer {
                 ));
             }
             let mut payload = serde_json::json!({});
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.name {
-                obj.insert("name".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.description {
-                obj.insert("description".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.extra_budget {
-                obj.insert("extra_budget".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.auto_hire_override {
-                obj.insert("auto_hire_override".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.params {
-                obj.insert("params".into(), v.into());
-            }
-            if let Some(v) = req.depends_on {
-                obj.insert("depends_on".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "name", req.name)?;
+            insert_optional_field(&mut payload, "description", req.description)?;
+            insert_optional_field(&mut payload, "extra_budget", req.extra_budget)?;
+            insert_optional_field(&mut payload, "auto_hire_override", req.auto_hire_override)?;
+            insert_optional_field(&mut payload, "params", req.params)?;
+            insert_optional_field(&mut payload, "depends_on", req.depends_on)?;
             let data = self
                 .client
                 .post(
@@ -2513,25 +2463,12 @@ impl SwarmServer {
                 "path": req.path,
                 "patch": req.patch,
             });
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.app_schema {
-                obj.insert("app_schema".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.rationale {
-                obj.insert("rationale".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.confirmation {
-                obj.insert("confirmation".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.force_ask {
-                obj.insert("force_ask".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.content {
-                obj.insert("content".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.source_message_id {
-                obj.insert("source_message_id".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "app_schema", req.app_schema)?;
+            insert_optional_field(&mut payload, "rationale", req.rationale)?;
+            insert_optional_field(&mut payload, "confirmation", req.confirmation)?;
+            insert_optional_field(&mut payload, "force_ask", req.force_ask)?;
+            insert_optional_field(&mut payload, "content", req.content)?;
+            insert_optional_field(&mut payload, "source_message_id", req.source_message_id)?;
             let data = self
                 .client
                 .post(
@@ -2579,19 +2516,10 @@ impl SwarmServer {
                 "name": req.name,
                 "patch": req.patch,
             });
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.app_schema {
-                obj.insert("app_schema".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.from {
-                obj.insert("from".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.hypothesis {
-                obj.insert("hypothesis".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.source_message_id {
-                obj.insert("source_message_id".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "app_schema", req.app_schema)?;
+            insert_optional_field(&mut payload, "from", req.from)?;
+            insert_optional_field(&mut payload, "hypothesis", req.hypothesis)?;
+            insert_optional_field(&mut payload, "source_message_id", req.source_message_id)?;
             let data = self
                 .client
                 .post(
@@ -2635,13 +2563,8 @@ impl SwarmServer {
                 ));
             }
             let mut payload = serde_json::json!({});
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.content {
-                obj.insert("content".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.apply_result {
-                obj.insert("apply_result".into(), v.into());
-            }
+            insert_optional_field(&mut payload, "content", req.content)?;
+            insert_optional_field(&mut payload, "apply_result", req.apply_result)?;
             let data = self
                 .client
                 .post(
@@ -2686,10 +2609,7 @@ impl SwarmServer {
                 ));
             }
             let mut payload = serde_json::json!({});
-            if let Some(v) = req.note {
-                let obj = payload.as_object_mut().expect("just constructed object");
-                obj.insert("note".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "note", req.note)?;
             let data = self
                 .client
                 .post(
@@ -2742,16 +2662,9 @@ impl SwarmServer {
                 "target": req.target,
                 "body": req.body,
             });
-            let obj = payload.as_object_mut().expect("just constructed object");
-            if let Some(v) = req.app_schema {
-                obj.insert("app_schema".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.severity {
-                obj.insert("severity".into(), serde_json::json!(v));
-            }
-            if let Some(v) = req.source_message_id {
-                obj.insert("source_message_id".into(), serde_json::json!(v));
-            }
+            insert_optional_field(&mut payload, "app_schema", req.app_schema)?;
+            insert_optional_field(&mut payload, "severity", req.severity)?;
+            insert_optional_field(&mut payload, "source_message_id", req.source_message_id)?;
             let data = self
                 .client
                 .post(
