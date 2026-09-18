@@ -85,40 +85,31 @@ impl NebiusHost {
     }
 }
 
+pub(crate) fn build_cloud_init(job: &TrainingJob, ssh_key: &str) -> Result<String, HostProviderError> {
+    let script = crate::providers::runpod::generate_install_script(
+        job, job.params.harness.unwrap_or(job.harness),
+    )?;
+    // JSON is a YAML subset: neither script bytes nor the key become YAML syntax.
+    Ok(format!("#cloud-config\n{}\n", serde_json::json!({
+        "users": [{
+            "name": "user", "sudo": "ALL=(ALL) NOPASSWD:ALL", "shell": "/bin/bash",
+            "ssh_authorized_keys": [ssh_key],
+        }],
+        "write_files": [{
+            "path": "/workspace/install_and_train.sh", "content": script, "permissions": "0755",
+        }],
+        "runcmd": [
+            "mkdir -p /workspace/logs /workspace/outputs",
+            "bash /workspace/install_and_train.sh 2>&1 | tee /workspace/logs/entrypoint.log",
+        ],
+    })))
+}
+
 #[async_trait::async_trait]
 impl TrainingHost for NebiusHost {
     async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let vm_name = Self::vm_name(&job.id);
-        let install_script = crate::providers::runpod::generate_install_script(
-            job,
-            job.params.harness.unwrap_or(job.harness),
-        )?;
-
-        // Build cloud-init user-data
-        let cloud_init = format!(
-            r#"#cloud-config
-users:
-  - name: user
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - {ssh_key}
-write_files:
-  - path: /workspace/install_and_train.sh
-    content: |
-{script_indented}
-    permissions: '0755'
-runcmd:
-  - mkdir -p /workspace/logs /workspace/outputs
-  - bash /workspace/install_and_train.sh 2>&1 | tee /workspace/logs/entrypoint.log
-"#,
-            ssh_key = self.ssh_public_key,
-            script_indented = install_script
-                .lines()
-                .map(|l| format!("      {l}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        let cloud_init = build_cloud_init(job, &self.ssh_public_key)?;
 
         // Step 1: Create boot disk from Ubuntu+CUDA image
         let disk_name = format!("{vm_name}-disk");

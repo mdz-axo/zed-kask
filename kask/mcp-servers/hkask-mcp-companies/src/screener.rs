@@ -55,6 +55,36 @@
 
 use regex::Regex;
 
+/// Compile a screener extraction pattern, caching compiled patterns by
+/// source (F4: patterns are rebuilt per keyword per prompt — recompiling
+/// each on every call was pure CPU waste on the screener's hot path).
+/// A pattern that fails to compile is surfaced with a `warn!` naming it
+/// (the `.rules` silent-failure rule: the keyword visibly matches nothing
+/// for that pass instead of silently skipping).
+fn compiled(pattern: &str) -> Option<Regex> {
+    static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Regex>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(re) = cache.get(pattern) {
+        return Some(re.clone());
+    }
+    match Regex::new(pattern) {
+        Ok(re) => {
+            cache.insert(pattern.to_string(), re.clone());
+            Some(re)
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.companies.screener",
+                pattern,
+                %error,
+                "screener extraction pattern failed to compile — its keyword matches nothing for this pass"
+            );
+            None
+        }
+    }
+}
+
 /// Build the "more than" operator array for a given criteria field name.
 fn more_than(param: &'static str) -> Vec<(&'static str, &'static str)> {
     vec![
@@ -594,7 +624,7 @@ fn parse_numeric(
     {
         for keyword in keywords {
             let pattern = build_between_pattern(keyword);
-            if let Some(captures) = Regex::new(&pattern).ok().and_then(|re| re.captures(prompt)) {
+            if let Some(captures) = compiled(&pattern).and_then(|re| re.captures(prompt)) {
                 let low = captures.name("low").map(|m| m.as_str()).unwrap_or("");
                 let high = captures.name("high").map(|m| m.as_str()).unwrap_or("");
                 if let (Some(low_value), Some(high_value)) =
@@ -624,7 +654,7 @@ fn parse_numeric_direction(
     }
     for keyword in keywords {
         let pattern = build_directional_pattern(keyword, ops);
-        if let Some(captures) = Regex::new(&pattern).ok().and_then(|re| re.captures(prompt)) {
+        if let Some(captures) = compiled(&pattern).and_then(|re| re.captures(prompt)) {
             let value_str = captures.name("value").map(|m| m.as_str()).unwrap_or("");
             let operator = captures.name("op").map(|m| m.as_str()).unwrap_or("");
 
@@ -756,7 +786,7 @@ fn parse_string_value_first(
         r"(?i)\b([a-zA-Z][a-zA-Z\s&.-]+?)\s+{}\b(?:\s*(?:,|and|or|with|$))",
         kw
     );
-    if let Some(captures) = Regex::new(&pattern).ok().and_then(|re| re.captures(prompt)) {
+    if let Some(captures) = compiled(&pattern).and_then(|re| re.captures(prompt)) {
         let val = strip_leading_fillers(captures.get(1).map(|m| m.as_str()).unwrap_or(""));
         if !val.is_empty() && !is_operator_word(&val) && !is_numeric_word(&val) {
             map.insert(field.to_string(), serde_json::Value::String(val));
@@ -830,8 +860,12 @@ fn parse_exchange_criteria(prompt: &str, map: &mut serde_json::Map<String, serde
     // VN"). Prose values cannot become codes: a literal must be short and
     // uppercase as written, so "exchange rate" does not screen exchange=RATE.
     // The tail terminator consumes (no lookahead — the regex crate has none).
-    let phrase = r"(?i)\bexchanges?\b\s*(?:(?:equals|is|of|in|on|at|the|for|listed|traded)\s+|=\s*)*([a-zA-Z][a-zA-Z\s&.,-]*?)(?:\s*$|\s*[.;]|\s+(?:and|with|where|that|having)\b)";
-    if let Some(captures) = Regex::new(phrase).ok().and_then(|re| re.captures(prompt)) {
+    // Compiled once — this runs on every screener prompt.
+    static RE_PHRASE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"(?i)\bexchanges?\b\s*(?:(?:equals|is|of|in|on|at|the|for|listed|traded)\s+|=\s*)*([a-zA-Z][a-zA-Z\s&.,-]*?)(?:\s*$|\s*[.;]|\s+(?:and|with|where|that|having)\b)")
+            .expect("exchange phrase pattern compiles")
+    });
+    if let Some(captures) = RE_PHRASE.captures(prompt) {
         if let Some(tail) = captures.get(1).map(|m| m.as_str()) {
             for token in tail.split(',').flat_map(|part| part.split(" or ")) {
                 let token = token.trim();

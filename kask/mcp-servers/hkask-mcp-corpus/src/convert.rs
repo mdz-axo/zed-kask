@@ -222,9 +222,11 @@ pub(crate) fn decode_html_entities(text: &str) -> String {
     let text = text.replace("&#39;", "'");
     let text = text.replace("&amp;", "&");
 
-    // Numeric decimal entities: &#NNN;
-    let re_dec = regex::Regex::new(r"&#(\d+);").expect("decimal entity regex");
-    let text = re_dec.replace_all(&text, |caps: &regex::Captures| {
+    // Numeric decimal entities: &#NNN;. Compiled once — this runs per
+    // document page during conversion (F4: regexes were recompiled per call).
+    static RE_DEC: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"&#(\d+);").expect("decimal entity regex"));
+    let text = RE_DEC.replace_all(&text, |caps: &regex::Captures| {
         caps[1]
             .parse::<u32>()
             .ok()
@@ -233,9 +235,11 @@ pub(crate) fn decode_html_entities(text: &str) -> String {
             .unwrap_or_default()
     });
 
-    // Numeric hex entities: &#xNNN;
-    let re_hex = regex::Regex::new(r"&#x([0-9a-fA-F]+);").expect("hex entity regex");
-    re_hex
+    // Numeric hex entities: &#xNNN;. Compiled once — same per-page hot path.
+    static RE_HEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"&#x([0-9a-fA-F]+);").expect("hex entity regex")
+    });
+    RE_HEX
         .replace_all(&text, |caps: &regex::Captures| {
             u32::from_str_radix(&caps[1], 16)
                 .ok()
@@ -251,8 +255,10 @@ pub(crate) fn decode_html_entities(text: &str) -> String {
 /// Handles multi-line comments. Used for markdown files that contain
 /// embedded HTML comments from OCR/Kindle conversion tools.
 pub(crate) fn strip_html_comments(text: &str) -> String {
-    let re = regex::Regex::new(r"(?s)<!--.*?-->").expect("html comment regex");
-    re.replace_all(text, "").into_owned()
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?s)<!--.*?-->").expect("html comment regex")
+    });
+    RE.replace_all(text, "").into_owned()
 }
 
 /// Strip URLs, file links, and hyperlinks from text before chunking.
@@ -262,21 +268,27 @@ pub(crate) fn strip_html_comments(text: &str) -> String {
 /// mailto). Collapses leftover double spaces. Preserves newlines and
 /// non-link text.
 pub(crate) fn sanitize_links(text: &str) -> String {
-    use regex::Regex;
+    // Compiled once — this runs pre-chunking on every converted page.
+    static RE_ANCHOR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?is)<a\s[^>]*>(.*?)</a>"#).expect("anchor regex")
+    });
+    static RE_MD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\[([^\]]*)\]\((?:https?://|ftp://|file://|www\.|mailto:)[^)]*\)")
+            .expect("md-link regex")
+    });
+    static RE_URL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r#"(?:https?|ftp|file|ssh)://[^\s<>"'\)\]]+|www\.[^\s<>"'\)\]]+|mailto:[^\s<>"'\)\]]+"#,
+        )
+        .expect("url regex")
+    });
+    static RE_SPACES: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"  +").expect("spaces regex"));
 
-    let re_anchor = Regex::new(r#"(?is)<a\s[^>]*>(.*?)</a>"#).expect("anchor regex");
-    let re_md = Regex::new(r"\[([^\]]*)\]\((?:https?://|ftp://|file://|www\.|mailto:)[^)]*\)")
-        .expect("md-link regex");
-    let re_url = Regex::new(
-        r#"(?:https?|ftp|file|ssh)://[^\s<>"'\)\]]+|www\.[^\s<>"'\)\]]+|mailto:[^\s<>"'\)\]]+"#,
-    )
-    .expect("url regex");
-    let re_spaces = Regex::new(r"  +").expect("spaces regex");
-
-    let text = re_anchor.replace_all(text, "$1");
-    let text = re_md.replace_all(&text, "$1");
-    let text = re_url.replace_all(&text, "");
-    let text = re_spaces.replace_all(&text, " ");
+    let text = RE_ANCHOR.replace_all(text, "$1");
+    let text = RE_MD.replace_all(&text, "$1");
+    let text = RE_URL.replace_all(&text, "");
+    let text = RE_SPACES.replace_all(&text, " ");
     text.lines()
         .map(|l| l.trim_end())
         .collect::<Vec<_>>()

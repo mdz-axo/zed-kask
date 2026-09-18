@@ -365,7 +365,6 @@ impl RunpodHost {
     /// assumes the caller has already resolved the image/disk/ports from the
     /// template if one was requested.
     fn build_create_pod_body(
-        &self,
         job_id: &str,
         spec: &PodDeploySpec<'_>,
         env_entries: &[(&str, String)],
@@ -414,6 +413,26 @@ struct PodDeploySpec<'a> {
 }
 
 // ── Install script generation ───────────────────────────────────────────────
+
+// Encode bytes, not shell source. Bash ANSI-C quoting is used for argv values;
+// printf %b uses the same octal escapes for lossless file transfers (including NUL).
+fn shell_data(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 4 + 3);
+    encoded.push_str("$'");
+    for byte in value.bytes() {
+        encoded.push_str(&format!("\\{byte:03o}"));
+    }
+    encoded.push('\'');
+    encoded
+}
+
+fn transfer_data(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 5);
+    for byte in value.bytes() {
+        encoded.push_str(&format!("\\0{byte:03o}"));
+    }
+    format!("printf '%b' '{encoded}'")
+}
 
 /// Generate the install + training script for the pod.
 ///
@@ -492,8 +511,7 @@ pub(crate) fn generate_install_script(
 
     // Generate the install script. We build it with push_str to avoid
     // format! brace-escaping issues with bash ${VAR} references.
-    // The config content is written via a quoted heredoc to prevent shell
-    // expansion of the rendered YAML content.
+    // Caller bytes are encoded before crossing the shell-source boundary.
     let mut script = String::with_capacity(4096);
     script.push_str("#!/usr/bin/env bash\n");
     script.push_str("set -euo pipefail\n\n");
@@ -550,11 +568,9 @@ pub(crate) fn generate_install_script(
         config_filename
     ));
     script.push_str(&format!(
-        "cat <<'HKASK_CONFIG' > /workspace/{}\n",
-        config_filename
+        "{} > /workspace/{}\n\n",
+        transfer_data(&config_content), config_filename
     ));
-    script.push_str(&config_content);
-    script.push_str("\nHKASK_CONFIG\n\n");
 
     // Step 3: Run training.
     script.push_str(
@@ -616,20 +632,12 @@ pub(crate) fn generate_install_script(
     script.push_str(
         "# ── Step 4: Upload adapter ──────────────────────────────────────────────────\n",
     );
-    script.push_str(&format!("OUTPUT_DIR=\"{}\"\n", output_dir));
+    script.push_str(&format!("OUTPUT_DIR={}\n", shell_data(&output_dir)));
     if !model_repo.is_empty() {
         script.push_str("if [ \"$TRAINING_STATUS\" = \"success\" ]; then\n");
         script.push_str(&format!(
-            "    echo '=== Uploading adapter to {}'\n",
-            model_repo
-        ));
-        script.push_str(&format!(
-            "    huggingface-cli upload \"{}\" \"$OUTPUT_DIR\" \\\n",
-            model_repo
-        ));
-        script.push_str(&format!(
-            "        --commit-message \"hKask training: {}\" || \\\n",
-            job.id
+            "    huggingface-cli upload {} \"$OUTPUT_DIR\" --commit-message {} || \\\n",
+            shell_data(&model_repo), shell_data(&format!("hKask training: {}", job.id))
         ));
         script.push_str("        echo 'WARNING: Adapter upload failed' >&2\n");
         script.push_str("fi\n");
@@ -646,53 +654,45 @@ pub(crate) fn generate_install_script(
     );
     // Compute adapter SHA256 if the file exists (best-effort).
     script.push_str("ADAPTER_SHA256=$(sha256sum \"$OUTPUT_DIR/adapter_model.safetensors\" 2>/dev/null | cut -d' ' -f1 || echo \"\")\n");
-    script.push_str(&format!("cat > \"{}\" <<MANIFEST\n", local_manifest_path));
-    script.push_str("{\n");
-    script.push_str(&format!("    \"job_id\": \"{}\",\n", job.id));
-    script.push_str("    \"status\": \"${TRAINING_STATUS}\",\n");
-    // Dataset SHA256 from the env var set by submit().
-    script.push_str("    \"dataset_sha256\": \"${HKASK_EXPECTED_DATASET_SHA256:-}\",\n");
-    script.push_str("    \"adapter\": {\n");
-    script.push_str(&format!(
-        "        \"repository\": \"{}\",\n",
-        if model_repo.is_empty() {
-            ""
-        } else {
-            model_repo.as_str()
-        }
-    ));
-    script.push_str("        \"revision\": \"main\",\n");
-    script.push_str("        \"path\": \"adapter_model.safetensors\",\n");
-    script.push_str("        \"sha256\": \"$ADAPTER_SHA256\"\n");
-    script.push_str("    },\n");
-    script.push_str("    \"finished_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\n");
-    script.push_str(&format!("    \"base_model\": \"{}\",\n", job.base_model));
-    script.push_str(&format!(
-        "    \"harness\": \"{}\",\n",
-        format!("{:?}", harness).to_lowercase()
-    ));
-    script.push_str("    \"training_duration_secs\": ${TRAINING_DURATION},\n");
-    script.push_str("    \"loss\": ${FINAL_LOSS_JSON},\n");
-    script.push_str("    \"grad_norm\": ${FINAL_GRAD_NORM_JSON},\n");
-    script.push_str("    \"current_step\": ${FINAL_STEP_JSON},\n");
-    script.push_str("    \"total_steps\": ${TOTAL_STEPS_JSON},\n");
-    script.push_str("    \"alerts\": [],\n");
-    script.push_str("    \"output_dir\": \"$OUTPUT_DIR\"\n");
-    script.push_str("}\n");
-    script.push_str("MANIFEST\n");
+    // Serialize all job/artifact strings in Rust. Only locally generated status,
+    // timestamp, checksum and validated numbers are appended by fixed shell code.
+    let manifest = serde_json::json!({
+        "job_id": job.id,
+        "base_model": job.base_model,
+        "harness": format!("{harness:?}").to_lowercase(),
+        "dataset_sha256": job.artifacts.as_ref().map(|a| a.dataset.sha256.as_str()).unwrap_or(""),
+        "output_dir": output_dir,
+        "alerts": [],
+    }).to_string();
+    let adapter = serde_json::json!({
+        "repository": model_repo,
+        "revision": "main",
+        "path": "adapter_model.safetensors",
+    }).to_string();
+    let prefix = format!("{},\"adapter\":{}", manifest.trim_end_matches('}'), adapter.trim_end_matches('}'));
+    script.push_str(&format!("{} > /workspace/completion.json\n", transfer_data(&prefix)));
+    script.push_str(r#"[[ "$ADAPTER_SHA256" =~ ^[0-9a-f]{64}$ ]] || ADAPTER_SHA256=''
+json_number() {
+    if [[ "$1" =~ ^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+printf ',"sha256":"%s"},"status":"%s","finished_at":"%s",' "$ADAPTER_SHA256" "$TRAINING_STATUS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /workspace/completion.json
+printf '"training_duration_secs":%s,"loss":%s,"grad_norm":%s,"current_step":%s,"total_steps":%s}\n' "$(json_number "$TRAINING_DURATION")" "$(json_number "$FINAL_LOSS_JSON")" "$(json_number "$FINAL_GRAD_NORM_JSON")" "$(json_number "$FINAL_STEP_JSON")" "$(json_number "$TOTAL_STEPS_JSON")" >> /workspace/completion.json
+"#);
     script.push_str(&format!(
         "echo '=== Completion manifest written to {}'\n",
         local_manifest_path
     ));
+    script.push_str("# End manifest data transfer\n");
     // Upload manifest to HuggingFace so training_status can fetch it.
     if !model_repo.is_empty() && !hf_manifest_repo_path.is_empty() {
         script.push_str(&format!(
-            "huggingface-cli upload \"{}\" {} \"{}\" \\\n",
-            model_repo, local_manifest_path, hf_manifest_repo_path
-        ));
-        script.push_str(&format!(
-            "    --commit-message \"hKask completion manifest: {}\" || \\\n",
-            job.id
+            "huggingface-cli upload {} {} {} --commit-message {} || \\\n",
+            shell_data(&model_repo), local_manifest_path, shell_data(&hf_manifest_repo_path),
+            shell_data(&format!("hKask completion manifest: {}", job.id))
         ));
         script.push_str("    echo 'WARNING: Manifest upload failed' >&2\n");
     }
@@ -1024,7 +1024,7 @@ impl TrainingHost for RunpodHost {
         // who need to customize the startup command.
         let docker_args = std::env::var("RUNPOD_DOCKER_ARGS").unwrap_or_default();
 
-        let body = self.build_create_pod_body(
+        let body = Self::build_create_pod_body(
             &job.id,
             &PodDeploySpec {
                 gpu_type_id: &gpu_type_id,
@@ -1223,7 +1223,26 @@ impl TrainingHost for RunpodHost {
 mod tests {
     use super::*;
 
-    /// Pin: the HTTP client built in `RunpodHost::new` carries explicit
+    fn transported_scripts(job: &TrainingJob) -> [String; 2] {
+        let script = generate_install_script(job, job.params.harness.unwrap_or(job.harness)).expect("generate");
+        let body = RunpodHost::build_create_pod_body(
+            &job.id,
+            &PodDeploySpec { gpu_type_id: "fixture", container_disk_gb: 1, docker_image: "fixture", docker_args: "" },
+            &[("HKASK_INSTALL_SCRIPT", script.clone())],
+        );
+        let body: Value = serde_json::from_str(&body.to_string()).expect("Runpod payload");
+        let cloud = crate::providers::nebius::build_cloud_init(job, "fixture-key").expect("Nebius payload");
+        let cloud: Value = serde_json::from_str(cloud.strip_prefix("#cloud-config\n").expect("cloud header")).expect("cloud JSON/YAML");
+        let scripts = [
+            body["env"]["HKASK_INSTALL_SCRIPT"].as_str().expect("env script").to_string(),
+            cloud["write_files"][0]["content"].as_str().expect("cloud script").to_string(),
+        ];
+        for transported in &scripts {
+            assert_eq!(transported, &script);
+        }
+        scripts
+    }
+
     fn hostile_job(harness: TrainingHarnessId) -> TrainingJob {
         TrainingJob {
             id: "f3-job".into(),
@@ -1265,7 +1284,7 @@ mod tests {
     fn f3_config_transfer_is_literal() {
         for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
             let job = hostile_job(harness);
-            let script = generate_install_script(&job, harness).expect("generate");
+            for script in transported_scripts(&job) {
             let config = match harness {
                 TrainingHarnessId::Axolotl => crate::providers::AxolotlHarness.render_config(&job),
                 TrainingHarnessId::Ludwig => crate::providers::LudwigHarness.render_config(&job),
@@ -1279,6 +1298,7 @@ mod tests {
             let (bytes, marker) = execute_transfer(&section);
             assert!(!marker, "caller data executed a command");
             assert_eq!(bytes, config.as_bytes());
+            }
         }
     }
 
@@ -1287,16 +1307,33 @@ mod tests {
     fn f3_manifest_transfer_is_literal() {
         for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
             let mut job = hostile_job(harness);
-            job.base_model = "org/model$(printf expanded > marker)`printf expanded > marker`".into();
-            let script = generate_install_script(&job, harness).expect("generate");
+            job.id = format!("f3-job-{}", job.base_model);
+            job.artifacts = Some(crate::huggingface::TrainingArtifacts {
+                dataset: crate::huggingface::TrainingArtifact {
+                    repository: "org/dataset".into(), revision: "main".into(), path: "train.jsonl".into(), sha256: job.base_model.clone(),
+                },
+                model_repository: job.base_model.clone(),
+                completion_manifest_path: job.base_model.clone(),
+            });
+            for script in transported_scripts(&job) {
+            assert!(!script.contains(&job.base_model), "raw caller bytes in shell source");
             let section = script.split("# ── Step 5:").nth(1).expect("manifest section")
-                .split("# ── Step 6:").next().expect("end section");
+                .split("# End manifest data transfer").next().expect("end section");
             let snippet = format!("TRAINING_STATUS=success; TRAINING_DURATION=7; OUTPUT_DIR=outputs; FINAL_LOSS_JSON=null; FINAL_GRAD_NORM_JSON=null; FINAL_STEP_JSON=2; TOTAL_STEPS_JSON=3\n# {section}\ncat /workspace/completion.json > result\n");
             let (bytes, marker) = execute_transfer(&snippet);
             assert!(!marker, "caller data executed a command");
             let manifest: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
             assert_eq!(manifest["base_model"], job.base_model);
             assert_eq!(manifest["training_duration_secs"], 7);
+            assert_eq!(manifest["job_id"], job.id);
+            assert_eq!(manifest["dataset_sha256"], job.base_model);
+            assert_eq!(manifest["adapter"]["repository"], job.base_model);
+            assert_eq!(manifest["output_dir"], format!("/workspace/outputs/{}", job.id));
+            assert_eq!(manifest["status"], "success");
+            assert_eq!(manifest["current_step"], 2);
+            assert_eq!(manifest["total_steps"], 3);
+            assert!(manifest["loss"].is_null());
+            }
         }
     }
 

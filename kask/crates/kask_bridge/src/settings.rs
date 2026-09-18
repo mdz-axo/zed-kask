@@ -439,14 +439,6 @@ pub struct KaskSwarmSettings {
     /// When `true`, the operator has globally opted in and the token is optional.
     pub curator_consent_default: bool,
 
-    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
-    /// read by `AgentExecutor::build_skill_catalog` to inject skill
-    /// descriptions into the local agent's system prompt (Slice 6 — local
-    /// agent skill-awareness). When empty, skill-awareness is disabled (the
-    /// agent runs skill-blind). Set from the project's `.agents/skills/`
-    /// directory.
-    pub skills_dir: String,
-
     /// Default model id for newly created ABW agents when the caller omits
     /// `model` (KA-05). When empty, uses the server default
     /// (`qwen/qwen3-235b-a22b-thinking-2507`).
@@ -510,7 +502,6 @@ impl Default for KaskSwarmSettings {
             api_url: String::new(),
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
-            skills_dir: String::new(),
             default_agent_model: String::new(),
             a2a_http_enabled: false,
             embedding_dim: 1024,
@@ -980,7 +971,6 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
             curator_consent_default: c
                 .curator_consent_default
                 .unwrap_or(default.curator_consent_default),
-            skills_dir: c.skills_dir.unwrap_or(default.skills_dir),
             default_agent_model: c.default_agent_model.unwrap_or(default.default_agent_model),
             a2a_http_enabled: c.a2a_http_enabled.unwrap_or(default.a2a_http_enabled),
             embedding_dim: c.embedding_dim.unwrap_or(default.embedding_dim),

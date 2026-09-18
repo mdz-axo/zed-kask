@@ -7,7 +7,7 @@
 # EVA is the canonical data-driven initializer for the Capabilities Researcher
 # adapter. PiSSA is not used because its mutated-base save contract is not
 # portable across the verified environments.
-base_model: {{ base_model }}
+base_model: {{ base_model | tojson }}
 adapter: lora
 load_in_4bit: {{ load_in_4bit | default("false") | lower }}
 load_in_8bit: false

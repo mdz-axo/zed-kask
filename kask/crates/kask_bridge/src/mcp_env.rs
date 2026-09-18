@@ -330,9 +330,6 @@ pub(crate) fn emit_swarm_env(
     env.insert("HKASK_LOCAL_AGENTS_DIR".to_string(), local_agents_dir);
     let local_swarms_dir = swarm_root.join("swarms").to_string_lossy().to_string();
     env.insert("HKASK_LOCAL_SWARMS_DIR".to_string(), local_swarms_dir);
-    if !swarm.skills_dir.is_empty() {
-        env.insert("HKASK_SKILLS_DIR".to_string(), swarm.skills_dir.clone());
-    }
     if !swarm.default_agent_model.is_empty() {
         env.insert(
             "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
@@ -883,7 +880,6 @@ mod tests {
         assert!(!env.contains_key("HKASK_ABW_MAX_CREDITS"));
         assert!(!env.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
         assert!(!env.contains_key("HKASK_SWARM_MODE"));
-        assert!(!env.contains_key("HKASK_SKILLS_DIR"));
         assert!(!env.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
         assert!(!env.contains_key("HKASK_A2A_HTTP_ENABLE"));
         assert!(!env.contains_key("HKASK_SWARM_EMBEDDING_DIM"));
@@ -923,7 +919,6 @@ mod tests {
         settings.swarm.max_credits_per_dispatch = 100;
         settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
         settings.swarm.curator_consent_default = true;
-        settings.swarm.skills_dir = "/custom/skills/dir".to_string();
         settings.swarm.default_agent_model = "claude-sonnet-4-6".to_string();
         settings.swarm.a2a_http_enabled = true;
         settings.swarm.embedding_dim = 2048;
@@ -954,10 +949,6 @@ mod tests {
         assert_eq!(
             env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
             Some("/custom/kask/data/mcp/swarm/swarms")
-        );
-        assert_eq!(
-            env.get("HKASK_SKILLS_DIR").map(String::as_str),
-            Some("/custom/skills/dir")
         );
         assert_eq!(
             env.get("HKASK_ABW_DEFAULT_AGENT_MODEL").map(String::as_str),

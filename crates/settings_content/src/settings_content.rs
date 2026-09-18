@@ -1848,11 +1848,6 @@ pub struct KaskSwarmSettingsContent {
     /// When `true`, Xaman Ek curator calls do not require a per-call consent
     /// token. Default `false` (opt-in per call).
     pub curator_consent_default: Option<bool>,
-    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
-    /// read by `AgentExecutor::build_skill_catalog` to inject skill
-    /// descriptions into the local agent's system prompt (Slice 6 — local
-    /// agent skill-awareness). When empty/None, skill-awareness is disabled.
-    pub skills_dir: Option<String>,
     /// Default model id for newly created ABW agents when the caller omits
     /// `model`. Operator-configurable so the default is not a code literal
     /// that goes stale when the provider renames/deprecates the model

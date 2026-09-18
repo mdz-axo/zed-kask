@@ -12,7 +12,7 @@
 # - https://ludwig.ai/latest/getting_started/llm_fine_tuning/
 # - https://ludwig.ai/latest/configuration/
 model_type: llm
-base_model: {{ base_model }}
+base_model: {{ base_model | tojson }}
 
 {% if load_in_4bit %}
 quantization:
