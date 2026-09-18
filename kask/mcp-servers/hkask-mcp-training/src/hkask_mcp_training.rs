@@ -785,6 +785,96 @@ mod smoke {
         )
     }
 
+    /// expect: "Evaluation retains requested and returned model evidence without inventing alias equivalence" [P8]
+    #[tokio::test]
+    async fn evaluation_preserves_candidate_and_judge_identity_evidence() -> anyhow::Result<()> {
+        let mut candidate = evaluation_reply("A")?;
+        candidate.model = "fixture/candidate".into();
+        let mut judge = evaluation_reply("CORRECT")?;
+        judge.model = "judge-version-not-requested-alias".into();
+        let mut unidentified = evaluation_reply("B")?;
+        unidentified.model = "  ".into();
+        let (result, _) = evaluate_fixture(
+            &evaluation_chat_row().repeat(2),
+            serde_json::json!({"method":"semantic","judge_model":"fixture/judge"}),
+            vec![
+                Ok(candidate),
+                Ok(judge),
+                Ok(unidentified),
+                Err(InferenceError::Timeout("judge".into())),
+            ],
+        )
+        .await?;
+        let calls = result["inference_evidence"]
+            .as_array()
+            .expect("call evidence");
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0]["example_index"], 0);
+        assert_eq!(calls[0]["role"], "candidate");
+        assert_eq!(calls[0]["requested_model"], "fixture/candidate");
+        assert_eq!(calls[0]["returned_model"], "fixture/candidate");
+        assert_eq!(calls[0]["model_comparison"], "exact_string_match");
+        assert_eq!(calls[1]["role"], "judge");
+        assert_eq!(calls[1]["requested_model"], "fixture/judge");
+        assert_eq!(
+            calls[1]["returned_model"],
+            "judge-version-not-requested-alias"
+        );
+        assert_eq!(calls[1]["model_comparison"], "different_unresolved");
+        assert_eq!(calls[1]["cost_usd"], 0.01);
+        assert_eq!(calls[2]["example_index"], 1);
+        assert!(calls[2]["returned_model"].is_null());
+        assert_eq!(calls[2]["model_comparison"], "unreported");
+        assert_eq!(calls[3]["status"], "error");
+        assert!(calls[3]["returned_model"].is_null());
+        assert!(calls[3]["cost_usd"].is_null());
+        assert_eq!(result["model_identity_basis"], "port_reported_not_attested");
+        assert_eq!(
+            result["correct"], 1,
+            "identity comparison is not task scoring"
+        );
+        Ok(())
+    }
+
+    /// expect: "Every attempt retains identity evidence, including benchmark errors and malformed judging" [P8]
+    #[tokio::test]
+    async fn evaluation_identity_evidence_covers_every_scoring_path() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark", "semantic"] {
+            let row = if method == "benchmark" {
+                "{\"question\":\"Pick A\",\"choices\":[\"yes\",\"no\"],\"answer\":\"A\"}\n".into()
+            } else {
+                evaluation_chat_row()
+            };
+            let mut replies = vec![evaluation_reply("A")];
+            let mut request = serde_json::json!({"method":method});
+            if method == "semantic" {
+                request["judge_model"] = serde_json::json!("fixture/judge");
+                replies.push(evaluation_reply("malformed verdict"));
+            }
+            replies.push(Err(InferenceError::Connection("no response".into())));
+            let (result, _) = evaluate_fixture(&row.repeat(2), request, replies).await?;
+            let evidence = result["inference_evidence"]
+                .as_array()
+                .expect("call evidence");
+            assert_eq!(result["inference_calls"], evidence.len());
+            assert_eq!(evidence.len(), if method == "semantic" { 3 } else { 2 });
+            assert_eq!(evidence[0]["returned_model"], "fixture-model");
+            assert_eq!(evidence[0]["model_comparison"], "different_unresolved");
+            let failed = evidence.last().expect("failed call");
+            assert_eq!(failed["example_index"], 1);
+            assert_eq!(failed["role"], "candidate");
+            assert_eq!(failed["status"], "error");
+            assert!(failed["returned_model"].is_null());
+            assert!(failed["tokens"].is_null());
+            if method == "semantic" {
+                assert_eq!(evidence[1]["role"], "judge");
+                assert_eq!(evidence[1]["status"], "response");
+                assert_eq!(result["evaluator_errors"], 1);
+            }
+        }
+        Ok(())
+    }
+
     /// expect: "Semantic evaluation separates wrong answers from failed or malformed judging" [P8]
     /// post: only an exact CORRECT verdict counts; candidate and judge requests use explicit models
     #[tokio::test]

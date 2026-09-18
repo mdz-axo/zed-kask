@@ -52,6 +52,25 @@ failed calls with unknown consumption. `reported_tokens_used` and
 `unreported_cost_calls`, and `inference_calls` describe coverage. A genuinely
 reported zero remains zero. These measurements do not enforce a spending cap.
 
+`inference_evidence` records each candidate/judge call with its example index,
+requested model, port-returned model (null if missing), call status, reported
+tokens, and cost. `model_comparison` is `exact_string_match`,
+`different_unresolved`, or `unreported`. Different strings may be legitimate
+provider aliases; they are not silently normalized or treated as the same
+model. This comparison does not change answer scoring. R5 acceptance must
+resolve model provenance independently rather than infer it from accuracy.
+`model_identity_basis: "port_reported_not_attested"` is deliberate: the direct
+HTTP port returns provider response metadata, whereas the Zed bridge returns
+its resolved model label. Neither an exact string match nor an explicit
+`judge_model` proves provider identity or evaluator independence. Error calls
+retain the requested model but never invent a returned model or zero cost.
+
+Direct HTTP cost uses the same compatible-provider preference as D20:
+`usage.market_cost`, then `usage.cost`, then `usage.estimated_cost`, choosing
+the first finite nonnegative value. Thus the aggregate is a provider-observed
+cost signal, not necessarily invoiced spend. Missing cost remains unknown,
+independently of whether token usage is available.
+
 Implementation: `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs`
 (`EvaluationSummary`, `training_evaluate`, `eval_benchmark`); behavioral tests
 are the `evaluation_*` public-tool fixtures in

@@ -62,6 +62,8 @@ mod screening;
 
 #[cfg(test)]
 mod acquisition_tests;
+#[cfg(test)]
+mod forecast_loop_tests;
 pub(crate) mod research;
 mod scenarios;
 mod screener;

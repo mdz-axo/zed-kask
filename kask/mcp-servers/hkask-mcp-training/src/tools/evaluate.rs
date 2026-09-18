@@ -12,7 +12,7 @@ struct EvaluationSummary {
     correct: usize,
     generation_errors: usize,
     evaluator_errors: usize,
-    inference_calls: usize,
+    inference_evidence: Vec<serde_json::Value>,
     reported_tokens: u64,
     reported_cost: f64,
     unreported_usage_calls: usize,
@@ -20,18 +20,39 @@ struct EvaluationSummary {
 }
 
 impl EvaluationSummary {
-    fn record_call(&mut self, result: &Result<InferenceResult, InferenceError>) {
-        self.inference_calls += 1;
+    fn record_call(
+        &mut self,
+        example_index: usize,
+        role: &str,
+        requested_model: &str,
+        result: &Result<InferenceResult, InferenceError>,
+    ) {
+        let response = result.as_ref().ok();
+        let returned_model = response
+            .map(|r| r.model.as_str())
+            .filter(|model| !model.trim().is_empty());
+        let cost = response
+            .and_then(|r| r.cost_usd)
+            .filter(|cost| cost.is_finite() && *cost >= 0.0);
+        self.inference_evidence.push(json!({
+            "example_index": example_index, "role": role,
+            "requested_model": requested_model, "returned_model": returned_model,
+            "model_comparison": match returned_model {
+                Some(returned) if returned == requested_model => "exact_string_match",
+                Some(_) => "different_unresolved",
+                None => "unreported",
+            },
+            "status": if result.is_ok() { "response" } else { "error" },
+            "tokens": response.and_then(|r| r.usage.reported.then_some(r.usage.total_tokens)),
+            "cost_usd": cost,
+        }));
         if let Ok(response) = result {
             if response.usage.reported {
                 self.reported_tokens += u64::from(response.usage.total_tokens);
             } else {
                 self.unreported_usage_calls += 1;
             }
-            if let Some(cost) = response
-                .cost_usd
-                .filter(|cost| cost.is_finite() && *cost >= 0.0)
-            {
+            if let Some(cost) = cost {
                 self.reported_cost += cost;
             } else {
                 self.unreported_cost_calls += 1;
@@ -52,7 +73,9 @@ impl EvaluationSummary {
             "incorrect": total - self.correct - errors, "errors": errors,
             "generation_errors": self.generation_errors, "evaluator_errors": self.evaluator_errors,
             "accuracy": if total == 0 { 0.0 } else { self.correct as f64 / total as f64 },
-            "inference_calls": self.inference_calls,
+            "inference_calls": self.inference_evidence.len(),
+            "inference_evidence": self.inference_evidence,
+            "model_identity_basis": "port_reported_not_attested",
             "total_tokens_used": (self.unreported_usage_calls == 0).then_some(self.reported_tokens),
             "reported_tokens_used": self.reported_tokens,
             "unreported_usage_calls": self.unreported_usage_calls,
@@ -192,7 +215,7 @@ impl TrainingServer {
                 let response = router
                     .generate_with_model(&prompt, &params, Some(&model), None)
                     .await;
-                summary.record_call(&response);
+                summary.record_call(i, "candidate", &model, &response);
                 match response {
                     Ok(response) => {
                         let generated = response.text.trim();
@@ -210,7 +233,8 @@ impl TrainingServer {
                                 let judge = router
                                     .generate_with_model(&judge_prompt, &params, judge_model.as_deref(), None)
                                     .await;
-                                summary.record_call(&judge);
+                                // Semantic admission above requires an explicit judge.
+                                summary.record_call(i, "judge", judge_model.as_deref().unwrap_or_default(), &judge);
                                 match judge {
                                     Ok(judge) => match judge.text.trim() {
                                         "CORRECT" => Ok(true),
@@ -362,7 +386,7 @@ impl TrainingServer {
             let response = router
                 .generate_with_model(&prompt, &params, Some(model), None)
                 .await;
-            summary.record_call(&response);
+            summary.record_call(i, "candidate", model, &response);
             match response {
                 Ok(response) => {
                     let generated = response.text.trim();

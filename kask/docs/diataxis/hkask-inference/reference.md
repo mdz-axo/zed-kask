@@ -1,8 +1,8 @@
 ---
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "3.0.0"
+last_updated: 2026-09-18
+version: "3.1.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition]
@@ -141,6 +141,23 @@ Provider keys are read from the process environment only (`kask/crates/hkask-inf
 | `media_generate` | Child-local `MediaRouter` | Same child-local path | `kask/crates/hkask-inference/src/hkask_inference.rs:358-375` |
 
 The direct provider descriptors are DeepInfra, OpenRouter, and Ollama (`kask/crates/hkask-inference/src/hkask_inference.rs:409-437`). `DirectEmbeddingPort::try_new` requires a recognized prefix and any required provider key (`kask/crates/hkask-inference/src/hkask_inference.rs:439-490`).
+
+### Direct chat response evidence
+
+The direct chat path retains the response's `model` rather than substituting
+the requested name. Missing model metadata remains an empty port value;
+evaluation reports expose it as unreported. Provider-reported cost is selected
+from `usage.market_cost`, `usage.cost`, then `usage.estimated_cost` (first finite
+nonnegative value), matching the existing D20 compatible-provider precedence.
+Cost and token reporting are independent; cost alone does not imply a measured
+token total, and missing cost is not zero.
+
+Implementation: `ChatUsage`, `usage_from_wire`, and `DirectEmbeddingPort` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-inference/src/hkask_inference.rs`.
+`direct_chat_preserves_model_and_provider_cost` exercises the actual HTTP
+decoder on a loopback-only fixture with no credentials. Reference precedence:
+`/home/mdz-axolotl/Clones/zed-kask/crates/language_model_core/src/chat_completion.rs:191–216`.
+These are response metadata, not authenticated model identity or a spend cap.
 
 ## Typed model failures
 
