@@ -365,6 +365,14 @@ fn main() {
         return;
     }
 
+    // zed-kask: D9 — apply a scheduled DB passphrase rotation before any
+    // consumer opens a database. A failure keeps every database and the
+    // keychain on the old passphrase; the pending intent stays surfaced on
+    // the Security page for cancellation or the next startup's retry.
+    if let Err(error) = kask_bridge::run_pending_db_passphrase_rotation() {
+        log::error!("Pending DB passphrase rotation failed: {error}");
+    }
+
     // zed-kask: `.env` file loading has been removed. API keys must be
     // configured via the settings UI (keychain) or shell environment
     // variables. The keychain is the single source of truth — keys set

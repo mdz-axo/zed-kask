@@ -422,8 +422,8 @@ keychain) without changing serde-default signatures.
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
 passphrase for every SQLCipher database (curator, swarm memory, kata-kanban,
 research, training) — no per-DB passphrases. The user can change it later
-via the settings UI (Security page), which triggers atomic DB rotation
-before saving the new passphrase.
+via the settings UI (Security page); the change is scheduled there and
+applied by the next editor startup, before any database opens.
 
 ### Passphrase rotation
 
@@ -440,20 +440,28 @@ If any step fails, the original DB is untouched — the old passphrase remains
 in effect. The caller writes the new passphrase to the keychain ONLY after
 rotation returns `Ok(())`.
 
-The bridge layer wraps this in one function (`kask/crates/kask_bridge/src/identity.rs:210-283`):
+The bridge layer wraps this for the whole fleet (`kask/crates/kask_bridge/src/passphrase_rotation.rs`):
 
-- `rotate_all_kask_db_passphrases(new_passphrase)` — rotates EVERY kask
-  SQLCipher DB that exists at its resolved path (curator, swarm memory,
-  kata-kanban, research, training), rolling back the already-rotated DBs
-  if any rotation fails. Corpus DBs are caller-supplied per-workflow paths
-  and are not covered.
+- `schedule_db_passphrase_rotation(new_passphrase, confirmed_inventory)` —
+  the Security page's action: stores the new passphrase in the keychain
+  pending slot (`hkask_db_passphrase_pending`) and the confirmed inventory's
+  rotate paths in `maintenance/pending-db-rotation.json` (paths and the
+  last error only — the passphrase never touches disk). Nothing is rotated
+  at scheduling time.
+- `run_pending_db_passphrase_rotation()` — called once at editor startup,
+  before any database opens: each confirmed database is classified with
+  `hkask_storage::verify_database_key` (old key → rotate; new key → already
+  done, e.g. after a crash between rotation and the keychain write; neither
+  → a surfaced manual-recovery error), the old-key set is rotated with
+  rollback, and only after every database is consistent is the new
+  passphrase written to the main keychain slot and the pending intent
+  deleted. A failure records its error in the pending record, keeps the
+  old passphrase everywhere, and retries at the next startup.
 
-It resolves the old passphrase from the keychain and each DB path from
-env/data-dir. The settings UI calls it on a background spawn before
-writing the new passphrase to the keychain and nudging MCP servers to
-restart.
-
-**From the settings UI:** the Security page changes the one DB passphrase. Rotation completes before the new keychain value is written; on failure, a warning is emitted and the old passphrase remains (`crates/settings_ui/src/pages/kask_page/security.rs`).
+**From the settings UI:** the Security page schedules the change after a
+confirmed inventory review and shows the scheduled state (with a cancel
+action) until the next startup applies it
+(`crates/settings_ui/src/pages/kask_page/security.rs`).
 
 
 ## Environment Variable Reference
