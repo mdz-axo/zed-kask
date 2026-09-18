@@ -483,8 +483,10 @@ mod tests {
     fn open_memory_store_refuses_empty_passphrase_before_any_db_open() {
         let directory = tempfile::tempdir().expect("tempdir");
         let db_path = directory.path().join("never-created.db");
-        let error = open_memory_store(db_path.to_str().expect("utf-8 path"), "")
-            .expect_err("empty passphrase must be refused");
+        let error = match open_memory_store(db_path.to_str().expect("utf-8 path"), "") {
+            Ok(_) => panic!("empty passphrase must be refused"),
+            Err(error) => error,
+        };
         assert_eq!(
             error.kind,
             hkask_types::McpErrorKind::PermissionDenied,
