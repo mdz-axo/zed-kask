@@ -81,9 +81,9 @@ share `HKASK_DB_PASSPHRASE` (`crates/zed/src/main.rs:1620-1624`).
 ### 5. Pin the registered tool surface
 
 A router can compile while silently omitting a sub-router. Add an end-to-end
-count/name pin in the server crate. The current media server pins exactly 80
-registered tools in `tool_surface_is_exactly_80_registered_tools`
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:456-467`).
+count/name pin in the server crate. The current media server pins exactly 81
+registered tools in `tool_surface_is_exactly_81_registered_tools`
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`).
 
 ### 6. Validate
 

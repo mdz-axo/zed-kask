@@ -12,8 +12,8 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **25 registered tools**, pinned by
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:250-279`.
+schema contract and **26 registered tools**, pinned by
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:269-383`.
 Parameter additions do not add tools.
 
 The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed

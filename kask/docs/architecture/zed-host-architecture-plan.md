@@ -97,13 +97,13 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.3 MCP load set (11 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) — **11 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-506` enumerates them (media entry at `mcp_servers.rs:468-505`); `builtin_mcp_server_ids()` (`mcp_servers.rs:508-512`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) and the **spreadsheet** server was added (2026-09-18) — **12 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-541` enumerates them (media entry at `mcp_servers.rs:479-519`); `builtin_mcp_server_ids()` (`mcp_servers.rs:543-547`) derives the ID list.[^anthropic-mcp]
 
-| On disk (11)                                                                                                          |
+| On disk (12)                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------- |
-| `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training` |
+| `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training` |
 
-> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 80 registered tools by `tool_surface_is_exactly_80_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:456-466`); its OMC mapping is checked across the same registered set at `:492-502`.
+> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 81 registered tools by `tool_surface_is_exactly_81_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`); its OMC mapping is checked across the same registered set at `:515-529`.
 
 ---
 
