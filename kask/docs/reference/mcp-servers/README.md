@@ -28,16 +28,16 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-12 built-in MCP servers, **376 registered tools** fleet-wide (verified 2026-09-15 against the live routers, generated tool-name sets, and pinning tests below; spreadsheet added 2026-09-18 with its own pin). `KaskMcpSettings::default()` sets `load_default: true`, so all twelve auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+12 built-in MCP servers, **387 registered tools** fleet-wide (verified 2026-09-18 against the live routers, generated tool-name sets, and pinning tests below — every server now carries a count pin or a generated-name-set pin). `KaskMcpSettings::default()` sets `load_default: true`, so all twelve auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
 | [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server) | 40 |
-| [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 23 |
+| [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 20 |
-| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 25 |
-| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 80 |
-| [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 13 |
+| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
+| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 81 |
+| [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 18 |
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
@@ -48,15 +48,15 @@ mds_categories: [composition, domain]
 ### Count verification methods (per row)
 
 - **Companies = 40** — pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`, which asserts the live nine-router sum (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492`).
-- **Corpus = 23** — pinned end-to-end by `tool_surface_is_exactly_23_registered_tools` over its seven-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:250-279`).
-- **Media = 80** — pinned end-to-end by `tool_surface_is_exactly_80_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live eight-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:431-488`).
+- **Corpus = 26** — pinned end-to-end by `tool_surface_is_exactly_26_registered_tools` over its seven-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:269-383`).
+- **Media = 81** — pinned end-to-end by `tool_surface_is_exactly_81_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live eight-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-571`).
 - **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` over `scenario_router` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:267,1900-1916`). The only direct market-record bridge is `scenario_from_markets_set`; CMP indices use `scenario_from_cmp_indices`.
 - **Swarm = 87** — pinned end-to-end by `tool_surface_is_exactly_87_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:173-178,731-792`). The live partition is 48 cloud plus 39 non-cloud: 32 local + 3 A2A + 4 knowledge.
-- **Kata Kanban = 25 and Portfolio = 13** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1906-1923`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:149-520`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
-- **Curator = 20, Prediction Markets = 32, Research = 26, Training = 9** — verified from their currently wired router blocks and registered `#[tool]` methods (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:357`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:161`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:285-309`).
+- **Kata Kanban = 27 and Portfolio = 18** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1906-1923`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:149-520`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
+- **Curator = 20, Prediction Markets = 32, Research = 26, Training = 9** — each pinned end-to-end by its `tool_surface_is_exactly_<n>_registered_tools` test over the live router (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:2143-2151`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1944-1955`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:2281-2289`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:318-326`).
 - **Spreadsheet = 2** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `spreadsheet_router` surface (`kask/mcp-servers/hkask-mcp-spreadsheet/src/hkask_mcp_spreadsheet.rs:36-55`); the tool-behavior suite additionally drives both tools end-to-end over the real engine actor (`kask/mcp-servers/hkask-mcp-spreadsheet/tests/tool_behavior.rs`).
 
-Arithmetic: `40 + 23 + 20 + 25 + 80 + 13 + 32 + 26 + 19 + 87 + 9 + 2 = 376`.
+Arithmetic: `40 + 26 + 20 + 27 + 81 + 18 + 32 + 26 + 19 + 2 + 87 + 9 = 387`.
 
 ## Common Patterns
 
