@@ -28,7 +28,7 @@ use ui::{Icon, IconName, Label, LabelSize, prelude::*};
 use util::ResultExt as _;
 
 /// Server that hosts the media tools — the `BUILT_IN_MCP_SERVERS` id, the
-/// same id the panel's Steer conversation is scoped to.
+/// same id used for direct viewer-initiated media tool dispatch.
 const MEDIA_SERVER: &str = "media";
 const GALLERY_PAGE_LIMIT: usize = 100;
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(1);

@@ -17,8 +17,8 @@
 //! audited admin force-publish path). Spend actions are gated behind the
 //! cost/consent gate (see `kask/docs/diataxis/swarm_system/reference.md`).
 //!
-//! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server.
-//! The operator asks the curator to compose/steer a swarm; the curator's
+//! **Steer mode** hosts a cross-domain `ConversationView` framed around swarm
+//! work. The operator asks the curator to compose/steer a swarm; the curator's
 //! `SkillTool` invokes the `swarm-intelligence` cascade (see
 //! `kask/docs/diataxis/swarm_system/explanation.md`). The conversation is
 //! persisted via the global `ThreadStore` — the curator's live state
@@ -77,7 +77,7 @@ use workspace::{
     register_serializable_item,
 };
 
-// Steer mode: a `ConversationView` scoped to the swarm MCP server. The
+// Steer mode: a cross-domain `ConversationView` framed around swarm work. The
 // curator's `SkillTool` invokes the `swarm-intelligence` cascade when the
 // operator asks to compose/steer a swarm. See
 // `kask/docs/diataxis/swarm_system/explanation.md`.
@@ -104,9 +104,9 @@ const SWARM_SERVER: &str = "swarm";
 /// a mission in the compose form before the "Create" button is enabled.
 const MIN_AGENTS_TO_LAUNCH: usize = 3;
 
-/// The system prompt injected into the Steer mode `ConversationView`. Tells
-/// the curator it is scoped to the swarm MCP server and that the
-/// `swarm-intelligence` skill is available for composition/steering. The
+/// The system prompt injected into the Steer mode `ConversationView`. It
+/// highlights swarm tools and the `swarm-intelligence` skill while retaining
+/// the full cross-domain MCP surface. The
 /// curator's `SkillTool` discovers the skill from the `<available_skills>`
 /// list in its base system prompt; this prompt adds the swarm-specific
 /// context (active workspace, current backend mode, the skill's purpose).
@@ -160,8 +160,8 @@ fn steer_system_prompt(
     let prompt = format!(
         "## Agent Swarm Panel — Steer Mode
          \n\
-         You are operating in the Agent Swarm panel's Steer mode, scoped to the \
-         `{SWARM_SERVER}` MCP server. The swarm server exposes two tool sets, \
+         You are operating in the Agent Swarm panel's cross-domain Steer mode. \
+         The full MCP tool surface remains available. The swarm server exposes two tool sets, \
          selected by the operator via the `kask.swarm.mode` setting (`abw` or \
          `local`):\n\
          \n\
@@ -448,7 +448,7 @@ enum PanelMode {
     /// new App. Entered via an App card click (detail) or the Author toggle
     /// when the Apps filter is active (new App).
     AppAuthor,
-    /// Steer: a `ConversationView` scoped to the swarm MCP server. The
+    /// Steer: a cross-domain `ConversationView` framed around swarm work. The
     /// operator asks the curator to compose/steer a swarm; the curator's
     /// `SkillTool` invokes the `swarm-intelligence` cascade.
     Steer,
@@ -607,7 +607,7 @@ pub struct SwarmPanel {
     /// by `load_app_into_form`'s spawn; consumed by `apply_pending_app_load`.
     /// Mirrors the `pending_author_load` deferred-mutation pattern.
     pending_app_load: Option<AppDetailLoad>,
-    /// The Steer-mode surface: owns the scoped curator `ConversationView`
+    /// The Steer-mode surface: owns the cross-domain curator `ConversationView`
     /// lifecycle (construction + invalidation). Empty until the operator
     /// first selects Steer. Uses the retained-view pattern (one
     /// `ConversationView`, reused across re-renders).
@@ -878,7 +878,7 @@ impl SwarmPanel {
     }
 
     /// Lazily construct the `ConversationView` for Steer mode if it doesn't
-    /// exist yet. Constructs a `CuratorAgentServer` scoped to the swarm MCP
+    /// exist yet. Constructs a `CuratorAgentServer` with the swarm workflow
     /// server, with a system prompt that tells the curator about the
     /// `swarm-intelligence` skill and the active swarm. The curator's
     /// `SkillTool` invokes the cascade when the operator asks to compose/steer

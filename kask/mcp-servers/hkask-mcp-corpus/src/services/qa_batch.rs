@@ -312,84 +312,7 @@ impl QaBatchService {
                                 );
                             }
                         }
-                        let review_messages = match render_passage_quality_review_messages(
-                            &worker_prompt,
-                            &proposed_quality,
-                        ) {
-                            Ok(messages) => messages,
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(quality_response, Err(error.to_string()))),
-                                );
-                            }
-                        };
                         prior_responses.push(response_metadata(&quality_response));
-                        let mut review_response = match verify_with_retry(
-                            &router,
-                            &limiter,
-                            &selected_verification_model,
-                            &review_messages,
-                            &prompt_id,
-                            "passage quality review",
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(error) => return (prior_responses, Err(error)),
-                        };
-                        let mut reviewed_quality = parse_passage_quality_response(
-                            &crate::extract_json_from_response(&review_response.text),
-                        );
-                        if let Err(error) = &reviewed_quality {
-                            prior_responses.push(response_metadata(&review_response));
-                            let mut correction_messages = review_messages.clone();
-                            correction_messages[0].content.push_str(&format!(
-                                " Your reviewed passage quality failed the typed schema: {error}. Return one corrected decision only."
-                            ));
-                            review_response = match verify_with_retry(
-                                &router,
-                                &limiter,
-                                &selected_verification_model,
-                                &correction_messages,
-                                &prompt_id,
-                                "passage quality review schema correction",
-                            )
-                            .await
-                            {
-                                Ok(response) => response,
-                                Err(error) => return (prior_responses, Err(error)),
-                            };
-                            reviewed_quality = parse_passage_quality_response(
-                                &crate::extract_json_from_response(&review_response.text),
-                            );
-                        }
-                        match reviewed_quality {
-                            Ok(PassageQuality::Clean) => {
-                                prior_responses.push(response_metadata(&review_response));
-                            }
-                            Ok(PassageQuality::Skip(reason)) => {
-                                let plan = prompt_wide_skip_plan(&worker_prompt, &reason);
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        review_response,
-                                        merge_disposition_plans(&plan, None),
-                                    )),
-                                );
-                            }
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        review_response,
-                                        Err(format!(
-                                            "passage quality review rejected: {error}"
-                                        )),
-                                    )),
-                                );
-                            }
-                        }
                     }
                     let mut planning_response = match infer_with_retry(
                         &router,
@@ -453,53 +376,21 @@ impl QaBatchService {
                             }
                         }
                     } else {
-                        let proposed_plan =
+                        let mut plan =
                             parse_disposition_plan_response(&proposed_response, &worker_prompt);
-                        let proposal_error = proposed_plan.as_ref().err().map(String::as_str);
-                        let review_messages = match render_disposition_review_messages(
-                            &worker_prompt,
-                            &proposed_response,
-                            proposal_error,
-                        ) {
-                            Ok(messages) => messages,
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(planning_response, Err(error.to_string()))),
-                                );
-                            }
-                        };
-                        prior_responses.push(response_metadata(&planning_response));
-                        planning_response = match verify_with_retry(
-                            &router,
-                            &limiter,
-                            &selected_verification_model,
-                            &review_messages,
-                            &prompt_id,
-                            "QA disposition review",
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(error) => return (prior_responses, Err(error)),
-                        };
-                        let mut plan = parse_disposition_plan_response(
-                            &crate::extract_json_from_response(&planning_response.text),
-                            &worker_prompt,
-                        );
                         if let Err(error) = &plan {
                             prior_responses.push(response_metadata(&planning_response));
-                            let mut correction_messages = review_messages.clone();
+                            let mut correction_messages = planning_messages.clone();
                             correction_messages[0].content.push_str(&format!(
-                                " Your reviewed plan failed the typed schema: {error}. Return one corrected plan only."
+                                " Your plan failed the typed schema: {error}. Return one corrected plan only."
                             ));
-                            planning_response = match verify_with_retry(
+                            planning_response = match infer_with_retry(
                                 &router,
                                 &limiter,
-                                &selected_verification_model,
+                                &selected_model,
                                 &correction_messages,
                                 &prompt_id,
-                                "QA disposition review schema correction",
+                                "QA disposition schema correction",
                             )
                             .await
                             {
@@ -518,7 +409,7 @@ impl QaBatchService {
                                     prior_responses,
                                     Ok(qa_completion(
                                         planning_response,
-                                        Err(format!("QA disposition review rejected: {error}")),
+                                        Err(format!("QA disposition plan rejected: {error}")),
                                     )),
                                 );
                             }
@@ -591,148 +482,10 @@ impl QaBatchService {
                             );
                         }
                     };
-                    let review_messages = match render_planned_qa_review_messages(
-                        &worker_prompt,
-                        &plan,
-                        &writer_draft,
-                    ) {
-                        Ok(messages) => messages,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(writer_response, Err(error.to_string()))),
-                            );
-                        }
-                    };
-                    prior_responses.push(response_metadata(&writer_response));
-                    let (review_response, verdicts) = match verify_qa_draft(
-                        &router,
-                        &limiter,
-                        &selected_verification_model,
-                        &review_messages,
-                        &prompt_id,
-                        "QA draft verification",
-                        &plan,
-                        &mut prior_responses,
+                    (
+                        prior_responses,
+                        Ok(qa_completion(writer_response, Ok(writer_completed))),
                     )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(error) => return (prior_responses, Err(error)),
-                    };
-                    let verdicts = match verdicts {
-                        Ok(verdicts) => verdicts,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(
-                                    review_response,
-                                    Err(format!("QA verification verdict rejected: {error}")),
-                                )),
-                            );
-                        }
-                    };
-                    if !verdicts.requires_correction() {
-                        return (
-                            prior_responses,
-                            Ok(qa_completion(review_response, Ok(writer_completed))),
-                        );
-                    }
-
-                    let correction_messages = match render_planned_qa_correction_messages(
-                        &worker_prompt,
-                        &plan,
-                        &writer_draft,
-                        &verdicts,
-                    ) {
-                        Ok(messages) => messages,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(review_response, Err(error.to_string()))),
-                            );
-                        }
-                    };
-                    prior_responses.push(response_metadata(&review_response));
-                    let corrected_response = match infer_with_retry(
-                        &router,
-                        &limiter,
-                        &selected_model,
-                        &correction_messages,
-                        &prompt_id,
-                        "QA correction",
-                    )
-                    .await
-                    {
-                        Ok(response) => response,
-                        Err(error) => return (prior_responses, Err(error)),
-                    };
-                    let corrected_draft =
-                        crate::extract_json_from_response(&corrected_response.text);
-                    let corrected_completed = match merge_disposition_plans(
-                        &plan,
-                        Some(&corrected_draft),
-                    ) {
-                        Ok(completed) => completed,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(corrected_response, Err(error))),
-                            );
-                        }
-                    };
-                    let final_review_messages = match render_planned_qa_review_messages(
-                        &worker_prompt,
-                        &plan,
-                        &corrected_draft,
-                    ) {
-                        Ok(messages) => messages,
-                        Err(error) => {
-                            return (
-                                prior_responses,
-                                Ok(qa_completion(corrected_response, Err(error.to_string()))),
-                            );
-                        }
-                    };
-                    prior_responses.push(response_metadata(&corrected_response));
-                    let (final_review_response, final_verdicts) = match verify_qa_draft(
-                        &router,
-                        &limiter,
-                        &selected_verification_model,
-                        &final_review_messages,
-                        &prompt_id,
-                        "corrected QA verification",
-                        &plan,
-                        &mut prior_responses,
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(error) => return (prior_responses, Err(error)),
-                    };
-                    match final_verdicts {
-                        Ok(final_verdicts) if !final_verdicts.requires_correction() => (
-                            prior_responses,
-                            Ok(qa_completion(final_review_response, Ok(corrected_completed))),
-                        ),
-                        Ok(final_verdicts) => (
-                            prior_responses,
-                            Ok(qa_completion(
-                                final_review_response,
-                                Err(format!(
-                                    "second correct verdict rejected the corrected QA: {}",
-                                    final_verdicts.correction_findings()
-                                )),
-                            )),
-                        ),
-                        Err(error) => (
-                            prior_responses,
-                            Ok(qa_completion(
-                                final_review_response,
-                                Err(format!("final QA verification verdict rejected: {error}")),
-                            )),
-                        ),
-                    }
                 });
                 pending.insert(task.id(), prompt);
             }

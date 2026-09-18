@@ -46,10 +46,9 @@ use workspace::{
     register_serializable_item,
 };
 
-// Steer mode: a ConversationView scoped to the kanban MCP server, so the
-// kanban panel hosts all swarm-agent kanban coordination. The curator can
-// create tasks, spawn subagents, move tasks, and decompose work via the
-// kanban MCP tools.
+// Steer mode: a cross-domain ConversationView framed around kanban
+// coordination. The curator can combine kanban operations with portfolio,
+// company, scenario, research, and other MCP tools.
 
 mod fetch;
 
@@ -227,9 +226,8 @@ pub enum TaskActionKind {
     ConfirmDeleteBoard,
 }
 
-/// The panel's active mode: Browse (board view) or Steer (conversation with
-/// the curator scoped to the kanban MCP server for swarm-agent kanban
-/// coordination).
+/// The panel's active mode: Browse (board view) or Steer (a cross-domain
+/// curator conversation framed around swarm-agent kanban coordination).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelMode {
     Browse,
@@ -297,10 +295,9 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-/// The system prompt injected into the Steer mode ConversationView. Tells
-/// the curator it is scoped to the kanban MCP server and can use all kanban
-/// tools for board and task management, including spawning subagents and
-/// coordinating with swarms.
+/// The system prompt injected into the Steer mode ConversationView. It
+/// highlights kanban tools for board and task management while retaining the
+/// full cross-domain MCP surface.
 ///
 /// The tool list is rendered from `hkask_mcp_kata_kanban::TOOL_NAMES`
 /// (build.rs-generated from the server's `#[tool]` fns — the single source of
@@ -331,8 +328,8 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
     );
     let prompt = format!(
         "## Kanban Panel — Steer Mode\n\
-         You are operating in the Kanban panel's Steer mode, scoped to the \
-         `{KANBAN_SERVER}` MCP server. You have access to all kanban tools:\n\
+         You are operating in the Kanban panel's Steer mode. The full MCP \
+         tool surface remains available; these kanban tools are central to this workflow:\n\
          \n\
          {tool_section}\
          \n\
@@ -506,7 +503,7 @@ pub struct KanbanPanel {
     create_board_editor: Option<Entity<Editor>>,
     /// The active panel mode (Browse or Steer).
     mode: PanelMode,
-    /// The Steer-mode surface: owns the scoped curator ConversationView
+    /// The Steer-mode surface: owns the cross-domain curator ConversationView
     /// lifecycle (construction + invalidation). Empty until the operator
     /// first selects Steer.
     steer: SteerSurface,
@@ -855,7 +852,7 @@ impl KanbanPanel {
         cx.notify();
     }
 
-    /// Lazily construct the ConversationView for Steer mode, scoped to the
+    /// Lazily construct the cross-domain ConversationView for Steer mode.
     /// kanban MCP server. The curator can create tasks, spawn subagents,
     /// move tasks, and decompose work via the kanban MCP tools.
     fn ensure_steer_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -5,8 +5,9 @@
 //! generation, voice synthesis, transcription, and face recognition. A
 //! hand-written management UI for all of these would be impractical and would
 //! duplicate the Steer conversation's chat-driven workflow. The panel's sole
-//! affordance is a scoped curator `ConversationView` (via `hkask_steer::SteerSurface`)
-//! whose prompt advertises the media server's generated `TOOL_NAMES`.
+//! affordance is a cross-domain curator `ConversationView` (via
+//! `hkask_steer::SteerSurface`) whose prompt highlights the media server's
+//! generated `TOOL_NAMES` without hiding other MCP tools.
 //!
 //! Generated media (images, videos) renders inline in the conversation via the
 //! media block renderer (the D18 seam). The operator asks the curator to
@@ -91,7 +92,7 @@ pub fn init(cx: &mut App) {
 /// The Media panel: a tabbed viewing pane above a Steer director pane,
 /// split by a draggable horizontal divider.
 ///
-/// The director (bottom) is the scoped curator conversation — all media
+/// The director (bottom) is a cross-domain curator conversation — media
 /// operations (generate, search, organize, transform, transcribe) are
 /// driven through chat. The viewing pane (top) surfaces what the tools
 /// produced: assets are extracted structurally from tool-result
@@ -205,8 +206,8 @@ impl MediaPanel {
             )
     }
 
-    /// Lazily construct the Steer `ConversationView`. Scoped to the media
-    /// MCP server; verified against its generated `TOOL_NAMES`.
+    /// Lazily construct the cross-domain Steer `ConversationView`. Media tool
+    /// guidance is verified against the server's generated `TOOL_NAMES`.
     fn ensure_steer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         hkask_steer::ensure_steer(
             &mut self.steer,
@@ -274,8 +275,8 @@ fn steer_system_prompt() -> SharedString {
     );
     let prompt = format!(
         "## Media Panel — Steer Mode\n\
-         You are operating in the Media panel's Steer mode, scoped to the \
-         `hkask-mcp-media` MCP server. All media operations are driven \
+         You are operating in the Media panel's cross-domain Steer mode. The \
+         full MCP tool surface remains available. Media operations are driven \
          through chat — there are no management forms in this panel.\n\
          \n\
          {tool_section}\

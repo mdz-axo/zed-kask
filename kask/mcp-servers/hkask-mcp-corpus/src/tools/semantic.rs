@@ -149,7 +149,7 @@ mod identity_tests {
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Generate QA from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. An optional complete prepared-qa-adjudication-v2 JSONL binds passage and per-level mandates to every prompt; reviewed skips are terminal and reviewed admits bypass passage/disposition model review. Canonical identities are restored only after exact quote verification. Old rendered-message and adjudication-v1 files are rejected. Output contains ingest-compatible QA, terminal skips, or identified error rows; summary includes prompt outcomes, QA rows, reviewed decision counts, and prompt-level token usage."
+        description = "Generate unverified QA candidates from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. An optional complete prepared-qa-adjudication-v2 JSONL binds passage and per-level mandates to every prompt; reviewed skips are terminal and reviewed admits bypass passage-quality inference. Canonical identities and exact citations are restored, but generation never authorizes ingestion. corpus_ingest_qa requires a separate complete grounding manifest over canonical source chunks."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -159,7 +159,6 @@ impl CorpusServer {
             output,
             concurrency,
             model,
-            verification_model,
         }): Parameters<GenerateQaBatchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_generate_qa_batch", async {
@@ -170,7 +169,6 @@ impl CorpusServer {
                     output,
                     concurrency,
                     model,
-                    verification_model,
                 })
                 .await
         })
@@ -553,10 +551,6 @@ pub(crate) struct GenerateQaBatchRequest {
     /// no active-chat or training-base fallback. Must accept non-thinking requests.
     #[serde(default)]
     pub model: Option<String>,
-    /// Optional provider-prefixed verification model for unreviewed passage/disposition
-    /// review and generated-QA verdicts. It must differ from the generator and has no fallback.
-    #[serde(default)]
-    pub verification_model: Option<String>,
 }
 
 fn default_batch_concurrency() -> usize {

@@ -139,8 +139,8 @@ impl PortfolioPanel {
         })
     }
 
-    /// Lazily construct the Steer `ConversationView`. Scoped to the portfolio
-    /// MCP server; verified against its generated `TOOL_NAMES`.
+    /// Lazily construct the cross-domain Steer `ConversationView`. Portfolio
+    /// tool guidance is verified against the server's generated `TOOL_NAMES`.
     fn ensure_steer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         hkask_steer::ensure_steer(
             &mut self.steer,
@@ -220,8 +220,9 @@ fn steer_system_prompt() -> SharedString {
     );
     let prompt = format!(
         "## Portfolio Panel — Steer Mode\n\
-         You are operating in the Portfolio panel's Steer mode, scoped to the \
-         `hkask-mcp-portfolio` MCP server. Use the portfolio report tools for \
+         You are operating in the Portfolio panel's cross-domain Steer mode. \
+         Combine portfolio, company, scenario, research, and other tools as the \
+         analysis requires. Use the portfolio report tools for \
          investor-oriented characteristics, contribution, benchmark-relative \
          attribution, and current or historical what-if analysis. Do not frame \
          the workspace around daily-return monitoring.\n\
