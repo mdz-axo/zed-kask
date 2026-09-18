@@ -307,6 +307,24 @@ impl TrainingServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for TrainingServer {}
 
+// Pins the registered tool-surface count end-to-end: `combined_router()`
+// must register every `#[tool]` method in `tools/*.rs`. The sub-router merge
+// is load-bearing — before it existed, a single `#[tool_router(server_handler)]`
+// on one impl block registered zero tools because rmcp's macro only scans
+// the block it is attached to (see the comment above combined_router). A
+// missing merge arm or a silent registration drop fails here instead of
+// shipping as an undocumented surface change.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::TrainingServer;
+
+    #[test]
+    fn tool_surface_is_exactly_9_registered_tools() {
+        let n = TrainingServer::combined_router().list_all().len();
+        assert_eq!(n, 9, "training registered tool surface changed; got {n}");
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────
 
 /// Run the training MCP server (used by binary target).
