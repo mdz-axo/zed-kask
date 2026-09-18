@@ -39,6 +39,17 @@ impl ReviewedQaAdjudication {
     pub fn levels(&self) -> &[ReviewedLevelDecision] {
         &self.levels
     }
+
+    /// Test seam: reviewed decisions normally exist only via
+    /// `read_complete_adjudications`. Unit tests of the reviewed-only render
+    /// path construct them directly.
+    #[cfg(test)]
+    pub(crate) fn from_decisions(
+        passage: ReviewedPassageDecision,
+        levels: Vec<ReviewedLevelDecision>,
+    ) -> Self {
+        Self { passage, levels }
+    }
 }
 
 pub(crate) struct ReviewedQaAdjudications {

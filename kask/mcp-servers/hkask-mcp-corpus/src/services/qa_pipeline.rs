@@ -10,13 +10,14 @@ use serde_json::{Value, json};
 
 use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
-use crate::services::qa_adjudication::{ReviewedLevelDecision, ReviewedQaAdjudication};
+use crate::services::qa_adjudication::{
+    ReviewedLevelDecision, ReviewedPassageDecision, ReviewedQaAdjudication,
+};
 use crate::tools::corpus::{QaType, qa_type_instruction};
 
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
 
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
-const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
 const QA_GENERATION_PROTOCOL: &str = "prepared-qa-grounding-candidate-v1";
 const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
@@ -51,11 +52,6 @@ enum PlannedQaLevel {
 #[derive(Clone)]
 pub(crate) struct QaDispositionPlan {
     levels: Vec<PlannedQaLevel>,
-}
-
-pub(crate) enum PassageQuality {
-    Clean,
-    Skip(String),
 }
 
 impl QaDispositionPlan {
@@ -206,71 +202,9 @@ pub(crate) fn conceptual_relation_is_supported(relation: &str) -> bool {
     )
 }
 
-/// expect: Passage quality and requested-level support are decided before any QA is written.
-/// [P9] Motivating: Bad or unsupported source material cannot become accepted training prose.
-/// pre: prompt carries validated primary text and ordered requested levels.
-/// post: the model receives one whole-passage decision task with server-owned evidence candidates.
-pub(crate) fn render_passage_quality_messages(
-    prompt: &PreparedQaPrompt,
-) -> Result<[ChatMessage; 2], McpToolError> {
-    prompt.validate()?;
-    let user = serde_json::to_string(&json!({
-        "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
-        "primary_passage": crate::guard_content(&prompt.primary().text),
-    }))
-    .map_err(|error| McpToolError::internal(format!("Cannot render passage quality: {error}")))?;
-    let system = format!(
-        "{CONTENT_GUARD_INSTRUCTION}{PASSAGE_QUALITY_POLICY} Return exactly [\"clean\"] for an eligible passage, [\"skip\",\"contaminated_or_garbled\"], or [\"skip\",\"non_substantive_passage\"]. This is a focused passage-quality gate: do not judge Bloom-level support, draft questions, or select evidence. Emit one compact JSON array and nothing else."
-    );
-    Ok([
-        ChatMessage {
-            role: "system".to_string(),
-            content: system,
-        },
-        ChatMessage {
-            role: "user".to_string(),
-            content: user,
-        },
-    ])
-}
-
-pub(crate) fn parse_passage_quality_response(response: &str) -> Result<PassageQuality, String> {
-    let fields: Vec<String> = serde_json::from_str(response)
-        .map_err(|error| format!("invalid compact passage-quality JSON: {error}"))?;
-    match fields.as_slice() {
-        [decision] if decision == "clean" => Ok(PassageQuality::Clean),
-        [decision, reason]
-            if decision == "skip"
-                && matches!(
-                    reason.as_str(),
-                    "contaminated_or_garbled" | "non_substantive_passage"
-                ) =>
-        {
-            Ok(PassageQuality::Skip(reason.clone()))
-        }
-        _ => Err(
-            "passage quality must be exactly one canonical clean or prompt-wide skip disposition"
-                .to_string(),
-        ),
-    }
-}
-
-pub(crate) fn prompt_wide_skip_plan(prompt: &PreparedQaPrompt, reason: &str) -> QaDispositionPlan {
-    QaDispositionPlan {
-        levels: prompt
-            .qa_types
-            .iter()
-            .map(|qa_type| PlannedQaLevel::Skipped {
-                bloom_level: qa_type.as_str().to_string(),
-                reason: reason.to_string(),
-            })
-            .collect(),
-    }
-}
-
 pub(crate) fn render_disposition_plan_messages(
     prompt: &PreparedQaPrompt,
-    reviewed: Option<&ReviewedQaAdjudication>,
+    reviewed: &ReviewedQaAdjudication,
 ) -> Result<[ChatMessage; 2], McpToolError> {
     prompt.validate()?;
     let level_requirements = prompt
@@ -292,48 +226,42 @@ pub(crate) fn render_disposition_plan_messages(
             })
         })
         .collect::<Vec<_>>();
-    let mut user = json!({
+    let mandates = reviewed
+        .levels()
+        .iter()
+        .zip(&prompt.qa_types)
+        .map(|(decision, qa_type)| match decision {
+            ReviewedLevelDecision::Generate { relation } => json!({
+                "level": qa_type,
+                "decision": "generate",
+                "relation": relation,
+                "reason": null,
+            }),
+            ReviewedLevelDecision::Skip { reason } => json!({
+                "level": qa_type,
+                "decision": "skip",
+                "relation": null,
+                "reason": reason,
+            }),
+        })
+        .collect::<Vec<_>>();
+    let user = json!({
         "disposition_protocol": QA_DISPOSITION_PROTOCOL,
         "primary_passage": crate::guard_content(&prompt.primary().text),
         "requested_levels": prompt.qa_types,
         "level_requirements": level_requirements,
         "evidence_candidates": evidence_candidates,
+        "reviewed_level_mandates": mandates,
     });
-    if let Some(reviewed) = reviewed {
-        let mandates = reviewed
-            .levels()
-            .iter()
-            .zip(&prompt.qa_types)
-            .map(|(decision, qa_type)| match decision {
-                ReviewedLevelDecision::Generate { relation } => json!({
-                    "level": qa_type,
-                    "decision": "generate",
-                    "relation": relation,
-                    "reason": null,
-                }),
-                ReviewedLevelDecision::Skip { reason } => json!({
-                    "level": qa_type,
-                    "decision": "skip",
-                    "relation": null,
-                    "reason": reason,
-                }),
-            })
-            .collect::<Vec<_>>();
-        user.as_object_mut()
-            .ok_or_else(|| McpToolError::internal("Rendered disposition request is not an object"))?
-            .insert("reviewed_level_mandates".to_string(), json!(mandates));
-    }
     let user = serde_json::to_string(&user).map_err(|error| {
         McpToolError::internal(format!("Cannot render QA disposition plan: {error}"))
     })?;
     let mut system = format!(
         "{CONTENT_GUARD_INSTRUCTION}{PASSAGE_QUALITY_POLICY} Return one typed disposition plan before any QA is written. Prompt-wide quality reasons override all level dispositions. For a clean passage return [\"clean\",[{{\"level\":\"factual\",\"disposition\":\"generate\",\"relation\":null,\"reason\":null,\"evidence_ids\":[\"e0\"]}},{{\"level\":\"conceptual\",\"disposition\":\"skip\",\"relation\":null,\"reason\":\"conceptual_support_absent\",\"evidence_ids\":[]}}]], with exactly one ordered object per requested level. Generated levels require one to three unique evidence IDs that together contain every premise and answer component the writer will need. Evidence must retain the grammatical subject: when a selected span begins with a pronoun or continuation whose antecedent is outside that span, include an adjacent candidate containing the antecedent or select a different self-contained claim. Never emit a generate disposition with an empty evidence list: copy the supporting eN IDs, or use the level's support-absent skip when no candidate supports it. Conceptual generation additionally requires exactly one relation from mechanism, relationship, causal_relationship, distinction, purpose, framework, transferable_principle. Conceptual support exists when evidence explicitly connects a formula to its inputs or discrete values, a method to both construction and ongoing use, examples to a stated general claim, a modeling assumption to its practical justification, an action to an outcome with purpose or result language, or components to distinct roles or interactions. A denominator or entry count that constrains a formula's possible values is a supported mathematical relationship even in a short passage. Explicit result language supports a relationship even when the outcome is qualified by hope; preserve that qualification rather than skipping the relation. A stated threshold or sufficiently large parameter connected to infeasibility is a supported relationship without requiring an unstated mechanism. A characterization followed by how a subject treats its stated faults is a supported characterization relationship. A structured set of components supports framework when the QA can explain how they organize dependencies, estimates, or decisions. Copying listed criteria and adding that they form a framework or lead to the already stated outcome remains factual recall. A purpose relation requires explicit intent or goal language; a statement that someone urges an action to produce an outcome is explicit purpose and should be retained. Adjacent future actions, hopes, or preferences alone do not establish why an action is taken. An explicit condition, decision, action, and resulting configuration supports mechanism and must not be skipped merely because each step is directly stated. A passage that merely asserts a relation with phrases such as useful, enables, or shows, without explaining how the relation works, does not support mechanism or causal_relationship. When a passage states an overall effect and separately defines a formula without saying which factor causes the effect, conceptual support is limited to the formula or framework—not an invented component-level causal mechanism. If answering would only retrieve a name, label, list, title, number, explanation label, or sentence paraphrase without explaining one of those relations, skip conceptual support. Other generated levels use null relation. A level skip uses only its canonical support-absent reason and no evidence. Emit compact JSON only."
     );
-    if reviewed.is_some() {
-        system.push_str(
-            " The supplied reviewed_level_mandates are authoritative. Copy every mandated decision and conceptual relation exactly; select evidence IDs only for mandated generate levels. Do not re-evaluate passage quality or level support.",
-        );
-    }
+    system.push_str(
+        " The supplied reviewed_level_mandates are authoritative. Copy every mandated decision and conceptual relation exactly; select evidence IDs only for mandated generate levels. Do not re-evaluate passage quality or level support.",
+    );
     Ok([
         ChatMessage {
             role: "system".to_string(),
@@ -1173,9 +1101,8 @@ fn qa_result_envelope(
         },
         "provenance": {
             "generator_model": model,
-            "verification_model": verification_model,
+            "grounding_status": "pending_external_verification",
             "adjudication_protocol": adjudication_protocol,
-            "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
             "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,
@@ -1190,7 +1117,6 @@ fn qa_skip_envelope(
     bloom_level: &str,
     reason: &str,
     model: &str,
-    verification_model: Option<&str>,
     adjudication_protocol: Option<&str>,
 ) -> serde_json::Value {
     json!({
@@ -1202,9 +1128,8 @@ fn qa_skip_envelope(
         "reason": reason,
         "provenance": {
             "generator_model": model,
-            "verification_model": verification_model,
+            "grounding_status": "not_applicable_skip",
             "adjudication_protocol": adjudication_protocol,
-            "passage_quality_protocol": PASSAGE_QUALITY_PROTOCOL,
             "disposition_plan_protocol": QA_DISPOSITION_PROTOCOL,
             "prompt_protocol": QA_GENERATION_PROTOCOL,
             "prepared_prompt_protocol": PREPARED_QA_PROTOCOL,
@@ -1230,12 +1155,13 @@ mod tests {
     #[test]
     fn prepared_prompt_uses_guarded_evidence_candidates() -> Result<(), Box<dyn std::error::Error>>
     {
-        let messages = render_disposition_plan_messages(&prepared(), None)?;
+        let prompt = prepared();
+        let messages = render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt))?;
         assert!(messages[0].content.contains(CONTENT_GUARD_INSTRUCTION));
         assert!(messages[0].content.contains("evidence IDs"));
         let user: serde_json::Value = serde_json::from_str(&messages[1].content)?;
         assert_eq!(user["evidence_candidates"][0]["id"], "e0");
-        assert!(user.get("reviewed_level_mandates").is_none());
+        assert_eq!(user["reviewed_level_mandates"][0]["decision"], "generate");
         assert!(
             user["evidence_candidates"][0]["text"]
                 .as_str()
@@ -1283,6 +1209,19 @@ mod tests {
             candidate_terms: vec!["grounded answer".into()],
             qa_types: vec![QaType::Factual],
         }
+    }
+
+    fn reviewed_admit(prompt: &PreparedQaPrompt) -> ReviewedQaAdjudication {
+        ReviewedQaAdjudication::from_decisions(
+            ReviewedPassageDecision::Admit,
+            prompt
+                .qa_types
+                .iter()
+                .map(|qa_type| ReviewedLevelDecision::Generate {
+                    relation: (qa_type == &QaType::Conceptual).then(|| "mechanism".to_string()),
+                })
+                .collect(),
+        )
     }
 
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
@@ -1539,153 +1478,14 @@ mod tests {
         assert!(system.contains("one outer JSON array"));
     }
 
-    /// expect: Evidence planning retains antecedents, and verification rejects
-    /// conceptual answers that omit one side of a multi-edge relation.
+    /// expect: Evidence planning retains antecedents needed to preserve source identity.
     #[test]
-    fn planning_and_verification_contracts_cover_antecedents_and_relation_edges() {
+    fn planning_contract_requires_antecedent_complete_evidence() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Conceptual];
-        let planning = render_disposition_plan_messages(&prompt, None).expect("planning messages");
+        let planning = render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt))
+            .expect("planning messages");
         assert!(planning[0].content.contains("antecedent"));
-
-        let plan = parse_disposition_plan_response(
-            &json!([
-                "clean",
-                [{"level":"conceptual","disposition":"generate","relation":"relationship","reason":null,"evidence_ids":["e0"]}]
-            ])
-            .to_string(),
-            &prompt,
-        )
-        .expect("valid conceptual plan");
-        let review = render_planned_qa_review_messages(
-            &prompt,
-            &plan,
-            &json!([{"level":"conceptual","question":"Why is it double-edged?","answer":"One adverse effect."}]).to_string(),
-        )
-        .expect("review messages");
-        assert!(review[0].content.contains("both contrasting effects"));
-    }
-
-    /// expect: Verification is a strict verdict channel: accept is internally
-    /// consistent, correct carries actionable findings, and QA fields are forbidden.
-    #[test]
-    fn typed_qa_verdicts_enforce_checks_findings_and_writer_ownership() {
-        let prompt = prepared();
-        let plan = parse_disposition_plan_response(
-            &json!([
-                "clean",
-                [{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]}]
-            ])
-            .to_string(),
-            &prompt,
-        )
-        .expect("valid plan");
-        let accepted = json!([{
-            "level":"factual",
-            "verdict":"accept",
-            "subject":true,
-            "condition":true,
-            "premise":true,
-            "entailment":true,
-            "completeness":true,
-            "actual_difficulty":true,
-            "findings":[]
-        }])
-        .to_string();
-        assert!(
-            !parse_planned_qa_verdicts(&accepted, &plan)
-                .expect("valid accept")
-                .requires_correction()
-        );
-
-        let correction = json!([{
-            "level":"factual",
-            "verdict":"correct",
-            "subject":false,
-            "condition":true,
-            "premise":true,
-            "entailment":true,
-            "completeness":true,
-            "actual_difficulty":true,
-            "findings":["Restore the source subject."]
-        }])
-        .to_string();
-        assert!(
-            parse_planned_qa_verdicts(&correction, &plan)
-                .expect("valid correction")
-                .requires_correction()
-        );
-
-        let mut conceptual_prompt = prepared();
-        conceptual_prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let conceptual_plan = parse_disposition_plan_response(
-            &json!([
-                "clean",
-                [
-                    {"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},
-                    {"level":"conceptual","disposition":"generate","relation":"mechanism","reason":null,"evidence_ids":["e0"]}
-                ]
-            ])
-            .to_string(),
-            &conceptual_prompt,
-        )
-        .expect("valid conceptual plan");
-        let terminal_skip = json!([
-            {
-                "level":"factual","verdict":"accept","subject":true,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":[]
-            },
-            {
-                "level":"conceptual","verdict":"skip","subject":true,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":false,"findings":["The fixed evidence cannot support the planned mechanism."]
-            }
-        ])
-        .to_string();
-        assert!(parse_planned_qa_verdicts(&terminal_skip, &conceptual_plan).is_err());
-
-        let final_correction = json!([
-            {
-                "level":"factual","verdict":"accept","subject":true,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":[]
-            },
-            {
-                "level":"conceptual","verdict":"correct","subject":true,"condition":true,
-                "premise":false,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":["The corrected question still assumes an unstated distinction."]
-            }
-        ])
-        .to_string();
-        let final_verdicts = parse_planned_qa_verdicts(&final_correction, &conceptual_plan)
-            .expect("valid final correction verdict");
-        assert!(final_verdicts.requires_correction());
-
-        for invalid in [
-            json!([{
-                "level":"factual","verdict":"accept","subject":false,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":[]
-            }]),
-            json!([{
-                "level":"factual","verdict":"correct","subject":true,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":["No failed check."]
-            }]),
-            json!([{
-                "level":"factual","verdict":"correct","subject":false,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":[]
-            }]),
-            json!([{
-                "level":"factual","verdict":"accept","subject":true,"condition":true,
-                "premise":true,"entailment":true,"completeness":true,
-                "actual_difficulty":true,"findings":[],"question":"Verifier rewrite"
-            }]),
-        ] {
-            assert!(parse_planned_qa_verdicts(&invalid.to_string(), &plan).is_err());
-        }
     }
 
     /// expect: Unsupported or contaminated levels are skipped explicitly instead of
@@ -1694,7 +1494,8 @@ mod tests {
     fn prepared_contract_advertises_quality_gated_skips() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages = render_disposition_plan_messages(&prompt, None).expect("render");
+        let messages =
+            render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt)).expect("render");
         let rendered = messages
             .iter()
             .map(|message| message.content.as_str())
@@ -1724,7 +1525,8 @@ mod tests {
     fn staged_contract_restores_verified_canonical_evidence() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages = render_disposition_plan_messages(&prompt, None).expect("render");
+        let messages =
+            render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt)).expect("render");
         let rendered = messages
             .iter()
             .map(|message| message.content.as_str())

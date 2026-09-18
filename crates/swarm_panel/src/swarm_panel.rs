@@ -2842,19 +2842,20 @@ mod tests {
 
     #[test]
     fn kanban_tool_names_match_server() {
-        // `KANBAN_TOOLS` must match the #[tool] fn names in
-        // `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
-        // adding/removing a server tool — a rename in the kanban server must be
-        // reflected here so the steer prompt never advertises a stale name.
+        // `KANBAN_TOOLS` is re-exported from the server's build.rs-generated
+        // `hkask_mcp_kata_kanban::TOOL_NAMES`, so the names cannot drift from the
+        // server's `#[tool]` fns; this test pins the count and the naming
+        // convention so a server change gets a deliberate look here.
         assert_eq!(hkask_types::kanban_wire::KANBAN_SERVER_NAME, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
-        // the const is caught. 25 after the rJoule budget removal
+        // this pin is caught. 26 since `kanban_goal_memory_acknowledge`
+        // (cc4ff7be79) joined the 25 left after the rJoule budget removal
         // (e13224d836) deleted `kanban_task_add_rjoules`.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            25,
-            "tool count changed — update KANBAN_TOOLS to match \
+            26,
+            "tool count changed — update the count pin to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );
 

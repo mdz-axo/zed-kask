@@ -462,7 +462,6 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
                 output: req.generated_jsonl.clone(),
                 concurrency: 1,
                 model: Some("OpenRouter/offline-model".into()),
-                verification_model: Some("OpenRouter/offline-verifier".into()),
             }))
             .await?,
     )?;

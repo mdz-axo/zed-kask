@@ -16,11 +16,8 @@ Multi-provider inference router for hKask — OpenRouter, Ollama, RunPod.
   `kask.models.qa_generation_model`), otherwise a visible configuration error.
   The setting defaults empty. Malformed values fail rather than falling through;
   registry/provider lookup checks availability. Chat/default and training base
-  models are never inputs to this QA resolver. The independent verification
-  resolver likewise requires an explicit model or `HKASK_QA_VERIFICATION_MODEL`
-  (`kask.models.qa_verification_model`) and never consults generation, chat,
-  classifier, or training models. Both dedicated settings default empty.
-  Non-QA inference retains its own defaults below.
+  models are never inputs to this QA resolver. The dedicated setting defaults
+  empty. Non-QA inference retains its own defaults below.
 - QA disables thinking: synchronous direct HTTP and bridge OpenRouter requests
   serialize `reasoning.effort: "none"`. The provider-batch formatter does too
   (its sole production caller is corpus QA); `exclude` is not a disable flag.
@@ -54,7 +51,6 @@ Multi-provider inference router for hKask — OpenRouter, Ollama, RunPod.
 | `RUNPOD_TEMPLATE_ID` | RunPod serverless template ID (alternative to `RUNPOD_BASE_URL`) |
 | `HKASK_DEFAULT_MODEL` | Default model for non-QA callers (e.g., `OR/z-ai/glm-5.2`) |
 | `HKASK_QA_GENERATION_MODEL` | Required dedicated QA generator unless explicitly supplied; full `Provider/model-id`, no default |
-| `HKASK_QA_VERIFICATION_MODEL` | Required independent QA verifier unless explicitly supplied; full `Provider/model-id`, no default or fallback |
 | `HKASK_DEFAULT_PROVIDER` | Default provider code (OR, OM, RP; default: OR) |
 
 ## Media routing policy — operator decision 2026-09-06

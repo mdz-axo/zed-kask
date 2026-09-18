@@ -1,7 +1,11 @@
 //! Public-tool oracles for compact prepared QA requests.
 use crate::CorpusServer;
+use crate::services::qa_adjudication::{
+    ReviewedLevelDecision, ReviewedPassageDecision, ReviewedQaAdjudication,
+};
 use crate::services::qa_pipeline::{PreparedQaPrompt, render_disposition_plan_messages};
 use crate::tools::corpus::BuildPromptsRequest as ToolRequest;
+use crate::tools::corpus::QaType;
 use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
@@ -181,7 +185,17 @@ async fn split_builds_have_stable_ids_and_primary_only_needs_no_db() -> anyhow::
     for prompt in all_by_id.values() {
         assert_eq!(prompt.qa_types.len(), 2);
         assert_eq!(prompt.passages.len(), 1);
-        let rendered = render_disposition_plan_messages(prompt, None)?;
+        let reviewed = ReviewedQaAdjudication::from_decisions(
+            ReviewedPassageDecision::Admit,
+            prompt
+                .qa_types
+                .iter()
+                .map(|qa_type| ReviewedLevelDecision::Generate {
+                    relation: (qa_type == &QaType::Conceptual).then(|| "mechanism".to_string()),
+                })
+                .collect(),
+        );
+        let rendered = render_disposition_plan_messages(prompt, &reviewed)?;
         let messages = rendered
             .iter()
             .map(|message| message.content.as_str())

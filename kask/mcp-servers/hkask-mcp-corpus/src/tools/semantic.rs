@@ -143,13 +143,29 @@ mod identity_tests {
         assert!(rendered.contains("prepared-qa-adjudication-v2"));
         assert!(rendered.contains("exact qa_types order"));
         assert!(rendered.contains("V1 and partial manifests fail"));
+        assert!(
+            !rendered.contains("verification_model"),
+            "the rejected verifier surface must not reappear in the request schema"
+        );
+        let schema: serde_json::Value =
+            serde_json::from_str(&rendered).expect("parse request schema");
+        let required = schema["required"]
+            .as_array()
+            .expect("required array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            required.contains(&"quality_adjudications_jsonl"),
+            "adjudication must be required, not defaulted"
+        );
     }
 }
 
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Generate unverified QA candidates from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. An optional complete prepared-qa-adjudication-v2 JSONL binds passage and per-level mandates to every prompt; reviewed skips are terminal and reviewed admits bypass passage-quality inference. Canonical identities and exact citations are restored, but generation never authorizes ingestion. corpus_ingest_qa requires a separate complete grounding manifest over canonical source chunks."
+        description = "Generate unverified QA candidates from compact prepared requests: prompt_id, protocol, local-to-canonical passages, candidate_terms, and ordered qa_types. Requires a complete prepared-qa-adjudication-v2 JSONL binding passage and per-level mandates to every prompt; reviewed skips are terminal and zero-inference, and reviewed admits execute the ordered level mandates through planning, one bounded generator-owned correction each for mandate mismatch and writer-schema mismatch, then writing with deterministic validation. Generation never authorizes ingestion: candidates are unverified, and corpus_ingest_qa requires a separate complete grounding manifest over canonical source chunks."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -536,11 +552,11 @@ pub(crate) struct GenerateQaBatchRequest {
     /// Canonical prepared JSONL: prompt_id, protocol, passages, candidate_terms,
     /// and ordered qa_types. IDs must be unique, 1–64 provider-safe ASCII characters.
     pub prompts_jsonl: String,
-    /// Optional complete `prepared-qa-adjudication-v2` JSONL. Every prepared prompt
+    /// Required complete `prepared-qa-adjudication-v2` JSONL. Every prepared prompt
     /// appears exactly once with matching prompt_id, chunk_ref, source, one passage
-    /// decision, and level decisions in exact qa_types order. V1 and partial manifests fail.
-    #[serde(default)]
-    pub quality_adjudications_jsonl: Option<String>,
+    /// decision, and level decisions in exact qa_types order. V1 and partial manifests fail;
+    /// there is no unadjudicated generation path.
+    pub quality_adjudications_jsonl: String,
     /// Output path for generated QAs JSONL.
     pub output: String,
     /// Max concurrent LLM calls.

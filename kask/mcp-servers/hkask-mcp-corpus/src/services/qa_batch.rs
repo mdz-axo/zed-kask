@@ -1,7 +1,9 @@
 //! Prepared QA candidate generation with AIMD-gated synchronous inference.
 //!
-//! Generation fixes passage, level, evidence, and draft shape. It does not verify
-//! its own claims: the external grounding manifest at ingestion owns acceptance.
+//! Generation executes reviewed adjudication mandates only: reviewed passage
+//! skips are terminal and zero-inference, and reviewed admits plan, write, and
+//! validate against the ordered level mandates. It does not verify its own
+//! claims: the external grounding manifest at ingestion owns acceptance.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -22,11 +24,9 @@ use crate::services::qa_adjudication::{
     read_complete_adjudications,
 };
 use crate::services::qa_pipeline::{
-    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
-    QaResponseMetadata, enforce_reviewed_adjudication, merge_disposition_plans,
-    parse_disposition_plan_response, parse_passage_quality_response, prompt_wide_skip_plan,
-    qa_llm_parameters, read_prompts, render_disposition_plan_messages,
-    render_passage_quality_messages, render_planned_qa_messages,
+    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, QaResponseMetadata,
+    enforce_reviewed_adjudication, merge_disposition_plans, parse_disposition_plan_response,
+    qa_llm_parameters, read_prompts, render_disposition_plan_messages, render_planned_qa_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -161,7 +161,7 @@ impl Drop for QaOutputLease {
 
 pub(crate) struct QaBatchRequest {
     pub prompts_jsonl: String,
-    pub quality_adjudications_jsonl: Option<String>,
+    pub quality_adjudications_jsonl: String,
     pub output: String,
     pub concurrency: usize,
     pub model: Option<String>,
@@ -191,18 +191,13 @@ impl QaBatchService {
             model,
         } = request;
         let prompts = read_prompts(&prompts_jsonl)?;
-        let adjudications = quality_adjudications_jsonl
-            .as_deref()
-            .map(|path| read_complete_adjudications(path, &prompts))
-            .transpose()?;
+        let adjudications = read_complete_adjudications(&quality_adjudications_jsonl, &prompts)?;
         let selected_model =
             hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
                 .map_err(map_qa_inference_error)?;
 
         let output_path = crate::path_safety::distinct_output_path(&prompts_jsonl, &output)?;
-        if let Some(path) = quality_adjudications_jsonl.as_deref() {
-            crate::path_safety::distinct_output_path(path, &output)?;
-        }
+        crate::path_safety::distinct_output_path(&quality_adjudications_jsonl, &output)?;
         let lease = QaOutputLease::acquire(output_path)?;
         let file = std::fs::File::create(&lease.path).map_err(|error| {
             map_corpus_io_error(error, &format!("Cannot create output file '{output}'"))
@@ -211,15 +206,13 @@ impl QaBatchService {
         // No BufWriter: cancellation must not depend on an unchecked drop-time
         // flush to preserve completed rows. File errors surface at the write.
         let mut completions = QaOutput::new(file, prompts.len());
-        if let Some(adjudications) = adjudications.as_ref() {
-            completions.set_reviewed_adjudications(
-                QA_ADJUDICATION_PROTOCOL,
-                adjudications.passage_admits(),
-                adjudications.passage_skips(),
-                adjudications.level_generates(),
-                adjudications.level_skips(),
-            );
-        }
+        completions.set_reviewed_adjudications(
+            QA_ADJUDICATION_PROTOCOL,
+            adjudications.passage_admits(),
+            adjudications.passage_skips(),
+            adjudications.level_generates(),
+            adjudications.level_skips(),
+        );
         self.generate_prepared(
             prompts,
             adjudications,
@@ -235,7 +228,7 @@ impl QaBatchService {
     async fn generate_prepared<W: Write>(
         &self,
         prompts: Vec<PreparedQaPrompt>,
-        adjudications: Option<ReviewedQaAdjudications>,
+        adjudications: ReviewedQaAdjudications,
         selected_model: &str,
         limiter: AdaptiveLimiter,
         mut completions: QaOutput<W>,
@@ -243,26 +236,27 @@ impl QaBatchService {
         output: &str,
     ) -> Result<serde_json::Value, McpToolError> {
         let result = async {
-            let adjudications = adjudications.map(Arc::new);
+            let adjudications = Arc::new(adjudications);
             let mut tasks = tokio::task::JoinSet::new();
             let mut pending = HashMap::with_capacity(prompts.len());
             for prompt in prompts {
                 let reviewed_adjudication = adjudications
-                    .as_ref()
-                    .and_then(|adjudications| adjudications.decision(&prompt.prompt_id))
-                    .cloned();
-                if let Some(reviewed) = reviewed_adjudication.as_ref()
-                    && let ReviewedPassageDecision::Skip(reason) = reviewed.passage()
-                {
+                    .decision(&prompt.prompt_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        McpToolError::internal(format!(
+                            "Reviewed adjudication manifest does not cover prompt '{}'",
+                            prompt.prompt_id
+                        ))
+                    })?;
+                if let ReviewedPassageDecision::Skip(reason) = reviewed_adjudication.passage() {
                     completions.complete_reviewed_skip(&prompt, reason, selected_model)?;
                     continue;
                 }
-                let reviewed_admit = reviewed_adjudication.is_some();
                 let router = Arc::clone(&self.inference_router);
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
                 let task_lease = Arc::clone(&lease);
-                let quality_messages = render_passage_quality_messages(&prompt)?;
                 let planning_messages = render_disposition_plan_messages(
                     &prompt,
                     reviewed_adjudication.as_ref(),
@@ -274,46 +268,6 @@ impl QaBatchService {
                     // worker actually drops, not merely until its abort is requested.
                     let _lease = task_lease;
                     let mut prior_responses = Vec::new();
-                    if !reviewed_admit {
-                        let quality_response = match infer_with_retry(
-                            &router,
-                            &limiter,
-                            &selected_model,
-                            &quality_messages,
-                            &prompt_id,
-                            "passage quality",
-                        )
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(error) => return (prior_responses, Err(error)),
-                        };
-                        let proposed_quality =
-                            crate::extract_json_from_response(&quality_response.text);
-                        match parse_passage_quality_response(&proposed_quality) {
-                            Ok(PassageQuality::Clean) => {}
-                            Ok(PassageQuality::Skip(reason)) => {
-                                let plan = prompt_wide_skip_plan(&worker_prompt, &reason);
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        quality_response,
-                                        merge_disposition_plans(&plan, None),
-                                    )),
-                                );
-                            }
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        quality_response,
-                                        Err(format!("passage quality response rejected: {error}")),
-                                    )),
-                                );
-                            }
-                        }
-                        prior_responses.push(response_metadata(&quality_response));
-                    }
                     let mut planning_response = match infer_with_retry(
                         &router,
                         &limiter,
@@ -329,90 +283,50 @@ impl QaBatchService {
                     };
                     let proposed_response =
                         crate::extract_json_from_response(&planning_response.text);
-                    let plan = if let Some(reviewed) = reviewed_adjudication.as_ref() {
-                        let mut plan = parse_disposition_plan_response(
-                            &proposed_response,
+                    let reviewed = reviewed_adjudication.as_ref();
+                    let mut plan = parse_disposition_plan_response(
+                        &proposed_response,
+                        &worker_prompt,
+                    )
+                    .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
+                    if let Err(error) = &plan {
+                        let exact_error = error.clone();
+                        prior_responses.push(response_metadata(&planning_response));
+                        let mut correction_messages = planning_messages.clone();
+                        correction_messages[0].content.push_str(&format!(
+                            " Your plan violated the reviewed mandate: {exact_error}. Return one corrected plan only."
+                        ));
+                        planning_response = match infer_with_retry(
+                            &router,
+                            &limiter,
+                            &selected_model,
+                            &correction_messages,
+                            &prompt_id,
+                            "QA disposition mandate correction",
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => return (prior_responses, Err(error)),
+                        };
+                        plan = parse_disposition_plan_response(
+                            &crate::extract_json_from_response(&planning_response.text),
                             &worker_prompt,
                         )
                         .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
-                        if let Err(error) = &plan {
-                            let exact_error = error.clone();
-                            prior_responses.push(response_metadata(&planning_response));
-                            let mut correction_messages = planning_messages.clone();
-                            correction_messages[0].content.push_str(&format!(
-                                " Your plan violated the reviewed mandate: {exact_error}. Return one corrected plan only."
-                            ));
-                            planning_response = match infer_with_retry(
-                                &router,
-                                &limiter,
-                                &selected_model,
-                                &correction_messages,
-                                &prompt_id,
-                                "QA disposition mandate correction",
-                            )
-                            .await
-                            {
-                                Ok(response) => response,
-                                Err(error) => return (prior_responses, Err(error)),
-                            };
-                            plan = parse_disposition_plan_response(
-                                &crate::extract_json_from_response(&planning_response.text),
-                                &worker_prompt,
-                            )
-                            .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
-                        }
-                        match plan {
-                            Ok(plan) => plan,
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        planning_response,
-                                        Err(format!(
-                                            "QA disposition mandate rejected: {error}"
-                                        )),
+                    }
+                    match plan {
+                        Ok(plan) => plan,
+                        Err(error) => {
+                            return (
+                                prior_responses,
+                                Ok(qa_completion(
+                                    planning_response,
+                                    Err(format!(
+                                        "QA disposition mandate rejected: {error}"
                                     )),
-                                );
-                            }
-                        }
-                    } else {
-                        let mut plan =
-                            parse_disposition_plan_response(&proposed_response, &worker_prompt);
-                        if let Err(error) = &plan {
-                            prior_responses.push(response_metadata(&planning_response));
-                            let mut correction_messages = planning_messages.clone();
-                            correction_messages[0].content.push_str(&format!(
-                                " Your plan failed the typed schema: {error}. Return one corrected plan only."
-                            ));
-                            planning_response = match infer_with_retry(
-                                &router,
-                                &limiter,
-                                &selected_model,
-                                &correction_messages,
-                                &prompt_id,
-                                "QA disposition schema correction",
-                            )
-                            .await
-                            {
-                                Ok(response) => response,
-                                Err(error) => return (prior_responses, Err(error)),
-                            };
-                            plan = parse_disposition_plan_response(
-                                &crate::extract_json_from_response(&planning_response.text),
-                                &worker_prompt,
+                                )),
                             );
-                        }
-                        match plan {
-                            Ok(plan) => plan,
-                            Err(error) => {
-                                return (
-                                    prior_responses,
-                                    Ok(qa_completion(
-                                        planning_response,
-                                        Err(format!("QA disposition plan rejected: {error}")),
-                                    )),
-                                );
-                            }
                         }
                     };
                     let writer_messages = match render_planned_qa_messages(&worker_prompt, &plan) {
@@ -554,22 +468,12 @@ mod tests {
         Success,
         RejectContaminated,
         RejectQualityOnly,
-        QualityReviewRejects,
-        QualityReviewMalformed,
         SkipConceptual,
-        ReviewSkipsConceptual,
-        ReviewGeneratesConceptual,
         Malformed,
         WriterMalformed,
         WriterMalformedOnce,
-        ReviewMalformed,
-        DraftReviewMalformed,
-        QaCorrectionThenAccept,
-        QaCorrectionRejected,
-        VerifierWritesQa,
         ReviewedGenerateMismatchOnce,
         ReviewedGenerateMismatchAlways,
-        ReviewedVerifierSkips,
         Pending,
     }
 
@@ -607,45 +511,14 @@ mod tests {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             assert_eq!(messages.len(), 2);
             let is_quality = messages[0].content.contains("focused passage-quality gate");
-            let is_quality_review = is_quality
-                && messages[0]
-                    .content
-                    .contains("Independently review the proposed passage-quality decision");
             let is_planning = messages[0].content.contains("disposition plan");
-            let is_review = messages[0]
-                .content
-                .contains("Independently review the proposed disposition");
-            let is_qa_verification = messages[0]
-                .content
-                .contains("prepared-qa-verification-verdict-v1");
-            let is_qa_correction = messages[0]
-                .content
-                .contains("single bounded refinement step");
             let is_mandate_correction = messages[0]
                 .content
                 .contains("Your plan violated the reviewed mandate:");
-            let verification_call = is_quality_review || is_review || is_qa_verification;
-            assert_eq!(parameters.thinking_allowed, verification_call);
-            assert_eq!(
-                model,
-                Some(if verification_call {
-                    "OpenRouter/offline-verifier"
-                } else {
-                    "OpenRouter/offline-model"
-                })
-            );
+            assert!(!parameters.thinking_allowed);
+            assert_eq!(model, Some("OpenRouter/offline-model"));
             assert!(tools.is_none());
             let mode = self.mode;
-            let user: serde_json::Value =
-                serde_json::from_str(&messages[1].content).expect("stub user JSON");
-            if is_qa_verification {
-                assert!(
-                    messages[0]
-                        .content
-                        .contains("Do not output question, answer")
-                );
-                assert!(user.get("proposed_qa").is_some());
-            }
             if is_mandate_correction
                 && matches!(
                     mode,
@@ -656,16 +529,7 @@ mod tests {
                     "reviewed mandate for level 1 requires generate relation Some(\"mechanism\"), generator returned skip reason 'conceptual_support_absent'"
                 ));
             }
-            if is_qa_correction {
-                assert_eq!(user["planned_levels"][0]["evidence"][0]["id"], "e0");
-                assert_eq!(user["verification_findings"][0]["subject"], false);
-                assert!(
-                    user["verification_findings"][0]["findings"][0]
-                        .as_str()
-                        .is_some_and(|finding| finding.contains("subject"))
-                );
-            }
-            if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 5
+            if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 3
             {
                 assert!(
                     messages[0]
@@ -677,26 +541,20 @@ mod tests {
                 if matches!(mode, Mode::Pending) {
                     return std::future::pending().await;
                 }
-                let malformed_writer = !is_quality && !is_planning && !is_qa_verification;
+                let malformed_writer = !is_quality && !is_planning;
                 let text = if matches!(mode, Mode::Malformed)
-                    || matches!(mode, Mode::QualityReviewMalformed) && is_quality_review
-                    || matches!(mode, Mode::ReviewMalformed) && is_review
-                    || matches!(mode, Mode::DraftReviewMalformed) && is_qa_verification
                     || matches!(mode, Mode::WriterMalformed) && malformed_writer
-                    || matches!(mode, Mode::WriterMalformedOnce) && malformed_writer && call == 4
+                    || matches!(mode, Mode::WriterMalformedOnce) && malformed_writer && call == 2
                 {
                     "[".to_string()
                 } else if matches!(mode, Mode::RejectContaminated)
                     || matches!(mode, Mode::RejectQualityOnly) && is_quality
-                    || matches!(mode, Mode::QualityReviewRejects) && is_quality_review
                 {
                     json!(["skip", "contaminated_or_garbled"]).to_string()
                 } else if is_quality {
                     json!(["clean"]).to_string()
                 } else if is_planning {
                     let skip_conceptual = matches!(mode, Mode::SkipConceptual)
-                        || matches!(mode, Mode::ReviewSkipsConceptual) && is_review
-                        || matches!(mode, Mode::ReviewGeneratesConceptual) && !is_review
                         || matches!(mode, Mode::ReviewedGenerateMismatchAlways)
                         || matches!(mode, Mode::ReviewedGenerateMismatchOnce)
                             && !is_mandate_correction;
@@ -713,89 +571,8 @@ mod tests {
                         ]
                     ])
                     .to_string()
-                } else if is_qa_verification && matches!(mode, Mode::VerifierWritesQa) {
-                    json!([{
-                        "level":"factual",
-                        "question":"Verifier rewrite",
-                        "answer":"Verifier-authored QA"
-                    }])
-                    .to_string()
-                } else if is_qa_verification && matches!(mode, Mode::ReviewedVerifierSkips) {
-                    user["proposed_qa"]
-                        .as_array()
-                        .expect("proposed QA array")
-                        .iter()
-                        .map(|draft| {
-                            json!({
-                                "level":draft["level"],
-                                "verdict":"skip",
-                                "subject":true,
-                                "condition":true,
-                                "premise":true,
-                                "entailment":true,
-                                "completeness":true,
-                                "actual_difficulty":false,
-                                "findings":["The fixed evidence cannot support this level."]
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .collect::<serde_json::Value>()
-                        .to_string()
-                } else if is_qa_verification {
-                    let proposed = user["proposed_qa"].as_array().expect("proposed QA array");
-                    let corrected = proposed
-                        .first()
-                        .and_then(|draft| draft["question"].as_str())
-                        == Some("What is grounded?");
-                    let reject = matches!(mode, Mode::QaCorrectionRejected)
-                        || matches!(mode, Mode::QaCorrectionThenAccept) && !corrected;
-                    proposed
-                        .iter()
-                        .map(|draft| {
-                            let level = draft["level"].as_str().expect("draft level");
-                            if reject {
-                                json!({
-                                    "level":level,
-                                    "verdict":"correct",
-                                    "subject":false,
-                                    "condition":true,
-                                    "premise":true,
-                                    "entailment":true,
-                                    "completeness":true,
-                                    "actual_difficulty":true,
-                                    "findings":["Restore the source's grammatical subject."]
-                                })
-                            } else {
-                                json!({
-                                    "level":level,
-                                    "verdict":"accept",
-                                    "subject":true,
-                                    "condition":true,
-                                    "premise":true,
-                                    "entailment":true,
-                                    "completeness":true,
-                                    "actual_difficulty":true,
-                                    "findings":[]
-                                })
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .collect::<serde_json::Value>()
-                        .to_string()
-                } else if matches!(mode, Mode::SkipConceptual | Mode::ReviewSkipsConceptual) {
+                } else if matches!(mode, Mode::SkipConceptual) {
                     json!([{"level":"factual","question":"What is grounded?","answer":"Grounded answer one."}]).to_string()
-                } else if matches!(
-                    mode,
-                    Mode::QaCorrectionThenAccept | Mode::QaCorrectionRejected
-                ) && !is_qa_correction
-                {
-                    json!([
-                        {"level":"factual","question":"Wrong subject?","answer":"Grounded answer one."},
-                        {"level":"conceptual","question":"Why is it grounded?","answer":"Grounded answer two."}
-                    ])
-                    .to_string()
                 } else {
                     json!([
                         {"level":"factual","question":"What is grounded?","answer":"Grounded answer one."},
@@ -859,7 +636,6 @@ mod tests {
                     .into_owned(),
                 concurrency: 2,
                 model: Some("OpenRouter/offline-model".into()),
-                verification_model: Some("OpenRouter/offline-verifier".into()),
             },
         ))
     }
@@ -934,11 +710,12 @@ mod tests {
         )
     }
 
-    /// expect: Typed accept verdicts admit only the generator's named-object drafts,
-    /// restore canonical evidence, and report every prompt once.
+    /// expect: Generation admits the generator's named-object drafts as candidates
+    /// with canonical evidence, marks them pending external verification, and
+    /// reports every prompt once.
     #[tokio::test]
-    async fn generates_verified_rows_and_truthful_summary() -> Result<(), Box<dyn std::error::Error>>
-    {
+    async fn generates_candidate_rows_and_truthful_summary()
+    -> Result<(), Box<dyn std::error::Error>> {
         let prompts = [prompt("qa-1"), prompt("qa-2")];
         let (_directory, request) = fixture(&prompts)?;
         let output = request.output.clone();
@@ -950,108 +727,29 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 2);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
-        assert_eq!(summary["verification_model"], "OpenRouter/offline-verifier");
-        assert_eq!(summary["provider_responses"], 12);
-        assert_eq!(summary["tokens_used"], 120);
+        assert_eq!(summary["grounding_status"], "pending_external_verification");
+        assert_eq!(summary["provider_responses"], 6);
+        assert_eq!(summary["tokens_used"], 60);
         assert!(
             (summary["reported_cost_usd"]
                 .as_f64()
                 .expect("reported cost")
-                - 0.12)
+                - 0.06)
                 .abs()
                 < 1e-12
         );
-        assert_eq!(port.calls.load(Ordering::SeqCst), 12);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
         assert!(rows.iter().all(|row| {
-            row["provenance"]["verification_model"] == "OpenRouter/offline-verifier"
+            row["provenance"]["grounding_status"] == "pending_external_verification"
         }));
         assert!(rows.iter().all(|row| {
             row["response"]["evidence_quotes"][0]["chunk_ref"]
                 .as_str()
                 .is_some_and(|chunk| chunk.starts_with("chunk-qa-"))
         }));
-        Ok(())
-    }
-
-    /// expect: A subject-substituted generator draft is corrected once by the generator
-    /// from typed findings and admitted only after the distinct verifier accepts it.
-    #[tokio::test]
-    async fn typed_correction_then_accept_preserves_generator_ownership()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::QaCorrectionThenAccept));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["prompts_failed"], 0);
-        assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 8);
-        assert_eq!(summary["tokens_used"], 80);
-        assert_eq!(summary["reported_cost_usd"], 0.08);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
-        let rows = records(&output)?;
-        assert_eq!(rows[0]["response"]["instruction"], "What is grounded?");
-        assert!(rows.iter().all(|row| {
-            row["provenance"]["verification_model"] == "OpenRouter/offline-verifier"
-        }));
-        Ok(())
-    }
-
-    /// expect: A second correct verdict exhausts bounded recovery and fails the
-    /// whole prompt without leaking either generator draft or inventing support skips.
-    #[tokio::test]
-    async fn second_correct_verdict_fails_prompt_without_terminal_skips()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::QaCorrectionRejected));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 0);
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["provider_responses"], 8);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 8);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].get("response").is_none());
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("second correct verdict"))
-        );
-        Ok(())
-    }
-
-    /// expect: Even schema-shaped QA from the verifier is forbidden replacement
-    /// content, receives only the one schema correction, and then fails closed.
-    #[tokio::test]
-    async fn verifier_cannot_write_replacement_qa() -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::VerifierWritesQa));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 7);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 7);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].get("response").is_none());
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("QA verification verdict rejected"))
-        );
         Ok(())
     }
 
@@ -1077,57 +775,6 @@ mod tests {
         assert!(
             rows.iter()
                 .all(|row| row["reason"] == "contaminated_or_garbled")
-        );
-        Ok(())
-    }
-
-    /// expect: An independent passage review can reject an initially clean passage before planning.
-    #[tokio::test]
-    async fn passage_quality_review_rejection_skips_every_level_before_planning()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::QualityReviewRejects));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 2);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| row["status"] == "skipped"));
-        assert!(
-            rows.iter()
-                .all(|row| row["reason"] == "contaminated_or_garbled")
-        );
-        Ok(())
-    }
-
-    /// expect: A malformed independent passage review cannot silently admit a passage.
-    #[tokio::test]
-    async fn malformed_passage_quality_review_fails_closed_after_one_correction()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::QualityReviewMalformed));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 0);
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("passage quality review rejected"))
         );
         Ok(())
     }
@@ -1165,10 +812,10 @@ mod tests {
         Ok(())
     }
 
-    /// expect: A reviewed admit bypasses passage and disposition review while preserving QA verification.
+    /// expect: A reviewed admit bypasses passage quality; candidates are generated
+    /// per the reviewed level mandates and marked pending external verification.
     #[tokio::test]
-    async fn reviewed_admit_bypasses_passage_and_disposition_reviews()
-    -> Result<(), Box<dyn std::error::Error>> {
+    async fn reviewed_admit_bypasses_passage_quality() -> Result<(), Box<dyn std::error::Error>> {
         let (directory, mut request) = fixture(&[prompt("qa-1")])?;
         attach_adjudication(&directory, &mut request, "admit", None)?;
         let output = request.output.clone();
@@ -1181,8 +828,8 @@ mod tests {
         assert_eq!(summary["reviewed_passage_admits"], 1);
         assert_eq!(summary["reviewed_level_generates"], 2);
         assert_eq!(summary["reviewed_level_skips"], 0);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.get("response").is_some()));
@@ -1204,37 +851,10 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 2);
         assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert!(rows.iter().all(|row| row.get("response").is_some()));
-        Ok(())
-    }
-
-    /// expect: The QA verifier judges generated content but cannot re-litigate an
-    /// externally reviewed generate mandate as a support-absent terminal skip.
-    #[tokio::test]
-    async fn reviewed_conceptual_generate_cannot_become_verifier_skip()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
-        attach_adjudication(&directory, &mut request, "admit", None)?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewedVerifierSkips));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("unknown variant `skip`"))
-        );
         Ok(())
     }
 
@@ -1304,8 +924,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 1);
         assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(summary["provider_responses"], 6);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["qa_type"], "factual");
@@ -1316,49 +936,6 @@ mod tests {
         assert_eq!(rows[1]["qa_type"], "conceptual");
         assert_eq!(rows[1]["status"], "skipped");
         assert_eq!(rows[1]["reason"], "conceptual_support_absent");
-        Ok(())
-    }
-
-    /// expect: A valid disposition review can stop conceptual generation proposed by the first pass.
-    #[tokio::test]
-    async fn reviewed_skip_overrides_proposed_generation() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewSkipsConceptual));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["qa_rows_written"], 1);
-        assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
-        let rows = records(&output)?;
-        assert_eq!(rows[0]["qa_type"], "factual");
-        assert_eq!(rows[1]["qa_type"], "conceptual");
-        assert_eq!(rows[1]["status"], "skipped");
-        assert_eq!(rows[1]["reason"], "conceptual_support_absent");
-        Ok(())
-    }
-
-    /// expect: A valid disposition review can retain conceptual support rejected by the first pass.
-    #[tokio::test]
-    async fn reviewed_generation_overrides_proposed_skip() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewGeneratesConceptual));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
-        let rows = records(&output)?;
-        assert_eq!(rows[0]["qa_type"], "factual");
-        assert_eq!(rows[1]["qa_type"], "conceptual");
-        assert!(rows.iter().all(|row| row.get("response").is_some()));
         Ok(())
     }
 
@@ -1396,22 +973,6 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Generator and verifier identity cannot collapse into correlated self-review.
-    #[tokio::test]
-    async fn identical_generation_and_verification_models_fail_before_inference()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, mut request) = fixture(&[prompt("qa-1")])?;
-        request.verification_model = request.model.clone();
-        let port = Arc::new(StubPort::new(Mode::Success));
-        let error = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await
-            .expect_err("same model must fail");
-        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 0);
-        Ok(())
-    }
-
     /// expect: A malformed provider response becomes one identified failure row, never partial QA.
     #[tokio::test]
     async fn malformed_response_is_an_explicit_prompt_failure()
@@ -1431,57 +992,8 @@ mod tests {
         Ok(())
     }
 
-    /// expect: An invalid disposition review cannot authorize generation after correction fails.
-    #[tokio::test]
-    async fn invalid_disposition_review_fails_closed_after_one_correction()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewMalformed));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 0);
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 5);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 5);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("QA disposition review rejected"))
-        );
-        Ok(())
-    }
-
-    /// expect: A malformed QA verdict gets one fully metered schema correction,
-    /// then fails closed without retaining unchecked generator output.
-    #[tokio::test]
-    async fn malformed_qa_verdict_fails_closed_after_one_schema_correction()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::DraftReviewMalformed));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 0);
-        assert_eq!(summary["prompts_failed"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 7);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 7);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("QA verification verdict rejected"))
-        );
-        Ok(())
-    }
-
+    /// expect: One malformed writer response gets one fully metered schema correction
+    /// and recovers without partial rows.
     #[tokio::test]
     async fn writer_schema_correction_recovers_without_partial_rows()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1494,8 +1006,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 7);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 7);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         assert_eq!(records(&output)?.len(), 2);
         Ok(())
     }
@@ -1512,8 +1024,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 0);
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 6);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["prompt_id"], "qa-1");
@@ -1531,7 +1043,6 @@ mod tests {
             output: request.output.clone(),
             concurrency: 1,
             model: request.model.clone(),
-            verification_model: request.verification_model.clone(),
         };
         let pending = Arc::new(StubPort::new(Mode::Pending));
         let running = tokio::spawn({
