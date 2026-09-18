@@ -38,9 +38,10 @@ pub(crate) use hkask_mcp_server::server::map_memory_store_error;
 /// `credentials` allowlist under governed launch).
 ///
 /// The `OnceLock` is acceptable here because there is exactly one corpus
-/// server per process (MCP servers run as child processes). Tests that don't
-/// go through `run_server` leave the `OnceLock` unset and fall back to the
-/// env/keychain tier, preserving existing test behavior.
+/// server per process (MCP servers run as child processes). Tests seed it
+/// with the canonical test value via `seed_test_passphrase` — the same
+/// seam a governed launch uses — so handler-level tests resolve the
+/// passphrase the way production does.
 static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
 
 /// Initialize the process-wide corpus DB passphrase from `ctx.credentials`.
@@ -61,27 +62,44 @@ pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
 }
 
 /// Resolve the corpus DB passphrase: construction-time `ctx.credentials`
-/// capture first, then env → keychain per call.
-///
-/// Returns an empty string on failure — callers must check and surface
-/// `permission_denied`. An empty passphrase must NOT be passed to a DB
-/// open call — it would silently create an unencrypted DB.
-pub(crate) fn default_corpus_passphrase() -> String {
-    if let Some(Some(resolved)) = CORPUS_DB_PASSPHRASE.get() {
-        return resolved.clone();
+/// capture first, then env → keychain per call. Fail-closed — a failed
+/// resolution (or an empty one) is `permission_denied` naming the env var
+/// (the `.rules` missing-credential pattern); this function never returns
+/// an empty string. An empty passphrase must NOT be passed to a DB open
+/// call — it would silently create an unencrypted DB (`open_memory_store`
+/// enforces the same rule at the open boundary for internal callers).
+pub(crate) fn resolve_corpus_passphrase() -> Result<String, McpToolError> {
+    if let Some(resolved) = CORPUS_DB_PASSPHRASE
+        .get()
+        .and_then(Option::as_deref)
+        .filter(|passphrase| !passphrase.is_empty())
+    {
+        return Ok(resolved.to_owned());
     }
-    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE")
-        .map_err(|e| {
+    match hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE") {
+        Ok(passphrase) if !passphrase.is_empty() => Ok(passphrase),
+        Ok(_) => Err(passphrase_unavailable()),
+        Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.corpus",
-                error = %e,
-                "HKASK_DB_PASSPHRASE resolution failed — returning empty string; \
-                 callers must surface permission_denied"
+                %error,
+                "HKASK_DB_PASSPHRASE resolution failed — corpus DB access is permission_denied"
             );
-            e
-        })
-        .ok()
-        .unwrap_or_default()
+            Err(passphrase_unavailable())
+        }
+    }
+}
+
+/// The fail-closed credential error for corpus DB access. Names the env var
+/// so the operator can distinguish "not configured" from "configured but
+/// broken"; kask never falls back to opening a SQLCipher DB with an empty
+/// key.
+fn passphrase_unavailable() -> McpToolError {
+    McpToolError::permission_denied(
+        "HKASK_DB_PASSPHRASE not configured — set it via the keychain \
+         (kask://credentials/hkask_db_passphrase) or environment variable; \
+         kask never opens a SQLCipher DB with an empty key",
+    )
 }
 
 /// Classify a `TriageError` from the PDF triage pipeline into the appropriate
@@ -167,14 +185,18 @@ pub(crate) fn read_text_capped(path: &str, label: &str) -> Result<String, McpToo
 /// embedding dimension. Single enforcement point for the `MemoryStore::open`
 /// + `map_database_error` pattern duplicated across `corpus_dedup_chunks`,
 /// `corpus_ingest_qa`, `corpus_purge_qa`, `embed_batch_from_jsonl`, and the
-/// consolidation/prompt-builder/assertions services. A passphrase mismatch or
-/// missing `HKASK_DB_PASSPHRASE` surfaces as `permission_denied` (the
-/// `.rules` missing-credential pattern); a corrupted DB is `invalid_argument`;
-/// SQLite/SQLCipher failures are `internal`.
+/// consolidation/prompt-builder/assertions services. Fail-closed before any
+/// SQLCipher open: an empty passphrase is `permission_denied` (it would
+/// silently create an unencrypted DB), never an open attempt. A passphrase
+/// mismatch surfaces as `permission_denied`; a corrupted DB is
+/// `invalid_argument`; SQLite/SQLCipher failures are `internal`.
 pub(crate) fn open_memory_store(
     db_path: &str,
     passphrase: &str,
 ) -> Result<hkask_memory::MemoryStore, McpToolError> {
+    if passphrase.is_empty() {
+        return Err(passphrase_unavailable());
+    }
     let dim = crate::embedding_dim();
     hkask_memory::MemoryStore::open(db_path, passphrase, dim)
         .map_err(|e| map_database_error(e, "Cannot open memory DB"))
@@ -423,4 +445,68 @@ pub(crate) fn chunk_structure(
         overlap_words,
     )
     .map_err(|error| McpToolError::invalid_argument(error.to_string()))
+}
+
+// ── Test seam ─────────────────────────────────────────────────────────────
+
+/// Canonical test passphrase. Handler-level tests cannot carry a passphrase
+/// in their requests (the field is resolved server-side only), so they seed
+/// the process-wide capture with this value via `seed_test_passphrase`.
+/// Direct store constructions (`open_memory_store`, service request fields)
+/// reference the same constant so both resolution paths agree on one DB key.
+#[cfg(test)]
+pub(crate) const TEST_PASSPHRASE: &str = "corpus-test-passphrase";
+
+#[cfg(test)]
+static TEST_PASSPHRASE_SEED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Seed the process-wide corpus passphrase capture for tests — the same
+/// `set_corpus_db_passphrase` seam a governed launch uses. Idempotent per
+/// process: only the first call actually sets (the guard prevents the
+/// already-set warning under parallel test execution); every later call is
+/// a no-op.
+#[cfg(test)]
+pub(crate) fn seed_test_passphrase() {
+    if TEST_PASSPHRASE_SEED.set(()).is_ok() {
+        set_corpus_db_passphrase(Some(TEST_PASSPHRASE.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F1 pin: an empty passphrase is refused with `permission_denied`
+    /// BEFORE any SQLCipher open — no DB file may be created when the
+    /// credential is unavailable.
+    #[test]
+    fn open_memory_store_refuses_empty_passphrase_before_any_db_open() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("never-created.db");
+        let error = open_memory_store(db_path.to_str().expect("utf-8 path"), "")
+            .expect_err("empty passphrase must be refused");
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "{error:?}"
+        );
+        assert!(
+            error.message.contains("HKASK_DB_PASSPHRASE"),
+            "the refusal must name the credential: {error:?}"
+        );
+        assert!(
+            !db_path.exists(),
+            "no DB file may be created when the credential is refused"
+        );
+    }
+
+    /// F1 pin: the resolver is fail-closed — it either returns a non-empty
+    /// passphrase or an error naming the credential, never an empty string
+    /// a caller could pass on to a DB open.
+    #[test]
+    fn seeded_resolution_never_returns_an_empty_passphrase() {
+        seed_test_passphrase();
+        let resolved = resolve_corpus_passphrase().expect("seeded passphrase must resolve");
+        assert!(!resolved.is_empty());
+    }
 }

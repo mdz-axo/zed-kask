@@ -50,9 +50,6 @@ pub struct EmbeddingInventoryRequest {
     pub chunks_jsonl: String,
     /// Existing SQLCipher embedding database. Inventory never creates a database.
     pub db_path: String,
-    /// Passphrase for the embedding database.
-    #[serde(default = "crate::helpers::default_corpus_passphrase")]
-    pub passphrase: String,
     /// Provider-confirmed model identity required for every durable row.
     pub expected_model: String,
 }
@@ -202,17 +199,16 @@ fn embedding_inventory(
             "expected_model must be non-empty",
         ));
     }
-    if request.passphrase.is_empty() {
-        return Err(McpToolError::permission_denied(
-            "corpus_embedding_inventory requires HKASK_DB_PASSPHRASE or an explicit passphrase",
-        ));
-    }
     if !Path::new(&request.db_path).is_file() {
         return Err(McpToolError::invalid_argument(format!(
             "embedding database does not exist: {}",
             request.db_path
         )));
     }
+
+    // The DB passphrase resolves server-side only (fail-closed; never an
+    // empty-key open).
+    let passphrase = crate::helpers::resolve_corpus_passphrase()?;
 
     let rows = crate::read_jsonl::<serde_json::Value>(&request.chunks_jsonl, "chunks_jsonl")?;
     let mut requested = BTreeSet::new();
@@ -240,17 +236,14 @@ fn embedding_inventory(
     }
 
     let requested_refs = requested.iter().cloned().collect::<Vec<_>>();
-    let store = hkask_memory::MemoryStore::open(
-        &request.db_path,
-        &request.passphrase,
-        crate::embedding_dim(),
-    )
-    .map_err(|error| {
-        McpToolError::internal(format!(
-            "cannot open embedding database {}: {error}",
-            request.db_path
-        ))
-    })?;
+    let store =
+        hkask_memory::MemoryStore::open(&request.db_path, &passphrase, crate::embedding_dim())
+            .map_err(|error| {
+                McpToolError::internal(format!(
+                    "cannot open embedding database {}: {error}",
+                    request.db_path
+                ))
+            })?;
     let stored = store
         .embedding_models_for_refs(&requested_refs)
         .map_err(|error| McpToolError::internal(format!("cannot inventory embeddings: {error}")))?;

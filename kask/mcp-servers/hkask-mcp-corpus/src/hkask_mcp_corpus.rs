@@ -338,6 +338,24 @@ mod tool_surface_tests {
         }
     }
 
+    /// F2 pin: the corpus DB passphrase resolves server-side only — no
+    /// model-facing tool schema may expose a settable `passphrase`
+    /// property (the model never legitimately supplies the credential).
+    #[test]
+    fn no_tool_schema_exposes_a_passphrase_property() {
+        let tools = CorpusServer::combined_router().list_all();
+        assert!(!tools.is_empty(), "corpus tool surface must be registered");
+        for tool in &tools {
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema JSON");
+            let properties = schema["properties"].as_object().expect("properties object");
+            assert!(
+                !properties.contains_key("passphrase"),
+                "tool {} must not expose a model-settable passphrase property",
+                tool.name
+            );
+        }
+    }
+
     /// expect: "Step 6 extends the existing centroid tool, not the tool count." [P3]
     #[test]
     fn centroid_schema_exposes_optional_selection_and_dimension() {
@@ -387,12 +405,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             // Resolve `HKASK_DB_PASSPHRASE` via the canonical 2-tier chain
             // (ctx.credentials → env → `hkask-keystore` keychain) once at
-            // construction and publish it to the process-wide `OnceLock` so every tool's
-            // `default_corpus_passphrase` serde
-            // default benefits from governed-launch injection. On resolution
-            // failure we publish `None` and let each tool fall back to
-            // env/keychain per call (and ultimately fail with an actionable
-            // "Passphrase cannot be empty" error from `Database::open`).
+            // construction and publish it to the process-wide `OnceLock` so
+            // every tool's `resolve_corpus_passphrase` benefits from
+            // governed-launch injection. On resolution failure we publish
+            // `None` and each tool's per-call resolution fails closed with
+            // `permission_denied` naming the env var — never an empty-key
+            // SQLCipher open.
             let db_passphrase = match hkask_mcp_server::resolve_db_passphrase(&ctx.credentials) {
                 Ok(passphrase) => Some(passphrase),
                 Err(error) => {
@@ -470,6 +488,7 @@ mod smoke {
     }
 
     fn make_server() -> CorpusServer {
+        crate::helpers::seed_test_passphrase();
         let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
             &inference_port,
@@ -582,7 +601,6 @@ mod smoke {
                     include_text: None,
                     min_score: None,
                     db_path: None,
-                    passphrase: None,
                 }))
                 .await
                 .expect_err("corpus_query without inference must fail, not panic");
@@ -909,7 +927,7 @@ mod smoke {
         let dim = crate::embedding_dim();
         let store = hkask_memory::MemoryStore::open(
             db_path.to_string_lossy().as_ref(),
-            "test-passphrase",
+            crate::helpers::TEST_PASSPHRASE,
             dim,
         )
         .expect("open memory DB");
@@ -984,7 +1002,6 @@ mod smoke {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: prompts_path.to_string_lossy().to_string(),
                 db_path: Some(db_path.to_string_lossy().to_string()),
-                passphrase: Some("test-passphrase".to_string()),
                 prefix: Some("corpus:custom:".to_string()),
                 context_k: 3,
                 qa_pairs_per_chunk: 1,
@@ -1015,7 +1032,6 @@ mod smoke {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: default_prompts.to_string_lossy().to_string(),
                 db_path: Some(db_path.to_string_lossy().to_string()),
-                passphrase: Some("test-passphrase".to_string()),
                 prefix: None,
                 context_k: 3,
                 qa_pairs_per_chunk: 1,

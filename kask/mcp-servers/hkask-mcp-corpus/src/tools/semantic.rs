@@ -17,7 +17,7 @@ pub(crate) mod qa;
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
 };
-use crate::helpers::default_corpus_passphrase;
+use crate::helpers::resolve_corpus_passphrase;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, McpToolError, Parameters, default_embedding_model, default_owner,
@@ -200,13 +200,13 @@ impl CorpusServer {
             chunks_jsonl,
             tagged_jsonl,
             db_path,
-            passphrase,
             max_assertions,
             owner,
             concurrency,
         }): Parameters<ExtractAssertionsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_extract_assertions", async {
+            let passphrase = resolve_corpus_passphrase()?;
             AssertionsService::new(Arc::clone(&self.inference_router))
                 .extract(AssertionsRequest {
                     chunks_jsonl,
@@ -231,12 +231,12 @@ impl CorpusServer {
             chunks_jsonl,
             tagged_jsonl,
             db_path,
-            passphrase,
             model,
             batch_size,
         }): Parameters<EmbedRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_embed", async {
+            let passphrase = resolve_corpus_passphrase()?;
             self.embed_batch_from_jsonl(
                 &chunks_jsonl,
                 tagged_jsonl.as_deref(),
@@ -584,9 +584,6 @@ pub(crate) struct ExtractAssertionsRequest {
     pub tagged_jsonl: Option<String>,
     /// Path to the SQLCipher memory DB for h_mem storage.
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Maximum h_mems to extract per chunk (default 15).
     #[serde(default = "default_max_assertions")]
     pub max_assertions: usize,
@@ -618,9 +615,6 @@ pub struct EmbedRequest {
     pub tagged_jsonl: Option<String>,
     /// Path to the SQLCipher memory DB for vector storage.
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Embedding model to use. If not set, uses the configured default.
     #[serde(default)]
     pub model: Option<String>,

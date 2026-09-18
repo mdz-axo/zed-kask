@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
-const PASSPHRASE: &str = "ingest-test-passphrase";
+const PASSPHRASE: &str = crate::helpers::TEST_PASSPHRASE;
 const ANSWERS: [&str; 4] = ["Thirty", "72 hours", "A collision", "exp(-E/kB T)"];
 const PARAPHRASE_ANSWER: &str = "about thirty, give or take";
 
@@ -25,6 +25,7 @@ impl InferencePort for NoInference {
 }
 
 fn server() -> CorpusServer {
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = Arc::new(NoInference);
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(
@@ -54,7 +55,6 @@ fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
         source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
         output: directory.join("training.jsonl").to_string_lossy().into(),
         db_path: directory.join("memory.db").to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         dry_run,
         dataset: "brooks-test".into(),
         owner: "brooks-test-owner".into(),
@@ -348,8 +348,17 @@ async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
     req.output = directory.path().to_string_lossy().into_owned();
     assert!(server.corpus_ingest_qa(Parameters(req)).await.is_err());
     assert!(!directory.path().join("memory.db").exists());
-    let mut req = request(directory.path(), false);
-    req.passphrase.clear();
+    let req = request(directory.path(), false);
+    // A DB opened under a different key than the server-side resolution
+    // is an authorization failure — the tool errors and never produces a
+    // successful storage summary. (Before F1/F2 this leg cleared a
+    // model-supplied `passphrase` field; the credential now resolves
+    // server-side, so the honest equivalent pins the same DB-open
+    // failure through the repaired seam.)
+    crate::helpers::open_memory_store(
+        &directory.path().join("memory.db").to_string_lossy(),
+        "a-different-key",
+    )?;
     assert!(server.corpus_ingest_qa(Parameters(req)).await.is_err());
     // File output is deliberately not advertised as atomic with DB writes.
     assert_eq!(

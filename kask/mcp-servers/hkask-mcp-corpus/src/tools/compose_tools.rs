@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::helpers::{default_corpus_passphrase, map_service_error};
+use crate::helpers::map_service_error;
 use crate::inference_svc::InferenceContext;
 use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
@@ -107,27 +107,11 @@ fn resolve_cognition_config(
     }
 }
 
-/// Guard for the canonically-resolved passphrase: an empty resolution is
-/// an authorization failure naming the setting, never a silent fallback to
-/// an unencrypted DB (the `.rules` missing-credential pattern).
-fn require_passphrase(passphrase: &str) -> Result<(), McpToolError> {
-    if passphrase.trim().is_empty() {
-        return Err(McpToolError::permission_denied(
-            "no database passphrase resolved — set HKASK_DB_PASSPHRASE \
-             (canonical resolution: launch-injected credentials → env → \
-             keychain); kask never falls back to an unencrypted DB",
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ComposeRequest {
     pub prompt: String,
     pub author: String,
     pub db_path: String,
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Optional path to a cognition config YAML (e.g. a mashup or style
     /// synthesizer config). When provided, the Jinja2 template, embedding
     /// model, retrieval parameters, and validation thresholds are loaded
@@ -143,8 +127,6 @@ pub(crate) struct RewriteRequest {
     pub content: String,
     pub author: String,
     pub db_path: String,
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     #[serde(default = "default_composite")]
     pub dimension: String,
     /// Optional path to a cognition config YAML. When provided, the Jinja2
@@ -161,8 +143,6 @@ fn default_composite() -> String {
 pub(crate) struct CentroidRequest {
     pub author: String,
     pub db_path: String,
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Optional contained UTF-8 file: one existing entity ref per nonblank line.
     /// Repeated refs count once; missing eligible refs fail without storing a centroid.
     #[serde(default)]
@@ -208,14 +188,14 @@ fn load_centroid_refs(refs_file: &str) -> Result<Vec<String>, McpToolError> {
 #[tool_router(router = compose_router, vis = "pub")]
 impl crate::CorpusServer {
     #[tool(
-        description = "Generate prose in an author's style using exemplar retrieval and centroid validation. When config_path is provided, loads a cognition config YAML (mashup or style synthesizer) for the Jinja2 system prompt and validation thresholds. The db_path and passphrase connect to the corpus memory DB for exemplar retrieval."
+        description = "Generate prose in an author's style using exemplar retrieval and centroid validation. When config_path is provided, loads a cognition config YAML (mashup or style synthesizer) for the Jinja2 system prompt and validation thresholds. The db_path connects to the corpus memory DB for exemplar retrieval; the DB passphrase resolves server-side and is never model-supplied."
     )]
     pub async fn corpus_compose(
         &self,
         Parameters(params): Parameters<ComposeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_compose", async {
-            require_passphrase(&params.passphrase)?;
+            let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
             let gen_model = generation_model();
             let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
@@ -225,7 +205,7 @@ impl crate::CorpusServer {
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
                 db_path: PathBuf::from(&params.db_path),
-                db_passphrase: params.passphrase,
+                db_passphrase,
                 cognition: config,
                 inference_ctx,
                 no_validate: params.no_validate,
@@ -255,7 +235,7 @@ impl crate::CorpusServer {
         Parameters(params): Parameters<CentroidRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_centroid", async {
-            require_passphrase(&params.passphrase)?;
+            let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
             let embed_model = embedding_model();
             if embed_model.trim().is_empty() {
                 return Err(McpToolError::permission_denied(
@@ -279,7 +259,7 @@ impl crate::CorpusServer {
             let result = crate::compose::ComposeService::style_centroid(
                 crate::compose::CentroidComputeRequest {
                     db_path: PathBuf::from(&params.db_path),
-                    db_passphrase: params.passphrase,
+                    db_passphrase,
                     author: params.author.clone(),
                     dimension,
                     entity_refs,
@@ -310,7 +290,7 @@ impl crate::CorpusServer {
             self,
             "corpus_rewrite",
             async {
-                require_passphrase(&params.passphrase)?;
+                let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
                 let dimension = normalize_dimension(&params.dimension)?;
                 let dimension_guidance = match dimension.as_str() {
                     "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",
@@ -342,7 +322,7 @@ impl crate::CorpusServer {
                 let request = crate::compose::ComposeRequest {
                     prompt,
                     db_path: PathBuf::from(&params.db_path),
-                    db_passphrase: params.passphrase,
+                    db_passphrase,
                     cognition: config,
                     inference_ctx,
                     no_validate: false,

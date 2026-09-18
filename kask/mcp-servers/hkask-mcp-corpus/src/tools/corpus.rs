@@ -11,7 +11,7 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{default_corpus_passphrase, read_text_capped};
+use crate::helpers::read_text_capped;
 use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
@@ -50,10 +50,11 @@ impl CorpusServer {
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_dedup_chunks", async {
+            let passphrase = crate::helpers::resolve_corpus_passphrase()?;
             let input = crate::services::cluster::load_clusters(
                 &req.tagged_jsonl,
                 &req.db_path,
-                &req.passphrase,
+                &passphrase,
                 &req.prefix,
             )?;
             let threshold = req.threshold as f32;
@@ -107,6 +108,7 @@ impl CorpusServer {
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
+            let passphrase = crate::helpers::resolve_corpus_passphrase()?;
             ConsolidationService::new(
                 Arc::clone(&self.inference_router),
                 Arc::clone(&self.index),
@@ -116,7 +118,7 @@ impl CorpusServer {
                 tagged_jsonl: req.tagged_jsonl,
                 output: req.output,
                 db_path: req.db_path,
-                passphrase: req.passphrase,
+                passphrase,
                 prefix: req.prefix,
                 threshold: req.threshold,
                 concurrency: req.concurrency,
@@ -131,19 +133,28 @@ impl CorpusServer {
     // ── Build Prompts ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Build compact prepared QA requests from classified chunks. One request can produce several Bloom-level pairs; canonical passage identities remain server-side and the model receives only local IDs. context_k defaults to 0 (primary only); db_path/passphrase are required only when context_k > 0. qa_pairs_per_chunk defaults to 2, max_pairs caps requested pairs, and old rendered-message prompt files are rejected."
+        description = "Build compact prepared QA requests from classified chunks. One request can produce several Bloom-level pairs; canonical passage identities remain server-side and the model receives only local IDs. context_k defaults to 0 (primary only); db_path is required only when context_k > 0 (the DB passphrase resolves server-side and is never model-supplied). qa_pairs_per_chunk defaults to 2, max_pairs caps requested pairs, and old rendered-message prompt files are rejected."
     )]
     pub async fn corpus_build_prompts(
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_build_prompts", async {
+            // The credential is only needed when context_k > 0 resolves
+            // neighbors from the DB — primary-only builds stay usable
+            // without a resolvable passphrase (same laziness as before
+            // the field removal).
+            let passphrase = if req.context_k > 0 {
+                Some(crate::helpers::resolve_corpus_passphrase()?)
+            } else {
+                None
+            };
             PromptBuilderService::new()
                 .build_prompts(ServiceBuildPromptsRequest {
                     tagged_jsonl: req.tagged_jsonl,
                     output: req.output,
                     db_path: req.db_path,
-                    passphrase: req.passphrase,
+                    passphrase,
                     prefix: req.prefix,
                     context_k: req.context_k,
                     qa_pairs_per_chunk: req.qa_pairs_per_chunk,
@@ -320,7 +331,10 @@ impl CorpusServer {
 
             // Store h_mems; this path does not generate embeddings. The output
             // file and individual DB inserts are not one atomic transaction.
-            let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
+            let store = crate::helpers::open_memory_store(
+                &req.db_path,
+                &crate::helpers::resolve_corpus_passphrase()?,
+            )?;
             let webid = owner_webid(&req.owner);
             let mut stored = 0usize;
             let mut storage_errors = Vec::new();
@@ -595,9 +609,6 @@ pub(crate) struct DedupChunksRequest {
     pub output: String,
     /// Path to the SQLCipher memory DB containing chunk embeddings.
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Entity-ref prefix for chunk embeddings in the DB (e.g. "corpus:researcher:").
     #[serde(default = "default_corpus_prefix")]
     pub prefix: String,
@@ -625,9 +636,6 @@ pub(crate) struct ConsolidateChunksRequest {
     pub output: String,
     /// Path to the SQLCipher memory DB.
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// Entity-ref prefix for chunk embeddings.
     #[serde(default = "default_corpus_prefix")]
     pub prefix: String,
@@ -666,9 +674,6 @@ pub(crate) struct BuildPromptsRequest {
     /// SQLCipher memory DB used only when context_k > 0.
     #[serde(default)]
     pub db_path: Option<String>,
-    /// DB passphrase used only when context_k > 0.
-    #[serde(default)]
-    pub passphrase: Option<String>,
     /// Entity-ref prefix for the KNN embedding lookup (default
     /// "corpus:researcher:"). All input references must be under this prefix.
     /// KNN reads complete-source stored passages, not just the input partition.
@@ -714,9 +719,6 @@ pub struct IngestQaRequest {
     pub output: String,
     /// Path to the SQLCipher memory DB for QA h_mem storage (no embeddings generated).
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "default_corpus_passphrase")]
-    pub passphrase: String,
     /// If true, validate and dedup without storing.
     #[serde(default)]
     pub dry_run: bool,

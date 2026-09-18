@@ -16,7 +16,7 @@ use crate::tools::calibration::EmbeddingInventoryRequest;
 use crate::tools::semantic::EmbedRequest;
 use crate::tools::storage::{PurgeQaRequest, QueryRequest};
 
-const PASSPHRASE: &str = "retrieval-test-passphrase";
+const PASSPHRASE: &str = crate::helpers::TEST_PASSPHRASE;
 const ORIGINAL: &str = "The archive records the river flooding in spring.";
 const SYNTHESIZED: &str = "The river floods each spring and replenishes the fertile valley.";
 
@@ -139,6 +139,7 @@ impl InferencePort for RecordingPort {
 }
 
 fn server<T: InferencePort + 'static>(port: Arc<T>) -> CorpusServer {
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = port;
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)
@@ -324,7 +325,6 @@ async fn composition_filters_durable_passages_by_declared_method() {
                 chunks_jsonl: input.to_string_lossy().into(),
                 tagged_jsonl: None,
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 model: Some("offline".into()),
                 batch_size: 10,
             }))
@@ -449,7 +449,6 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
                 chunks_jsonl: input.to_string_lossy().into(),
                 tagged_jsonl: None,
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 model: Some("offline".into()),
                 batch_size: 10,
             }))
@@ -461,7 +460,6 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
             .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
                 author: "jb-test".into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 refs_file: None,
                 dimension: None,
             }))
@@ -475,7 +473,6 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
             .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
                 author: "jb-test".into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 refs_file: None,
                 dimension: Some("composite".into()),
             }))
@@ -497,7 +494,6 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
             .corpus_centroid(Parameters(crate::tools::compose_tools::CentroidRequest {
                 author: "jb-test".into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 refs_file: None,
                 dimension: None,
             }))
@@ -570,7 +566,6 @@ async fn dimension_centroid_tool_and_rewrite_validation_round_trip() {
     let centroid_request = || crate::tools::compose_tools::CentroidRequest {
         author: "step6".into(),
         db_path: database.to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         refs_file: Some(refs_file.to_string_lossy().into()),
         dimension: Some(" Hopper ".into()),
     };
@@ -606,7 +601,6 @@ async fn dimension_centroid_tool_and_rewrite_validation_round_trip() {
         content: "Make this easier to read.".into(),
         author: "step6".into(),
         db_path: database.to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         dimension: dimension.into(),
         config_path: Some(config_path.to_string_lossy().into()),
     };
@@ -659,7 +653,6 @@ async fn dimension_centroid_tool_and_rewrite_validation_round_trip() {
                 prompt: "Write a sentence.".into(),
                 author: "step6".into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 config_path: Some(config_path.to_string_lossy().into()),
                 no_validate: true,
             }))
@@ -722,7 +715,6 @@ async fn rewrite_centroid_lookup_failure_is_not_missing() {
             author: "test".into(),
             dimension: "hopper".into(),
             db_path: database.to_string_lossy().into(),
-            passphrase: PASSPHRASE.into(),
             config_path: Some(config_path.to_string_lossy().into()),
         }))
         .await
@@ -750,7 +742,6 @@ async fn centroid_refs_file_containment_and_empty_selection() {
     let request = |path: &std::path::Path| crate::tools::compose_tools::CentroidRequest {
         author: "test".into(),
         db_path: directory.path().join("unused.db").to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         refs_file: Some(path.to_string_lossy().into()),
         dimension: Some("hopper".into()),
     };
@@ -805,7 +796,6 @@ fn embed_request(directory: &std::path::Path, database: &str, text: &str) -> Emb
         chunks_jsonl: path.to_string_lossy().into(),
         tagged_jsonl: None,
         db_path: directory.join(database).to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         model: Some("offline".into()),
         batch_size: 10,
     }
@@ -883,7 +873,6 @@ async fn embedding_inventory_returns_exact_missing_only_retry_refs() {
             .corpus_embedding_inventory(Parameters(EmbeddingInventoryRequest {
                 chunks_jsonl: shard.to_string_lossy().into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 expected_model: "provider/actual-model".into(),
             }))
             .await,
@@ -900,7 +889,6 @@ async fn embedding_inventory_returns_exact_missing_only_retry_refs() {
             .corpus_embedding_inventory(Parameters(EmbeddingInventoryRequest {
                 chunks_jsonl: shard.to_string_lossy().into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
                 expected_model: "provider/other-model".into(),
             }))
             .await,
@@ -924,7 +912,6 @@ fn query(database: Option<&std::path::Path>, answer: bool, include_text: bool) -
         include_text: Some(include_text),
         min_score: Some(0.5),
         db_path: database.map(|path| path.to_string_lossy().into()),
-        passphrase: Some(PASSPHRASE.into()),
     }
 }
 
@@ -934,7 +921,6 @@ async fn purge(server: &CorpusServer, database: &std::path::Path) -> Value {
             .corpus_purge_qa(Parameters(PurgeQaRequest {
                 prefix: "corpus:test:".into(),
                 db_path: database.to_string_lossy().into(),
-                passphrase: PASSPHRASE.into(),
             }))
             .await,
     )
@@ -1046,7 +1032,6 @@ async fn retrieval_consolidation_survives_restart() {
             .to_string_lossy()
             .into(),
         db_path: directory.path().join("memory.db").to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         prefix: "corpus:test:".into(),
         threshold: 0.75,
         concurrency: 2,
@@ -1192,7 +1177,6 @@ async fn retrieval_origin_isolation_and_path_aliases() {
         false,
         true,
     );
-    request.passphrase = Some("wrong but unused".into());
     assert_eq!(
         content(server.corpus_query(Parameters(request)).await)["total_indexed"],
         3,
@@ -1456,7 +1440,6 @@ async fn consolidation_fixture(
             .to_string_lossy()
             .into(),
         db_path: directory.join("memory.db").to_string_lossy().into(),
-        passphrase: PASSPHRASE.into(),
         prefix: "corpus:test:".into(),
         threshold: 0.75,
         concurrency: 2,
@@ -1487,7 +1470,7 @@ async fn retrieval_consolidation_snapshot_is_protected() {
                 tagged_jsonl: request.tagged_jsonl,
                 output: request.output,
                 db_path: request.db_path,
-                passphrase: request.passphrase,
+                passphrase: PASSPHRASE.into(),
                 prefix: request.prefix,
                 threshold: request.threshold,
                 concurrency: request.concurrency,
@@ -1539,7 +1522,7 @@ async fn retrieval_replacement_error_survives_tool_boundary() {
                             tagged_jsonl: request.tagged_jsonl.clone(),
                             output: request.output.clone(),
                             db_path: request.db_path.clone(),
-                            passphrase: request.passphrase.clone(),
+                            passphrase: PASSPHRASE.into(),
                             prefix: request.prefix.clone(),
                             threshold: request.threshold,
                             concurrency: request.concurrency,
@@ -1614,7 +1597,6 @@ async fn retrieval_partial_purge_failure_still_invalidates() {
         .corpus_purge_qa(Parameters(PurgeQaRequest {
             prefix: "corpus:test:".into(),
             db_path: database.to_string_lossy().into(),
-            passphrase: PASSPHRASE.into(),
         }))
         .await;
     assert!(result.is_err(), "partial purge must not return success");

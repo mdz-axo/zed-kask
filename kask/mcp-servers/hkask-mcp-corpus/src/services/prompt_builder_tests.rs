@@ -13,7 +13,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use serde_json::json;
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
-const PASSPHRASE: &str = "qa-context-fixture";
+const PASSPHRASE: &str = crate::helpers::TEST_PASSPHRASE;
 
 struct NoInference;
 impl InferencePort for NoInference {
@@ -28,6 +28,7 @@ impl InferencePort for NoInference {
 }
 
 fn server() -> CorpusServer {
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = Arc::new(NoInference);
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(
@@ -115,7 +116,6 @@ fn request(directory: &Path, name: &str, chunks: &[TaggedChunk]) -> anyhow::Resu
             .to_string_lossy()
             .into(),
         db_path: None,
-        passphrase: None,
         prefix: Some("corpus:test:".into()),
         context_k: 0,
         qa_pairs_per_chunk: 2,
@@ -291,7 +291,6 @@ async fn context_requires_db_and_preserves_local_identity_mapping() -> anyhow::R
     let mut contextual = request(directory.path(), "context", &chunks[..1])?;
     contextual.context_k = 1;
     contextual.db_path = Some(directory.path().join("memory.db").to_string_lossy().into());
-    contextual.passphrase = Some(PASSPHRASE.into());
     let (summary, prompts) = build(&server, contextual).await?;
     assert_eq!(summary["context_scope"], "complete_source");
     assert_eq!(prompts[0].passages.len(), 2);

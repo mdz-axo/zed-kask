@@ -1,10 +1,10 @@
 # zed-kask findings review — kask core, MCP servers, and seams
 
-**Date:** 2026-09-18 · **Mode:** findings-only, read-only (no edits, no commits) ·
+**Date:** 2026-09-18 · **Mode:** findings-only, read-only (no edits to source, no commits) ·
 **Compatibility:** none required — pre-release; breaking-change proposals allowed.
-**Judge question:** does this code, as built, produce elegant, efficient, precise,
-functional behavior — with *elegant* anchored to the project's own principles,
-not private taste?
+**Judge question:** does this code, as built, produce elegant, efficient, precise, functional
+behavior — with *elegant* anchored to the project's own principles
+(P5 essentialism/deletion test, honest feedback loops, D-seam discipline), not private taste.
 
 ---
 
@@ -21,180 +21,500 @@ not private taste?
 - 12 MCP servers run as child processes over stdio under a governed `McpRuntime`
   (single spawn authority, D3); the agent's tool surface routes through the
   process-global `KaskToolSource`.
-- Keychain is the single source of truth for API keys (D5/D9): data-service keys at
-  `kask://credentials/<key>`, inference-provider keys at their provider `api_url`
-  slots; one passphrase (`HKASK_DB_PASSPHRASE`) for every SQLCipher DB.
-- Standardized artifact storage (D28): one rooted data tree with class subdirs;
-  visible artifacts under `~/Documents/zk-data/`.
+- Keychain is the single source of truth for API keys (D5/D9); one passphrase
+  (`HKASK_DB_PASSPHRASE`) for every SQLCipher DB, resolved via the canonical
+  2-tier helper `hkask_mcp_server::server::credentials::resolve_db_passphrase`.
+- Standardized artifact storage (D28): one rooted data tree with class subdirs.
 
 ### 1.2 Human-in-the-loop philosophy (what the system is for)
 
-- zed-kask is a human-in-the-loop system for working with AI agents and tools: the
-  **user is the product manager** (keeper of functional requirements, judge of what
+- The user is the product manager (keeper of functional requirements, judge of what
   the work is for); the agent is the technical program manager
   (`kask/docs/architecture/functional-interaction-spec.md`, D40).
 - The Curator is the in-process cybernetic regulator: algedonic alerts, escalations,
-  calibration, operator advice review. Regulation (`hkask-regulation`) is the
-  nervous system that keeps the loop honest (P9).
-- Magna Carta sovereignty (P1–P4): user data ownership, affirmative consent,
-  generative space, capability separation; SQLCipher file as the private-sphere
-  boundary; P12 authenticated host mandate with *surfaced* fallbacks.
+  calibration, operator advice review (P9). Regulation must be an honest feedback
+  loop — every deviation observable, every degradation surfaced.
+- Magna Carta sovereignty (P1–P4), SQLCipher file as private-sphere boundary (P11.1),
+  P12 authenticated host mandate with *surfaced* fallbacks.
 
 ### 1.3 Quality principles (the judge's yardstick)
 
-Anchored to `kask/docs/architecture/core/PRINCIPLES.md` (P1–P12), the Magna Carta,
-and the project `.rules`:
-
-- **P5 Essentialism & Minimalism** — "remove before adding; every module must earn
-  existence by reducing total system action" (the deletion test); 5W1H gate for new
-  surface; bridges earn their keep.
-- **P7 Evolutionary Architecture** — types and seams emerge from real usage; no
-  speculative abstraction (trait-with-one-impl is a smell).
-- **P8 Semantic Grounding** — P8.3 fallback ladder, "nothing is ever untagged";
-  agent output grounding; published vocabularies, never private definitions.
-- **P9 Homeostatic Self-Regulation** — honest feedback loops: errors surfaced, never
-  swallowed; degradations labeled, never reported as success; `reg.*` namespace
-  discipline.
+- **P5 Essentialism** — remove before adding; deletion test; 5W1H gate.
+- **P7 Evolutionary Architecture** — no speculative abstraction ("reserved for
+  future" surface is the anti-pattern).
+- **P8 Semantic Grounding** — P8.3 fallback ladder; absence must never be recorded
+  as zero.
+- **P9 Homeostatic Self-Regulation** — errors surfaced, never swallowed;
+  degradations labeled, never reported as success; "not configured" must be
+  distinguishable from "configured but broken."
 - **`.rules` operational discipline** — no `unwrap()` on fallible paths; never
-  silently discard errors (`let _ =`); advertised invariants must point to their
-  enforcement line or say "not yet enforced"; stale comments are active
-  misinformation; deletions must clean up what they orphan (no dead deps, no
-  orphan piles); validation gates must return `Undetermined`/`Skipped`, not
-  `Ready` with empty findings; MCP servers are leaf crates (visibility tightening
-  is churn; focus on truly unused items).
-- **D-seam discipline** — upstream findings route through kask-side seams only;
-  every zed-side edit carries its DIVERGENCE.md update in the same pass.
+  discard errors with `let _ =`; advertised invariants must point to their
+  enforcement line; stale comments are active misinformation; deletions clean up
+  what they orphan; MCP servers are leaf crates.
 
-### 1.4 Frame verification (`.rules` claims checked against the tree)
+### 1.4 Frame verification (`.rules`/docs claims checked against the tree)
 
 - `script/clippy` machete scope is `kask/`-only — **verified** (`script/clippy:56-59`).
-- `hkask-ledger` listed in DIVERGENCE.md's workspace-member list — **stale**: the
-  crate was deleted 2026-09-08 (per `zed-host-architecture-plan.md:88`); absent
-  from the tree and the root manifest.
-- Docs README (updated 2026-09-18) says "11 managed MCP servers" and "D1–D56" —
-  **stale**: the tree has 12 servers (`hkask-mcp-spreadsheet` added) and
-  DIVERGENCE.md runs D1–D66. Systemic doc drift is itself a finding (stale
-  comments are active misinformation).
+- Canonical passphrase helper adopted — **verified** (no server inlines
+  `HKASK_DB_PASSPHRASE` reads; all route through `credentials.rs`).
+- Doc drift confirmed at grounding (see F3): `hkask-ledger` in DIVERGENCE's member
+  list is deleted; server-count and D-range claims are stale in several docs.
 
 ---
 
 ## 2. Crate inventory and lens assignments
 
-Process lenses (run by the lead, not delegated): **kata-improvement** (outer loop),
-**metacognition** (per-phase prediction/gap), **falsifiability** (gate on every
-finding at synthesis), **grill-me** (adversarial pass on top findings),
-**refactor-architecture** (cross-crate synthesis from cluster inputs + own reads).
+Process lenses (lead): **kata-improvement** (outer loop), **metacognition**
+(per-phase predictions, §5), **falsifiability** (every finding below carries a
+discriminating check), **grill-me** (adversarial verification — see §5.3),
+**refactor-architecture** (cross-crate synthesis from the sweeps below).
 
-Per-crate lenses — deep scope (all four: deep-module, code-review, bug-hunt,
-lean-prover), delegated in clusters A1–A5 (core) and B1–B8 (servers):
+Per-crate lenses: **deep-module**, **code-review**, **bug-hunt**, **lean-prover**.
+Coverage method — every deep-scope crate received: (a) the full pattern-sweep set
+(production `unwrap()`/`expect()` censuses with `#[cfg(test)]` filtering, `let _ =`
+census, silent-`.ok()` sweep, `block_on`/tokio-trap scan, `panic!` scan,
+`unwrap_or(0)` sense-input scan, `allow(dead_code)`/`mod.rs` census, envelope-pattern
+and passphrase-resolution greps, env-read census per server), plus (b) targeted
+deep reads where the crate is seam-central or the sweep flagged it. Crates whose
+coverage was sweeps + partial reads are marked **bounded** — the mission's
+bounded-pass allowance, recorded per crate.
 
-| Cluster | Crate | LOC | Status |
+### kask/crates/ (core)
+
+| Crate | LOC | Coverage | Notes |
 |---|---|---|---|
-| A1 foundation | `hkask-types` | 7,399 | pending |
-| A1 | `hkask-tool-port` | 147 | pending |
-| A1 | `hkask-event-store` | 921 | pending |
-| A1 | `hkask-lisp` | 2,028 | pending |
-| A1 | `hkask-steer-core` | 242 | pending |
-| A1 | `hkask-email` | 328 | pending |
-| A1 | `hkask-services-core` | 792 | pending |
-| A2 storage/memory | `hkask-storage` | 9,565 | pending |
-| A2 | `hkask-memory` | 5,288 | pending |
-| A2 | `hkask-keystore` | 777 | pending |
-| A3 regulation | `hkask-regulation` | 12,765 | pending |
-| A3 | `hkask-forecast` | 1,566 | pending |
-| A4 runtime/server fw | `hkask-mcp` | 3,649 | pending |
-| A4 | `hkask-mcp-server` | 2,144 | pending |
-| A4 | `hkask-inference` | 6,316 | pending |
-| A4 | `hkask-bridge-ontology` | 3,526 | pending |
-| A4 | `hkask-condenser` | 2,283 | pending |
-| A4 | `hkask-spreadsheet` | 1,795 | pending |
-| A5 bridge+seams | `kask_bridge` | 19,342 | pending |
-| B1 | `hkask-mcp-companies` | 25,509 | pending |
-| B2 | `hkask-mcp-corpus` | 25,032 | pending |
-| B3 | `hkask-mcp-media` | 25,712 | pending |
-| B4 | `hkask-mcp-swarm` | 23,359 | pending |
-| B5 | `hkask-mcp-research` | 14,827 | pending |
-| B6 | `hkask-mcp-prediction-markets` | 10,458 | pending |
-| B6 | `hkask-mcp-scenarios` | 6,403 | pending |
-| B7 | `hkask-mcp-training` | 9,303 | pending |
-| B7 | `hkask-mcp-curator` | 8,144 | pending |
-| B8 | `hkask-mcp-kata-kanban` | 8,758 | pending |
-| B8 | `hkask-mcp-portfolio` | 6,440 | pending |
-| B8 | `hkask-mcp-spreadsheet` | 625 | pending |
+| `hkask-types` | 7,399 | sweeps + targeted reads | `InferenceUsage` (F10), `tool_schema` dead-code allow = justified test fixture on the recorded baseline; `voice.rs` alive (media users); ports clean |
+| `kask_bridge` | 19,342 | deep (mcp_servers.rs, settings.rs, mcp_env.rs, memory/*, alert_escalation.rs, ingest.rs) | F3, F5, F8, F9 citations; env construction exemplary (mcp_servers.rs:11-22, 646-664, 698-821) |
+| `hkask-tool-port` | 147 | sweeps + dependent check | clean; 4 dependents earn it |
+| `hkask-keystore` | 777 | sweeps + targeted reads | keychain docs honest (async-std backend note); passphrase chain documented "not a security boundary" |
+| `hkask-regulation` | 12,765 | deep (cybernetics_loop.rs, cycle.rs head, system_simulator.rs, doc-invariant sample) | F7; production cycle exemplary (absence-vs-zero modeling, `AlertQueueOutcome` honesty, no-sink warns); `block_on` sites all test-module |
+| `hkask-forecast` | 1,566 | sweeps + dependents | 4 server dependents; alive |
+| `hkask-lisp` | 2,028 | sweeps + dependents | agent/companies/corpus dependents; no production unwrap hits |
+| `hkask-memory` | 5,288 | sweeps + targeted reads (`MemoryStore::open`, memory_store.rs:153-168) | F1 chain confirmed here; embed/h_mem split clean |
+| `hkask-mcp` | 3,649 | deep (runtime.rs:1-420 — config, healing docs, PASSTHROUGH_ENV, governance) | F3 (runtime doc defects), F6; SPAWN_RUNTIME reactor-hop exemplary (runtime.rs:107-129) |
+| `hkask-mcp-server` | 2,144 | deep (credentials.rs full, transport.rs P12) | canonical chain exemplary (credentials.rs:61-104, parse_env_warn:122-144); P12 fallback surfaced with warns |
+| `hkask-event-store` | 921 | sweeps + dependents | 3 dependents (bridge/swarm/training); alive |
+| `hkask-storage` | 9,565 | deep (sqlite.rs:1-140, core/connection.rs PRAGMA path) | driver exemplary (WAL ordering invariant :14-25, labeled pools, `with_durability` honesty); SQLCipher probe-before-pool documented (connection.rs:426-441) |
+| `hkask-inference` | 6,316 | targeted reads (hkask_inference.rs wire-parse, openai_compat.rs, ipc_client.rs) | F10 citations; `openai_compat.rs:85` clean (Option::max); probe-connect `let _` intentional (ipc_client.rs:327-336) |
+| `hkask-bridge-ontology` | 3,526 | sweeps + panic-site check | `panic!` sites all `#[cfg(test)]` fixture loads; ladder vocabulary intact |
+| `hkask-condenser` | 2,283 | sweeps + dependents | bridge-dependent (BridgeThreadCondenser); alive |
+| `hkask-services-core` | 792 | sweeps + doc read | F3 (stale "CLI, API, REPL" consumers); live consumer = corpus direct-launch settings |
+| `hkask-email` | 328 | sweeps + dependents | bridge+zed dependents (email sink); alive |
+| `hkask-steer-core` | 242 | sweeps + read | tool-advertisement truth; clean |
+| `hkask-spreadsheet` | 1,795 | sweeps + expect census | expect sites test-module; engine alive (portfolio + spreadsheet servers) |
 
-Bounded scope (zed-side kask-owned crates; lenses: deletion test + seam health +
-obvious-defect scan; rationale: kask-owned but zed-side UI crates — the mission's
-center of mass is `kask/` + `mcp-servers/` + seams; recorded as bounded, not
-skipped):
+### kask/mcp-servers/ (servers)
 
-| Cluster | Crate | LOC | Status |
+| Crate | LOC | Coverage | Notes |
 |---|---|---|---|
-| C1a widgets | `hkask-viz-core` | 660 | pending |
-| C1a | `hkask-media-widget` | 6,243 | pending |
-| C1a | `hkask-graph-widget` | 2,732 | pending |
-| C1a | `hkask-kanban-widget` | 3,147 | pending |
-| C1b widgets/leafs | `hkask-portfolio-widget` | 2,199 | pending |
-| C1b | `hkask-scenarios-widget` | 1,698 | pending |
-| C1b | `hkask-spreadsheet-widget` | 1,659 | pending |
-| C1b | `hkask-swarm-widget` | 519 | pending |
-| C1b | `hkask-media-benchmarks` | 317 | pending |
-| C1b | `hkask-steer` | 579 | pending |
-| C1b | `hkask-tool-invoker` | 352 | pending |
-| C1b | `hkask-conversation-injector` | 258 | pending |
-| C2 panels | `swarm_panel` | 10,145 | pending |
-| C2 | `kanban_panel` | 3,922 | pending |
-| C2 | `portfolio_panel` | 992 | pending |
-| C2 | `marketplace_ui_common` | 220 | pending |
+| `hkask-mcp-companies` | 25,509 | sweeps + targeted reads (screener.rs, research.rs, fibo_cache.rs, acquisition_tests exclusion) | F4 (screener regexes); research.rs statics use expect-on-compile (acceptable); `.ok()` sites = external-data tolerance |
+| `hkask-mcp-corpus` | 25,032 | deep (helpers.rs, index.rs, tools/corpus.rs, storage.rs, compose_tools.rs, semantic.rs, calibration.rs envelope/passphrase chain) | F1, F2, F3, F4 citations; `write_contained` single enforcement point exemplary (helpers.rs:186-192) |
+| `hkask-mcp-media` | 25,712 | sweeps + targeted reads (jobs.rs, hkask_mcp_media.rs structure, faces.rs) | job-store strict contract deliberate + pinned (jobs.rs:28-46); production envelope use = strict decode, not duplication |
+| `hkask-mcp-swarm` | 23,359 | sweeps + targeted reads (cloud_swarm_tools.rs, a2a_http.rs, local_tools.rs, grounding.rs) | F13; F5 (no HKASK_SKILLS_DIR readers); `.ok()` sites = best-effort response parsing |
+| `hkask-mcp-research` | 14,827 | sweeps + targeted reads (db.rs, providers.rs, synthetic.rs, hkask_mcp_research.rs:1335) | F11; F12; `pick_best_provider` guarded (providers.rs:874-881) — not a finding; db.rs `.ok()`s legitimate optional lookups |
+| `hkask-mcp-prediction-markets` | 10,458 | sweeps + targeted reads (streaming.rs, hkask_mcp_prediction_markets.rs, fetch_contracts.rs) | F12; envelope extractor test-only; HTTP timeouts pinned below the 60s MCP cap (test-documented) |
+| `hkask-mcp-scenarios` | 6,403 | sweeps (bounded) | no production unwrap/expect/let-_/trap hits beyond sweeps |
+| `hkask-mcp-training` | 9,303 | sweeps + targeted reads (submit.rs:111 guard-invariant, env census) | guard-implied expect documented; env reads align with allowlist (mcp_servers.rs pins) |
+| `hkask-mcp-curator` | 8,144 | sweeps + targeted reads (distillation.rs expect sites, tool_behavior references) | expect sites test-module or epoch invariants; distillation config env allowlist documents live-observed gap fix |
+| `hkask-mcp-kata-kanban` | 8,758 | sweeps + targeted reads (service.rs let-_= sites) | trait-param silencing at service.rs:352/569/939 (interface mismatch, minor — observation); idempotency design documented + pinned (D3) |
+| `hkask-mcp-portfolio` | 6,440 | sweeps + targeted read (server.rs:175) | schema-validity expect at startup, by construction; provider-agnostic allowlist pinned |
+| `hkask-mcp-spreadsheet` | 625 | sweeps (bounded) | minimal mutation-owner server; 0 env reads, allowlist = artifacts dir only |
 
-Seams under explicit audit (A5 brief + lead synthesis):
+### zed-side kask-owned (bounded scope — deletion test + seam health + trap sweeps)
 
-1. Tool-contract envelopes (`{"content": ...}` unwrap discipline across all servers).
-2. Credential/passphrase resolution (canonical `resolve_db_passphrase` adoption;
-   allowlist alignment).
-3. Settings-to-server sync (`mcp_env` → per-server `config_env` allowlists → actual
-   env reads; `nudge_mcp_servers`; load/unload lifecycle).
-4. Shared DB patterns (SQLCipher open/passphrase, path layout, schema duplication
-   across servers).
-5. GPUI/background-runtime boundary (Send/Sync, tokio-vs-GPUI timer traps).
-6. Tool-advertisement truth (server `TOOL_NAMES` → Steer overlays → prompts).
-7. Inference IPC lifecycle (socket path, grants, circuit breaker).
+| Crate | LOC | Coverage | Notes |
+|---|---|---|---|
+| `hkask-tool-invoker` | 352 | full read | exemplary leaf crate — `InvokeError` retry taxonomy replaces string-matching |
+| `hkask-conversation-injector` | 258 | full read | exemplary — per-app `Global` (not process-global) with leak rationale |
+| `hkask-steer` | 579 | read + sweeps | Steer lifecycle; clean |
+| `hkask-viz-core` | 660 | sweeps (bounded) | registry composition; no traps |
+| `hkask-media-widget` | 6,243 | sweeps + cfg(test) verification | block_on sites all test-module (verified :1305+) |
+| `hkask-graph-widget` | 2,732 | sweeps (bounded) | no trap hits |
+| `hkask-kanban-widget` | 3,147 | sweeps (bounded) | no trap hits |
+| `hkask-portfolio-widget` | 2,199 | sweeps (bounded) | clean |
+| `hkask-scenarios-widget` | 1,698 | sweeps (bounded) | clean |
+| `hkask-spreadsheet-widget` | 1,659 | sweeps (bounded) | clean |
+| `hkask-swarm-widget` | 519 | sweeps (bounded) | clean |
+| `hkask-media-benchmarks` | 317 | sweeps (bounded) | isolated bench package (D18) |
+| `swarm_panel` | 10,145 | sweeps + spot checks | no production block_on/trap hits |
+| `kanban_panel` | 3,922 | sweeps + targeted read (board_picker.rs:120-155) | production `foreground.block_on(match_strings)` at board_picker.rs:145 — deliberate, documented ("board list is small… same approach as ThreadPicker"), bounded work → observation, not finding |
+| `portfolio_panel` | 992 | sweeps (bounded) | clean |
+| `marketplace_ui_common` | 220 | sweeps (bounded) | shared chrome; survives D30 by documented reuse |
+
+### Seam audit results
+
+1. **Tool-contract envelopes:** CLEAN — production uses shared
+   `hkask_types::tool_response::unwrap_tool_envelope`; per-server extractors
+   (corpus `unwrap_content`, media `content_of`, pm `unwrap_content`) are
+   test-module helpers.
+2. **Credential/passphrase resolution:** canonical chain exemplary
+   (`credentials.rs:61-104`, typed `permission_denied`, warn-on-miss);
+   exceptions are F1 (corpus gap) and F9 (NEBIUS classification).
+3. **Settings-to-server sync:** allowlists are rationale-documented and
+   pin-tested per server (`mcp_servers.rs:1037-1100` — allowlist-vs-reads
+   assertions); exception is F5 (dead entry).
+4. **Shared DB patterns:** driver exemplary (PRAGMA ordering invariant, labeled
+   pools, durability honesty, probe-before-pool); the gap is corpus-side (F1).
+5. **GPUI/background-runtime boundary:** production clean everywhere reviewed;
+   `block_on`/`tokio::time` traps confined to `#[cfg(test)]` (verified per file);
+   the one production `block_on` (board_picker.rs:145) is documented + bounded.
+6. **Tool-advertisement truth:** bounded pass — `hkask-steer-core` (render/verify
+   + generated `TOOL_NAMES`, D2) read; prompt-token tests documented in DIVERGENCE.
+7. **Inference IPC lifecycle:** socket re-set + dual re-sync verified in code
+   (`mcp_servers.rs:797-818`); `SPAWN_RUNTIME` reactor-hop for off-runtime
+   reconnect documented with the live incident (runtime.rs:107-129).
 
 ---
 
 ## 3. Prioritized findings
 
-*(filled at Phase 4 synthesis — each finding: file:line, falsifiable claim,
-principle served/violated, severity, effort, discriminating check)*
+Ranked by severity ÷ effort (highest value first). Every claim is IS (verified in
+tree this session); directions are proposals, not patches.
+
+### F1 — Corpus SQLCipher passphrase: empty-string fallback validated on only one of ~11 consumer paths · severity medium-high · effort S
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:69-85`
+  (`default_corpus_passphrase()` — `resolve_credential(...).ok().unwrap_or_default()`,
+  doc delegates the invariant: "callers must surface permission_denied"); the gate
+  exists only at `src/index.rs:271-276` (`hydrate_if_empty` checks
+  `passphrase.is_empty()` → `permission_denied`); direct consumers without a check:
+  `src/tools/corpus.rs:323` (`open_memory_store(&req.db_path, &req.passphrase)?`)
+  plus serde-default sites `tools/corpus.rs:599,629,718`, `tools/storage.rs:568`,
+  `tools/semantic.rs:588,622`, `tools/compose_tools.rs:129,146,164`,
+  `tools/calibration.rs:54`; the open chain adds no check:
+  `helpers.rs:174-180` → `kask/crates/hkask-memory/src/memory_store.rs:153-159`
+  → `kask/crates/hkask-storage/src/core/connection.rs:430-431`
+  (`PRAGMA key = '{escaped}'`).
+- **Claim (IS, falsifiable):** when `HKASK_DB_PASSPHRASE` resolution fails,
+  `default_corpus_passphrase()` returns `""` (helpers.rs:84) and every consumer
+  except `hydrate_if_empty` passes `""` straight into the SQLCipher key PRAGMA —
+  so a direct-launched server (no env injection, no keychain entry) attempts an
+  open with an empty key instead of returning `permission_denied`. The
+  "callers must surface permission_denied" invariant is enforced nowhere central.
+- **Principle:** P9 (a resolution failure silently becomes an open attempt —
+  "not configured" must not look like a normal call); lean-prover (comment-delegated
+  invariant, no enforcement line).
+- **Check:** unset `HKASK_DB_PASSPHRASE` (and clear the keychain tier), direct-launch
+  the corpus server, and call any serde-default consumer (e.g. `corpus_embed` with a
+  fresh `db_path`): the claim predicts the call reaches the SQLCipher open with
+  `PRAGMA key = ''`; the honest behavior is `permission_denied` before any open.
+- **Direction:** enforce the empty check once — in `open_memory_store` or
+  `default_corpus_passphrase` (return `Result`, map empty → `permission_denied`) —
+  and delete the per-caller comment invariant.
+- **Counterfactual:** if any layer validated empty centrally, this finding is false —
+  verified none does (greps + reads above).
+
+### F2 — Credential field model-exposed across ~10 corpus tool schemas · severity medium · effort M
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:599-600,629-630,718`,
+  `tools/storage.rs:567-568`, `tools/semantic.rs:587-588,621-622`,
+  `tools/compose_tools.rs:128-129,145-146,163-164`, `tools/calibration.rs:53-54`
+  — `#[serde(default = "...passphrase")] pub passphrase: String` on
+  `JsonSchema`-deriving request structs. Live evidence: this session's own
+  `corpus_query` tool schema exposes `passphrase` to the model.
+- **Claim (IS, falsifiable):** the DB passphrase is a model-settable parameter on
+  ~10 model-facing schemas although the model never legitimately supplies it (the
+  serde default resolves server-side when omitted). A model-supplied value on a
+  fresh `db_path` creates a DB encrypted under a key the operator never set; the
+  field also puts credential-shaped surface into every prompt's schema tokens.
+- **Principle:** P5 (interface minimalism — expose what the caller may set);
+  P4 (credential authority belongs to the server's resolution chain, not the caller).
+- **Check:** call `corpus_embed` with `passphrase: "model-chosen"` and a fresh
+  `db_path` — a DB opens under that key; then grep the server's emitted
+  `input_schema` JSON for the `passphrase` property (present today).
+- **Direction:** remove the field from model-facing schemas entirely; resolve
+  server-side only (what the default already does when omitted). Breaking change —
+  allowed.
+
+### F3 — Systemic doc drift on load-bearing surfaces · severity medium · effort S–M
+
+- **file:line (all verified against the tree):**
+  - `DIVERGENCE.md:239` lists deleted `hkask-ledger` as a workspace member
+    (deleted 2026-09-08; `zed-host-architecture-plan.md:88`; absent from tree and
+    root manifest).
+  - `kask/docs/README.md:13` "11 managed MCP servers" and `:15`/`:137` "D1–D56" —
+    the tree has **12** servers (`hkask-mcp-spreadsheet` added) and DIVERGENCE runs
+    to **D66**; same stale count in `kask/docs/reference/mcp-servers/README.md:40`
+    ("11 built-in servers") and `kask/docs/architecture/core/MDS.md` (via README:32,
+    "18 library/composition crates, and 11 MCP servers" — actual: 19 + 12).
+  - `DIVERGENCE.md:254` — upstream-sync runbook says "D1–D58" while `:125` says
+    "D1–D66".
+  - `kask/crates/hkask-mcp/src/runtime.rs:102` — mid-sentence fragment
+    ("…(observed live 2026-08-29). up. Reset to zero on the first healthy connection
+    seen."); `:144-148` — doc comment for the **removed** degraded-interval
+    mechanism (per D3), now mis-attached above `resolve_duration_env_secs`;
+    `:358-359` — contract reference to deleted `crates/hkask-cli/src/repl/builtin_servers.rs`.
+  - `kask/crates/kask_bridge/src/mcp_servers.rs:119-121` — stale comment: "the DB is
+    silently encrypted with the hardcoded dev passphrase" (current code returns `""`
+    + warn — see F1).
+  - `kask/crates/hkask-services-core/src/standalone_settings.rs:2-4` — names deleted
+    consumers ("CLI, API, REPL"); the live consumer is MCP servers under direct launch.
+- **Claim (IS, falsifiable):** at least six load-bearing docs/comments contradict
+  the tree. Per `.rules` ("stale comments are active misinformation" — agents follow
+  comments over code), these are the exact surfaces agents and upstream-rebasers
+  consult first.
+- **Principle:** `.rules` stale-comment rule; doc-truth; D-seam bookkeeping.
+- **Check:** each citation is directly contradicted by the tree (count server dirs =
+  12; `grep hkask-ledger Cargo.toml` → empty; `ls crates/hkask-cli` → absent;
+  `grep DEGRADED kask/crates/hkask-mcp/src/runtime.rs` → only an unrelated hit).
+
+### F4 — Regexes recompiled per call on corpus/companies hot paths · severity medium · effort S
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-corpus/src/convert.rs:226`
+  (`unescape_html` — `Regex::new(r"&#(\d+);")` per call), `:254`
+  (`strip_html_comments` per call), `:267-274` (`sanitize_links` builds **four**
+  regexes per call — runs pre-chunking on every document page);
+  `kask/mcp-servers/hkask-mcp-companies/src/screener.rs:597,627,759,834`
+  (`Regex::new(&pattern)` per keyword per prompt).
+  `grep -c 'LazyLock\|once_cell'` = 0 in both files.
+- **Claim (IS, falsifiable):** these functions compile regexes on every invocation;
+  a large `corpus_convert` recompiles four patterns per page — pure CPU waste on
+  the documented hot path.
+- **Principle:** efficiency (the judge question's "efficient"); P5 (a `LazyLock`
+  static is the standard deep fix; companies' `research.rs` already uses the
+  compile-once pattern — `research.rs:595` "static numeric-extraction pattern
+  compiles").
+- **Check:** instrument regex compilation (or time a 1,000-page convert) before/after
+  wrapping `sanitize_links`' four patterns in `LazyLock`.
+
+### F5 — Dead operator knob: `kask.swarm.skills_dir` → `HKASK_SKILLS_DIR` · severity medium-low · effort S
+
+- **file:line:** `kask/crates/kask_bridge/src/settings.rs:448` (`pub skills_dir:
+  String` on `KaskSwarmSettings`), `:513`, `:983`; `src/mcp_env.rs:333-334`
+  (emits `HKASK_SKILLS_DIR`); `src/mcp_servers.rs:389-393` (allowlist entry whose
+  own comment says "the swarm server no longer reads this env var").
+- **Claim (IS, falsifiable):** the setting flows settings → `mcp_env` → allowlist →
+  **nothing** — zero readers in `kask/mcp-servers/hkask-mcp-swarm/src` (grep
+  verified). An operator who sets it gets silent no-effect — precisely the
+  "not configured vs configured-but-broken" indistinguishability `.rules` forbids.
+- **Principle:** P5 (delete dead surface — the entry's own comment admits it);
+  P9 (silent no-op knob).
+- **Check:** `grep -rn 'HKASK_SKILLS_DIR' kask/mcp-servers/hkask-mcp-swarm/src` →
+  zero hits, while the setting round-trips (`mcp_env.rs:926` sets it in tests).
+
+### F6 — `startup_timeout` default borrows the health-check constant · severity medium-low · effort S
+
+- **file:line:** `kask/crates/hkask-mcp/src/runtime.rs:229-232` —
+  `resolve_duration_env_secs("HKASK_MCP_STARTUP_TIMEOUT_SECS", DEFAULT_HEALTH_CHECK_INTERVAL)`.
+- **Claim (IS, falsifiable):** the handshake/discovery deadline's fallback is
+  `DEFAULT_HEALTH_CHECK_INTERVAL` (60s), not a dedicated startup constant (none
+  exists in the const list, runtime.rs:58-105). Today the value is coincidentally
+  the intended 60s (DIVERGENCE D3), but any tuning of the health interval silently
+  re-times startup handshakes — latent cross-wiring between unrelated mechanisms.
+- **Principle:** precise behavior (constant coupling).
+- **Check:** in a test build, change `DEFAULT_HEALTH_CHECK_INTERVAL` alone and
+  observe `McpRuntimeConfig::default().startup_timeout` follow it.
+
+### F7 — `system_simulator` production module framed as an aspirational "digital twin" · severity low · effort S
+
+- **file:line:** `kask/crates/hkask-regulation/src/system_simulator.rs:1-8`
+  ("Predictive regulation via a moving-average digital twin", "Future (Fermi-style
+  ODE models)" — referencing a `dynamics` crate that does not exist in the
+  workspace); used in production at `cybernetics_loop.rs:231` (`simulator:
+  MovingAverageExtrapolator`) and `:332`.
+- **Claim (IS, falsifiable):** the production loop's trend predictor lives in a
+  module named and motivated as a simulator with an unimplemented ODE future; the
+  internal docs are honest ("simple moving-average… no learning"), but the framing
+  invites speculative growth and misdescribes what production runs.
+- **Principle:** P7 (no speculative abstraction).
+- **Check:** `grep -r 'dynamics' Cargo.toml` → no such crate; the module's real API
+  is a windowed moving-average fit.
+
+### F8 — `AlertEscalationSink::persist_alert` carries a discard-by-contract legacy variant · severity low · effort S
+
+- **file:line:** `kask/crates/hkask-regulation/src/algedonic.rs:170-200` (trait:
+  `try_persist_alert`'s default falls back to `persist_alert`, `:187`);
+  `kask/crates/kask_bridge/src/memory/alert_escalation.rs:390-394`
+  (`let _ = self.persist_alert_reporting(...)` — "the legacy contract").
+- **Claim (IS, falsifiable):** the sink trait requires a best-effort variant whose
+  contract is to discard persistence failures, beside the honest
+  `try_persist_alert` (which the production cycle already calls —
+  `cycle.rs:134`). In a no-backward-compat project this is a legacy surface; the
+  trait could collapse to the honest variant.
+- **Principle:** P5 (delete the legacy path); P9.
+- **Check:** `grep -rn '\.persist_alert('` → the only production caller is the
+  default fallback at `algedonic.rs:187`.
+
+### F9 — NEBIUS IDs classified as credentials · severity low · effort S
+
+- **file:line:** `kask/crates/kask_bridge/src/mcp_servers.rs:435-436`
+  (`NEBIUS_PROJECT_ID`, `NEBIUS_SUBNET_ID` under `credentials:`) vs `:457-465`
+  (the file's own reclassification of `RUNPOD_TEMPLATE_ID` to `config_env`:
+  "a template ID… not a key").
+- **Claim (IS, falsifiable):** non-secret infrastructure IDs ride the credential
+  allowlist, inconsistent with the file's documented classification rule; both are
+  read via plain `std::env::var` (`hkask_mcp_training.rs:322`, `providers.rs:55`)
+  — the config-var access pattern.
+- **Principle:** P4 (boundary semantics — the credentials allowlist should mean
+  secrets); internal consistency.
+- **Check:** the two reads are `std::env::var` — identical to config vars; no
+  keychain tier is consulted for them.
+
+### F10 — `InferenceUsage` cannot distinguish "unreported" from zero · severity low · effort S–M
+
+- **file:line:** `kask/crates/hkask-types/src/ports/inference_types.rs:77-81`
+  (`pub struct InferenceUsage { prompt_tokens: u32, completion_tokens: u32,
+  total_tokens: u32 }`); produced at `kask/crates/hkask-inference/src/hkask_inference.rs:707-724`
+  (`content.unwrap_or_default()`, usage fields `.unwrap_or(0)` on optional wire data).
+- **Claim (IS, falsifiable):** a provider that omits usage yields an all-zero
+  `InferenceUsage`, indistinguishable at the type level from a genuine 0-token call
+  — so any future token/cost accounting cannot tell "provider didn't report" from
+  "nothing used". The project's own regulation layer models this correctly
+  ("absence, not zero — a fabricated 0 would read as a real measurement",
+  `cybernetics_loop.rs:70-71`); the inference port does not.
+- **Principle:** P8/P9 (absence-vs-zero honesty).
+- **Check:** read the struct (no Option/validity field); send a chat request whose
+  response omits `usage` — the port reports zeros, not "unreported".
+
+### F11 — Synthetic-feed error-status write discards its result silently · severity low · effort S
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:1335-1338`
+  (`let _ = spawn_db(db.clone(), move |conn| { update_synthetic_status(...) }).await;`).
+- **Claim (IS, falsifiable):** the DB record that a synthetic feed failed is written
+  best-effort with the `Result` dropped with no log — the tool error is returned to
+  the caller, but a lost status write is invisible; a later feed listing shows a
+  stale status with no trace.
+- **Principle:** P9; `.rules` `let _ =` on fallible operations (borderline
+  fire-and-forget bookkeeping — minimum remedy is a warn).
+- **Check:** make `update_synthetic_status` fail (read-only DB file) and trigger a
+  failed fetch — no log line names the lost write.
+
+### F12 — "Reserved for future" parameters in live interfaces · severity low · effort S
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-research/src/research/synthetic.rs:148`
+  (`let _ = content_type; // reserved for future content-type-based dispatch`);
+  `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:320`
+  (`let _ = (&store, &path); // reserved for a future price-snapshot join`).
+- **Claim (IS, falsifiable):** two production signatures carry parameters whose only
+  use is silencing, justified by futures that don't exist — P7's exact anti-pattern
+  (types and seams should emerge from real usage).
+- **Principle:** P7.
+- **Check:** `grep -n 'content_type' synthetic.rs` → no read site; no
+  price-snapshot join exists.
+
+### F13 — Repeated `json!(…).as_object_mut().expect("just constructed object")` (9 sites) · severity low · effort S
+
+- **file:line:** `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:336, 2058,
+  2124, 2272, 2516, 2582, 2638, 2690, 2745`.
+- **Claim (IS, falsifiable):** nine copies of a just-constructed-object `expect` —
+  each true by construction, but nine panic-anchored sites where one small helper
+  (`fn insert(payload: &mut Value, …)`) would delete the pattern.
+- **Principle:** P5 (pattern reuse over syntax repetition).
+- **Check:** count the sites (`grep -c 'just constructed object'` → 9).
+
+### Observations (examined, deliberately not findings)
+
+- `crates/kanban_panel/src/board_picker.rs:145` — production
+  `foreground.block_on(match_strings(...))` on the main thread: the `.rules`
+  `block_on` class, but documented ("board list is small… same approach as
+  ThreadPicker"), bounded work, upstream precedent. Watch under list growth.
+- Media job store persists tool-result envelopes and re-parses strictly
+  (`tools/jobs.rs:28-46`) — deliberate strict-contract design, pinned by
+  `job_list_decoder_rejects_legacy_and_incomplete_shapes`.
+- `default_corpus_passphrase`'s ProcessGlobal capture (`helpers.rs:44-54`) and
+  `write_contained` single enforcement point (`helpers.rs:186-192`) are good
+  deep-module patterns the F1 fix should follow.
+
+---
 
 ## 4. Ranked opportunities
 
-*(filled at Phase 4 synthesis)*
+1. **Centralize corpus credential resolution** (F1 + F2 together): make
+   `default_corpus_passphrase` return `Result` (empty → `permission_denied` at one
+   enforcement line), and delete the model-facing `passphrase` fields. One seam,
+   two findings, one change; shrinks ~10 schemas.
+2. **Doc-truth pass** (F3): the six drift sites are the surfaces agents and
+   rebasers trust most; the project's own `DOCUMENTATION_STANDARDS.md` lifecycle
+   discipline should sweep `DIVERGENCE.md` counts, the docs portal, `runtime.rs`
+   doc fragments, `mcp_servers.rs:119-121`, and `standalone_settings.rs` framing.
+3. **Regex caching** (F4): `LazyLock` the corpus `convert.rs` and companies
+   `screener.rs` patterns — measurable hot-path win, S effort.
+4. **Constant hygiene in the MCP runtime** (F6): introduce
+   `DEFAULT_STARTUP_TIMEOUT` and stop borrowing the health interval.
+5. **Dead-knob audit** (F5): `skills_dir` is confirmed dead end-to-end; a
+   one-command audit pattern (setting → emission → allowlist → reader grep) would
+   catch its siblings if any exist.
+6. **Regulation naming cleanup** (F7 + F8): rename `system_simulator` to its
+   actual function (e.g. `extrapolation`), delete the ODE future-docs, and collapse
+   `AlertEscalationSink` to the honest variant.
+7. **Small honesty fixes** (F9–F13): NEBIUS reclassification, `InferenceUsage`
+   absence modeling, the research status-write warn, removing the two
+   "reserved for future" params, and the swarm `json!` helper.
+
+---
 
 ## 5. Process record
 
-**Kata target condition:** every inventory crate examined by its assigned lenses;
-every finding falsifiable with file:line; top findings grilled; report ranks by
-severity × effort; no upstream-direct-edit proposals; no duplicated findings.
+### 5.1 Kata target condition
 
-**Phase 0 (Ground) — outcome:** frame recorded from DIVERGENCE.md, docs README,
-PRINCIPLES.md, Magna Carta, `.rules`; `.rules` spot-verified (machete scope ✓,
-hkask-ledger stale ✗, server-count drift ✗). Exit criteria met.
+Every inventory crate examined by its assigned lenses; every finding falsifiable
+with file:line; top findings adversarially verified; report ranks by
+severity × effort; no upstream-direct-edit proposals; no duplicated findings;
+no backward-compatibility concessions. Exit when the report exists — achieved.
 
-**Phase 1 (Inventory) — outcome:** 31 deep + 16 bounded crates enumerated from the
-tree + root manifest; clusters assigned; seams listed. Exit criteria met (every
-crate has an owner).
+### 5.2 Phase record
 
-**Phase 2 predictions (metacognition, recorded before the passes):**
+- **Phase 0 (Ground) — exit met.** Frame from DIVERGENCE.md, docs README,
+  PRINCIPLES.md (P1–P12), Magna Carta, `.rules`; `.rules` spot-verified
+  (machete scope ✓; `hkask-ledger` stale ✗; server counts stale ✗).
+- **Phase 1 (Inventory) — exit met.** 31 deep-scope crates (19 core + 12 servers,
+  ~228K LOC) + 16 zed-side kask-owned crates (~37K LOC, bounded scope,
+  interpretation recorded in §2). Every crate assigned coverage.
+- **Phase 2 (Review passes) — completed via direct passes.** *Stall record:*
+  the initial plan delegated per-cluster passes to five parallel sub-agents; the
+  operator canceled the wave, so the lead ran the passes directly (pattern
+  sweeps for breadth + targeted deep reads on seam-central crates). Every crate
+  received the sweep set; depth concentrated where the mission's center of mass
+  is (bridge, runtime, storage, regulation, corpus). Bounded passes are recorded
+  per crate in §2.
+- **Phase 3 (Grill) — completed inline.** Every finding in §3 was verified against
+  its cited lines this session; candidates that failed adversarial checks were
+  dropped or demoted to observations: envelope-extractor "duplication" (test-only,
+  verified), research `db.rs` `.ok()`s (legitimate optional lookups), ontology
+  `panic!`s (test fixtures), `pick_best_provider` (guarded caller), media
+  `block_on`s (test modules, verified per file), `openai_compat.rs:85`
+  (Option::max, not a sense input), `allow(dead_code)` in `tool_schema.rs`
+  (justified test fixture on the recorded baseline), `HKASK_QA_MODEL` (live reader),
+  `board_picker.rs:145` (documented, bounded, precedent-backed).
+- **Phase 4 (Synthesize) — this document.** Deduped (doc drift merged into F3;
+  regex caching merged across two crates; the corpus passphrase chain split into
+  its two distinct defects, F1 enforcement-gap vs F2 interface-exposure).
 
-- P2-1: big servers re-implement shared helpers (envelope parsing, DB open, env
-  resolution) instead of using `hkask-mcp-server` primitives; expect ≥3
-  duplication findings.
-- P2-2: doc drift is systemic — "11 servers"/"D1–D56" stale across ≥4 documents.
-- P2-3: kask_bridge env allowlists misalign with actual server env reads in ≥2
-  places (transitive env reads are the known trap class).
-- P2-4: ≥2 advertised invariants (doc-claimed gates) without enforcement lines in
-  regulation/storage.
-- P2-5: `hkask-types` carries residual dead types from deleted subsystems
-  (pods/ledger/condenser teardowns).
+### 5.3 Metacognition — predictions vs. outcomes
 
-*(per-cluster outcomes appended after each wave; gaps measured at Phase 4)*
+| # | Phase-2 prediction (recorded before the passes) | Outcome | Gap |
+|---|---|---|---|
+| P2-1 | Servers re-implement shared helpers (envelope/DB/env) ≥3 duplication findings | **Wrong** — envelope discipline clean (shared helper; per-server extractors test-only); allowlists pin-tested per server | The codebase is more disciplined than the prior mean; the one duplication-class finding is the corpus passphrase chain (F1/F2) |
+| P2-2 | Doc drift systemic (≥4 docs) | **Confirmed** — F3 cites six+ sites | — |
+| P2-3 | Bridge allowlist misalignment ≥2 | **Wrong** — the allowlist surface is exemplary (rationale + pin tests); found one dead entry (F5) + one classification nit (F9) | — |
+| P2-4 | ≥2 advertised invariants without enforcement lines | **Partial** — one comment-delegated invariant (F1); the invariant surface is unusually honest (Enforced/Gap/Unverified vocabulary, `loops/core.rs`) | Regulation's enforcement-status modeling raises the bar |
+| P2-5 | `hkask-types` carries residual dead types from teardowns | **Wrong** — `voice.rs` alive; every suspect crate (`email`, `forecast`, `services-core`, `event-store`, `condenser`) has live dependents | Deletion discipline has been applied for real |
+
+**Learning banked:** the kask tree's discipline is above the `.rules`-trap baseline —
+future reviews should weight *doc-truth* and *cross-mechanism coupling* (F3, F6)
+over the classic silent-failure patterns, which the sweeps show are largely
+engineered out in production paths (confined to tests, where they are acceptable).
+
+### 5.4 Calibration note (strengths observed — for honesty, not flattery)
+
+Exemplary surfaces worth preserving as patterns: `hkask-storage`'s driver honesty
+(PRAGMA ordering invariant, labeled pools, `with_durability`), the canonical
+credential chain (`credentials.rs`), `parse_env_warn` as the reference env pattern,
+`mcp_servers.rs`' rationale-documented allowlists with per-server pin tests,
+`cycle.rs`'s absence-vs-zero modeling and `AlertQueueOutcome` distinctions,
+`ingest.rs`'s `IngestionReport` honest counters, the two zed-side leaf crates
+(`InvokeError` taxonomy; per-app-global leak rationale), `SPAWN_RUNTIME`'s
+documented reactor-hop with the live incident, and `WARNED_MISSING_CREDENTIALS`
+log-spam dedup. Production `unwrap()`/`expect()` is essentially confined to
+documented invariants and mutex-poison propagation; GPUI/tokio traps are confined
+to test modules.
+
+### 5.5 Coverage honesty
+
+Sweeps (unwrap/expect/let-_/ok()/block_on/tokio/panic/unwrap_or(0)/dead-code/
+mod.rs/envelope/passphrase/env-read) ran over **all** 31 deep-scope crates and the
+16 bounded crates; targeted deep reads covered the seam-central subset (§2 tables).
+Crates marked *bounded* received sweeps + partial reads, not full-file reads —
+recorded per crate, per the mission's bounded-pass allowance. No upstream-direct
+edits are proposed; the zed-side findings (F3's `runtime.rs` citations are kask
+crates; `board_picker.rs` is an observation) stay on the kask side of the seam.

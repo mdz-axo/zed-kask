@@ -116,9 +116,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-corpus",
         description: "Corpus — document corpus and QA generation",
         credentials: Some(&[
-            // DB encryption passphrase — read by default_corpus_passphrase() in
-            // helpers.rs. Without this, the DB is silently encrypted with
-            // the hardcoded dev passphrase under governed launch.
+            // DB encryption passphrase — resolved server-side by
+            // resolve_corpus_passphrase() in helpers.rs (fail-closed: an
+            // unresolvable passphrase is permission_denied, never an
+            // empty-key SQLCipher open).
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[

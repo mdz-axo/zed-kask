@@ -253,12 +253,10 @@ impl PassageIndex {
 
     /// Hydration is an empty-index fallback, never a per-query database selector.
     /// It finishes synchronously before query inference; clear/purge cannot race a
-    /// detached DB snapshot back into the cache.
-    pub fn hydrate_if_empty(
-        &self,
-        path: Option<&str>,
-        passphrase: Option<&str>,
-    ) -> Result<(), McpToolError> {
+    /// detached DB snapshot back into the cache. The DB passphrase resolves
+    /// server-side (fail-closed) only when an actual open is needed — a warm
+    /// index never requires the credential.
+    pub fn hydrate_if_empty(&self, path: Option<&str>) -> Result<(), McpToolError> {
         let mut state = self.lock()?;
         if !state.passages.is_empty() {
             return Ok(());
@@ -266,14 +264,7 @@ impl PassageIndex {
         let Some(path) = path else {
             return Ok(());
         };
-        let passphrase = passphrase
-            .map(str::to_owned)
-            .unwrap_or_else(crate::helpers::default_corpus_passphrase);
-        if passphrase.is_empty() {
-            return Err(McpToolError::permission_denied(
-                "HKASK_DB_PASSPHRASE not configured — corpus_query requires the DB passphrase",
-            ));
-        }
+        let passphrase = crate::helpers::resolve_corpus_passphrase()?;
         let store = open_memory_store(path, &passphrase)?;
         let origin = database_origin(path)?;
         let entries = store

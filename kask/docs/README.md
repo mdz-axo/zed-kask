@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-18
-version: "2.1.0"
+version: "2.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -16,7 +16,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 66 files under `kask/docs/` on 2026-09-18 (measured with `find kask/docs -type f`), within the fewer-than-70 cap.
+**Corpus size:** 67 files under `kask/docs/` on 2026-09-18 (measured with `find kask/docs -type f`), within the fewer-than-70 cap.
+
+## Repair and improvement plans
+
+| Document | Status and purpose |
+| --- | --- |
+| [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Proposed, operator-retained review findings and execution plan; no backward-compatibility requirements. Includes evidence, validation history, acceptance criteria, and a continuation prompt. Saving the plan does not authorize implementation. |
 
 ## Architecture
 
@@ -75,7 +81,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 66 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 67 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 

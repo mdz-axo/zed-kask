@@ -89,7 +89,6 @@ impl CorpusServer {
             include_text,
             min_score,
             db_path,
-            passphrase,
         }): Parameters<QueryRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_query", async {
@@ -127,7 +126,7 @@ impl CorpusServer {
                 )
             })?;
 
-            self.index.hydrate_if_empty(db_path.as_deref(), passphrase.as_deref())?;
+            self.index.hydrate_if_empty(db_path.as_deref())?;
 
             let query_embedding = match self
                 .inference_router
@@ -233,13 +232,8 @@ impl CorpusServer {
         Parameters(req): Parameters<PurgeQaRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_purge_qa", async {
-            if req.passphrase.is_empty() {
-                return Err(McpToolError::permission_denied(
-                    "HKASK_DB_PASSPHRASE not configured — corpus_purge_qa requires the DB passphrase. \
-                     Set it via the keychain (kask://credentials/hkask_db_passphrase) or environment variable."
-                ));
-            }
-            self.index.purge(&req.db_path, &req.passphrase, &req.prefix)
+            let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            self.index.purge(&req.db_path, &passphrase, &req.prefix)
         })
         .await
     }
@@ -301,9 +295,6 @@ pub(crate) struct QueryRequest {
     /// (e.g. after server restart). Ignored on a nonempty index; it does not switch DBs.
     #[serde(default)]
     pub db_path: Option<String>,
-    /// Passphrase for the memory DB. Defaults to `HKASK_DB_PASSPHRASE`.
-    #[serde(default)]
-    pub passphrase: Option<String>,
 }
 
 /// Parse a Lisp S-expression query string into query options.
@@ -564,9 +555,6 @@ pub(crate) struct PurgeQaRequest {
     pub prefix: String,
     /// Path to the SQLCipher memory DB.
     pub db_path: String,
-    /// Passphrase for the memory DB.
-    #[serde(default = "crate::helpers::default_corpus_passphrase")]
-    pub passphrase: String,
 }
 
 fn default_purge_prefix() -> String {
