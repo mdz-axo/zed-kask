@@ -22,7 +22,7 @@ use crate::KanbanPanel;
 use crate::{
     BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL, BOARD_IMPORT_TOOL, BOARD_UPDATE_TOOL,
     KANBAN_SERVER, RefreshTarget, TASK_ASSIGN_TOOL, TASK_CREATE_TOOL, TASK_DELETE_TOOL,
-    TASK_SPAWN_TOOL, TASK_UNASSIGN_TOOL, TASK_UPDATE_TOOL, TaskActionKind,
+    TASK_SPAWN_TOOL, TASK_UNASSIGN_TOOL, TASK_UPDATE_TOOL, TaskActionKind, board_name_cap_error,
 };
 
 /// The form state for creating a new task.
@@ -707,6 +707,14 @@ impl KanbanPanel {
         if name.is_empty() {
             return;
         }
+        if let Some(message) = board_name_cap_error(&name) {
+            // Refuse client-side so the typed text survives in the open
+            // form; the service boundary enforces the same cap for every
+            // caller (MCP agents, import).
+            self.error = Some(message);
+            cx.notify();
+            return;
+        }
         self.active_action = None;
         self.create_board_editor = None;
         let args = json!({ "name": name });
@@ -742,6 +750,14 @@ impl KanbanPanel {
         };
         let name = editor.read(cx).text(cx).trim().to_string();
         if name.is_empty() {
+            return;
+        }
+        if let Some(message) = board_name_cap_error(&name) {
+            // Same client-side refusal as create: keep the typed text in
+            // the open form; the service boundary enforces the cap for
+            // every caller.
+            self.error = Some(message);
+            cx.notify();
             return;
         }
         self.active_action = None;

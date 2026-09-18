@@ -136,10 +136,14 @@ pub struct SpreadsheetWidget {
     /// The widget-side mirror of staged batches (one entry per stage/undo
     /// step); the save payload is its flattening. Cleared on successful
     /// save; kept on `Interrupted` (the outcome is unknown).
-    staged_batches: Vec<Vec<CellEdit>>,
+    staged_batches: Vec<(u64, Vec<CellEdit>)>,
+    /// Monotone stage ids so a FAILED stage removes exactly its own batch
+    /// (completions arrive in actor order; a blind pop could remove a
+    /// different in-flight batch).
+    stage_seq: u64,
     /// Batches undone locally, eligible for redo. Cleared by new staging
     /// (matching engine semantics).
-    redo_buffer: Vec<Vec<CellEdit>>,
+    redo_buffer: Vec<(u64, Vec<CellEdit>)>,
     save_status: SaveStatus,
     load_error: Option<String>,
 }
@@ -173,6 +177,7 @@ impl SpreadsheetWidget {
             selection_extent: None,
             editor: None,
             staged_batches: Vec::new(),
+            stage_seq: 0,
             redo_buffer: Vec::new(),
             save_status: SaveStatus::Idle,
             load_error: None,
@@ -205,6 +210,7 @@ impl SpreadsheetWidget {
             selection_extent: None,
             editor: None,
             staged_batches: Vec::new(),
+            stage_seq: 0,
             redo_buffer: Vec::new(),
             save_status: SaveStatus::Idle,
             load_error: None,
@@ -289,7 +295,7 @@ impl SpreadsheetWidget {
     }
 
     fn move_active(&mut self, nav: Nav, extend_selection: bool, cx: &mut Context<Self>) {
-        self.active_cell = move_active(self.active_cell, nav);
+        self.active_cell = move_active(self.active_cell, nav, self.window.as_ref());
         if extend_selection {
             self.selection_extent = Some(self.active_cell);
         } else {
@@ -377,7 +383,9 @@ impl SpreadsheetWidget {
         let Some(document) = self.document.clone() else {
             return;
         };
-        self.staged_batches.push(edits.clone());
+        let stage_id = self.stage_seq;
+        self.stage_seq += 1;
+        self.staged_batches.push((stage_id, edits.clone()));
         self.redo_buffer.clear();
         self.save_status = SaveStatus::Idle;
         cx.spawn(async move |this, cx| {
@@ -385,7 +393,7 @@ impl SpreadsheetWidget {
             this.update(cx, |widget, cx| {
                 if let Err(error) = outcome {
                     widget.load_error = Some(format!("stage failed: {error}"));
-                    widget.staged_batches.pop();
+                    widget.staged_batches.retain(|(id, _)| *id != stage_id);
                 }
                 widget.fetch_window(cx);
                 cx.notify();
@@ -403,8 +411,8 @@ impl SpreadsheetWidget {
             let outcome = document.undo().await;
             this.update(cx, |widget, cx| {
                 if matches!(outcome, Ok(true)) {
-                    if let Some(batch) = widget.staged_batches.pop() {
-                        widget.redo_buffer.push(batch);
+                    if let Some(entry) = widget.staged_batches.pop() {
+                        widget.redo_buffer.push(entry);
                     }
                 }
                 widget.fetch_window(cx);
@@ -423,8 +431,8 @@ impl SpreadsheetWidget {
             let outcome = document.redo().await;
             this.update(cx, |widget, cx| {
                 if matches!(outcome, Ok(true)) {
-                    if let Some(batch) = widget.redo_buffer.pop() {
-                        widget.staged_batches.push(batch);
+                    if let Some(entry) = widget.redo_buffer.pop() {
+                        widget.staged_batches.push(entry);
                     }
                 }
                 widget.fetch_window(cx);
@@ -468,7 +476,11 @@ impl SpreadsheetWidget {
         if self.staged_batches.is_empty() {
             return;
         }
-        let edits: Vec<CellEdit> = self.staged_batches.iter().flatten().cloned().collect();
+        let edits: Vec<CellEdit> = self
+            .staged_batches
+            .iter()
+            .flat_map(|(_, batch)| batch.iter().cloned())
+            .collect();
         let transaction = match EditTransaction::new(
             block.artifact,
             uuid::Uuid::new_v4().simple().to_string(),
@@ -656,7 +668,7 @@ impl SpreadsheetWidget {
 
     // ── rendering ───────────────────────────────────────────────────────
 
-    fn render_header(&self) -> AnyElement {
+    fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let title = match &self.block {
             Ok(block) => block.title.clone(),
             Err(_) => "Spreadsheet".to_string(),
@@ -671,6 +683,8 @@ impl SpreadsheetWidget {
             )
             .children(self.sheets.iter().enumerate().map(|(index, sheet)| {
                 let active = sheet == &self.active_sheet;
+                let target = sheet.clone();
+                let handle = cx.entity().downgrade();
                 div()
                     .id(("sheet-tab", index as u64))
                     .px_2()
@@ -678,6 +692,12 @@ impl SpreadsheetWidget {
                     .rounded_sm()
                     .flex_shrink_0()
                     .when(active, |tab| tab.bg(gpui::transparent_black().opacity(0.1)))
+                    .on_click(move |_event, _window, cx| {
+                        let Some(handle) = handle.upgrade() else {
+                            return;
+                        };
+                        handle.update(cx, |widget, cx| widget.switch_sheet(target.clone(), cx));
+                    })
                     .child(
                         Label::new(sheet.clone())
                             .size(LabelSize::XSmall)
@@ -685,6 +705,22 @@ impl SpreadsheetWidget {
                     )
             }))
             .into_any_element()
+    }
+
+    /// Switch the active sheet (§8 multi-sheet tabs): re-window and
+    /// re-fetch under the new sheet name.
+    fn switch_sheet(&mut self, sheet: String, cx: &mut Context<Self>) {
+        if sheet == self.active_sheet {
+            return;
+        }
+        self.active_sheet = sheet;
+        self.active_cell = (0, 0);
+        self.selection_anchor = None;
+        self.selection_extent = None;
+        self.editor = None;
+        self.window = Some(window_covering(self.active_cell, &self.active_sheet));
+        self.fetch_window(cx);
+        cx.notify();
     }
 
     fn render_formula_bar(&self) -> AnyElement {
@@ -877,7 +913,11 @@ impl SpreadsheetWidget {
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
-        let staged = self.staged_batches.iter().map(Vec::len).sum::<usize>();
+        let staged = self
+            .staged_batches
+            .iter()
+            .map(|(_, batch)| batch.len())
+            .sum::<usize>();
         let status_label = self.save_status.label();
         h_flex()
             .gap_2()
@@ -955,7 +995,7 @@ impl Render for SpreadsheetWidget {
             .min_w_0()
             .gap_1()
             .p_2()
-            .child(self.render_header())
+            .child(self.render_header(cx))
             .children(error_banner)
             .child(self.render_formula_bar())
             .child(

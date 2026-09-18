@@ -60,6 +60,141 @@ impl QaDispositionPlan {
     }
 }
 
+/// Disposition-plan failures: parsing the model's typed plan and enforcing
+/// the reviewed adjudication mandates. The correction loop renders the error
+/// into the retry prompt and the terminal rejection records it via Display,
+/// so every `#[error]` template is byte-identical to the historical message
+/// string it replaces.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum QaDispositionPlanError {
+    #[error("invalid compact QA disposition JSON: {0}")]
+    InvalidJson(serde_json::Error),
+    #[error("QA disposition plan must be an array")]
+    NotArray,
+    #[error("expected {expected} planned QA levels, received {received}")]
+    LevelCountMismatch { expected: usize, received: usize },
+    #[error("invalid QA disposition level {index}: {source}")]
+    InvalidLevelJson {
+        index: usize,
+        source: serde_json::Error,
+    },
+    #[error("planned level {index} expected '{expected}', received '{received}'")]
+    LevelMismatch {
+        index: usize,
+        expected: String,
+        received: String,
+    },
+    #[error("planned level {index} needs one to three evidence IDs")]
+    GenerateEvidenceCount { index: usize },
+    #[error("planned level {index} repeats evidence candidate '{evidence_id}'")]
+    RepeatedPlanEvidence { index: usize, evidence_id: String },
+    #[error("planned level {index} cites unknown evidence candidate '{evidence_id}'")]
+    UnknownPlanEvidence { index: usize, evidence_id: String },
+    #[error("planned generated level {index} must use null reason")]
+    GeneratedLevelReasonMustBeNull { index: usize },
+    #[error("planned conceptual level {index} needs a relation")]
+    ConceptualRelationRequired { index: usize },
+    #[error("planned conceptual level {index} has unsupported relation '{relation}'")]
+    UnsupportedConceptualRelation { index: usize, relation: String },
+    #[error("planned non-conceptual level {index} must use null relation")]
+    NonConceptualRelationMustBeNull { index: usize },
+    #[error("planned skip level {index} must use null relation")]
+    SkipRelationMustBeNull { index: usize },
+    #[error("planned skip level {index} needs a reason")]
+    SkipReasonRequired { index: usize },
+    #[error("planned skip level {index} must use '{reason}' with no evidence")]
+    SkipReasonMismatch { index: usize, reason: String },
+    #[error("planned level {index} has unsupported disposition '{disposition}'")]
+    UnsupportedDisposition { index: usize, disposition: String },
+    #[error(
+        "QA disposition plan must be one canonical prompt-wide skip or a clean ordered level plan"
+    )]
+    MalformedPlanShape,
+    #[error("reviewed adjudication has {reviewed} levels but generator plan has {planned}")]
+    MandateLevelCountMismatch { reviewed: usize, planned: usize },
+    #[error(
+        "reviewed mandate for level {index} requires generate relation {mandated:?}, generator returned relation {received:?}"
+    )]
+    MandateRelationMismatch {
+        index: usize,
+        mandated: Option<String>,
+        received: Option<String>,
+    },
+    #[error(
+        "reviewed mandate for level {index} requires skip reason '{mandated}', generator returned skip reason '{received}'"
+    )]
+    MandateSkipReasonMismatch {
+        index: usize,
+        mandated: String,
+        received: String,
+    },
+    #[error(
+        "reviewed mandate for level {index} requires skip reason '{mandated}', generator returned generate"
+    )]
+    MandateSkipRejectedGenerate { index: usize, mandated: String },
+    #[error(
+        "reviewed mandate for level {index} requires generate relation {mandated:?}, generator returned skip reason '{skip_reason}'"
+    )]
+    MandateGenerateRejectedSkip {
+        index: usize,
+        mandated: Option<String>,
+        skip_reason: String,
+    },
+}
+
+/// Completed-QA envelope failures: the writer merge under reviewed
+/// adjudication, the legacy envelope parse, and the mandate rejection that
+/// routes a disposition-stage failure into a completion's rejection record.
+/// Display strings are byte-identical to the historical message strings
+/// because they are recorded verbatim in QA output rows.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum QaEnvelopeError {
+    #[error("invalid compact planned QA JSON: {0}")]
+    InvalidDraftsJson(serde_json::Error),
+    #[error("planned generated levels require a writer response")]
+    WriterResponseRequired,
+    #[error("writer omitted planned generated level {index}")]
+    WriterOmittedLevel { index: usize },
+    #[error("writer level {index} expected '{expected}', received '{received}'")]
+    WriterLevelMismatch {
+        index: usize,
+        expected: String,
+        received: String,
+    },
+    #[error("writer level {index} needs a nonblank question and answer")]
+    WriterBlankContent { index: usize },
+    #[error("writer returned more QA rows than the disposition plan")]
+    WriterExtraRows,
+    #[error("invalid compact QA JSON: {0}")]
+    InvalidEnvelopeJson(serde_json::Error),
+    #[error("expected {expected} QA level dispositions, received {received}")]
+    DispositionCountMismatch { expected: usize, received: usize },
+    #[error("pair {index} expected Bloom level '{expected}', received '{received}'")]
+    PairLevelMismatch {
+        index: usize,
+        expected: String,
+        received: String,
+    },
+    #[error("skip {index} must carry an empty evidence ID list")]
+    SkipEvidenceNotEmpty { index: usize },
+    #[error("skip {index} has unsupported reason '{reason}' for level '{level}'")]
+    SkipReasonUnsupported {
+        index: usize,
+        reason: String,
+        level: String,
+    },
+    #[error("pair {index} needs nonblank question and answer plus one to three evidence IDs")]
+    PairIncomplete { index: usize },
+    #[error("pair {index} repeats evidence candidate '{evidence_id}'")]
+    RepeatedPairEvidence { index: usize, evidence_id: String },
+    #[error("pair {index} cites unknown evidence candidate '{evidence_id}'")]
+    UnknownPairEvidence { index: usize, evidence_id: String },
+    #[error("prompt-wide quality reason '{reason}' must skip every requested level")]
+    PartialQualitySkip { reason: String },
+    #[error("QA disposition mandate rejected: {0}")]
+    MandateRejected(QaDispositionPlanError),
+}
+
 /// One server-owned passage identity. Only `local_id` and guarded `text` enter
 /// the model prompt; canonical identity is restored after quote verification.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -275,12 +410,10 @@ pub(crate) fn render_disposition_plan_messages(
 pub(crate) fn parse_disposition_plan_response(
     response: &str,
     prompt: &PreparedQaPrompt,
-) -> Result<QaDispositionPlan, String> {
-    let value: Value = serde_json::from_str(response)
-        .map_err(|error| format!("invalid compact QA disposition JSON: {error}"))?;
-    let fields = value
-        .as_array()
-        .ok_or_else(|| "QA disposition plan must be an array".to_string())?;
+) -> Result<QaDispositionPlan, QaDispositionPlanError> {
+    let value: Value =
+        serde_json::from_str(response).map_err(QaDispositionPlanError::InvalidJson)?;
+    let fields = value.as_array().ok_or(QaDispositionPlanError::NotArray)?;
     match fields.as_slice() {
         [Value::String(decision), Value::String(reason)]
             if decision == "skip"
@@ -302,11 +435,10 @@ pub(crate) fn parse_disposition_plan_response(
         }
         [Value::String(decision), Value::Array(raw_levels)] if decision == "clean" => {
             if raw_levels.len() != prompt.qa_types.len() {
-                return Err(format!(
-                    "expected {} planned QA levels, received {}",
-                    prompt.qa_types.len(),
-                    raw_levels.len()
-                ));
+                return Err(QaDispositionPlanError::LevelCountMismatch {
+                    expected: prompt.qa_types.len(),
+                    received: raw_levels.len(),
+                });
             }
             let candidates = evidence_candidates(prompt);
             let candidate_ids = candidates
@@ -324,52 +456,59 @@ pub(crate) fn parse_disposition_plan_response(
                     reason,
                     evidence_ids,
                 } = serde_json::from_value(raw_level.clone()).map_err(|error| {
-                    format!("invalid QA disposition level {index}: {error}")
+                    QaDispositionPlanError::InvalidLevelJson {
+                        index,
+                        source: error,
+                    }
                 })?;
                 if level != expected.as_str() {
-                    return Err(format!(
-                        "planned level {index} expected '{}', received '{level}'",
-                        expected.as_str()
-                    ));
+                    return Err(QaDispositionPlanError::LevelMismatch {
+                        index,
+                        expected: expected.as_str().to_string(),
+                        received: level.clone(),
+                    });
                 }
                 match disposition.as_str() {
                     "generate" => {
                         if evidence_ids.is_empty() || evidence_ids.len() > 3 {
-                            return Err(format!(
-                                "planned level {index} needs one to three evidence IDs"
-                            ));
+                            return Err(QaDispositionPlanError::GenerateEvidenceCount { index });
                         }
                         let mut seen = HashSet::with_capacity(evidence_ids.len());
                         for evidence_id in &evidence_ids {
                             if !seen.insert(evidence_id.as_str()) {
-                                return Err(format!(
-                                    "planned level {index} repeats evidence candidate '{evidence_id}'"
-                                ));
+                                return Err(QaDispositionPlanError::RepeatedPlanEvidence {
+                                    index,
+                                    evidence_id: evidence_id.clone(),
+                                });
                             }
                             if !candidate_ids.contains(evidence_id.as_str()) {
-                                return Err(format!(
-                                    "planned level {index} cites unknown evidence candidate '{evidence_id}'"
-                                ));
+                                return Err(QaDispositionPlanError::UnknownPlanEvidence {
+                                    index,
+                                    evidence_id: evidence_id.clone(),
+                                });
                             }
                         }
                         if reason.is_some() {
-                            return Err(format!(
-                                "planned generated level {index} must use null reason"
-                            ));
+                            return Err(QaDispositionPlanError::GeneratedLevelReasonMustBeNull {
+                                index,
+                            });
                         }
                         if *expected == QaType::Conceptual {
-                            let relation = relation.as_deref().ok_or_else(|| {
-                                format!("planned conceptual level {index} needs a relation")
-                            })?;
+                            let relation = relation.as_deref().ok_or(
+                                QaDispositionPlanError::ConceptualRelationRequired { index },
+                            )?;
                             if !conceptual_relation_is_supported(relation) {
-                                return Err(format!(
-                                    "planned conceptual level {index} has unsupported relation '{relation}'"
-                                ));
+                                return Err(
+                                    QaDispositionPlanError::UnsupportedConceptualRelation {
+                                        index,
+                                        relation: relation.to_string(),
+                                    },
+                                );
                             }
                         } else if relation.is_some() {
-                            return Err(format!(
-                                "planned non-conceptual level {index} must use null relation"
-                            ));
+                            return Err(QaDispositionPlanError::NonConceptualRelationMustBeNull {
+                                index,
+                            });
                         }
                         levels.push(PlannedQaLevel::Generate {
                             bloom_level: level,
@@ -379,18 +518,15 @@ pub(crate) fn parse_disposition_plan_response(
                     }
                     "skip" => {
                         if relation.is_some() {
-                            return Err(format!(
-                                "planned skip level {index} must use null relation"
-                            ));
+                            return Err(QaDispositionPlanError::SkipRelationMustBeNull { index });
                         }
-                        let reason = reason.ok_or_else(|| {
-                            format!("planned skip level {index} needs a reason")
-                        })?;
+                        let reason =
+                            reason.ok_or(QaDispositionPlanError::SkipReasonRequired { index })?;
                         if reason != support_absent_reason(*expected) || !evidence_ids.is_empty() {
-                            return Err(format!(
-                                "planned skip level {index} must use '{}' with no evidence",
-                                support_absent_reason(*expected)
-                            ));
+                            return Err(QaDispositionPlanError::SkipReasonMismatch {
+                                index,
+                                reason: support_absent_reason(*expected).to_string(),
+                            });
                         }
                         levels.push(PlannedQaLevel::Skipped {
                             bloom_level: level,
@@ -398,15 +534,16 @@ pub(crate) fn parse_disposition_plan_response(
                         });
                     }
                     _ => {
-                        return Err(format!(
-                            "planned level {index} has unsupported disposition '{disposition}'"
-                        ));
+                        return Err(QaDispositionPlanError::UnsupportedDisposition {
+                            index,
+                            disposition: disposition.clone(),
+                        });
                     }
                 }
             }
             Ok(QaDispositionPlan { levels })
         }
-        _ => Err("QA disposition plan must be one canonical prompt-wide skip or a clean ordered level plan".to_string()),
+        _ => Err(QaDispositionPlanError::MalformedPlanShape),
     }
 }
 
@@ -486,13 +623,12 @@ struct PreparedQaDraft {
 pub(crate) fn enforce_reviewed_adjudication(
     plan: QaDispositionPlan,
     reviewed: &ReviewedQaAdjudication,
-) -> Result<QaDispositionPlan, String> {
+) -> Result<QaDispositionPlan, QaDispositionPlanError> {
     if plan.levels.len() != reviewed.levels().len() {
-        return Err(format!(
-            "reviewed adjudication has {} levels but generator plan has {}",
-            reviewed.levels().len(),
-            plan.levels.len()
-        ));
+        return Err(QaDispositionPlanError::MandateLevelCountMismatch {
+            reviewed: reviewed.levels().len(),
+            planned: plan.levels.len(),
+        });
     }
     for (index, (planned, mandate)) in plan.levels.iter().zip(reviewed.levels()).enumerate() {
         match (planned, mandate) {
@@ -508,10 +644,11 @@ pub(crate) fn enforce_reviewed_adjudication(
                     relation: mandated_relation,
                 },
             ) => {
-                return Err(format!(
-                    "reviewed mandate for level {index} requires generate relation {:?}, generator returned relation {:?}",
-                    mandated_relation, relation
-                ));
+                return Err(QaDispositionPlanError::MandateRelationMismatch {
+                    index,
+                    mandated: mandated_relation.clone(),
+                    received: relation.clone(),
+                });
             }
             (
                 PlannedQaLevel::Skipped { reason, .. },
@@ -525,23 +662,27 @@ pub(crate) fn enforce_reviewed_adjudication(
                     reason: mandated_reason,
                 },
             ) => {
-                return Err(format!(
-                    "reviewed mandate for level {index} requires skip reason '{mandated_reason}', generator returned skip reason '{reason}'"
-                ));
+                return Err(QaDispositionPlanError::MandateSkipReasonMismatch {
+                    index,
+                    mandated: mandated_reason.clone(),
+                    received: reason.clone(),
+                });
             }
             (PlannedQaLevel::Generate { .. }, ReviewedLevelDecision::Skip { reason }) => {
-                return Err(format!(
-                    "reviewed mandate for level {index} requires skip reason '{reason}', generator returned generate"
-                ));
+                return Err(QaDispositionPlanError::MandateSkipRejectedGenerate {
+                    index,
+                    mandated: reason.clone(),
+                });
             }
             (
                 PlannedQaLevel::Skipped { reason, .. },
                 ReviewedLevelDecision::Generate { relation },
             ) => {
-                return Err(format!(
-                    "reviewed mandate for level {index} requires generate relation {:?}, generator returned skip reason '{reason}'",
-                    relation
-                ));
+                return Err(QaDispositionPlanError::MandateGenerateRejectedSkip {
+                    index,
+                    mandated: relation.clone(),
+                    skip_reason: reason.clone(),
+                });
             }
         }
     }
@@ -551,13 +692,13 @@ pub(crate) fn enforce_reviewed_adjudication(
 pub(crate) fn merge_disposition_plans(
     plan: &QaDispositionPlan,
     writer_response: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, QaEnvelopeError> {
     let mut drafts = match writer_response {
         Some(response) => serde_json::from_str::<Vec<PreparedQaDraft>>(response)
-            .map_err(|error| format!("invalid compact planned QA JSON: {error}"))?
+            .map_err(QaEnvelopeError::InvalidDraftsJson)?
             .into_iter(),
         None if !plan.needs_writer() => Vec::new().into_iter(),
-        None => return Err("planned generated levels require a writer response".to_string()),
+        None => return Err(QaEnvelopeError::WriterResponseRequired),
     };
     let mut response = Vec::with_capacity(plan.levels.len());
     for (index, level) in plan.levels.iter().enumerate() {
@@ -573,16 +714,16 @@ pub(crate) fn merge_disposition_plans(
                     answer,
                 } = drafts
                     .next()
-                    .ok_or_else(|| format!("writer omitted planned generated level {index}"))?;
+                    .ok_or(QaEnvelopeError::WriterOmittedLevel { index })?;
                 if level != *bloom_level {
-                    return Err(format!(
-                        "writer level {index} expected '{bloom_level}', received '{level}'"
-                    ));
+                    return Err(QaEnvelopeError::WriterLevelMismatch {
+                        index,
+                        expected: bloom_level.to_string(),
+                        received: level.clone(),
+                    });
                 }
                 if question.trim().is_empty() || answer.trim().is_empty() {
-                    return Err(format!(
-                        "writer level {index} needs a nonblank question and answer"
-                    ));
+                    return Err(QaEnvelopeError::WriterBlankContent { index });
                 }
                 response.push(json!([level, question, answer, evidence_ids]));
             }
@@ -593,7 +734,7 @@ pub(crate) fn merge_disposition_plans(
         }
     }
     if drafts.next().is_some() {
-        return Err("writer returned more QA rows than the disposition plan".to_string());
+        return Err(QaEnvelopeError::WriterExtraRows);
     }
     Ok(Value::Array(response).to_string())
 }
@@ -614,15 +755,14 @@ pub(crate) fn support_absent_reason(qa_type: QaType) -> &'static str {
 fn parse_prepared_qa_response(
     response: &str,
     prompt: &PreparedQaPrompt,
-) -> Result<Vec<QaLevelDisposition>, String> {
-    let raw: Vec<PreparedQaPair> = serde_json::from_str(response)
-        .map_err(|error| format!("invalid compact QA JSON: {error}"))?;
+) -> Result<Vec<QaLevelDisposition>, QaEnvelopeError> {
+    let raw: Vec<PreparedQaPair> =
+        serde_json::from_str(response).map_err(QaEnvelopeError::InvalidEnvelopeJson)?;
     if raw.len() != prompt.qa_types.len() {
-        return Err(format!(
-            "expected {} QA level dispositions, received {}",
-            prompt.qa_types.len(),
-            raw.len()
-        ));
+        return Err(QaEnvelopeError::DispositionCountMismatch {
+            expected: prompt.qa_types.len(),
+            received: raw.len(),
+        });
     }
     let candidates = evidence_candidates(prompt);
     let candidates_by_id = candidates
@@ -636,26 +776,26 @@ fn parse_prepared_qa_response(
         .map(
             |(index, (PreparedQaPair(level, question, answer, evidence_ids), expected))| {
                 if level != expected.as_str() {
-                    return Err(format!(
-                        "pair {index} expected Bloom level '{}', received '{level}'",
-                        expected.as_str()
-                    ));
+                    return Err(QaEnvelopeError::PairLevelMismatch {
+                        index,
+                        expected: expected.as_str().to_string(),
+                        received: level.clone(),
+                    });
                 }
                 let Some(question) = question else {
                     if !evidence_ids.is_empty() {
-                        return Err(format!(
-                            "skip {index} must carry an empty evidence ID list"
-                        ));
+                        return Err(QaEnvelopeError::SkipEvidenceNotEmpty { index });
                     }
                     let reason = answer.trim();
                     if reason != "non_substantive_passage"
                         && reason != "contaminated_or_garbled"
                         && reason != support_absent_reason(*expected)
                     {
-                        return Err(format!(
-                            "skip {index} has unsupported reason '{reason}' for level '{}'",
-                            expected.as_str()
-                        ));
+                        return Err(QaEnvelopeError::SkipReasonUnsupported {
+                            index,
+                            reason: reason.to_string(),
+                            level: expected.as_str().to_string(),
+                        });
                     }
                     return Ok(QaLevelDisposition::Skipped {
                         bloom_level: level,
@@ -667,21 +807,23 @@ fn parse_prepared_qa_response(
                     || evidence_ids.is_empty()
                     || evidence_ids.len() > 3
                 {
-                    return Err(format!(
-                        "pair {index} needs nonblank question and answer plus one to three evidence IDs"
-                    ));
+                    return Err(QaEnvelopeError::PairIncomplete { index });
                 }
                 let mut seen = HashSet::with_capacity(evidence_ids.len());
                 let mut evidence_quotes = Vec::with_capacity(evidence_ids.len());
                 for evidence_id in evidence_ids {
                     if !seen.insert(evidence_id.clone()) {
-                        return Err(format!(
-                            "pair {index} repeats evidence candidate '{evidence_id}'"
-                        ));
+                        return Err(QaEnvelopeError::RepeatedPairEvidence {
+                            index,
+                            evidence_id: evidence_id.clone(),
+                        });
                     }
-                    let candidate = candidates_by_id.get(evidence_id.as_str()).ok_or_else(|| {
-                        format!("pair {index} cites unknown evidence candidate '{evidence_id}'")
-                    })?;
+                    let candidate = candidates_by_id.get(evidence_id.as_str()).ok_or(
+                        QaEnvelopeError::UnknownPairEvidence {
+                            index,
+                            evidence_id: evidence_id.clone(),
+                        },
+                    )?;
                     evidence_quotes.push(hkask_types::corpus::QaEvidence {
                         chunk_ref: prompt.primary().chunk_ref.clone(),
                         source: prompt.primary().source.clone(),
@@ -714,9 +856,9 @@ fn parse_prepared_qa_response(
             )
         });
         if !all_levels_skipped_for_same_reason {
-            return Err(format!(
-                "prompt-wide quality reason '{global_reason}' must skip every requested level"
-            ));
+            return Err(QaEnvelopeError::PartialQualitySkip {
+                reason: global_reason.clone(),
+            });
         }
     }
     Ok(dispositions)
@@ -949,7 +1091,7 @@ impl<W: Write> QaOutput<W> {
                         &extract_json_from_response(&completion.text),
                         prompt,
                     )
-                    .map_err(QaCompletionError::Rejected),
+                    .map_err(|error| QaCompletionError::Rejected(error.to_string())),
                 }
             }
             Err(error) => Err(error),

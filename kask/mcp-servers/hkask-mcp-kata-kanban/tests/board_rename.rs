@@ -17,6 +17,7 @@ use hkask_mcp_swarm::agent_stats::AgentStatsStore;
 use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
+use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use hkask_types::{InferenceError, WebID, WorktreeSpawnPort};
 use rmcp::handler::server::wrapper::Parameters;
 use std::future::Future;
@@ -187,6 +188,31 @@ async fn rename_to_whitespace_is_rejected_at_the_tool_seam() {
         format!("{err:?}").contains("board name is empty"),
         "the error must name the empty-name problem, got: {err:?}"
     );
+}
+
+#[tokio::test]
+async fn rename_to_an_over_cap_name_is_rejected_at_the_tool_seam() {
+    let server = make_server();
+    let board = create_board(&server, "Board").await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    // The 128-character cap (reference model R1; §6.6) is enforced at the
+    // service boundary the tool delegates to — the typed error surfaces
+    // through the MCP seam instead of a silent truncation.
+    let err: McpToolError = server
+        .kanban_board_update(Parameters(BoardUpdateRequest {
+            board_id,
+            name: "x".repeat(KANBAN_BOARD_NAME_MAX_CHARS + 1),
+        }))
+        .await
+        .expect_err("over-cap names must be rejected (reference model R1)");
+    assert!(
+        format!("{err:?}").contains("longer than 128"),
+        "the error must name the cap, got: {err:?}"
+    );
+
+    // The board is untouched.
+    assert_eq!(board_names(&server).await, ["Board"]);
 }
 
 #[tokio::test]

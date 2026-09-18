@@ -41,7 +41,15 @@ pub enum Nav {
 
 /// Move the active cell, clamped to the sheet ceiling (the engine accepts
 /// writes anywhere inside it; beyond it is not a coordinate).
-pub fn move_active(active: (usize, usize), nav: Nav) -> (usize, usize) {
+/// Move the active cell, clamped to the sheet ceiling (the engine accepts
+/// writes anywhere inside it; beyond it is not a coordinate). `End` is
+/// relative to the current fetch window (its last visible column) — not an
+/// absolute column, or a window beyond the first block would jump backward.
+pub fn move_active(
+    active: (usize, usize),
+    nav: Nav,
+    window: Option<&SpreadsheetViewport>,
+) -> (usize, usize) {
     let (row, col) = active;
     let (moved_row, moved_col) = match nav {
         Nav::Up => (row.saturating_sub(1), col),
@@ -49,7 +57,12 @@ pub fn move_active(active: (usize, usize), nav: Nav) -> (usize, usize) {
         Nav::Left => (row, col.saturating_sub(1)),
         Nav::Right => (row, (col + 1).min(MAX_SHEET_COLS.saturating_sub(1))),
         Nav::Home => (row, 0),
-        Nav::End => (row, WIDGET_WINDOW_COLS.saturating_sub(1)),
+        Nav::End => {
+            let end = window
+                .map(|window| window.start_col + window.col_count - 1)
+                .unwrap_or(WIDGET_WINDOW_COLS - 1);
+            (row, end.min(MAX_SHEET_COLS.saturating_sub(1)))
+        }
         Nav::PageUp => (row.saturating_sub(WIDGET_WINDOW_ROWS), col),
         Nav::PageDown => (
             (row + WIDGET_WINDOW_ROWS).min(MAX_SHEET_ROWS.saturating_sub(1)),
@@ -236,20 +249,31 @@ mod tests {
 
     #[test]
     fn navigation_moves_and_clamps() {
-        assert_eq!(move_active((5, 5), Nav::Up), (4, 5));
-        assert_eq!(move_active((5, 5), Nav::Down), (6, 5));
-        assert_eq!(move_active((5, 5), Nav::Left), (5, 4));
-        assert_eq!(move_active((5, 5), Nav::Right), (5, 6));
-        assert_eq!(move_active((0, 0), Nav::Up), (0, 0));
-        assert_eq!(move_active((0, 0), Nav::Left), (0, 0));
+        assert_eq!(move_active((5, 5), Nav::Up, None), (4, 5));
+        assert_eq!(move_active((5, 5), Nav::Down, None), (6, 5));
+        assert_eq!(move_active((5, 5), Nav::Left, None), (5, 4));
+        assert_eq!(move_active((5, 5), Nav::Right, None), (5, 6));
+        assert_eq!(move_active((0, 0), Nav::Up, None), (0, 0));
+        assert_eq!(move_active((0, 0), Nav::Left, None), (0, 0));
         assert_eq!(
-            move_active((MAX_SHEET_ROWS - 1, MAX_SHEET_COLS - 1), Nav::Down),
+            move_active((MAX_SHEET_ROWS - 1, MAX_SHEET_COLS - 1), Nav::Down, None),
             (MAX_SHEET_ROWS - 1, MAX_SHEET_COLS - 1)
         );
-        assert_eq!(move_active((5, 9), Nav::Home), (5, 0));
-        assert_eq!(move_active((5, 9), Nav::End), (5, WIDGET_WINDOW_COLS - 1));
+        assert_eq!(move_active((5, 9), Nav::Home, None), (5, 0));
+        // End is window-relative: with no window, the first block's edge.
         assert_eq!(
-            move_active((70, 3), Nav::PageUp),
+            move_active((5, 9), Nav::End, None),
+            (5, WIDGET_WINDOW_COLS - 1)
+        );
+        // And with a later window: the last visible column of THAT window —
+        // never backward.
+        let window = window_covering((70, 40), "Main");
+        assert_eq!(
+            move_active((70, 40), Nav::End, Some(&window)),
+            (70, window.start_col + window.col_count - 1)
+        );
+        assert_eq!(
+            move_active((70, 3), Nav::PageUp, None),
             (70 - WIDGET_WINDOW_ROWS, 3)
         );
     }

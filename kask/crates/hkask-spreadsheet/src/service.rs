@@ -503,6 +503,16 @@ fn handle_open(
     state: &mut ActorState,
     artifact: &SpreadsheetArtifactRef,
 ) -> Result<(), SpreadsheetError> {
+    let key = (artifact.artifact_id.clone(), artifact.revision_id.clone());
+    // Idempotent open: a document for this (artifact, revision) pair may
+    // already be open (a second widget for the same block body, a cache-evict
+    // re-render). Revisions are immutable and the digest was verified at the
+    // first open, so re-opening must keep the existing workbook — an
+    // unconditional insert would silently destroy another handle's staged
+    // state.
+    if state.documents.contains_key(&key) {
+        return Ok(());
+    }
     let bytes = state
         .store
         .read_revision(&artifact.artifact_id, &artifact.revision_id)?;
@@ -516,12 +526,9 @@ fn handle_open(
     }
     let workbook = logisheets_rs::Workbook::from_file(&bytes, artifact.artifact_id.clone())
         .map_err(|error| SpreadsheetError::Engine {
-            detail: format!("engine open failed: {error:?}"),
+            detail: format!("engine open failed: {error}"),
         })?;
-    state.documents.insert(
-        (artifact.artifact_id.clone(), artifact.revision_id.clone()),
-        workbook,
-    );
+    state.documents.insert(key, workbook);
     Ok(())
 }
 
@@ -1133,8 +1140,12 @@ mod tests {
             block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport redone");
         assert_eq!(cell(&redone, 1, 1), &TableValue::Number(424242.0));
 
-        // Staging never persisted: a fresh open still shows the original.
-        let fresh = block_on(service.open(&artifact)).expect("fresh open");
+        // Staging never persisted: a FRESH ACTOR on the same root reads the
+        // revision from disk and still shows the original (the live document
+        // handle intentionally keeps its staged state — idempotent open).
+        let second_service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("second actor");
+        let fresh = block_on(second_service.open(&artifact)).expect("fresh open");
         let original =
             block_on(fresh.viewport(full_viewport("Main", 4, 3))).expect("fresh viewport");
         assert_eq!(cell(&original, 1, 1), &TableValue::Number(15000.0));
@@ -1176,5 +1187,32 @@ mod tests {
         );
         assert!(block.viewport.row_count <= hkask_types::spreadsheet::MAX_VIEWPORT_ROWS);
         assert!(block.viewport.col_count <= hkask_types::spreadsheet::MAX_VIEWPORT_COLS);
+    }
+
+    /// A second open of the same (artifact, revision) must be idempotent: a
+    /// second widget for the same block body must not destroy the first
+    /// handle's staged state.
+    #[test]
+    fn reopen_keeps_staged_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (artifact, _block) = publish_workbook(&service, sample_table());
+
+        let first = block_on(service.open(&artifact)).expect("first open");
+        block_on(first.stage(vec![CellEdit::SetCell {
+            coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                .expect("coordinate"),
+            value: TableValue::Number(777.0),
+        }]))
+        .expect("stage on first handle");
+
+        // Second open of the same revision: must not reset the document.
+        let second = block_on(service.open(&artifact)).expect("second open");
+        let viewport = block_on(
+            second.viewport(SpreadsheetViewport::new("Main".into(), 0, 0, 3, 3).expect("viewport")),
+        )
+        .expect("viewport");
+        assert_eq!(viewport.cells[1][1], TableValue::Number(777.0));
     }
 }

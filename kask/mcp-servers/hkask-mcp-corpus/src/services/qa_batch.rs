@@ -24,9 +24,10 @@ use crate::services::qa_adjudication::{
     read_complete_adjudications,
 };
 use crate::services::qa_pipeline::{
-    PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput, QaResponseMetadata,
-    enforce_reviewed_adjudication, merge_disposition_plans, parse_disposition_plan_response,
-    qa_llm_parameters, read_prompts, render_disposition_plan_messages, render_planned_qa_messages,
+    PreparedQaPrompt, QaCompletion, QaCompletionError, QaEnvelopeError, QaOutput,
+    QaResponseMetadata, enforce_reviewed_adjudication, merge_disposition_plans,
+    parse_disposition_plan_response, qa_llm_parameters, read_prompts,
+    render_disposition_plan_messages, render_planned_qa_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -43,10 +44,14 @@ fn response_metadata(response: &InferenceResult) -> QaResponseMetadata {
     }
 }
 
-fn qa_completion(response: InferenceResult, completed: Result<String, String>) -> QaCompletion {
+fn qa_completion(
+    response: InferenceResult,
+    completed: Result<String, QaEnvelopeError>,
+) -> QaCompletion {
     let (text, rejection) = match completed {
         Ok(text) => (text, None),
-        Err(error) => (String::new(), Some(error)),
+        // Rejections are recorded verbatim in output rows via Display.
+        Err(error) => (String::new(), Some(error.to_string())),
     };
     QaCompletion {
         text,
@@ -290,7 +295,7 @@ impl QaBatchService {
                     )
                     .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
                     if let Err(error) = &plan {
-                        let exact_error = error.clone();
+                        let exact_error = error.to_string();
                         prior_responses.push(response_metadata(&planning_response));
                         let mut correction_messages = planning_messages.clone();
                         correction_messages[0].content.push_str(&format!(
@@ -322,9 +327,7 @@ impl QaBatchService {
                                 prior_responses,
                                 Ok(qa_completion(
                                     planning_response,
-                                    Err(format!(
-                                        "QA disposition mandate rejected: {error}"
-                                    )),
+                                    Err(QaEnvelopeError::MandateRejected(error)),
                                 )),
                             );
                         }

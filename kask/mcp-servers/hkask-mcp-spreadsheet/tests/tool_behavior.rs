@@ -316,7 +316,7 @@ async fn writes_are_contained_beneath_the_artifact_root() {
 /// boundary end-to-end through the server).
 #[tokio::test]
 async fn staging_never_persists_through_the_server() {
-    let (server, _dir) = make_server();
+    let (server, dir) = make_server();
     let base = publish_base(&server).await;
 
     let document = server.service.open(&base).await.expect("open");
@@ -325,8 +325,12 @@ async fn staging_never_persists_through_the_server() {
         .await
         .expect("stage");
 
-    // A fresh open still shows the original value — staging is local.
-    let fresh = server.service.open(&base).await.expect("fresh open");
+    // A FRESH ACTOR on the same root reads the revision from disk and still
+    // shows the original — staging is local (the live document handle
+    // intentionally keeps its staged state; idempotent open).
+    let second_service =
+        WorkbookService::start_with_root(dir.path().join("workbooks")).expect("second actor");
+    let fresh = second_service.open(&base).await.expect("fresh open");
     let viewport = fresh
         .viewport(SpreadsheetViewport::new("Main".into(), 0, 0, 3, 2).expect("viewport"))
         .await

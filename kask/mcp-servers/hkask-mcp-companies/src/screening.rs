@@ -651,7 +651,7 @@ async fn calculate_expectations_gap(
         .await
         {
             Ok(row) => row,
-            Err(reason) => unavailable_issuer_row(&group, &reason),
+            Err(reason) => unavailable_issuer_row(&group, &reason.to_string()),
         };
         rows.push(row);
     }
@@ -1010,6 +1010,44 @@ fn finalize_issuer_group(mut securities: Vec<MaterializedSecurity>) -> IssuerGro
     }
 }
 
+/// Screening enrichment failures per issuer: group resolution, fundamentals
+/// fetch, currency normalization, and the bulk/single-symbol fallback ladder.
+/// Display strings are byte-identical to the historical message strings
+/// because they are recorded verbatim in `unavailable_reason` rows and
+/// persisted screen-item errors.
+#[derive(Debug, Clone, thiserror::Error)]
+enum ScreeningError {
+    #[error("issuer group is empty")]
+    EmptyIssuerGroup,
+    /// EODHD fetch failures pass through unchanged: the typed `[kind] message`
+    /// Display is the recorded reason.
+    #[error("{0}")]
+    Fundamentals(#[from] McpToolError),
+    #[error("issuer has no market capitalization")]
+    MissingMarketCap,
+    #[error("primary currency is unavailable")]
+    MissingPrimaryCurrency,
+    #[error("statement currency is unavailable")]
+    MissingStatementCurrency,
+    #[error("primary price currency conversion is invalid")]
+    InvalidPriceConversion,
+    #[error("bulk fundamentals response is not an array")]
+    BulkResponseNotArray,
+    #[error("bulk fundamentals omitted {0}")]
+    BulkOmitted(String),
+    #[error("bulk fundamentals result missing issuer")]
+    BulkResultMissing,
+    #[error("bulk unavailable ({bulk_reason}); single-symbol fallback failed: {error}")]
+    BulkFallbackFailed {
+        bulk_reason: String,
+        error: McpToolError,
+    },
+    #[error("bulk unavailable ({bulk_reason}); single-symbol fallback exceeded 15 seconds")]
+    BulkFallbackTimeout { bulk_reason: String },
+    #[error("issuer group has no actionable security")]
+    NoActionableSecurity,
+}
+
 async fn analyze_issuer_group(
     client: &reqwest::Client,
     eodhd_api_key: &str,
@@ -1017,7 +1055,7 @@ async fn analyze_issuer_group(
     issuer_group: &IssuerGroup,
     fundamentals: Option<Value>,
     investor_target_return: f64,
-) -> Result<Value, String> {
+) -> Result<Value, ScreeningError> {
     let group = &issuer_group.securities;
     let actionable = group
         .iter()
@@ -1026,13 +1064,11 @@ async fn analyze_issuer_group(
                 .partial_cmp(&right.average_daily_dollar_volume_usd)
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .ok_or_else(|| "issuer group is empty".to_string())?;
+        .ok_or(ScreeningError::EmptyIssuerGroup)?;
     let analysis_symbol = actionable.symbol.as_str();
     let fundamentals = match fundamentals {
         Some(fundamentals) => fundamentals,
-        None => providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol)
-            .await
-            .map_err(|error| error.to_string())?,
+        None => providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol).await?,
     };
     let primary = fundamentals
         .pointer("/General/PrimaryTicker")
@@ -1098,7 +1134,7 @@ async fn analyze_issuer_group(
     let cap = caps
         .get(caps.len() / 2)
         .copied()
-        .ok_or_else(|| "issuer has no market capitalization".to_string())?;
+        .ok_or(ScreeningError::MissingMarketCap)?;
     let capability = report.get("capability").cloned().unwrap_or(Value::Null);
     let discounting = report.get("discounting").cloned().unwrap_or(Value::Null);
     let price_implied = report.get("price_implied").cloned().unwrap_or(Value::Null);
@@ -1237,7 +1273,7 @@ async fn wait_for_screen_cancel(store: &ResearchStore, job_id: &str) -> Result<(
 async fn fetch_bulk_fundamentals(
     server: &CompaniesServer,
     groups: &[IssuerGroup],
-) -> HashMap<String, Result<Value, String>> {
+) -> HashMap<String, Result<Value, ScreeningError>> {
     let mut by_exchange: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for group in groups {
         let actionable = group.securities.iter().max_by(|left, right| {
@@ -1283,10 +1319,7 @@ async fn fetch_bulk_fundamentals(
             Ok(value) => {
                 let Some(rows) = value.as_array() else {
                     for (issuer_key, _) in issuers {
-                        fundamentals.insert(
-                            issuer_key,
-                            Err("bulk fundamentals response is not an array".to_string()),
-                        );
+                        fundamentals.insert(issuer_key, Err(ScreeningError::BulkResponseNotArray));
                     }
                     continue;
                 };
@@ -1305,14 +1338,14 @@ async fn fetch_bulk_fundamentals(
                     let result = by_code
                         .get(code)
                         .map(|row| (*row).clone())
-                        .ok_or_else(|| format!("bulk fundamentals omitted {symbol}"));
+                        .ok_or_else(|| ScreeningError::BulkOmitted(symbol.clone()));
                     fundamentals.insert(issuer_key, result);
                 }
             }
             Err(error) => {
-                let reason = error.to_string();
                 for (issuer_key, _) in issuers {
-                    fundamentals.insert(issuer_key, Err(reason.clone()));
+                    fundamentals
+                        .insert(issuer_key, Err(ScreeningError::Fundamentals(error.clone())));
                 }
             }
         }
@@ -1366,7 +1399,7 @@ async fn enrich_pending_issuers(
         let job_id = job_id.to_string();
         let fundamentals = bulk
             .remove(&item.issuer_key)
-            .unwrap_or_else(|| Err("bulk fundamentals result missing issuer".to_string()));
+            .unwrap_or_else(|| Err(ScreeningError::BulkResultMissing));
         async move {
             if store.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::research_store::PortfolioError>(());
@@ -1382,13 +1415,24 @@ async fn enrich_pending_issuers(
                     match actionable {
                         Some(security) => match tokio::time::timeout(
                             FALLBACK_ISSUER_TIMEOUT,
-                            providers::fetch_eodhd_fundamentals(&client, &api_key, &security.symbol),
-                        ).await {
+                            providers::fetch_eodhd_fundamentals(
+                                &client,
+                                &api_key,
+                                &security.symbol,
+                            ),
+                        )
+                        .await
+                        {
                             Ok(Ok(fundamentals)) => Ok(fundamentals),
-                            Ok(Err(error)) => Err(format!("bulk unavailable ({bulk_reason}); single-symbol fallback failed: {error}")),
-                            Err(_) => Err(format!("bulk unavailable ({bulk_reason}); single-symbol fallback exceeded 15 seconds")),
+                            Ok(Err(error)) => Err(ScreeningError::BulkFallbackFailed {
+                                bulk_reason: bulk_reason.to_string(),
+                                error,
+                            }),
+                            Err(_) => Err(ScreeningError::BulkFallbackTimeout {
+                                bulk_reason: bulk_reason.to_string(),
+                            }),
                         },
-                        None => Err("issuer group has no actionable security".to_string()),
+                        None => Err(ScreeningError::NoActionableSecurity),
                     }
                 }
             };
@@ -1400,11 +1444,19 @@ async fn enrich_pending_issuers(
                     &group,
                     Some(fundamentals),
                     investor_target_return,
-                ).await {
+                )
+                .await
+                {
                     Ok(row) => (row, None),
-                    Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
+                    Err(reason) => (
+                        unavailable_issuer_row(&group, &reason.to_string()),
+                        Some(reason.to_string()),
+                    ),
                 },
-                Err(reason) => (unavailable_issuer_row(&group, &reason), Some(reason)),
+                Err(reason) => (
+                    unavailable_issuer_row(&group, &reason.to_string()),
+                    Some(reason.to_string()),
+                ),
             };
             let classification = row
                 .get("data_quality_status")
@@ -1733,15 +1785,15 @@ async fn normalize_primary_price(
     fundamentals: &Value,
     raw_price: f64,
     listing_currency_symbol: Option<&str>,
-) -> Result<f64, String> {
+) -> Result<f64, ScreeningError> {
     let quote_code = fundamentals
         .pointer("/General/CurrencyCode")
         .and_then(Value::as_str)
-        .ok_or_else(|| "primary currency is unavailable".to_string())?;
+        .ok_or(ScreeningError::MissingPrimaryCurrency)?;
     let statement_code = fundamentals
         .pointer("/Financials/Income_Statement/currency_symbol")
         .and_then(Value::as_str)
-        .ok_or_else(|| "statement currency is unavailable".to_string())?;
+        .ok_or(ScreeningError::MissingStatementCurrency)?;
     let (quote_major, mut quote_unit) = currency_code_unit(quote_code);
     if listing_currency_symbol == Some("p") {
         quote_unit = 0.01;
@@ -1757,7 +1809,7 @@ async fn normalize_primary_price(
     if normalized.is_finite() && normalized > 0.0 {
         Ok(normalized)
     } else {
-        Err("primary price currency conversion is invalid".to_string())
+        Err(ScreeningError::InvalidPriceConversion)
     }
 }
 
@@ -1766,7 +1818,7 @@ async fn current_rate(
     eodhd_api_key: &str,
     fx_rates: &HashMap<String, f64>,
     currency: &str,
-) -> Result<f64, String> {
+) -> Result<f64, ScreeningError> {
     if currency == "USD" {
         return Ok(1.0);
     }
@@ -1776,7 +1828,7 @@ async fn current_rate(
     providers::fetch_eodhd_forex_rate(client, eodhd_api_key, currency)
         .await
         .map(|(_, rate)| rate)
-        .map_err(|error| error.to_string())
+        .map_err(ScreeningError::from)
 }
 
 fn currency_code_unit(code: &str) -> (String, f64) {

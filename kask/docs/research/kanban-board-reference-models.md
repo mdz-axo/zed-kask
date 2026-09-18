@@ -173,8 +173,9 @@ The **concept model and server implementation already satisfy** R1 (partially
 
 - `Board` carries a required human `name`
   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs:12-25`),
-  and `board_create` rejects an empty name and a zero-column board
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:120-133`).
+  and `board_create` rejects an empty name, a zero-column board, and a
+  name longer than the 128-character cap (`validate_board_name`,
+  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:117-135`).
 - `task_create` verifies the board exists and returns `NotFound` otherwise
   (`service_impl/service.rs:278-284`) — R5 is enforced at the service seam,
   not just the schema. (No test currently pins this; T3.)
@@ -239,12 +240,17 @@ surface, `view.rs:236`). Replace the first two with:
   opening a searchable `BoardPicker` — the Kan `BoardDropdown` shape. One
   control carries all three duties: displays the open board's name (R4),
   opens the board list by name (R3), and scales to any board count (R2).
-- **Headline carries the open board's name** when one is selected, generic
-  otherwise — the strongest R4 surface.
 - **Tab text** becomes `Kanban — {name}` when a board is selected, so
   multiple kanban panels on different boards are distinguishable.
 - The label-row selector module is deleted, not patched. Planka-style
   always-visible tabs remain the labeled alternative (§8 decision 1).
+
+Revised again (operator decision 2026-09-18): the panel headline is
+**removed entirely**. It was the strongest R4 surface, but it duplicated
+the widget header's name — the widget header is load-bearing (it carries
+the "I disagree" provenance chip and renders in chat blocks), so the
+headline was the non-load-bearing copy. The identity surfaces are now the
+named board control, the tab, and the widget header.
 
 ### 6.2 BoardPicker module (G4 → R2, R3)
 
@@ -312,6 +318,14 @@ then also sends the trimmed name (`task_actions.rs:638-644` currently sends
 the untrimmed string). This matches Planka exactly and reuses the import
 path's existing trim behavior (`mermaid.rs:222-227`).
 
+Ratified (operator decision 2026-09-18): names are additionally **capped
+at 128 characters** (`KANBAN_BOARD_NAME_MAX_CHARS` in
+`hkask_types::kanban_wire` — Planka's `maxLength={128}`; Kan allows 255).
+The cap is enforced in the same single point (`validate_board_name`), so
+create, rename, and import all inherit it; the panel's create/rename
+forms refuse an over-cap name client-side (`board_name_cap_error`) so
+the typed text is not lost to a server rejection.
+
 ### 6.7 Name-first Steer binding (G5 → R2)
 
 The steer prompt clause becomes: "The active board is `{name}` (`{id}`). Use
@@ -327,7 +341,7 @@ today. Nothing is removed; the plan is additive:
 | Party | Has today | Gains from the plan |
 | --- | --- | --- |
 | Agents (MCP) | `board_create` (name-first), `board_list` (names), `board_delete`, `task_*`, goals, export/import, replay-protected creates | `kanban_board_update` (rename); steer working context that names the board instead of addressing it by bare id |
-| Users (GPUI) | create/delete board, create/edit/spawn/assign/delete tasks, move chips, export/import, steer mode, refresh | named board identity everywhere (headline, tab, switcher); searchable open-by-name; create/import opens the board; rename affordance; identity auto-reconciliation within 10s |
+| Users (GPUI) | create/delete board, create/edit/spawn/assign/delete tasks, move chips, export/import, steer mode, refresh | named board identity everywhere (switcher, tab, widget header); searchable open-by-name; create/import opens the board; rename affordance; identity auto-reconciliation within 10s |
 | Deferred | — | Cross-board task moves (§1); last-board persistence across restarts (§8 decision 3) |
 
 ## 8. Operator decisions
@@ -347,6 +361,17 @@ today. Nothing is removed; the plan is additive:
    `SerializableItem` seam (`kanban_panel.rs:1586-1628`). (A) Defer — the
    recommendation: orthogonal to the reference-model gaps, the seam exists
    when wanted. (B) Include now.
+4. **Board-name length cap** (resolved 2026-09-18): (A) 128 characters —
+   the decision, Planka-aligned (`maxLength={128}`); enforced at the
+   service boundary so every caller (panel, MCP agents, import) inherits
+   it, with a client-side refusal in the panel forms so typed text is not
+   lost. (B) 255 (Kan) or uncapped — rejected: an extreme name widens the
+   switcher and identity surfaces without truncation.
+5. **The panel headline is removed** (resolved 2026-09-18): it duplicated
+   the widget header's board name; the widget header is load-bearing (the
+   "I disagree" provenance chip, chat-block rendering). The tab title
+   keeps the `Kanban — {name}` identity; the widget header names the open
+   board at the point of use.
 
 ## 9. Test plan — using the reference model as the oracle
 
@@ -372,8 +397,10 @@ Panel-side (extend the existing test module,
 `crates/kanban_panel/src/kanban_panel.rs:1631-2061`, which today has
 refresh/steer/stale-selection coverage but no board-identity coverage):
 
-- **T5 (R4)**: `tab_content_text` and the headline carry the selected
-  board's name; generic when nothing is selected.
+- **T5 (R4)**: `tab_content_text` carries the selected board's name
+  (`panel_tab_title`); generic when nothing is selected. (The panel
+  headline was removed 2026-09-18 as redundant with the widget header —
+  §8 decision 5.)
 - **T6 (R3, red-first)**: the identity control renders with exactly one
   board and shows that board's name (fails against `kanban_panel.rs:929-932`
   today).
@@ -418,7 +445,7 @@ deferred):
   a named board switcher (ui Button → `BoardPickerDelegate` popover,
   fuzzy-matched by name with duplicate-name id-suffix disambiguation in
   `crates/kanban_panel/src/board_picker.rs`) opens any board by name;
-  headline and tab carry the open board's name (`panel_titles`); create and
+  the tab carries the open board's name (`panel_tab_title`); create and
   import capture the response's `board_id` and open the created board once
   its row lands (`pending_select_board` + `pending_board_to_select`);
   every 10s tick re-reads the board list so identity reconciles

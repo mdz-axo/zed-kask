@@ -24,17 +24,32 @@ pub(crate) struct ModelCompatibilityEntry {
     pub note: String,
 }
 
-pub(crate) fn registry() -> Result<ModelCompatibilityRegistry, String> {
-    let registry: ModelCompatibilityRegistry = serde_json::from_str(REGISTRY_JSON)
-        .map_err(|error| format!("model compatibility registry is invalid: {error}"))?;
+/// Failures of the compiled-in model-compatibility registry: malformed JSON,
+/// wrong schema version, empty content, or incomplete entries. Display
+/// strings are byte-identical to the historical message strings because they
+/// are recorded verbatim in the compatibility context's registry status.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ModelCompatibilityError {
+    #[error("model compatibility registry is invalid: {0}")]
+    InvalidJson(serde_json::Error),
+    #[error("unsupported model compatibility registry schema version {0}")]
+    UnsupportedSchemaVersion(u32),
+    #[error("model compatibility registry is empty")]
+    Empty,
+    #[error("model compatibility registry entry '{0}' is incomplete")]
+    IncompleteEntry(String),
+}
+
+pub(crate) fn registry() -> Result<ModelCompatibilityRegistry, ModelCompatibilityError> {
+    let registry: ModelCompatibilityRegistry =
+        serde_json::from_str(REGISTRY_JSON).map_err(ModelCompatibilityError::InvalidJson)?;
     if registry.schema_version != 1 {
-        return Err(format!(
-            "unsupported model compatibility registry schema version {}",
-            registry.schema_version
+        return Err(ModelCompatibilityError::UnsupportedSchemaVersion(
+            registry.schema_version,
         ));
     }
     if registry.as_of.trim().is_empty() || registry.entries.is_empty() {
-        return Err("model compatibility registry is empty".to_string());
+        return Err(ModelCompatibilityError::Empty);
     }
     for entry in &registry.entries {
         if entry.provider_id.trim().is_empty()
@@ -47,9 +62,8 @@ pub(crate) fn registry() -> Result<ModelCompatibilityRegistry, String> {
             || entry.quality_evidence_url.trim().is_empty()
             || entry.observed_at.trim().is_empty()
         {
-            return Err(format!(
-                "model compatibility registry entry '{}' is incomplete",
-                entry.model_id
+            return Err(ModelCompatibilityError::IncompleteEntry(
+                entry.model_id.clone(),
             ));
         }
     }

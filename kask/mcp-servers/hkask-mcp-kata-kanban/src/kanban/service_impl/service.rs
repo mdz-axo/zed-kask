@@ -16,6 +16,7 @@ use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::id::{BoardId, TaskId};
+use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use serde_json::Value;
 
 use super::types::KanbanError;
@@ -114,8 +115,9 @@ impl KanbanService {
 
     /// Validate and normalize a board name. The service boundary is the
     /// single enforcement point for every caller (panel, MCP agents,
-    /// import): names are trimmed and must be non-empty afterwards —
-    /// reference model R1 (see
+    /// import): names are trimmed, must be non-empty afterwards, and are
+    /// capped at [`KANBAN_BOARD_NAME_MAX_CHARS`] characters (operator
+    /// decision 2026-09-18, Planka-aligned — see
     /// `kask/docs/research/kanban-board-reference-models.md` §6.6). Returns
     /// the trimmed name.
     fn validate_board_name(name: &str) -> Result<&str, KanbanError> {
@@ -123,12 +125,19 @@ impl KanbanService {
         if trimmed.is_empty() {
             return Err(KanbanError::InvalidInput("board name is empty".into()));
         }
+        if trimmed.chars().count() > KANBAN_BOARD_NAME_MAX_CHARS {
+            return Err(KanbanError::InvalidInput(format!(
+                "board name is longer than {KANBAN_BOARD_NAME_MAX_CHARS} characters ({} given)",
+                trimmed.chars().count()
+            )));
+        }
         Ok(trimmed)
     }
 
     /// Create a new kanban board.
     ///
-    /// pre:  owner is a valid WebID; name is non-empty; columns is non-empty
+    /// pre:  owner is a valid WebID; name is non-empty and within the cap;
+    ///       columns is non-empty
     /// post: board is persisted as a h_mem; returns the created Board
     #[must_use = "result must be used"]
     pub(crate) fn board_create(
@@ -251,7 +260,8 @@ impl KanbanService {
     /// same call re-applies the same name, so it needs no idempotency key
     /// (the `task_update` class).
     ///
-    /// pre:  board_id is valid; new_name is non-empty after trimming
+    /// pre:  board_id is valid; new_name is non-empty after trimming and
+    ///       within the cap
     /// post: the board h_mem's name is updated in place (same h_mem id, PKO
     ///       procedure anchoring preserved); returns the renamed Board
     #[must_use = "result must be used"]

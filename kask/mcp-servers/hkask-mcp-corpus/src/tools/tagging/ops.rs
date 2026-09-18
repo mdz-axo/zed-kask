@@ -16,8 +16,8 @@ use hkask_bridge_ontology::term_resolution::{
 };
 use hkask_inference::model_constants::classifier_model;
 use hkask_inference::passage_tagging::{
-    ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
-    render_deployed_tagging_prompt,
+    ExpertiseMode, Passage, PassageTag, PassageTaggingError, PassageTaggingRequest,
+    parse_tagging_response, render_deployed_tagging_prompt,
 };
 use hkask_types::corpus::{ClassificationOutcome, ExpertiseLevel, TaggedChunk};
 use schemars::JsonSchema;
@@ -56,7 +56,25 @@ fn correlation_id(index: usize) -> String {
     format!("item-{index}")
 }
 
-fn tagging_request(chunks: &[InputChunk]) -> Result<PassageTaggingRequest, String> {
+/// Tagging-batch failures across the request/validate/join path. Display
+/// strings are byte-identical to the historical message strings because they
+/// are recorded verbatim in `ClassificationOutcome::Failed` rows of the
+/// published tagged JSONL.
+#[derive(Debug, thiserror::Error)]
+enum TaggingError {
+    /// Ontology request construction, template rendering, and response
+    /// parsing share `PassageTaggingError`; Display passes through unchanged.
+    #[error(transparent)]
+    Ontology(#[from] PassageTaggingError),
+    #[error("candidate_terms must contain 3-5 descriptive terms")]
+    InsufficientCandidateTerms,
+    #[error("inference failed after retries: {0}")]
+    Inference(#[from] hkask_types::InferenceError),
+    #[error("tagging batch task join failed: {0}")]
+    JoinFailed(String),
+}
+
+fn tagging_request(chunks: &[InputChunk]) -> Result<PassageTaggingRequest, TaggingError> {
     let passages = chunks
         .iter()
         .enumerate()
@@ -68,7 +86,7 @@ fn tagging_request(chunks: &[InputChunk]) -> Result<PassageTaggingRequest, Strin
         vec!["what", "how"],
         ExpertiseMode::ServerDerived,
     )
-    .map_err(|error| error.to_string())
+    .map_err(TaggingError::from)
 }
 
 /// Accept a response only when it covers exactly this batch's correlation set.
@@ -77,10 +95,10 @@ fn tagging_request(chunks: &[InputChunk]) -> Result<PassageTaggingRequest, Strin
 fn correlate_tags(
     text: &str,
     chunks: &[InputChunk],
-) -> Result<(HashMap<String, ValidatedTags>, bool), String> {
+) -> Result<(HashMap<String, ValidatedTags>, bool), TaggingError> {
     let request = tagging_request(chunks)?;
     let (response, repaired_outer_array) = repair_missing_outer_array(text);
-    let tags = parse_tagging_response(&request, &response).map_err(|error| error.to_string())?;
+    let tags = parse_tagging_response(&request, &response)?;
     let correlated = chunks
         .iter()
         .zip(tags)
@@ -183,10 +201,10 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
 /// Validate classifier judgments and resolve descriptive terms through the
 /// shared published-ontology authority. Malformed responses fail visibly;
 /// values are never silently promoted through fallback defaults.
-fn validate_candidate_tags(tags: PassageTag) -> Result<ValidatedTags, String> {
+fn validate_candidate_tags(tags: PassageTag) -> Result<ValidatedTags, TaggingError> {
     let candidate_terms = trim_and_cap_candidate_terms(&tags.candidate_terms);
     if candidate_terms.len() < 3 {
-        return Err("candidate_terms must contain 3-5 descriptive terms".to_string());
+        return Err(TaggingError::InsufficientCandidateTerms);
     }
     let canonical_terms = canonicalize_terms(&candidate_terms);
     let dc_subject = normalize_and_cap_concept_list(&canonical_terms.candidate_terms);
@@ -313,8 +331,7 @@ impl CorpusServer {
                     let slot = limiter.acquire().await;
 
                     let tagging_request = tagging_request(&batch_chunks)?;
-                    let prompt = render_deployed_tagging_prompt(&tagging_request)
-                        .map_err(|error| error.to_string())?;
+                    let prompt = render_deployed_tagging_prompt(&tagging_request)?;
 
                     let params = LLMParameters {
                         temperature: 0.1,
@@ -352,7 +369,7 @@ impl CorpusServer {
                                 error = %e,
                                 "LLM call failed after retries — chunks will get fallback tags"
                             );
-                            return Err(format!("inference failed after retries: {e}"));
+                            return Err(TaggingError::Inference(e));
                         }
                     };
 
@@ -396,7 +413,7 @@ impl CorpusServer {
                         result
                     }
                     Ok(Err(error)) => Err(error),
-                    Err(error) => Err(format!("tagging batch task join failed: {error}")),
+                    Err(error) => Err(TaggingError::JoinFailed(error.to_string())),
                 };
                 match outcome {
                     Ok((mut tags, repaired_outer_array)) => {
@@ -420,7 +437,7 @@ impl CorpusServer {
                         for _ in 0..batch_len {
                             results.push((
                                 fallback_tags(),
-                                ClassificationOutcome::Failed { reason: reason.clone() },
+                                ClassificationOutcome::Failed { reason: reason.to_string() },
                             ));
                         }
                     }

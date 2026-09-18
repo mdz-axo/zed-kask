@@ -795,8 +795,10 @@ async fn what_if_workbook_is_immutable_and_never_touches_the_ledger() {
     assert!(block.mutation.is_dispatchable());
     assert!(block.artifact.validate().is_ok());
 
-    // Staged edits never write through: open, stage, and a fresh open still
-    // shows the published values.
+    // Staged edits never write through: stage on the live document, then a
+    // FRESH ACTOR on the same root reads the revision from disk and still
+    // shows the published values (the live handle intentionally keeps its
+    // staged state; idempotent open).
     let document = server
         .spreadsheet
         .open(&block.artifact)
@@ -810,8 +812,10 @@ async fn what_if_workbook_is_immutable_and_never_touches_the_ledger() {
         }])
         .await
         .expect("stage edit");
-    let fresh = server
-        .spreadsheet
+    let second_actor =
+        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
+            .expect("second actor");
+    let fresh = second_actor
         .open(&block.artifact)
         .await
         .expect("fresh open");

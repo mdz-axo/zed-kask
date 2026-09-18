@@ -36,7 +36,7 @@ use hkask_kanban_widget::view::KanbanWidget;
 use hkask_steer::{SteerContext, SteerSurface};
 use hkask_tool_invoker::shared_tool_invoker;
 use hkask_types::BlockProvenance;
-use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
+use hkask_types::kanban_wire::{KANBAN_BOARD_NAME_MAX_CHARS, KANBAN_SERVER_NAME};
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;
@@ -477,18 +477,34 @@ struct CommentsResponse {
 // These helpers carry the panel's board-identity decisions so the fetch
 // path stays thin and the decisions are pinnable without a Workspace.
 
-/// The panel's identity titles (reference model R4: the open board's name
-/// is displayed at the point of use). The headline names the open board
-/// directly; the tab carries the panel-type prefix so kanban tabs stay
-/// recognizable while distinguishing panels on different boards.
-fn panel_titles(board_name: Option<&str>) -> (SharedString, SharedString) {
+/// The panel's tab title (reference model R4: the open board's name is
+/// displayed at the point of use — the tab here; the widget's header name
+/// is the in-content surface). The tab carries the panel-type prefix so
+/// kanban tabs stay recognizable while distinguishing panels on different
+/// boards. The panel headline that repeated the board name was removed
+/// (operator decision 2026-09-18) — it duplicated the widget's load-bearing
+/// header, which carries the "I disagree" provenance chip and renders in
+/// chat blocks.
+fn panel_tab_title(board_name: Option<&str>) -> SharedString {
     match board_name {
-        Some(name) if !name.is_empty() => (
-            SharedString::from(name.to_string()),
-            SharedString::from(format!("Kanban — {name}")),
-        ),
-        _ => ("Kanban Board".into(), "Kanban Board".into()),
+        Some(name) if !name.is_empty() => SharedString::from(format!("Kanban — {name}")),
+        _ => "Kanban Board".into(),
     }
+}
+
+/// The board-name cap the panel enforces client-side (the service boundary
+/// is the single enforcement point; this pre-flight keeps the typed text in
+/// the open form instead of losing it to a server rejection). Reference:
+/// Planka caps board names at 128 (`maxLength={128}`) — see
+/// `kask/docs/research/kanban-board-reference-models.md` §6.6. Returns the
+/// operator-facing message when the trimmed name exceeds the wire cap.
+pub(crate) fn board_name_cap_error(trimmed_name: &str) -> Option<SharedString> {
+    let chars = trimmed_name.chars().count();
+    (chars > KANBAN_BOARD_NAME_MAX_CHARS).then(|| {
+        SharedString::from(format!(
+            "Board names are capped at {KANBAN_BOARD_NAME_MAX_CHARS} characters — this one is {chars}."
+        ))
+    })
 }
 
 /// G8 (identity drift): the selected board's identity (name, columns) as
@@ -1661,60 +1677,57 @@ impl Render for KanbanPanel {
                     .pt_4()
                     .px_4()
                     .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .justify_between()
-                            .child(
-                                Headline::new(panel_titles(self.board_name.as_deref()).0)
-                                    .size(HeadlineSize::Large),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        // Mode toggle: Browse / Steer — uses
-                                        // `ToggleButtonGroup` for consistency with the
-                                        // swarm panel (the prior hand-rolled
-                                        // `div().cursor_pointer()` toggle had no
-                                        // measurement and could collide at narrow
-                                        // widths).
-                                        div().child(
-                                            ToggleButtonGroup::single_row(
-                                                "kanban-mode-buttons",
-                                                [
-                                                    ToggleButtonSimple::new(
-                                                        "Browse",
-                                                        cx.listener(move |this, _, _, cx| {
-                                                            this.set_mode(PanelMode::Browse, cx);
-                                                        }),
-                                                    ),
-                                                    ToggleButtonSimple::new(
-                                                        "Steer",
-                                                        cx.listener(move |this, _, _, cx| {
-                                                            this.set_mode(PanelMode::Steer, cx);
-                                                        }),
-                                                    ),
-                                                ],
-                                            )
-                                            .style(ToggleButtonGroupStyle::Outlined)
-                                            .size(ToggleButtonGroupSize::Custom(rems_from_px(
-                                                30.0_f32,
-                                            )))
-                                            .label_size(LabelSize::Default)
-                                            .auto_width()
-                                            .selected_index(match mode {
-                                                PanelMode::Browse => 0,
-                                                PanelMode::Steer => 1,
-                                            })
-                                            .into_any_element(),
-                                        ),
-                                    )
-                                    .when(mode == PanelMode::Browse, |this| {
-                                        this.child(self.render_toolbar(window, cx))
-                                    }),
-                            ),
+                        // The board-name headline is gone (operator
+                        // decision 2026-09-18): the widget's header
+                        // already names the open board at the point
+                        // of use, and the tab carries
+                        // `Kanban — {name}` — a panel headline only
+                        // repeated the name. The mode controls stay
+                        // right-aligned in the top bar.
+                        h_flex().w_full().justify_end().child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    // Mode toggle: Browse / Steer — uses
+                                    // `ToggleButtonGroup` for consistency with the
+                                    // swarm panel (the prior hand-rolled
+                                    // `div().cursor_pointer()` toggle had no
+                                    // measurement and could collide at narrow
+                                    // widths).
+                                    div().child(
+                                        ToggleButtonGroup::single_row(
+                                            "kanban-mode-buttons",
+                                            [
+                                                ToggleButtonSimple::new(
+                                                    "Browse",
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.set_mode(PanelMode::Browse, cx);
+                                                    }),
+                                                ),
+                                                ToggleButtonSimple::new(
+                                                    "Steer",
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.set_mode(PanelMode::Steer, cx);
+                                                    }),
+                                                ),
+                                            ],
+                                        )
+                                        .style(ToggleButtonGroupStyle::Outlined)
+                                        .size(ToggleButtonGroupSize::Custom(rems_from_px(30.0_f32)))
+                                        .label_size(LabelSize::Default)
+                                        .auto_width()
+                                        .selected_index(match mode {
+                                            PanelMode::Browse => 0,
+                                            PanelMode::Steer => 1,
+                                        })
+                                        .into_any_element(),
+                                    ),
+                                )
+                                .when(mode == PanelMode::Browse, |this| {
+                                    this.child(self.render_toolbar(window, cx))
+                                }),
+                        ),
                     )
                     .when(mode == PanelMode::Browse, |this| {
                         this.when_some(self.render_error(), |this, error| this.child(error))
@@ -1774,7 +1787,7 @@ impl Item for KanbanPanel {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        panel_titles(self.board_name.as_deref()).1
+        panel_tab_title(self.board_name.as_deref())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1842,11 +1855,11 @@ impl SerializableItem for KanbanPanel {
 mod tests {
     use super::{
         BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL, BOARD_UPDATE_TOOL, BoardInfo,
-        ColumnDef, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
-        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
-        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay, panel_titles,
-        pending_board_to_select, refresh_target, selected_identity_from_boards,
-        steer_system_prompt,
+        ColumnDef, IDEMPOTENT_TOOLS, KANBAN_BOARD_NAME_MAX_CHARS, MAX_MUTATION_RETRIES,
+        RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL,
+        attach_idempotency_key, board_name_cap_error, classify_kanban_fetch_error,
+        is_idempotent_tool, mutation_retry_delay, panel_tab_title, pending_board_to_select,
+        refresh_target, selected_identity_from_boards, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2299,24 +2312,36 @@ mod tests {
     // current, and the pending-selection that opens created boards. The
     // fetch path wires these; these tests pin the decisions.
 
-    /// T5 (R4): the panel's identity titles carry the selected board's name —
-    /// the headline names the board directly, and the tab distinguishes two
-    /// kanban panels open on different boards.
+    /// T5 (R4): the panel's tab title carries the selected board's name so
+    /// two kanban panels open on different boards stay distinguishable. The
+    /// panel headline that repeated the board name is gone (operator
+    /// decision 2026-09-18) — the widget's header is the in-content name
+    /// surface.
     #[test]
-    fn panel_titles_carry_the_selected_board_name() {
-        let (headline, tab) = panel_titles(Some("Alpha Board"));
-        assert_eq!(headline.as_ref(), "Alpha Board");
-        assert_eq!(tab.as_ref(), "Kanban — Alpha Board");
-
-        let (headline, tab) = panel_titles(None);
-        assert_eq!(headline.as_ref(), "Kanban Board");
-        assert_eq!(tab.as_ref(), "Kanban Board");
+    fn panel_tab_title_carries_the_selected_board_name() {
+        assert_eq!(
+            panel_tab_title(Some("Alpha Board")).as_ref(),
+            "Kanban — Alpha Board"
+        );
+        assert_eq!(panel_tab_title(None).as_ref(), "Kanban Board");
 
         // An empty name (identity not yet reconciled) must not render a
         // dangling dash.
-        let (headline, tab) = panel_titles(Some(""));
-        assert_eq!(headline.as_ref(), "Kanban Board");
-        assert_eq!(tab.as_ref(), "Kanban Board");
+        assert_eq!(panel_tab_title(Some("")).as_ref(), "Kanban Board");
+    }
+
+    /// The 128-character board-name cap (§6.6): a name at the cap passes,
+    /// a name over the cap yields a message that names the cap — so the
+    /// refused submit is never a silent no-op.
+    #[test]
+    fn board_name_cap_error_bounds_the_name_at_the_wire_cap() {
+        assert!(board_name_cap_error(&"x".repeat(KANBAN_BOARD_NAME_MAX_CHARS)).is_none());
+        let over = board_name_cap_error(&"x".repeat(KANBAN_BOARD_NAME_MAX_CHARS + 1))
+            .expect("a name over the cap must error");
+        assert!(
+            over.as_ref().contains("capped at 128"),
+            "the message must name the cap, got: {over}"
+        );
     }
 
     /// T11 (G8): the selected board's identity reconciles from every

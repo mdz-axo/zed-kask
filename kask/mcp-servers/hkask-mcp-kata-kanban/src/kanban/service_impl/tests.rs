@@ -7,6 +7,9 @@ use crate::kanban::{
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
+use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
+
+use super::types::KanbanError;
 
 fn make_store() -> HMemStore {
     let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
@@ -81,6 +84,51 @@ fn board_create_stores_trimmed_name() {
         .unwrap();
     assert_eq!(board.name, "Padded Board");
     assert_eq!(svc.board_list(&owner).unwrap()[0].name, "Padded Board");
+}
+
+/// The 128-character cap (operator decision 2026-09-18; Planka
+/// `maxLength={128}` — §6.6). A name over the cap is rejected at the
+/// single enforcement point, and the error names the cap.
+#[test]
+fn board_create_rejects_name_over_the_cap() {
+    let svc = KanbanService::new(make_store());
+    let over_cap = "x".repeat(KANBAN_BOARD_NAME_MAX_CHARS + 1);
+    let err = svc
+        .board_create(WebID::new(), &over_cap, &make_default_columns())
+        .unwrap_err();
+    assert!(
+        matches!(&err, KanbanError::InvalidInput(msg) if msg.contains("longer than 128")),
+        "the error must name the cap, got: {err:?}"
+    );
+}
+
+/// The cap boundary: exactly 128 characters is valid. The cap bounds, it
+/// never truncates — a silent truncation would address the board by a
+/// name the caller never typed.
+#[test]
+fn board_create_accepts_name_at_the_cap() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let at_cap = "x".repeat(KANBAN_BOARD_NAME_MAX_CHARS);
+    let board = svc
+        .board_create(owner, &at_cap, &make_default_columns())
+        .unwrap();
+    assert_eq!(board.name.chars().count(), KANBAN_BOARD_NAME_MAX_CHARS);
+    assert_eq!(svc.board_list(&owner).unwrap()[0].name, at_cap);
+}
+
+/// Rename enforces the same cap at the same boundary; a failed rename
+/// leaves the original name intact (the T4 discipline).
+#[test]
+fn board_rename_rejects_name_over_the_cap() {
+    let (svc, board, _owner) = make_service_with_board();
+    let over_cap = "x".repeat(KANBAN_BOARD_NAME_MAX_CHARS + 1);
+    assert!(svc.board_rename(board.id, &over_cap).is_err());
+    assert_eq!(
+        svc.board_list(&board.owner).unwrap()[0].name,
+        "Test Board",
+        "a failed rename must leave the original name intact"
+    );
 }
 
 // ── Board rename (reference model R6) ──────────────────────────────────

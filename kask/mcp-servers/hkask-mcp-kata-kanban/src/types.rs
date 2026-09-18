@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardCreateRequest {
+    /// Board name (required). Trimmed at the service boundary and rejected
+    /// when empty after trimming or longer than 128 characters
+    /// (`KANBAN_BOARD_NAME_MAX_CHARS` — reference model R1;
+    /// `kask/docs/research/kanban-board-reference-models.md` §6.6).
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
     /// Opaque client-generated key making this create replay-safe.
@@ -577,8 +581,9 @@ pub(crate) struct BoardDeleteResponse {
 pub struct BoardUpdateRequest {
     pub board_id: String,
     /// New board name. Trimmed at the service boundary and required
-    /// non-empty afterwards — the name is the board's addressing key
-    /// (reference model R1/R6;
+    /// non-empty afterwards; capped at 128 characters
+    /// (`KANBAN_BOARD_NAME_MAX_CHARS`) — the name is the board's addressing
+    /// key (reference model R1/R6;
     /// `kask/docs/research/kanban-board-reference-models.md` §6.3, §6.6).
     pub name: String,
 }
