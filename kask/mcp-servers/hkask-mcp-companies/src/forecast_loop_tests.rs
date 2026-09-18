@@ -217,3 +217,59 @@ async fn forecast_degradation_is_surfaced_never_silent() {
         "no forecasts is surfaced as an empty list — never fabricated zeros or entries"
     );
 }
+
+/// expect: the degraded no-probability path is pinned — a forecast persisted
+/// without forecast_probability is surfaced at write time (the persist note)
+/// and forecast_record scores against the documented 0.7 fallback prior
+/// (Brier (1−0.7)² = 0.09), never an invented probability.
+#[tokio::test]
+async fn forecast_record_without_probability_uses_pinned_fallback() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let server = server(directory.path());
+    let persisted = content(
+        &server
+            .forecast_persist(Parameters(types::ForecastPersistRequest {
+                symbol: "ACME.US".into(),
+                forecast_date: "2026-01-15".into(),
+                horizon: types::Horizon::SixMo,
+                forecast_price_change: Some(0.10),
+                forecast_multiple: Some(12.0),
+                forecast_probability: None,
+                revision_of: None,
+                forecast_id: Some("loop-fallback-1".into()),
+                forecast_price: None,
+                current_price: None,
+            }))
+            .await
+            .expect("forecast_persist tool"),
+    );
+    let note = persisted["note"].as_str().expect("persist response note");
+    assert!(
+        note.contains("WITHOUT forecast_probability"),
+        "the degradation must be surfaced at write time, got: {note}"
+    );
+
+    let recorded = content(
+        &server
+            .forecast_record(Parameters(types::ForecastRecordRequest {
+                symbol: "ACME.US".into(),
+                forecast_date: "2026-01-15".into(),
+                horizon: types::Horizon::SixMo,
+                forecast_multiple: 12.0,
+                forecast_price_change: 0.10,
+                outcome_date: "2026-07-15".into(),
+                actual_multiple: 12.0,
+                actual_price_change: 0.10,
+                forecast_id: Some("loop-fallback-1".into()),
+            }))
+            .await
+            .expect("forecast_record tool"),
+    );
+    let brier = recorded["brier"]["return_accuracy"]
+        .as_f64()
+        .expect("brier on the fallback path");
+    assert!(
+        (brier - 0.09).abs() < 1e-9,
+        "the fallback must be the pinned 0.7 prior: (1−0.7)² = 0.09, got {brier}"
+    );
+}
