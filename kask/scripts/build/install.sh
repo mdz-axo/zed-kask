@@ -123,7 +123,8 @@ clone_repo() {
 # ============================================================================
 #
 # install.sh does NOT maintain its own dependency list. The canonical list
-# lives in script/linux (shared with CI via .github/workflows/kask-ci.yml).
+# lives in script/linux (shared with CI via the zed-check job in
+# .github/workflows/kask-invariants.yml).
 # A second list here would drift, as it did before this rewrite — the prior
 # inline list omitted libasound2-dev, libfontconfig-dev, libxkbcommon-x11-dev,
 # libvulkan1, libwayland-dev, and other libs required to build zed/GPUI,

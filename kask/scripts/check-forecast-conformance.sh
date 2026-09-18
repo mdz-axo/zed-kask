@@ -13,7 +13,7 @@
 # (Fermi averaging, shrinkage, Bayes, Brier) and excludes struct constructors
 # like `FermiQuestion::new`, which are not methodology stages.
 #
-# Enabled in CI via .github/workflows/ci.yml invariants job.
+# Runs locally on demand; not currently wired into any CI workflow.
 # Run locally: scripts/check-forecast-conformance.sh
 
 set -euo pipefail
