@@ -249,9 +249,9 @@ impl TrainingServer {
 
             // G-D0: Dataset format compatibility check. Run before the refusal
             // gate so incompatible-dataset refusals are reported alongside
-            // config refusals. Derive trainer preference from trl_trainer.
+            // config refusals. Derive the dataset expectation from the training method.
             let trainer_pref = resolved_params
-                .trl_trainer
+                .training_method
                 .as_ref()
                 .map(|t| t.as_dataset_preference());
             let dataset_format_result = lora_validation::validate_dataset_format(

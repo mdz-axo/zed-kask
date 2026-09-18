@@ -24,7 +24,7 @@ impl TrainingServer {
             let mut findings = lora_validation::validate_training_params(&params);
 
             let trainer_preference = params
-                .trl_trainer
+                .training_method
                 .as_ref()
                 .map(|t| t.as_dataset_preference());
 

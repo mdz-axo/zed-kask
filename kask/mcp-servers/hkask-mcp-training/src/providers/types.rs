@@ -36,10 +36,7 @@ pub(crate) enum TrainingHarnessId {
     /// axolotl — YAML-based training framework, dispatched to Runpod.
     /// Supports SFT only (no preference optimization). Mature, single-file config.
     Axolotl,
-    /// trl — HuggingFace TRL Python library, dispatched to Runpod.
-    /// Supports SFT (SFTTrainer) and preference optimization (DPO/KTO/ORPO/Reward).
-    /// All trainers are implemented: SFT, DPO, KTO, ORPO, Reward.
-    Trl,
+
     /// ludwig — declarative YAML deep-learning framework (Linux Foundation AI & Data),
     /// dispatched to Runpod. Supports SFT, DPO/KTO/ORPO, and GRPO (reward-model-free
     /// RLHF) — the only harness in the candidate set covering GRPO. Also covers
@@ -49,95 +46,29 @@ pub(crate) enum TrainingHarnessId {
     Ludwig,
 }
 
-// ── TRL trainer identifiers ───────────────────────────────────────────────────
+// ── Training method identifiers ────────────────────────────────────────────────
 
-/// TRL trainer selection — only meaningful when `harness = Trl`.
-///
-/// Mirrors the TRL trainer taxonomy (https://huggingface.co/docs/trl/index).
-/// Each variant maps to a TRL trainer class + config class pair.
-/// Add trainers as concrete needs emerge (P7 — evolutionary architecture).
-///
-/// All trainers are implemented: `Sft`, `Dpo`, `Kto`, `Orpo`, `Reward`.
-/// Deferred: online RL trainers (GRPO, RLOO, PPO, OnlineDPO, NashMD, XPO) —
-///   require vLLM co-location and sandboxed environments; add when a concrete
-///   RL use case emerges.
+/// Training method selected independently of the declarative harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum TrlTrainer {
-    /// TRL `SFTTrainer` + `SFTConfig` — supervised fine-tuning.
-    /// The canonical SFT path; parallel to Axolotl's SFT support.
-    /// Supports: packing, assistant_only_loss, completion_only_loss, VLMs.
-    /// Data format: ChatML `{"messages": [...]}` or prompt-completion.
+pub(crate) enum TrainingMethod {
     #[default]
     Sft,
-    /// TRL `DPOTrainer` + `DPOConfig` — Direct Preference Optimization.
-    /// Offline preference optimization from paired chosen/rejected data.
-    /// Data format: `{"prompt": ..., "chosen": ..., "rejected": ...}`.
-    /// Source: arXiv:2305.18290.
     Dpo,
-    /// TRL `KTOTrainer` + `KTOConfig` — Kahneman-Tversky Optimization.
-    /// Unpaired binary preference data (good/bad labels, no pairing needed).
-    /// Data format: `{"prompt": ..., "completion": ..., "label": bool}`.
-    /// Source: arXiv:2402.01306.
     Kto,
-    /// TRL `ORPOTrainer` + `ORPOConfig` — Odds Ratio Preference Optimization.
-    /// Single-stage SFT + preference alignment in one pass.
-    /// Data format: `{"chosen": ..., "rejected": ...}` (prompt implicit).
-    /// Source: arXiv:2403.07691.
     Orpo,
-    /// TRL `RewardTrainer` + `RewardConfig` — reward model training.
-    /// Trains a reward model for RLHF pipelines (needed before PPO/GRPO).
-    /// Data format: `{"chosen": ..., "rejected": ...}` (prompt implicit).
-    /// Source: https://huggingface.co/docs/trl/main/en/reward_trainer.
-    Reward,
-    // Deferred: online RL trainers (GRPO, RLOO, PPO, OnlineDPO, NashMD, XPO)
-    // — require vLLM co-location and sandboxed environments. Add when a
-    // concrete RL use case emerges (P7 — evolutionary architecture).
+    Grpo,
 }
 
-impl TrlTrainer {
-    /// The TRL trainer class name (e.g., `"SFTTrainer"`).
-    pub fn trainer_class(&self) -> &'static str {
-        match self {
-            Self::Sft => "SFTTrainer",
-            Self::Dpo => "DPOTrainer",
-            Self::Kto => "KTOTrainer",
-            Self::Orpo => "ORPOTrainer",
-            Self::Reward => "RewardTrainer",
-        }
-    }
-
-    /// The TRL config class name (e.g., `"SFTConfig"`).
-    pub fn config_class(&self) -> &'static str {
-        match self {
-            Self::Sft => "SFTConfig",
-            Self::Dpo => "DPOConfig",
-            Self::Kto => "KTOConfig",
-            Self::Orpo => "ORPOConfig",
-            Self::Reward => "RewardConfig",
-        }
-    }
-
-    /// The expected dataset format for this trainer (for G-H1 validation).
-    pub fn expected_dataset_format(&self) -> &'static str {
-        match self {
-            Self::Sft => "chatml or prompt-completion",
-            Self::Dpo => "preference (prompt + chosen + rejected)",
-            Self::Kto => "unpaired preference (prompt + completion + label)",
-            Self::Orpo => "preference (chosen + rejected)",
-            Self::Reward => "preference (chosen + rejected)",
-        }
-    }
-
+impl TrainingMethod {
     /// G-D0 dataset preference string for `validate_dataset_format`.
-    /// Maps the trainer enum to the string expected by the format validator.
     pub fn as_dataset_preference(&self) -> &'static str {
         match self {
             Self::Sft => "sft",
             Self::Dpo => "dpo",
             Self::Kto => "kto",
             Self::Orpo => "orpo",
-            Self::Reward => "reward",
+            Self::Grpo => "grpo",
         }
     }
 }
@@ -595,19 +526,12 @@ pub(crate) struct TrainingParams {
     /// Attention, mixed precision, and eval parameters.
     #[serde(default)]
     pub advanced: AdvancedParams,
-    /// Selected training harness (operator-accepted from the `lora-training`
-    /// skill's G6 gate recommendation). `None` defers to the runtime default
-    /// (Axolotl) — preserves existing behavior when no harness is selected.
-    ///
-    /// Authority: the skill recommends; the operator accepts, overrides, or
-    /// rejects; the runtime enforces harness-method compatibility (G-H1).
+    /// Selected declarative training harness. `None` uses Axolotl.
     #[serde(default)]
     pub harness: Option<TrainingHarnessId>,
-    /// TRL trainer selection — only meaningful when `harness = Trl`.
-    /// `None` defaults to `Sft` when `harness = Trl`.
-    /// Ignored when `harness = Axolotl` or `None`.
+    /// Selected training method. Axolotl accepts SFT; Ludwig accepts all methods.
     #[serde(default)]
-    pub trl_trainer: Option<TrlTrainer>,
+    pub training_method: Option<TrainingMethod>,
 }
 
 impl Default for TrainingParams {
@@ -622,7 +546,7 @@ impl Default for TrainingParams {
             sequence: SequenceParams::default(),
             advanced: AdvancedParams::default(),
             harness: None,
-            trl_trainer: None,
+            training_method: None,
         }
     }
 }

@@ -15,7 +15,6 @@
 pub(crate) mod harness;
 pub(crate) mod nebius;
 pub(crate) mod runpod;
-pub(crate) mod trl_harness;
 pub(crate) mod types;
 
 // ── Re-exports for lib.rs compatibility ──────────────────────────────────
@@ -23,7 +22,6 @@ pub(crate) mod types;
 pub(crate) use harness::{AxolotlHarness, LudwigHarness};
 pub(crate) use nebius::NebiusHost;
 pub(crate) use runpod::RunpodHost;
-pub(crate) use trl_harness::TrlHarness;
 pub(crate) use types::{
     HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostId, TrainingJob,
     TrainingJobStatus, TrainingParams,

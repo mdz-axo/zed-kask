@@ -427,8 +427,7 @@ struct PodDeploySpec<'a> {
 ///   5. Writes a completion manifest
 ///   6. exec sleep infinity for SSH debugging
 ///
-/// The script is harness-specific — axolotl installs axolotl, TRL installs
-/// TRL, etc. The harness is selected by the `harness` parameter, which is
+/// The script is harness-specific. The harness is selected by the `harness` parameter, which is
 /// resolved by the caller from `job.params.harness` (operator-accepted) or
 /// `job.harness` (server default).
 pub(crate) fn generate_install_script(
@@ -472,22 +471,7 @@ pub(crate) fn generate_install_script(
                     "axolotl",
                 )
             }
-            TrainingHarnessId::Trl => {
-                let script = crate::providers::TrlHarness
-                    .render_config(job)
-                    .map_err(|e| {
-                        HostProviderError::InvalidConfig(format!(
-                            "Failed to render TRL script: {e}"
-                        ))
-                    })?;
-                (
-                    "train.py",
-                    script,
-                    "pip install --no-cache-dir trl==1.8.0 peft==0.19.0 transformers==5.9.0 bitsandbytes accelerate liger-kernel huggingface_hub",
-                    "python /workspace/train.py",
-                    "trl==1.8.0 peft==0.19.0 transformers==5.9.0",
-                )
-            }
+
             TrainingHarnessId::Ludwig => {
                 let yaml = crate::providers::LudwigHarness
                     .render_config(job)
@@ -509,7 +493,7 @@ pub(crate) fn generate_install_script(
     // Generate the install script. We build it with push_str to avoid
     // format! brace-escaping issues with bash ${VAR} references.
     // The config content is written via a quoted heredoc to prevent shell
-    // expansion of the rendered YAML/Python content.
+    // expansion of the rendered YAML content.
     let mut script = String::with_capacity(4096);
     script.push_str("#!/usr/bin/env bash\n");
     script.push_str("set -euo pipefail\n\n");
@@ -549,10 +533,6 @@ pub(crate) fn generate_install_script(
     );
     script.push_str(
         "    echo 'Ludwig already installed — skipping pip install (preserving GPU PyTorch)'\n",
-    );
-    script.push_str("elif [ \"$(basename \"$HARNESS_CMD\")\" = \"python\" ] && python -c 'import trl' 2>/dev/null; then\n");
-    script.push_str(
-        "    echo 'TRL already installed — skipping pip install (preserving GPU PyTorch)'\n",
     );
     script.push_str("else\n");
     script.push_str("    echo 'Installing harness packages...'\n");

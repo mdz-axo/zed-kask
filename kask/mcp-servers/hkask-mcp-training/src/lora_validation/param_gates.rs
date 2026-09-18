@@ -6,13 +6,13 @@
 //!
 //! Anchored to: LoRA (arXiv:2106.09685), QLoRA (arXiv:2305.14314), rsLoRA
 //! (arXiv:2312.03732), DoRA (arXiv:2402.09353), PiSSA (arXiv:2404.02948),
-//! Razin et al. (arXiv:2410.21228), PEFT v0.19.0, TRL v1.8.0.
+//! Razin et al. (arXiv:2410.21228), and PEFT v0.19.0.
 //!
 //! Extracted from `lora_validation.rs` (deep-module split: the LoRA-param
 //! gates are independent of dataset-format compatibility and runtime metrics).
 
 use crate::providers::types::{
-    LoraParams, QuantizationParams, TrainingHarnessId, TrainingParams, TrlTrainer,
+    LoraParams, QuantizationParams, TrainingHarnessId, TrainingMethod, TrainingParams,
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ValidationSeverity {
@@ -426,81 +426,28 @@ fn validate_no_silent_upcast(params: &TrainingParams, findings: &mut Vec<Validat
     }
 }
 
-/// G-H1: Harness-method compatibility.
+/// G-H1: harness-method compatibility.
 ///
-/// Asserts that the selected harness supports the selected method/trainer.
-/// This is the runtime enforcement point for the `lora-training` skill's
-/// G-H1 audit gate (see `registry/templates/lora-training/audit-config.j2`).
-///
-/// - harness=axolotl → SFT, DPO, KTO, ORPO, GRPO, GDPO, RM, Full FT via `rl:`
-///   parameter. If a TRL trainer is selected, warn — trl_trainer is TRL-specific
-///   and Axolotl ignores it (Axolotl uses its own `rl:` config parameter).
-/// - harness=trl → All trainers (SFT, DPO, KTO, ORPO, Reward) are supported.
-/// - harness=None → not_evaluated (runtime defaults to axolotl).
-///
-/// Citation: TRL trainer taxonomy — https://huggingface.co/docs/trl/index
+/// Axolotl's retained renderer produces SFT configuration. Ludwig renders SFT,
+/// DPO, KTO, ORPO, and GRPO through `trainer.type`. Unsupported combinations
+/// are refused rather than silently dropping the selected method.
 fn validate_harness_compatibility(params: &TrainingParams, findings: &mut Vec<ValidationFinding>) {
-    match params.harness {
-        None => {
-            // No harness selected — runtime defaults to axolotl. If a TRL
-            // trainer was specified without selecting harness=trl, warn: the
-            // trainer will be ignored.
-            if params.trl_trainer.is_some() {
-                findings.push(ValidationFinding {
-                    gate_id: "G-H1",
-                    severity: ValidationSeverity::Warn,
-                    message: "trl_trainer specified but harness is not set to trl — the trainer will be ignored (runtime defaults to axolotl)".to_string(),
-                    source: "TRL trainer taxonomy — https://huggingface.co/docs/trl/index",
-                    remediation: "Set harness=trl to use the specified TRL trainer, or remove trl_trainer to use axolotl SFT".to_string(),
-                });
-            }
-        }
-        Some(TrainingHarnessId::Axolotl) => {
-            // Axolotl supports the full training spectrum (SFT, DPO, KTO, ORPO,
-            // GRPO, GDPO, RM, Full FT) via its `rl:` config parameter. However,
-            // trl_trainer is a TRL-specific concept — Axolotl ignores it and uses
-            // its own method selection. Warn (not refuse) so the operator knows
-            // the trl_trainer will be dropped.
-            if params.trl_trainer.is_some() {
-                findings.push(ValidationFinding {
-                    gate_id: "G-H1",
-                    severity: ValidationSeverity::Warn,
-                    message: "harness=axolotl with trl_trainer set — trl_trainer is TRL-specific and Axolotl ignores it (Axolotl uses rl: in its YAML for method selection)".to_string(),
-                    source: "Axolotl docs — https://docs.axolotl.ai/docs/rlhf.html",
-                    remediation: "Remove trl_trainer when using harness=axolotl; Axolotl selects training method via rl: in the rendered config".to_string(),
-                });
-            }
-        }
-        Some(TrainingHarnessId::Trl) => {
-            // TRL harness: all trainers are supported.
-            // G-H1 only checks harness-method compatibility, not dataset format.
-            // Dataset format validation is handled by the dataset pipeline's
-            // format detection (DatasetFormat::detect) and the trainer's
-            // expected_dataset_format() method.
-            match params.trl_trainer.unwrap_or_default() {
-                TrlTrainer::Sft
-                | TrlTrainer::Dpo
-                | TrlTrainer::Kto
-                | TrlTrainer::Orpo
-                | TrlTrainer::Reward => {
-                    // All trainers are supported — no finding.
-                }
-            }
-        }
-        Some(TrainingHarnessId::Ludwig) => {
-            // Ludwig harness: supports SFT, DPO, KTO, ORPO, GRPO via trainer.type.
-            // If a TRL-specific trl_trainer field is set, warn: Ludwig uses its
-            // own trainer.type taxonomy, not TRL's.
-            if params.trl_trainer.is_some() {
-                findings.push(ValidationFinding {
-                    gate_id: "G-H1",
-                    severity: ValidationSeverity::Warn,
-                    message: "harness=ludwig with trl_trainer set — trl_trainer is TRL-specific and Ludwig ignores it (Ludwig uses trainer.type in its own YAML)".to_string(),
-                    source: "Ludwig trainer taxonomy — https://ludwig.ai/latest/configuration/#trainer",
-                    remediation: "Remove trl_trainer when using harness=ludwig; Ludwig's trainer is selected via trainer.type in the rendered config".to_string(),
-                });
-            }
-        }
+    let harness = params.harness.unwrap_or(TrainingHarnessId::Axolotl);
+    let method = params.training_method.unwrap_or_default();
+
+    if harness == TrainingHarnessId::Axolotl && method != TrainingMethod::Sft {
+        findings.push(ValidationFinding {
+            gate_id: "G-H1",
+            severity: ValidationSeverity::Refuse,
+            message: format!(
+                "harness=axolotl does not render training_method={}",
+                method.as_dataset_preference()
+            ),
+            source: "Axolotl renderer contract: registry/templates/training/axolotl-lora.j2",
+            remediation:
+                "Select harness=ludwig for DPO, KTO, ORPO, or GRPO, or select training_method=sft"
+                    .to_string(),
+        });
     }
 }
 

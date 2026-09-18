@@ -232,15 +232,10 @@ fn derive_expected_format(
             // ORPO format (prompt implicit in chosen/rejected) is the closest
             // match in the current DatasetFormat taxonomy.
             "reward" => return Some(DatasetFormat::PreferenceOrpo),
-            // GRPO consumes preference data (prompt + chosen + rejected +
-            // optionally per-token logprobs), but the current DatasetFormat
-            // taxonomy has no GRPO-specific variant and GRPO is not a TRL
-            // trainer supported by this pipeline (it is Ludwig-only and
-            // deferred per TrlTrainer). Return None so G-D0 surfaces
-            // "expected format not derivable" rather than silently mapping
-            // to ChatML (GRPO does not consume ChatML).
-            // TODO: verify against TRL GRPOTrainer's expected format when
-            // GRPO support lands (P7 — evolutionary architecture).
+            // GRPO consumes preference data, but the current DatasetFormat
+            // taxonomy has no GRPO-specific variant. Return None so G-D0
+            // surfaces "expected format not derivable" rather than silently
+            // mapping GRPO to ChatML.
             "grpo" => return None,
             _ => {}
         }

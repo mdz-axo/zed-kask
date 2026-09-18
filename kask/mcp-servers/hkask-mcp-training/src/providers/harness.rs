@@ -1,12 +1,11 @@
 //! Harness definitions — the tooling that runs on top of a host.
 //!
-//! A harness renders training configuration (YAML, Python script) from canonical
-//! `TrainingParams`. Hosts bind a harness and use it to generate the config/script
-//! they dispatch to their compute backend.
+//! A harness renders declarative YAML training configuration from canonical
+//! `TrainingParams`. Hosts bind a harness and dispatch that configuration to
+//! their compute backend.
 //!
 //! Harness → Host mapping:
 //!   Axolotl → Runpod
-//!   TRL     → Runpod
 //!   Ludwig  → Runpod
 
 use crate::providers::types::*;
@@ -16,13 +15,12 @@ use std::path::PathBuf;
 
 /// Renders training configuration in a harness-specific format.
 ///
-/// The *harness* is the tooling that orchestrates training (axolotl CLI,
-/// unsloth Python, TRL SFTTrainer). The *host* is where compute runs.
-/// Each host binds exactly one harness; the harness generates the config
-/// or script that the host dispatches.
+/// The *harness* is the tooling that orchestrates training. The *host* is where
+/// compute runs. Each host binds one harness; the harness generates the YAML
+/// configuration that the host dispatches.
 ///
 /// pre:  job.params carries full expanded TrainingParams
-/// post: returns harness-native config string (YAML, Python script, etc.)
+/// post: returns harness-native YAML configuration
 ///
 /// MDS: Composition — CAN render_config ON TrainingJob VIA HarnessAdapter
 pub(crate) trait HarnessAdapter: Send + Sync {
@@ -258,10 +256,9 @@ impl HarnessAdapter for AxolotlHarness {
 /// (parallel to `HKASK_AXOLOTL_CONFIG`). The pod's entrypoint writes it to
 /// `/workspace/model.yaml` and runs `ludwig train --config /workspace/model.yaml`.
 ///
-/// All Ludwig trainer types are supported via `trainer.type` in the rendered
-/// YAML: finetune (SFT), dpo, kto, orpo, grpo. The trainer is selected from
-/// `job.params.trl_trainer` (reused for Ludwig since the trainer taxonomy
-/// maps 1:1) or defaults to SFT.
+/// All Ludwig training methods are supported via `trainer.type` in the rendered
+/// YAML: finetune (SFT), dpo, kto, orpo, grpo. The method is selected from
+/// `job.params.training_method` or defaults to SFT.
 ///
 /// Ludwig is the only harness covering GRPO (reward-model-free RLHF) and
 /// the full advanced-PEFT initializer set (PiSSA, EVA, CorDA, LoftQ).
@@ -335,19 +332,14 @@ impl HarnessAdapter for LudwigHarness {
                 "use_dora".to_string(),
                 serde_json::json!(lo.use_dora.to_string()),
             ),
-            // Ludwig trainer type — derived from trl_trainer (taxonomy maps 1:1).
-            // SFT → finetune, DPO → dpo, KTO → kto, ORPO → orpo, Reward → finetune
-            // (Ludwig doesn't have a separate reward model trainer; use SFT).
-            // GRPO is Ludwig-only — it's set when trl_trainer is None but the
-            // operator declared trainer_preference=grpo (handled by G6 gate).
             (
                 "trainer_type".to_string(),
-                serde_json::json!(match p.trl_trainer.unwrap_or_default() {
-                    TrlTrainer::Sft => "finetune",
-                    TrlTrainer::Dpo => "dpo",
-                    TrlTrainer::Kto => "kto",
-                    TrlTrainer::Orpo => "orpo",
-                    TrlTrainer::Reward => "finetune", // Ludwig has no reward trainer; use SFT
+                serde_json::json!(match p.training_method.unwrap_or_default() {
+                    TrainingMethod::Sft => "finetune",
+                    TrainingMethod::Dpo => "dpo",
+                    TrainingMethod::Kto => "kto",
+                    TrainingMethod::Orpo => "orpo",
+                    TrainingMethod::Grpo => "grpo",
                 }),
             ),
         ]);

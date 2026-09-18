@@ -26,10 +26,17 @@
 //! from the ledger (the append-only source of truth) via
 //! [`PortfolioStore::rebuild_views`].
 
+mod analysis;
 mod returns;
 mod store;
 mod types;
 
+pub use analysis::{
+    AggregatedMetric, AttributionReport, AttributionRow, CharacteristicsReport,
+    ClassificationObservation, ContributionReport, ContributionRow, SecurityObservation,
+    WhatIfReport, attribution, characteristics, contribution, historical_what_if,
+    prospective_what_if,
+};
 pub use returns::{
     CachedPriceResolver, compute_irr, export_csv, export_json, import_csv, import_json, parse_ymd,
     returns,

@@ -6,9 +6,10 @@
 //! [`crate::CachedPriceResolver::seed_cache`] before calling `portfolio_returns`.
 
 use crate::{
-    AssetType, CachedPriceResolver, HoldingsSnapshot, LedgerFilter, PortfolioError, PortfolioStore,
-    ReturnsReport, Transaction, export_csv, export_json, import_csv, import_json, parse_ymd,
-    returns,
+    AssetType, CachedPriceResolver, ClassificationObservation, HoldingsSnapshot, LedgerFilter,
+    PortfolioError, PortfolioStore, PriceResolver, ReturnsReport, SecurityObservation, Transaction,
+    attribution, characteristics, contribution, export_csv, export_json, historical_what_if,
+    import_csv, import_json, parse_ymd, prospective_what_if, returns,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,6 +50,40 @@ where
         .map_err(map_portfolio_error)
 }
 
+struct CombinedPriceResolver {
+    primary: CachedPriceResolver,
+    fallback: CachedPriceResolver,
+}
+
+impl PriceResolver for CombinedPriceResolver {
+    fn resolve(&self, symbol: &str, date: &str) -> Option<f64> {
+        self.primary
+            .resolve(symbol, date)
+            .or_else(|| self.fallback.resolve(symbol, date))
+    }
+}
+
+fn report_response(
+    portfolio: &str,
+    report_kind: &str,
+    report: serde_json::Value,
+    provenance: serde_json::Value,
+) -> Result<serde_json::Value, McpToolError> {
+    let block = serde_json::json!({
+        "viz": "portfolio",
+        "portfolio": portfolio,
+        "report_kind": report_kind,
+        "report": report,
+        "provenance": provenance,
+    });
+    let body = serde_json::to_string(&block)
+        .map_err(|error| McpToolError::internal(format!("serialize portfolio report: {error}")))?;
+    Ok(serde_json::json!({
+        "report": block["report"],
+        "display_hint": format!("```portfolio\n{body}\n```"),
+    }))
+}
+
 /// Map a tool name to its ontology concept URI for the `"ontology"` field
 /// in the tool output JSON (read by the portfolio widget's "Explain"
 /// affordance). Currently only `portfolio_snapshot` emits the field
@@ -81,6 +116,48 @@ pub struct PortfolioReturnsRequest {
     pub portfolio: String,
     pub from: String,
     pub to: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioContributionRequest {
+    pub portfolio: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioCharacteristicsRequest {
+    pub portfolio: String,
+    pub date: String,
+    #[serde(default)]
+    pub observations: Vec<SecurityObservation>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioAttributionRequest {
+    pub portfolio: String,
+    pub benchmark: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub classifications: Vec<ClassificationObservation>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioWhatIfRequest {
+    pub portfolio: String,
+    pub date: String,
+    pub hypothetical_transactions: Vec<Transaction>,
+    #[serde(default)]
+    pub observations: Vec<SecurityObservation>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioHistoricalWhatIfRequest {
+    pub portfolio: String,
+    pub from: String,
+    pub to: String,
+    pub hypothetical_transactions: Vec<Transaction>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
