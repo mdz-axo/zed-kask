@@ -353,11 +353,7 @@ fn render_attribution(report: &AttributionReport, cx: &mut Context<PortfolioView
                 format_percent(row.selection_effect),
                 format_percent(row.interaction_effect)
             ),
-            &format!(
-                "portfolio {} · benchmark {}",
-                format_percent(row.portfolio_weight),
-                format_percent(row.benchmark_weight)
-            ),
+            "linked contribution to active return",
             cx,
         )
     }));

@@ -457,3 +457,38 @@ pub(crate) fn has_refusals(findings: &[ValidationFinding]) -> bool {
         .iter()
         .any(|f| f.severity == ValidationSeverity::Refuse)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axolotl_refuses_non_sft_training_method() {
+        let params = TrainingParams {
+            harness: Some(TrainingHarnessId::Axolotl),
+            training_method: Some(TrainingMethod::Dpo),
+            ..TrainingParams::default()
+        };
+        let mut findings = Vec::new();
+
+        validate_harness_compatibility(&params, &mut findings);
+
+        assert!(findings.iter().any(|finding| {
+            finding.gate_id == "G-H1" && finding.severity == ValidationSeverity::Refuse
+        }));
+    }
+
+    #[test]
+    fn ludwig_accepts_grpo_training_method() {
+        let params = TrainingParams {
+            harness: Some(TrainingHarnessId::Ludwig),
+            training_method: Some(TrainingMethod::Grpo),
+            ..TrainingParams::default()
+        };
+        let mut findings = Vec::new();
+
+        validate_harness_compatibility(&params, &mut findings);
+
+        assert!(findings.is_empty());
+    }
+}

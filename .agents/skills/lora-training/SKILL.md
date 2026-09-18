@@ -84,7 +84,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
    silently replace earlier constraints.
 3. Emit only derivable values for `adapter_purpose`, `base_mode`, `adapter_form`,
    `scaling`, `initializer`, `preservation`, `rank_range`,
-   `target_module_strategy`, `harness`, and `trainer`; otherwise emit
+   `target_module_strategy`, `harness`, and `training_method`; otherwise emit
    `undetermined`, required evidence, alternatives, constraints, or conflicts.
 4. Treat `model_size_b × 2` only as an approximate bf16 base-weight floor.
    Memory pressure may favor QLoRA, but these two scalar inputs do not establish

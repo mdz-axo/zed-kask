@@ -101,10 +101,6 @@ pub struct AttributionReport {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AttributionRow {
     pub group: String,
-    pub portfolio_weight: f64,
-    pub benchmark_weight: f64,
-    pub portfolio_return: f64,
-    pub benchmark_return: f64,
     pub allocation_effect: f64,
     pub selection_effect: f64,
     pub interaction_effect: f64,
@@ -149,6 +145,13 @@ struct GroupResult {
     profit: f64,
 }
 
+#[derive(Debug, Clone)]
+struct PeriodAttribution {
+    portfolio_return: f64,
+    benchmark_return: f64,
+    groups: BTreeMap<String, AttributionRow>,
+}
+
 pub fn contribution(
     store: &PortfolioStore,
     portfolio: &str,
@@ -185,68 +188,94 @@ pub fn attribution(
     validate_period(from, to)?;
     let portfolio_transactions = store.ledger(portfolio, LedgerFilter::all())?;
     let benchmark_transactions = store.ledger(benchmark, LedgerFilter::all())?;
-    let portfolio_report =
-        contribution_from_transactions(portfolio, &portfolio_transactions, from, to, prices)?;
-    let benchmark_report =
-        contribution_from_transactions(benchmark, &benchmark_transactions, from, to, prices)?;
-
     let classification_by_symbol: HashMap<&str, &str> = classifications
         .iter()
         .map(|item| (item.symbol.as_str(), item.group.as_str()))
         .collect();
-    let portfolio_groups = group_contribution(&portfolio_report, &classification_by_symbol);
-    let benchmark_groups = group_contribution(&benchmark_report, &classification_by_symbol);
-    let groups: BTreeSet<String> = portfolio_groups
-        .keys()
-        .chain(benchmark_groups.keys())
-        .cloned()
-        .collect();
 
-    let mut rows = Vec::with_capacity(groups.len());
-    let mut allocation_effect = 0.0;
-    let mut selection_effect = 0.0;
-    let mut interaction_effect = 0.0;
-    for group in groups {
-        let portfolio_group = portfolio_groups.get(&group).cloned().unwrap_or_default();
-        let benchmark_group = benchmark_groups.get(&group).cloned().unwrap_or_default();
-        let portfolio_weight =
-            safe_ratio(portfolio_group.start_value, portfolio_report.start_value);
-        let benchmark_weight =
-            safe_ratio(benchmark_group.start_value, benchmark_report.start_value);
-        let portfolio_group_return =
-            safe_ratio(portfolio_group.profit, portfolio_group.start_value);
-        let benchmark_group_return =
-            safe_ratio(benchmark_group.profit, benchmark_group.start_value);
-        let allocation = (portfolio_weight - benchmark_weight)
-            * (benchmark_group_return - benchmark_report.portfolio_return);
-        let selection = benchmark_weight * (portfolio_group_return - benchmark_group_return);
-        let interaction = (portfolio_weight - benchmark_weight)
-            * (portfolio_group_return - benchmark_group_return);
-        allocation_effect += allocation;
-        selection_effect += selection;
-        interaction_effect += interaction;
-        rows.push(AttributionRow {
-            group,
-            portfolio_weight,
-            benchmark_weight,
-            portfolio_return: portfolio_group_return,
-            benchmark_return: benchmark_group_return,
-            allocation_effect: allocation,
-            selection_effect: selection,
-            interaction_effect: interaction,
-        });
+    // Split at every position-changing transaction date. Each subperiod uses
+    // beginning weights; Carino scaling then links the arithmetic effects to
+    // the compounded active return without a residual.
+    let mut boundaries = BTreeSet::from([from.to_string(), to.to_string()]);
+    for transaction in portfolio_transactions
+        .iter()
+        .chain(benchmark_transactions.iter())
+    {
+        if transaction.date.as_str() > from
+            && transaction.date.as_str() < to
+            && matches!(
+                transaction.tx_type,
+                TxType::Buy | TxType::Sell | TxType::Roll | TxType::Deposit | TxType::Withdrawal
+            )
+        {
+            boundaries.insert(transaction.date.clone());
+        }
+    }
+    let boundaries: Vec<String> = boundaries.into_iter().collect();
+    let mut periods = Vec::new();
+    for pair in boundaries.windows(2) {
+        let [period_from, period_to] = pair else {
+            continue;
+        };
+        let portfolio_report = contribution_from_transactions(
+            portfolio,
+            &portfolio_transactions,
+            period_from,
+            period_to,
+            prices,
+        )?;
+        let benchmark_report = contribution_from_transactions(
+            benchmark,
+            &benchmark_transactions,
+            period_from,
+            period_to,
+            prices,
+        )?;
+        periods.push(period_attribution(
+            &portfolio_report,
+            &benchmark_report,
+            &classification_by_symbol,
+        ));
     }
 
-    let active_return = portfolio_report.portfolio_return - benchmark_report.portfolio_return;
+    let portfolio_return = periods.iter().fold(1.0, |factor, period| {
+        factor * (1.0 + period.portfolio_return)
+    }) - 1.0;
+    let benchmark_return = periods.iter().fold(1.0, |factor, period| {
+        factor * (1.0 + period.benchmark_return)
+    }) - 1.0;
+    let active_return = portfolio_return - benchmark_return;
+    let total_carino = carino_factor(portfolio_return, benchmark_return)?;
+    let mut linked_groups: BTreeMap<String, AttributionRow> = BTreeMap::new();
+    for period in periods {
+        let scale = carino_factor(period.portfolio_return, period.benchmark_return)? / total_carino;
+        for (group, row) in period.groups {
+            let linked = linked_groups
+                .entry(group.clone())
+                .or_insert_with(|| AttributionRow {
+                    group,
+                    allocation_effect: 0.0,
+                    selection_effect: 0.0,
+                    interaction_effect: 0.0,
+                });
+            linked.allocation_effect += row.allocation_effect * scale;
+            linked.selection_effect += row.selection_effect * scale;
+            linked.interaction_effect += row.interaction_effect * scale;
+        }
+    }
+    let rows: Vec<AttributionRow> = linked_groups.into_values().collect();
+    let allocation_effect = rows.iter().map(|row| row.allocation_effect).sum();
+    let selection_effect = rows.iter().map(|row| row.selection_effect).sum();
+    let interaction_effect = rows.iter().map(|row| row.interaction_effect).sum();
     let explained = allocation_effect + selection_effect + interaction_effect;
     Ok(AttributionReport {
         portfolio: portfolio.to_string(),
         benchmark: benchmark.to_string(),
         from: from.to_string(),
         to: to.to_string(),
-        model: "Brinson-Fachler (interaction separate)".to_string(),
-        portfolio_return: portfolio_report.portfolio_return,
-        benchmark_return: benchmark_report.portfolio_return,
+        model: "Brinson-Fachler with separate interaction; Carino multi-period linking".to_string(),
+        portfolio_return,
+        benchmark_return,
         active_return,
         allocation_effect,
         selection_effect,
@@ -552,6 +581,63 @@ fn characteristics_from_transactions(
         metrics,
         missing_prices: state.missing_prices,
     })
+}
+
+fn period_attribution(
+    portfolio: &ContributionReport,
+    benchmark: &ContributionReport,
+    classifications: &HashMap<&str, &str>,
+) -> PeriodAttribution {
+    let portfolio_groups = group_contribution(portfolio, classifications);
+    let benchmark_groups = group_contribution(benchmark, classifications);
+    let groups: BTreeSet<String> = portfolio_groups
+        .keys()
+        .chain(benchmark_groups.keys())
+        .cloned()
+        .collect();
+    let mut rows = BTreeMap::new();
+    for group in groups {
+        let portfolio_group = portfolio_groups.get(&group).cloned().unwrap_or_default();
+        let benchmark_group = benchmark_groups.get(&group).cloned().unwrap_or_default();
+        let portfolio_weight = safe_ratio(portfolio_group.start_value, portfolio.start_value);
+        let benchmark_weight = safe_ratio(benchmark_group.start_value, benchmark.start_value);
+        let portfolio_group_return =
+            safe_ratio(portfolio_group.profit, portfolio_group.start_value);
+        let benchmark_group_return =
+            safe_ratio(benchmark_group.profit, benchmark_group.start_value);
+        rows.insert(
+            group.clone(),
+            AttributionRow {
+                group,
+                allocation_effect: (portfolio_weight - benchmark_weight)
+                    * (benchmark_group_return - benchmark.portfolio_return),
+                selection_effect: benchmark_weight
+                    * (portfolio_group_return - benchmark_group_return),
+                interaction_effect: (portfolio_weight - benchmark_weight)
+                    * (portfolio_group_return - benchmark_group_return),
+            },
+        );
+    }
+    PeriodAttribution {
+        portfolio_return: portfolio.portfolio_return,
+        benchmark_return: benchmark.portfolio_return,
+        groups: rows,
+    }
+}
+
+fn carino_factor(portfolio_return: f64, benchmark_return: f64) -> Result<f64, PortfolioError> {
+    if portfolio_return <= -1.0 || benchmark_return <= -1.0 {
+        return Err(
+            "Carino linking requires portfolio and benchmark returns greater than -100%".into(),
+        );
+    }
+    if (portfolio_return - benchmark_return).abs() <= RECONCILIATION_EPSILON {
+        return Ok(1.0 / (1.0 + portfolio_return));
+    }
+    Ok(
+        ((1.0 + portfolio_return).ln() - (1.0 + benchmark_return).ln())
+            / (portfolio_return - benchmark_return),
+    )
 }
 
 fn group_contribution(

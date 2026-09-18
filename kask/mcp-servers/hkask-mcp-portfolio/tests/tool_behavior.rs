@@ -11,11 +11,14 @@
 #![forbid(unsafe_code)]
 
 use hkask_mcp_portfolio::server::{
-    LedgerApplyRequest, LedgerReadRequest, PortfolioContributionRequest, PortfolioCreateRequest,
-    PortfolioHistoricalWhatIfRequest, PortfolioNameRequest, PortfolioReturnsRequest,
-    PortfolioServer, PortfolioSnapshotRequest, PriceSeedEntry, PriceSeedRequest,
+    LedgerApplyRequest, LedgerReadRequest, PortfolioAttributionRequest,
+    PortfolioContributionRequest, PortfolioCreateRequest, PortfolioHistoricalWhatIfRequest,
+    PortfolioNameRequest, PortfolioReturnsRequest, PortfolioServer, PortfolioSnapshotRequest,
+    PriceSeedEntry, PriceSeedRequest,
 };
-use hkask_mcp_portfolio::{AssetType, PortfolioStore, Transaction, TxType};
+use hkask_mcp_portfolio::{
+    AssetType, ClassificationObservation, PortfolioStore, Transaction, TxType,
+};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
 
@@ -541,6 +544,128 @@ async fn investor_reports_emit_viewer_hints_and_what_if_keeps_the_ledger_immutab
         .await
         .expect("read ledger after");
     assert_eq!(unwrap_content(&after)["count"], before_count);
+
+    std::fs::remove_dir_all(&dir).expect("remove test directory");
+}
+
+#[tokio::test]
+async fn attribution_tool_reconciles_active_return_against_an_explicit_benchmark() {
+    let (server, dir) = make_server();
+    for name in ["portfolio", "benchmark"] {
+        server
+            .portfolio_create(Parameters(PortfolioCreateRequest {
+                name: name.into(),
+                asset_type: AssetType::Stock,
+            }))
+            .await
+            .expect("create analysis portfolio");
+    }
+    for (portfolio, a_quantity, b_quantity) in
+        [("portfolio", 60.0, 40.0), ("benchmark", 50.0, 50.0)]
+    {
+        for tx in [
+            transaction(
+                "2025-01-01",
+                TxType::Deposit,
+                None,
+                None,
+                None,
+                Some(1_000.0),
+            ),
+            transaction(
+                "2025-01-01",
+                TxType::Buy,
+                Some("A"),
+                Some(a_quantity),
+                Some(10.0),
+                None,
+            ),
+            transaction(
+                "2025-01-01",
+                TxType::Buy,
+                Some("B"),
+                Some(b_quantity),
+                Some(10.0),
+                None,
+            ),
+        ] {
+            server
+                .ledger_apply(Parameters(LedgerApplyRequest {
+                    portfolio: portfolio.into(),
+                    transaction: tx,
+                }))
+                .await
+                .expect("apply analysis transaction");
+        }
+        server
+            .portfolio_seed_price(Parameters(PriceSeedRequest {
+                portfolio: portfolio.into(),
+                symbol: None,
+                date: None,
+                close: None,
+                source: None,
+                prices: Some(vec![
+                    PriceSeedEntry {
+                        symbol: "A".into(),
+                        date: "2025-01-01".into(),
+                        close: 10.0,
+                        source: Some("fixture".into()),
+                    },
+                    PriceSeedEntry {
+                        symbol: "B".into(),
+                        date: "2025-01-01".into(),
+                        close: 10.0,
+                        source: Some("fixture".into()),
+                    },
+                    PriceSeedEntry {
+                        symbol: "A".into(),
+                        date: "2025-12-31".into(),
+                        close: 12.0,
+                        source: Some("fixture".into()),
+                    },
+                    PriceSeedEntry {
+                        symbol: "B".into(),
+                        date: "2025-12-31".into(),
+                        close: 11.0,
+                        source: Some("fixture".into()),
+                    },
+                ]),
+            }))
+            .await
+            .expect("seed analysis prices");
+    }
+
+    let output = server
+        .portfolio_attribution(Parameters(PortfolioAttributionRequest {
+            portfolio: "portfolio".into(),
+            benchmark: "benchmark".into(),
+            from: "2025-01-01".into(),
+            to: "2025-12-31".into(),
+            classifications: vec![
+                ClassificationObservation {
+                    symbol: "A".into(),
+                    group: "Growth".into(),
+                },
+                ClassificationObservation {
+                    symbol: "B".into(),
+                    group: "Value".into(),
+                },
+            ],
+        }))
+        .await
+        .expect("attribution report");
+    let report = unwrap_content(&output)["report"].clone();
+    assert!(
+        report["reconciliation_residual"]
+            .as_f64()
+            .is_some_and(|residual| residual.abs() < 1e-9),
+        "attribution effects must reconcile to active return: {report}"
+    );
+    assert!(
+        report["model"]
+            .as_str()
+            .is_some_and(|model| model.contains("Brinson-Fachler"))
+    );
 
     std::fs::remove_dir_all(&dir).expect("remove test directory");
 }
