@@ -65,6 +65,25 @@ pub fn set_global_inference_port(port: std::sync::Arc<dyn InferencePort>) {
     *guard = Some(port);
 }
 
+/// Clear the app-wide inference port. Production never clears — the port is
+/// replaced on re-wire, never removed; this exists so tests that install a
+/// stub port can restore the pre-test state and parallel tests never
+/// observe a stale stub.
+#[cfg(test)]
+pub fn clear_global_inference_port() {
+    let mut guard = match GLOBAL_INFERENCE_PORT.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                "GLOBAL_INFERENCE_PORT mutex poisoned — recovering via into_inner"
+            );
+            poisoned.into_inner()
+        }
+    };
+    *guard = None;
+}
+
 /// Read the app-wide inference port, if the inference stack has wired one.
 /// Returns a clone of the `Arc` — the caller holds it only for the duration
 /// of its request.

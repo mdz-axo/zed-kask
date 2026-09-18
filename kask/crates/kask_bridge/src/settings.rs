@@ -778,6 +778,26 @@ impl KaskSettings {
         crate::mcp_env::emit_operator_override_env(&mut env);
         env
     }
+
+    /// The host-deployed template registry root for in-process consumers
+    /// (curator memory chunk tagging renders `tag-passages-batch` from it).
+    ///
+    /// Same rule as the `HKASK_TEMPLATE_ROOT` env injection for MCP server
+    /// children ([`Self::mcp_env`]) — one resolution, two delivery seams.
+    /// The env var is only set in child processes, never in the editor
+    /// process itself, so in-process consumers must read the root here
+    /// instead of from env.
+    pub fn resolved_template_root(&self) -> std::path::PathBuf {
+        let data_dir = resolve_root_dir(
+            &self.data_dir,
+            "HKASK_DATA_DIR",
+            hkask_types::agent_paths::resolve_data_dir,
+        );
+        std::path::PathBuf::from(crate::mcp_env::resolve_template_root(
+            &self.corpus,
+            &data_dir,
+        ))
+    }
 }
 
 // ── Content → Settings conversions ─────────────────────────────────────────

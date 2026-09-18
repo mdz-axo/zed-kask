@@ -11,12 +11,14 @@
 //! agent to re-emit a block.
 //!
 //! Data flow:
-//! 1. On open, `fetch_boards` calls `kanban_board_list` and auto-selects the
-//!    first board.
+//! 1. On open, `fetch_boards` calls `kanban_board_list`, reconciles the
+//!    selected board's identity from the fresh list, and auto-selects the
+//!    first board when none is open.
 //! 2. `fetch_tasks` calls `kanban_task_list` for the selected board and
 //!    constructs/updates a `KanbanWidget`.
-//! 3. A background `refresh_task` re-fetches the task list every 10 seconds
-//!    so the board stays current without manual refresh.
+//! 3. A background `refresh_task` re-fetches the board list and the task
+//!    list every 10 seconds, so renames and external changes reach the
+//!    panel without manual refresh.
 
 use std::time::Duration;
 
@@ -34,11 +36,12 @@ use hkask_kanban_widget::view::KanbanWidget;
 use hkask_steer::{SteerContext, SteerSurface};
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
-use hkask_types::tool_response::parse_tool_error;
+use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
+use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;
 use ui::{
-    CommonAnimationExt, IconName, IconSize, ToggleButtonGroup, ToggleButtonGroupSize,
-    ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, prelude::*,
+    CommonAnimationExt, IconName, IconSize, PopoverMenuHandle, ToggleButtonGroup,
+    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -50,15 +53,17 @@ use workspace::{
 // coordination. The curator can combine kanban operations with portfolio,
 // company, scenario, research, and other MCP tools.
 
+mod board_picker;
 mod fetch;
 
 pub mod panel_button;
 pub mod task_actions;
 pub use panel_button::KanbanPanelButton;
 
+use board_picker::{BoardPickerDelegate, PickerBoard};
 use task_actions::{
     CreateTaskForm, EditTaskForm, SpawnTaskForm, render_create_board_form, render_create_task_form,
-    render_edit_task_form, render_spawn_task_form,
+    render_edit_task_form, render_rename_board_form, render_spawn_task_form,
 };
 
 /// The MCP server id (matches `KANBAN_SERVER_NAME` in `hkask_types::kanban_wire`).
@@ -72,6 +77,8 @@ const TASK_LIST_TOOL: &str = "kanban_task_list";
 const BOARD_CREATE_TOOL: &str = "kanban_board_create";
 /// The tool name for deleting a board.
 const BOARD_DELETE_TOOL: &str = "kanban_board_delete";
+/// The tool name for renaming a board.
+const BOARD_UPDATE_TOOL: &str = "kanban_board_update";
 /// The tool name for exporting a board as mermaid markdown.
 const BOARD_EXPORT_TOOL: &str = "kanban_board_export";
 /// The tool name for importing a board from mermaid markdown.
@@ -97,6 +104,10 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 enum RefreshTarget {
     Boards,
     Tasks,
+    /// Both lists: the every-tick identity reconciliation (the G8 fix) —
+    /// `fetch_boards` re-reads the selected board's name/columns while
+    /// `fetch_tasks` refreshes the cards.
+    BoardsAndTasks,
 }
 
 /// Tools that accept an `idempotency_key` and therefore absorb a replay
@@ -179,14 +190,16 @@ fn mutation_retry_delay(attempts_so_far: u32) -> Option<Duration> {
 ///
 /// Kept as a pure function so the recovery behavior is unit-testable without a
 /// `Workspace` (mirrors `hkask-kanban-widget`'s split of its dispatch decision
-/// out of the handler). The board-list branch is the load-bearing one: the loop
-/// previously skipped the tick entirely when no board was selected, so a
-/// `kanban_board_list` that failed at construction — MCP server still starting,
-/// or restarting — was never retried and the panel stayed empty for the whole
-/// session.
+/// out of the handler). Every tick re-reads the board list so the selected
+/// board's identity reconciles — renames and external changes reach the
+/// panel instead of freezing at selection time (reference model R4/R6). The
+/// board-list branch is the load-bearing one: the loop previously skipped
+/// the tick entirely when no board was selected, so a `kanban_board_list`
+/// that failed at construction — MCP server still starting, or restarting —
+/// was never retried and the panel stayed empty for the whole session.
 fn refresh_target(has_board: bool) -> RefreshTarget {
     if has_board {
-        RefreshTarget::Tasks
+        RefreshTarget::BoardsAndTasks
     } else {
         RefreshTarget::Boards
     }
@@ -220,6 +233,8 @@ pub enum TaskActionKind {
     EditTask(String),
     SpawnTask(String),
     CreateBoard,
+    /// Inline rename form for the selected board.
+    RenameBoard,
     /// Confirmation dialog for deleting a task.
     ConfirmDeleteTask(String),
     /// Confirmation dialog for deleting a board.
@@ -307,12 +322,19 @@ pub fn init(cx: &mut App) {
 /// TOOL_NAMES by `verify_tool_advertisement`; the
 /// `steer_prompt_advertises_only_known_tools` and
 /// `server_tools_are_all_advertised` tests are the enforcement points.
-fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
-    let board_clause = match selected_board_id {
-        Some(id) => format!(
+fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> SharedString {
+    // Reference model R2: the binding names the active board — the operator
+    // and agents address boards by name — with the id kept as the dispatch
+    // key. The id-only fallback covers a board whose name has not yet
+    // reconciled from a board-list read.
+    let board_clause = match (board_name, board_id) {
+        (Some(name), Some(id)) if !name.is_empty() => format!(
+            "\nThe active board is `{name}` (`{id}`). Use this board id when creating or moving tasks."
+        ),
+        (None, Some(id)) => format!(
             "\nThe active board is `{id}`. Use this board id when creating or moving tasks."
         ),
-        None => String::new(),
+        _ => String::new(),
     };
     // Labels and prefixes only — never tool names. `kanban_task_kata_` is
     // declared before `kanban_task_` so the kata tool lands in its own group.
@@ -362,7 +384,7 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
 
 /// One board from `kanban_board_list`. Mirrors the server's `BoardInfo`.
 #[derive(Debug, Clone, Deserialize)]
-struct BoardInfo {
+pub(crate) struct BoardInfo {
     #[serde(default)]
     board_id: String,
     #[serde(default)]
@@ -378,7 +400,7 @@ struct BoardInfo {
 
 /// One column definition from the server. Mirrors the server's `ColumnInfo`.
 #[derive(Debug, Clone, Deserialize)]
-struct ColumnDef {
+pub(crate) struct ColumnDef {
     #[serde(default)]
     #[allow(dead_code)]
     id: String,
@@ -453,6 +475,54 @@ struct CommentsResponse {
     comments: Vec<CommentInfo>,
 }
 
+// ── Board identity helpers (pure, unit-testable) ───────────────────────
+//
+// Reference model: `kask/docs/research/kanban-board-reference-models.md`.
+// These helpers carry the panel's board-identity decisions so the fetch
+// path stays thin and the decisions are pinnable without a Workspace.
+
+/// The panel's identity titles (reference model R4: the open board's name
+/// is displayed at the point of use). The headline names the open board
+/// directly; the tab carries the panel-type prefix so kanban tabs stay
+/// recognizable while distinguishing panels on different boards.
+fn panel_titles(board_name: Option<&str>) -> (SharedString, SharedString) {
+    match board_name {
+        Some(name) if !name.is_empty() => (
+            SharedString::from(name.to_string()),
+            SharedString::from(format!("Kanban — {name}")),
+        ),
+        _ => ("Kanban Board".into(), "Kanban Board".into()),
+    }
+}
+
+/// G8 (identity drift): the selected board's identity (name, columns) as
+/// found in a fetched board list — the reconcile source, so renames and
+/// external edits reach the panel's surfaces instead of freezing at
+/// selection time. `None` when nothing is selected or the selected board
+/// is not in the list (the stale-selection path clears the selection).
+pub(crate) fn selected_identity_from_boards(
+    selected: Option<&str>,
+    boards: &[BoardInfo],
+) -> Option<(&str, &[ColumnDef])> {
+    let selected = selected?;
+    let row = boards.iter().find(|b| b.board_id == selected)?;
+    Some((row.name.as_str(), &row.columns[..]))
+}
+
+/// R7 (select-after-create): the board a create/import gesture wants opened,
+/// once its row appears in the fetched list. `None` when nothing is pending
+/// or the created board has not landed yet (a later tick retries).
+pub(crate) fn pending_board_to_select(
+    pending: Option<&str>,
+    boards: &[BoardInfo],
+) -> Option<String> {
+    let pending = pending?;
+    boards
+        .iter()
+        .any(|b| b.board_id == pending)
+        .then(|| pending.to_string())
+}
+
 // ── Panel ───────────────────────────────────────────────────────────────────
 
 /// A persistent, auto-refreshing kanban board panel.
@@ -501,6 +571,17 @@ pub struct KanbanPanel {
     spawn_task_form: Option<SpawnTaskForm>,
     /// The create-board form state (a single-line editor for the board name).
     create_board_editor: Option<Entity<Editor>>,
+    /// The rename form state. Lazily initialized for the selected board.
+    rename_board_editor: Option<Entity<Editor>>,
+    /// The searchable open-by-name picker (reference model R2/R3) — created
+    /// lazily in render (`Picker::list` needs a Window) and its rows are
+    /// refreshed whenever a board-list read lands.
+    board_picker: Option<Entity<Picker<BoardPickerDelegate>>>,
+    /// The popover handle for the board switcher control.
+    board_picker_handle: PopoverMenuHandle<Picker<BoardPickerDelegate>>,
+    /// The board id a create/import gesture minted — opened as soon as the
+    /// next board-list read contains it (reference model R7).
+    pending_select_board: Option<String>,
     /// The active panel mode (Browse or Steer).
     mode: PanelMode,
     /// The Steer-mode surface: owns the cross-domain curator ConversationView
@@ -563,6 +644,10 @@ impl KanbanPanel {
                 edit_task_form: None,
                 spawn_task_form: None,
                 create_board_editor: None,
+                rename_board_editor: None,
+                board_picker: None,
+                board_picker_handle: PopoverMenuHandle::default(),
+                pending_select_board: None,
                 mode: PanelMode::Browse,
                 steer: SteerSurface::new(),
                 project: Some(project),
@@ -616,7 +701,7 @@ impl KanbanPanel {
         refresh: RefreshTarget,
         cx: &mut Context<Self>,
     ) {
-        self.dispatch_mutation_with(tool, args, label, refresh, None, cx);
+        self.dispatch_mutation_with(tool, args, label, refresh, None, false, cx);
     }
 
     /// [`Self::dispatch_mutation`] plus an optional state fixup applied before
@@ -627,6 +712,12 @@ impl KanbanPanel {
     /// before the board list is re-read, or the panel would fetch tasks for a
     /// board that no longer exists. It runs on success and on an unknown outcome
     /// (where the mutation may have landed), never on a clean failure.
+    ///
+    /// `capture_created_board` extends the success path for board-minting
+    /// gestures (create/import): the response's `board_id` is stashed in
+    /// `pending_select_board`, and the board-list refresh opens the created
+    /// board once its row lands (reference model R7 — creating a board
+    /// lands you in it).
     fn dispatch_mutation_with(
         &mut self,
         tool: &'static str,
@@ -634,6 +725,7 @@ impl KanbanPanel {
         label: &'static str,
         refresh: RefreshTarget,
         before_refresh: Option<fn(&mut Self)>,
+        capture_created_board: bool,
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = shared_tool_invoker() else {
@@ -681,6 +773,24 @@ impl KanbanPanel {
                             .log_err();
                             return;
                         }
+                        // Reference model R7: a board-minting gesture
+                        // (create, import) captures the minted board id from
+                        // the response; the board-list refresh opens it once
+                        // its row lands (see `pending_board_to_select`).
+                        if capture_created_board {
+                            let created = parse_tool_response(&output).ok().and_then(|content| {
+                                content
+                                    .get("board_id")
+                                    .and_then(|value| value.as_str())
+                                    .map(str::to_string)
+                            });
+                            if let Some(board_id) = created {
+                                this.update(cx, |this, _cx| {
+                                    this.pending_select_board = Some(board_id);
+                                })
+                                .log_err();
+                            }
+                        }
                         this.update(cx, |this, cx| {
                             this.error = None;
                             if let Some(fixup) = before_refresh {
@@ -689,6 +799,10 @@ impl KanbanPanel {
                             match refresh {
                                 RefreshTarget::Tasks => this.fetch_tasks(cx),
                                 RefreshTarget::Boards => this.fetch_boards(cx),
+                                RefreshTarget::BoardsAndTasks => {
+                                    this.fetch_boards(cx);
+                                    this.fetch_tasks(cx);
+                                }
                             }
                         })
                         .log_err();
@@ -761,6 +875,10 @@ impl KanbanPanel {
                                 match refresh {
                                     RefreshTarget::Tasks => this.fetch_tasks(cx),
                                     RefreshTarget::Boards => this.fetch_boards(cx),
+                                    RefreshTarget::BoardsAndTasks => {
+                                        this.fetch_boards(cx);
+                                        this.fetch_tasks(cx);
+                                    }
                                 }
                             }
                             cx.notify();
@@ -924,44 +1042,55 @@ impl KanbanPanel {
         cx.notify();
     }
 
-    /// Render the board selector as a row of clickable labels (one per
-    /// board). Hidden when there are zero or one boards.
-    fn render_board_selector(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.boards.len() <= 1 {
-            return None;
+    /// The searchable open-by-name picker (reference model R2/R3): created
+    /// lazily in render — `Picker::list` needs a Window — and its rows are
+    /// refreshed by `fetch_boards` on every board-list read.
+    fn ensure_board_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Picker<BoardPickerDelegate>> {
+        if self.board_picker.is_none() {
+            let panel_handle = cx.weak_entity();
+            let delegate = BoardPickerDelegate::new(
+                self.picker_rows(),
+                std::rc::Rc::new(move |board_id, _window, cx: &mut gpui::App| {
+                    panel_handle
+                        .update(cx, |panel, cx| panel.select_board(board_id, cx))
+                        .log_err();
+                }),
+                cx.foreground_executor().clone(),
+                cx.background_executor().clone(),
+            );
+            self.board_picker = Some(cx.new(|cx| {
+                Picker::list(delegate, window, cx)
+                    .show_scrollbar(true)
+                    .initial_width(rems(28.))
+            }));
         }
+        self.board_picker.clone().expect("picker was just ensured")
+    }
 
-        let selected_id = self.selected_board_id.clone();
-        let buttons: Vec<AnyElement> = self
-            .boards
-            .iter()
-            .map(|board| {
-                let board_id = board.board_id.clone();
-                let is_selected = selected_id.as_ref() == Some(&board.board_id);
-                div()
-                    .id(format!("kanban-board-{}", board.board_id))
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .when(is_selected, |this| {
-                        this.border_1().border_color(Color::Accent.color(cx))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_board(board_id.clone(), cx);
-                    }))
-                    .child(Label::new(board.name.clone()).size(LabelSize::Small).color(
-                        if is_selected {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        },
-                    ))
-                    .into_any_element()
-            })
-            .collect();
+    /// Push the current board list into the picker so opens and renames are
+    /// reflected the next time the popover is used. Called from
+    /// `fetch_boards` whenever a board-list read lands.
+    fn refresh_board_picker(&self, cx: &mut Context<Self>) {
+        let Some(picker) = &self.board_picker else {
+            return;
+        };
+        let rows = self.picker_rows();
+        picker.update(cx, |delegate, cx| delegate.set_boards(rows, cx));
+    }
 
-        Some(h_flex().gap_1().children(buttons))
+    /// Build the picker's rows from the fetched board list. Duplicate names
+    /// are allowed (operator decision, reference doc §8.2) — rows carrying
+    /// a shared name get a disambiguating id suffix.
+    fn picker_rows(&self) -> Vec<PickerBoard> {
+        board_picker::rows_from_names(
+            self.boards
+                .iter()
+                .map(|board| (board.board_id.clone(), board.name.clone())),
+        )
     }
 
     /// Render the refresh button.
@@ -1036,14 +1165,90 @@ impl KanbanPanel {
             .child(Label::new(message).color(Color::Muted))
     }
 
-    /// Render the toolbar with action buttons (create task, create board,
-    /// delete board, refresh).
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Render the toolbar: the board identity control (switcher + rename),
+    /// then the action buttons (create task, create board, delete board,
+    /// export, import, refresh).
+    ///
+    /// The board control is the reference model's navigation root
+    /// (R2/R3/R4): it names the open board, opens the searchable board
+    /// list, and scales to any board count — one control replacing the
+    /// label-row selector that hid itself at one board.
+    fn render_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_board = self.selected_board_id.is_some();
         let border_color = cx.theme().colors().border;
+
+        let picker = self.ensure_board_picker(window, cx);
+        let switcher_label: SharedString = if let Some(name) = &self.board_name {
+            name.clone()
+        } else if self.boards.is_empty() {
+            "No boards yet".into()
+        } else {
+            "Select a board…".into()
+        };
+        let picker_deployed = self.board_picker_handle.is_deployed();
+        let board_control = PickerPopoverMenu::new(
+            picker,
+            div()
+                .id("kanban-board-switcher")
+                .cursor_pointer()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(border_color)
+                .max_w(rems(20.))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .overflow_hidden()
+                        .child(
+                            Label::new(switcher_label)
+                                .size(LabelSize::Small)
+                                .color(Color::Accent)
+                                .truncate(),
+                        )
+                        .child(
+                            Icon::new(if picker_deployed {
+                                IconName::ChevronUp
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                        ),
+                ),
+            Box::new(Tooltip::text("Open a board by name")),
+            gpui::Anchor::BottomLeft,
+            cx,
+        )
+        .with_handle(self.board_picker_handle.clone())
+        .render(window, cx);
+
         h_flex()
             .gap_2()
             .items_center()
+            .child(board_control)
+            .when(has_board, |this| {
+                this.child(
+                    div()
+                        .id("kanban-board-rename-btn")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .hover(move |this| this.bg(border_color))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start_rename_board(cx);
+                        }))
+                        .tooltip(Tooltip::text("Rename board"))
+                        .child(
+                            Label::new("Rename")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("kanban-create-task-btn")
@@ -1180,6 +1385,10 @@ impl KanbanPanel {
                 .create_board_editor
                 .as_ref()
                 .map(|editor| render_create_board_form(editor, cx).into_any_element()),
+            Some(TaskActionKind::RenameBoard) => self
+                .rename_board_editor
+                .as_ref()
+                .map(|editor| render_rename_board_form(editor, cx).into_any_element()),
             Some(TaskActionKind::ConfirmDeleteTask(task_id)) => {
                 let task_id_clone = task_id.clone();
                 Some(
@@ -1432,6 +1641,27 @@ impl Render for KanbanPanel {
                 editor
             }));
         }
+        if matches!(self.active_action, Some(TaskActionKind::RenameBoard))
+            && self.rename_board_editor.is_none()
+        {
+            // Prefill with the selected board's name; a rename gesture with
+            // no board left to rename (deleted mid-gesture) falls back to
+            // closing the form so the panel is never stuck on a form with no
+            // editor.
+            match self.board_name.clone() {
+                Some(name) => {
+                    self.rename_board_editor = Some(cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_placeholder_text("Board name", window, cx);
+                        editor.set_text(name, window, cx);
+                        editor
+                    }));
+                }
+                None => {
+                    self.active_action = None;
+                }
+            }
+        }
 
         // Lazily initialize the Steer mode conversation when the operator
         // switches to Steer (ConversationView::new needs a Window).
@@ -1454,7 +1684,10 @@ impl Render for KanbanPanel {
                             .w_full()
                             .gap_2()
                             .justify_between()
-                            .child(Headline::new("Kanban Board").size(HeadlineSize::Large))
+                            .child(
+                                Headline::new(panel_titles(self.board_name.as_deref()).0)
+                                    .size(HeadlineSize::Large),
+                            )
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -1498,19 +1731,16 @@ impl Render for KanbanPanel {
                                         ),
                                     )
                                     .when(mode == PanelMode::Browse, |this| {
-                                        this.child(self.render_toolbar(cx))
+                                        this.child(self.render_toolbar(window, cx))
                                     }),
                             ),
                     )
                     .when(mode == PanelMode::Browse, |this| {
-                        this.when_some(self.render_board_selector(cx), |this, selector| {
-                            this.child(selector)
-                        })
-                        .when_some(self.render_error(), |this, error| this.child(error))
-                        .when_some(self.render_action_form(cx), |this, form| this.child(form))
-                        .when_some(self.render_task_actions(cx), |this, actions| {
-                            this.child(actions)
-                        })
+                        this.when_some(self.render_error(), |this, error| this.child(error))
+                            .when_some(self.render_action_form(cx), |this, form| this.child(form))
+                            .when_some(self.render_task_actions(cx), |this, actions| {
+                                this.child(actions)
+                            })
                     }),
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
@@ -1563,7 +1793,7 @@ impl Item for KanbanPanel {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Kanban Board".into()
+        panel_titles(self.board_name.as_deref()).1
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1630,10 +1860,12 @@ impl SerializableItem for KanbanPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL, BoardInfo, IDEMPOTENT_TOOLS,
-        MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
-        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
-        mutation_retry_delay, refresh_target, steer_system_prompt,
+        BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL, BOARD_UPDATE_TOOL, BoardInfo,
+        ColumnDef, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
+        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
+        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay, panel_titles,
+        pending_board_to_select, refresh_target, selected_identity_from_boards,
+        steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -1667,12 +1899,18 @@ mod tests {
 
     /// Already-idempotent mutations carry no key.
     ///
-    /// They converge on the same state (`task_update`) or are no-ops when
+    /// They converge on the same state (`task_update`; `board_update` —
+    /// replaying a rename re-applies the same name) or are no-ops when
     /// repeated (`task_delete`), so a key would be dead weight suggesting a
     /// guarantee the server was never asked for.
     #[test]
     fn convergent_mutations_do_not_carry_keys() {
-        for tool in [TASK_UPDATE_TOOL, TASK_DELETE_TOOL, BOARD_DELETE_TOOL] {
+        for tool in [
+            TASK_UPDATE_TOOL,
+            TASK_DELETE_TOOL,
+            BOARD_DELETE_TOOL,
+            BOARD_UPDATE_TOOL,
+        ] {
             assert!(
                 !is_idempotent_tool(tool),
                 "{tool} is already idempotent by construction and needs no key"
@@ -1905,10 +2143,22 @@ mod tests {
         );
     }
 
-    /// With a board selected, the tick refreshes that board's tasks.
+    /// With a board selected, the tick fetches BOTH the board list and the
+    /// tasks: identity reconciliation (reference model R4 — a rename must
+    /// reach the panel) happens on every cycle, not just on selection.
     #[test]
-    fn refresh_polls_tasks_once_a_board_is_selected() {
-        assert_eq!(refresh_target(true), RefreshTarget::Tasks);
+    fn refresh_reconciles_identity_and_tasks_once_a_board_is_selected() {
+        assert_eq!(
+            refresh_target(true),
+            RefreshTarget::BoardsAndTasks,
+            "every tick must re-read the board list — identity that froze at \
+             selection time was the G8 drift bug"
+        );
+        assert_ne!(
+            RefreshTarget::BoardsAndTasks,
+            RefreshTarget::Tasks,
+            "the reconciling tick is a distinct behavior from the pre-G8 task-only tick"
+        );
     }
 
     /// Every `kanban_*`/`contract_*` token the Steer prompt names in backticks
@@ -1919,8 +2169,8 @@ mod tests {
     #[test]
     fn steer_prompt_advertises_only_known_tools() {
         for prompt in [
-            steer_system_prompt(Some("board-1")),
-            steer_system_prompt(None),
+            steer_system_prompt(Some("Alpha Board"), Some("board-1")),
+            steer_system_prompt(None, None),
         ] {
             for name in hkask_steer::advertised_tool_names(&prompt, &["kanban_", "contract_"]) {
                 assert!(
@@ -1934,23 +2184,27 @@ mod tests {
         }
     }
 
-    /// The Steer prompt bakes the active board id in at construction, so the
-    /// board id must appear in the prompt for the staleness concern to be real —
-    /// and `select_board` must drop the conversation (see its `take()` call) so a
-    /// board switch rebuilds it. This pins the first half (the prompt is
-    /// board-scoped); the `take()` is the fix for the second.
+    /// The Steer prompt bakes the active board binding in at construction,
+    /// so the binding must appear in the prompt for the staleness concern to
+    /// be real — and `select_board` must drop the conversation (see its
+    /// `take()` call) so a board switch rebuilds it. Reference model R2:
+    /// the binding is name-first (the operator and agents address boards by
+    /// name) with the id as the dispatch key.
     #[test]
     fn steer_prompt_is_scoped_to_the_selected_board() {
-        let with_board = steer_system_prompt(Some("board-alpha"));
+        let with_board = steer_system_prompt(Some("Alpha Board"), Some("board-alpha"));
         assert!(
             with_board.contains("board-alpha"),
-            "prompt must name the active board, otherwise the curator writes to \
-             an unspecified board: {with_board}"
+            "prompt must carry the active board id for dispatch: {with_board}"
+        );
+        assert!(
+            with_board.contains("Alpha Board"),
+            "prompt must name the active board — agents address boards by name: {with_board}"
         );
 
         // A different selection must produce a different prompt — if it didn't,
         // dropping the conversation on switch would be pointless.
-        let other_board = steer_system_prompt(Some("board-beta"));
+        let other_board = steer_system_prompt(Some("Beta Board"), Some("board-beta"));
         assert_ne!(
             with_board.as_ref(),
             other_board.as_ref(),
@@ -1958,7 +2212,7 @@ mod tests {
         );
 
         // With no board selected the prompt must not invent one.
-        let no_board = steer_system_prompt(None);
+        let no_board = steer_system_prompt(None, None);
         assert!(
             !no_board.contains("The active board is"),
             "prompt must not claim an active board when none is selected: {no_board}"
@@ -1970,7 +2224,7 @@ mod tests {
     /// discover it in Steer mode.
     #[test]
     fn server_tools_are_all_advertised() {
-        let prompt = steer_system_prompt(Some("board-1"));
+        let prompt = steer_system_prompt(Some("Alpha Board"), Some("board-1"));
         for tool in hkask_mcp_kata_kanban::TOOL_NAMES {
             assert!(
                 prompt.contains(tool),
@@ -2057,5 +2311,97 @@ mod tests {
             "a not_found board is not a transient error — retrying won't \
              bring it back"
         );
+    }
+
+    // ── Board identity (reference model R4, R7) ───────────────────────────
+    //
+    // The panel's identity decisions as pure functions: the titles that
+    // carry the open board's name, the reconcile step that keeps identity
+    // current, and the pending-selection that opens created boards. The
+    // fetch path wires these; these tests pin the decisions.
+
+    /// T5 (R4): the panel's identity titles carry the selected board's name —
+    /// the headline names the board directly, and the tab distinguishes two
+    /// kanban panels open on different boards.
+    #[test]
+    fn panel_titles_carry_the_selected_board_name() {
+        let (headline, tab) = panel_titles(Some("Alpha Board"));
+        assert_eq!(headline.as_ref(), "Alpha Board");
+        assert_eq!(tab.as_ref(), "Kanban — Alpha Board");
+
+        let (headline, tab) = panel_titles(None);
+        assert_eq!(headline.as_ref(), "Kanban Board");
+        assert_eq!(tab.as_ref(), "Kanban Board");
+
+        // An empty name (identity not yet reconciled) must not render a
+        // dangling dash.
+        let (headline, tab) = panel_titles(Some(""));
+        assert_eq!(headline.as_ref(), "Kanban Board");
+        assert_eq!(tab.as_ref(), "Kanban Board");
+    }
+
+    /// T11 (G8): the selected board's identity reconciles from every
+    /// board-list read — a board renamed externally (or via the panel's own
+    /// rename gesture) reaches the panel's surfaces instead of freezing at
+    /// selection time.
+    #[test]
+    fn selected_identity_reconciles_from_the_board_list() {
+        let boards = [BoardInfo {
+            board_id: "abc".into(),
+            name: "Renamed Board".into(),
+            column_count: 2,
+            columns: vec![
+                ColumnDef {
+                    id: "c1".into(),
+                    name: "Backlog".into(),
+                    status: "backlog".into(),
+                    wip_limit: None,
+                },
+                ColumnDef {
+                    id: "c2".into(),
+                    name: "Done".into(),
+                    status: "done".into(),
+                    wip_limit: Some(1),
+                },
+            ],
+        }];
+        let (name, columns) = selected_identity_from_boards(Some("abc"), &boards)
+            .expect("a selected board present in the list must reconcile");
+        assert_eq!(name, "Renamed Board");
+        assert_eq!(columns.len(), 2);
+
+        assert_eq!(
+            selected_identity_from_boards(Some("gone"), &boards),
+            None,
+            "a vanished board reconciles to None — the stale-selection path clears it"
+        );
+        assert_eq!(
+            selected_identity_from_boards(None, &boards),
+            None,
+            "with nothing selected there is nothing to reconcile"
+        );
+    }
+
+    /// T8 (R7): a create/import gesture opens the created board as soon as
+    /// its row appears in the fetched list — no manual re-selection step.
+    #[test]
+    fn pending_create_opens_the_created_board_once_it_lands() {
+        let boards = [BoardInfo {
+            board_id: "b-1".into(),
+            name: "New Board".into(),
+            column_count: 3,
+            columns: vec![],
+        }];
+        assert_eq!(
+            pending_board_to_select(Some("b-1"), &boards),
+            Some("b-1".to_string()),
+            "a created board present in the refreshed list must be selected"
+        );
+        assert_eq!(
+            pending_board_to_select(Some("b-2"), &boards),
+            None,
+            "a created board that has not landed yet stays pending for a later tick"
+        );
+        assert_eq!(pending_board_to_select(None, &boards), None);
     }
 }

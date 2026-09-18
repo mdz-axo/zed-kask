@@ -24,7 +24,7 @@ use std::sync::RwLock;
 use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
 use hkask_inference::passage_tagging::{
     ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
-    render_deployed_tagging_prompt,
+    render_deployed_tagging_prompt_at,
 };
 use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
@@ -60,6 +60,11 @@ pub(crate) struct WriteContext<'a> {
     /// (`kask.models.classifier_model`). `None` = not configured — chunks
     /// get structural tags only (surfaced at wiring time, not per turn).
     pub classifier_model: Option<&'a str>,
+    /// Host-deployed template registry root the tagging prompt renders from
+    /// (`kask.corpus.template_root` override → `{data_dir}/skills/registry`).
+    /// Threaded from settings at wiring time — `HKASK_TEMPLATE_ROOT` only
+    /// reaches MCP server child processes, never this in-process path.
+    pub template_root: &'a std::path::Path,
     pub curator_webid: WebID,
     pub tokio_handle: &'a tokio::runtime::Handle,
     /// Self-healing curator consolidation service — rebuilt here after a
@@ -637,7 +642,7 @@ async fn tag_chunks_with_llm(
             return None;
         }
     };
-    let prompt = match render_deployed_tagging_prompt(&request) {
+    let prompt = match render_deployed_tagging_prompt_at(ctx.template_root, &request) {
         Ok(prompt) => prompt,
         Err(error) => {
             tracing::warn!(target: "reg.memory", error = %error, "Required chunk tagging template unavailable — structural tags only");
@@ -793,5 +798,100 @@ mod tests {
             Some(hkask_types::corpus::ExpertiseLevel::Researcher)
         );
         assert!(!merged.ontology_tags.contains_key("expertise"));
+    }
+
+    /// expect: "In-process chunk tagging renders from the settings-threaded
+    /// template root, not the process env" — `HKASK_TEMPLATE_ROOT` only
+    /// reaches MCP server child processes; before this threading, every
+    /// in-process turn ingest degraded to structural-only tags with
+    /// `HKASK_TEMPLATE_ROOT is not configured`.
+    /// pre: a sentinel template deployed at a temp registry root; the env
+    /// var is NOT set; a capturing stub occupies the global inference port.
+    /// post: the stub receives exactly one prompt rendered from the
+    /// sentinel root — proving the render used `ctx.template_root`.
+    #[tokio::test]
+    async fn chunk_tagging_renders_from_the_threaded_template_root() {
+        use hkask_types::{InferenceError, InferencePort, InferenceResult};
+
+        let registry = tempfile::tempdir().expect("tempdir");
+        let template_dir = registry.path().join("templates").join("docproc");
+        std::fs::create_dir_all(&template_dir).expect("create template dir");
+        std::fs::write(
+            template_dir.join("tag-passages-batch.j2"),
+            "SENTINEL-ROOT {{ passages[0].text }}",
+        )
+        .expect("write sentinel template");
+
+        struct CapturingPort {
+            prompts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        impl InferencePort for CapturingPort {
+            fn generate(
+                &self,
+                prompt: &str,
+                _parameters: &hkask_types::template::LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                self.prompts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(prompt.to_string());
+                Box::pin(async { Err(InferenceError::Generation("capture-only stub".to_string())) })
+            }
+        }
+
+        let prompts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        crate::inference_chat::set_global_inference_port(std::sync::Arc::new(CapturingPort {
+            prompts: prompts.clone(),
+        }));
+
+        let curator_store = CuratorStore::for_tests(None);
+        let curator_consolidation = std::sync::Arc::new(std::sync::RwLock::new(
+            build_curator_consolidation(0, &None),
+        ));
+        let tokio_handle = tokio::runtime::Handle::current();
+        let ctx = WriteContext {
+            curator_store: &curator_store,
+            embedding_port: None,
+            embedding_model: "test-model",
+            classifier_model: Some("test-classifier"),
+            template_root: registry.path(),
+            curator_webid: WebID::from_persona(b"curator"),
+            tokio_handle: &tokio_handle,
+            curator_consolidation: &curator_consolidation,
+            consolidation_cadence_secs: 0,
+        };
+
+        let tags = tag_chunks_with_llm(&ctx, &["sentinel passage text one two".to_string()]).await;
+        crate::inference_chat::clear_global_inference_port();
+
+        assert!(
+            tags.is_none(),
+            "the stub port errors, so tags degrade — but only AFTER a successful render"
+        );
+        let captured = prompts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            captured.len(),
+            1,
+            "the render must succeed from the threaded root and reach the port — \
+             with the old env-based call this is 0 (TemplateRootNotConfigured)"
+        );
+        assert!(
+            captured[0].starts_with("SENTINEL-ROOT"),
+            "prompt must come from the sentinel registry, got: {}",
+            captured[0]
+        );
+        assert!(
+            captured[0].contains("sentinel passage text"),
+            "chunk text reaches the template"
+        );
     }
 }

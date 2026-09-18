@@ -168,6 +168,19 @@ pub fn render_deployed_tagging_prompt(
     render_named_template(&root, TEMPLATE_NAME, request, true)
 }
 
+/// Render the fixed deployed tagging template at an explicit host-resolved
+/// root, with the same process-lifetime caching as the env-resolved variant.
+///
+/// The host process (the editor) threads the root from settings because the
+/// env-var seam (`HKASK_TEMPLATE_ROOT`) only reaches MCP server child
+/// processes — it is never set in the host process itself.
+pub fn render_deployed_tagging_prompt_at(
+    template_root: &Path,
+    request: &PassageTaggingRequest,
+) -> Result<String, PassageTaggingError> {
+    render_named_template(template_root, TEMPLATE_NAME, request, true)
+}
+
 /// Render the fixed deployed passage-tagging template with strict variables.
 pub fn render_tagging_prompt(
     template_root: &Path,
@@ -603,5 +616,27 @@ mod tests {
             ),
             Err(PassageTaggingError::TemplateTraversal(_))
         ));
+    }
+
+    /// The host-threaded variant must render the same deployed template the
+    /// env-resolved path uses — the editor process never has the env var
+    /// set, so in-process tagging depends entirely on this entry point.
+    #[test]
+    fn explicit_root_variant_renders_the_deployed_template() {
+        let root = tempfile::tempdir().expect("tempdir");
+        write_template(root.path(), "SENTINEL-ROOT {{ passages[0].text }}");
+        let request = request(ExpertiseMode::ModelAssigned);
+        for attempt in 0..2 {
+            let rendered =
+                render_deployed_tagging_prompt_at(root.path(), &request).expect("render");
+            assert!(
+                rendered.starts_with("SENTINEL-ROOT"),
+                "attempt {attempt}: prompt must come from the explicit root's template"
+            );
+            assert!(
+                rendered.contains("first passage"),
+                "attempt {attempt}: passage text reaches the template"
+            );
+        }
     }
 }

@@ -389,6 +389,55 @@ impl KanbanServer {
         .await
     }
 
+    /// Rename a kanban board. The board name is the addressing key for the
+    /// operator and for agents (reference model R6 — every reference
+    /// implementation treats rename as first-class), so a mistyped name is
+    /// corrected without deleting and recreating the board (which would
+    /// orphan the task links). Convergent by construction: replaying the
+    /// same rename re-applies the same name, so it carries no idempotency
+    /// key (the `task_update` class).
+    ///
+    /// contract: P3-svc-kanban-014
+    /// expect: "I can rename a kanban board I own" \[P3\]
+    /// pre:  board_id is a valid board id owned by the caller; name is
+    ///       non-empty after trimming
+    /// post: the board's name is updated in place; returns the new name
+    #[tool(
+        description = "Rename a kanban board (owner only). The name is the board's addressing key; trimmed and must be non-empty."
+    )]
+    pub async fn kanban_board_update(
+        &self,
+        Parameters(BoardUpdateRequest { board_id, name }): Parameters<BoardUpdateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "kanban_board_update", async {
+            let bid = parse_board_id(&board_id)?;
+            // Verify ownership before rename — only the board owner can
+            // rename it (P12), mirroring `kanban_board_delete` and
+            // `kanban_board_export`.
+            let board = self
+                .service
+                .board_get(bid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
+            if board.owner != self.webid {
+                return Err(McpToolError::permission_denied(format!(
+                    "board {bid} is not owned by caller — cannot rename"
+                )));
+            }
+            let board = self
+                .service
+                .board_rename(bid, &name)
+                .map_err(map_kanban_error)?;
+            serde_json::to_value(BoardUpdateResponse {
+                board_id: bid.to_string(),
+                name: board.name,
+                ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
+            })
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+        })
+        .await
+    }
+
     /// Create a functional goal — the kata target condition for a bit of
     /// work. The goal is the user's functional requirement in the user's
     /// words, with 1–4 observable criteria and an optional intake

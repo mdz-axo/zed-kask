@@ -1839,12 +1839,22 @@ fn main() {
                             );
                         }
 
+                        // The host-deployed template registry root for
+                        // in-process chunk tagging (curator memory ingest).
+                        // Resolved by the same rule `mcp_env()` uses to
+                        // inject `HKASK_TEMPLATE_ROOT` into MCP server
+                        // children — the env var is never set in this
+                        // process, so the root is threaded, not read from
+                        // env.
+                        let template_root = kask_settings.resolved_template_root();
+
                         match kask_bridge::RealMemoryPort::new(
                             &passphrase,
                             embedding_model,
                             embedding_dim,
                             embedding_port,
                             classifier_model,
+                            template_root,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
                             kask_settings.memory.memory_life_days,

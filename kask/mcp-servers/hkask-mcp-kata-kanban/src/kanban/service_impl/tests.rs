@@ -52,6 +52,103 @@ fn board_create_rejects_empty_columns() {
     assert!(result.is_err());
 }
 
+// ── Board name validation (reference model R1) ──────────────────────────
+//
+// The service boundary is the single enforcement point for every caller
+// (panel, MCP agents, import). Before the trim landed here, an MCP caller
+// could create a `"   "` board and the panel could store `"  My Board  "`
+// — while the mermaid import path already trimmed. Falsifier for the
+// pre-fix code: `board_create("   ")` succeeded.
+
+/// T1: a whitespace-only name is rejected after trimming.
+#[test]
+fn board_create_rejects_whitespace_only_name() {
+    let svc = KanbanService::new(make_store());
+    assert!(
+        svc.board_create(WebID::new(), "   \t ", &make_default_columns())
+            .is_err()
+    );
+}
+
+/// T1: a padded name is stored trimmed — the stored name is the identity
+/// every surface (board_list, export, steer prompt) addresses the board by.
+#[test]
+fn board_create_stores_trimmed_name() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board = svc
+        .board_create(owner, "  Padded Board  ", &make_default_columns())
+        .unwrap();
+    assert_eq!(board.name, "Padded Board");
+    assert_eq!(svc.board_list(&owner).unwrap()[0].name, "Padded Board");
+}
+
+// ── Board rename (reference model R6) ──────────────────────────────────
+//
+// Rename is first-class because the name is the addressing key; it is
+// convergent by construction (replaying the same rename re-applies the same
+// name — the `task_update` class), so it carries no idempotency key.
+
+/// T4: rename round-trips — the new name reaches `board_list`, and the
+/// board's identity (id, columns, creation time) survives.
+#[test]
+fn board_rename_round_trips() {
+    let (svc, board, _owner) = make_service_with_board();
+    let renamed = svc.board_rename(board.id, "  Renamed Board  ").unwrap();
+    assert_eq!(
+        renamed.name, "Renamed Board",
+        "rename must store the trimmed name"
+    );
+    assert_eq!(renamed.id, board.id);
+    assert_eq!(renamed.columns.len(), board.columns.len());
+    assert_eq!(renamed.created_at, board.created_at);
+
+    let boards = svc.board_list(&renamed.owner).unwrap();
+    assert_eq!(boards.len(), 1);
+    assert_eq!(boards[0].name, "Renamed Board");
+    // The task links survive — the board's PKO procedure root is the same
+    // row it was before the rename.
+    let spec = TaskSpec::new("Survivor".into());
+    let task = svc.task_create(board.id, spec, renamed.owner).unwrap();
+    assert_eq!(task.board_id, board.id);
+}
+
+/// T4: a name that is empty after trimming is rejected and the original
+/// name survives the failed rename.
+#[test]
+fn board_rename_rejects_empty_after_trim() {
+    let (svc, board, _owner) = make_service_with_board();
+    assert!(svc.board_rename(board.id, "   ").is_err());
+    assert_eq!(
+        svc.board_list(&board.owner).unwrap()[0].name,
+        "Test Board",
+        "a failed rename must leave the original name intact"
+    );
+}
+
+/// T4: renaming an unknown board is NotFound.
+#[test]
+fn board_rename_unknown_board_is_not_found() {
+    let svc = KanbanService::new(make_store());
+    assert!(svc.board_rename(BoardId::new(), "New Name").is_err());
+}
+
+/// T4: rename is convergent — renaming to the name the board already has
+/// succeeds without duplicating anything.
+#[test]
+fn board_rename_to_same_name_converges() {
+    let (svc, board, _owner) = make_service_with_board();
+    let once = svc.board_rename(board.id, "Test Board").unwrap();
+    assert_eq!(once.name, "Test Board");
+    let twice = svc.board_rename(board.id, "Test Board").unwrap();
+    assert_eq!(twice.name, "Test Board");
+    assert_eq!(
+        svc.board_list(&board.owner).unwrap().len(),
+        1,
+        "a converged rename must not mint a second board"
+    );
+}
+
 #[test]
 fn board_list_by_owner() {
     let svc = KanbanService::new(make_store());

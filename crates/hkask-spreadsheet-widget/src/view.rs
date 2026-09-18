@@ -15,21 +15,21 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use gpui::{
-    AnyElement, App, AppContext, ClipboardItem, Context, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Styled, div,
+    AnyElement, App, ClipboardItem, Context, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyDownEvent, Keystroke, ParentElement, Render, Styled, Window, div,
 };
+use gpui_util::ResultExt as _;
 use hkask_spreadsheet::{ViewportContent, WorkbookDocument, WorkbookService};
 use hkask_tool_invoker::{InvokeError, shared_tool_invoker};
 use hkask_types::spreadsheet::{
     CellEdit, EditTransaction, SpreadsheetAccess, SpreadsheetBlock, SpreadsheetViewport, TableValue,
 };
-use ui::{Color, Label, LabelSize, h_flex, v_flex};
+use ui::prelude::*;
 
 use crate::block::SpreadsheetBlockBody;
 use crate::logic::{
-    Nav, Rect, WIDGET_WINDOW_COLS, WIDGET_WINDOW_ROWS, commit_to_edit, editor_text, move_active,
-    selection_rect, selection_to_tsv, tsv_to_edits, value_to_text, window_contains,
-    window_covering,
+    Nav, Rect, commit_to_edit, editor_text, move_active, selection_rect, selection_to_tsv,
+    tsv_to_edits, value_to_text, window_contains, window_covering,
 };
 
 /// The spreadsheet MCP server's settings id — the mutation endpoint the
@@ -444,7 +444,7 @@ impl SpreadsheetWidget {
         cx.write_to_clipboard(ClipboardItem::new_string(tsv));
     }
 
-    fn paste(&mut self, cx: &mut App) {
+    fn paste(&mut self, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
@@ -669,10 +669,10 @@ impl SpreadsheetWidget {
                     .size(LabelSize::Small)
                     .color(Color::Default),
             )
-            .children(self.sheets.iter().map(|sheet| {
-                let active = *sheet == self.active_sheet;
+            .children(self.sheets.iter().enumerate().map(|(index, sheet)| {
+                let active = sheet == &self.active_sheet;
                 div()
-                    .id(("sheet-tab", sheet.as_str()))
+                    .id(("sheet-tab", index as u64))
                     .px_2()
                     .py_1()
                     .rounded_sm()
@@ -817,7 +817,7 @@ impl SpreadsheetWidget {
                 let click_focus = focus_target.clone();
                 row_el = row_el.child(
                     div()
-                        .id(("cell", format!("{row}-{col}")))
+                        .id(("cell", (row as u64) * 16_384 + col as u64))
                         .w_24()
                         .flex_shrink_0()
                         .py_1()
@@ -828,22 +828,17 @@ impl SpreadsheetWidget {
                         .when(is_selected && !is_active, |cell| {
                             cell.bg(gpui::transparent_black().opacity(0.04))
                         })
-                        .on_click(move |event, window, cx| {
+                        .on_click(move |_event, window, cx| {
                             let Some(entity) = click_handle.upgrade() else {
                                 return;
                             };
-                            window.focus(&click_focus);
-                            let double = event.down.click_count >= 2;
+                            window.focus(&click_focus, cx);
                             entity.update(cx, |widget, cx| {
                                 widget.active_cell = cell;
-                                if double {
-                                    widget.start_edit(window, cx);
-                                } else if widget.editor.is_some() {
+                                if widget.editor.is_some() {
                                     widget.editor = None;
-                                    cx.notify();
-                                } else {
-                                    cx.notify();
                                 }
+                                cx.notify();
                             });
                         })
                         .child(
@@ -905,11 +900,16 @@ impl SpreadsheetWidget {
                     _ => Color::Error,
                 };
                 row.child(
-                    Label::new(status_label)
-                        .size(LabelSize::XSmall)
-                        .color(color)
+                    div()
+                        .id("spreadsheet-status-label")
                         .min_w_0()
-                        .truncate(),
+                        .flex_1()
+                        .child(
+                            Label::new(status_label)
+                                .size(LabelSize::XSmall)
+                                .color(color)
+                                .truncate(),
+                        ),
                 )
             })
             .into_any_element()
@@ -923,7 +923,7 @@ impl SpreadsheetWidget {
     ) -> AnyElement {
         let handle = cx.entity().downgrade();
         div()
-            .id(("spreadsheet-action", label))
+            .id(label)
             .px_2()
             .py_1()
             .rounded_sm()
@@ -957,7 +957,7 @@ impl Render for SpreadsheetWidget {
             .p_2()
             .child(self.render_header())
             .children(error_banner)
-            .child(self.render_formula_bar(cx))
+            .child(self.render_formula_bar())
             .child(
                 div()
                     .id("spreadsheet-grid-scroll")
@@ -998,6 +998,7 @@ pub fn col_letter(col: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logic::{WIDGET_WINDOW_COLS, WIDGET_WINDOW_ROWS};
 
     #[test]
     fn col_letters_follow_the_spreadsheet_convention() {
@@ -1014,7 +1015,7 @@ mod tests {
         let status =
             SaveStatus::from_invoke_error(&InvokeError::Interrupted("spreadsheet_apply".into()));
         assert_eq!(status, SaveStatus::Interrupted);
-        assert!(status.label().contains("unknown"));
+        assert!(status.label().contains("UNKNOWN"));
     }
 
     #[test]

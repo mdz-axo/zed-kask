@@ -112,6 +112,20 @@ impl KanbanService {
 
     // ── Board operations ──────────────────────────────────────────────────
 
+    /// Validate and normalize a board name. The service boundary is the
+    /// single enforcement point for every caller (panel, MCP agents,
+    /// import): names are trimmed and must be non-empty afterwards —
+    /// reference model R1 (see
+    /// `kask/docs/research/kanban-board-reference-models.md` §6.6). Returns
+    /// the trimmed name.
+    fn validate_board_name(name: &str) -> Result<&str, KanbanError> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(KanbanError::InvalidInput("board name is empty".into()));
+        }
+        Ok(trimmed)
+    }
+
     /// Create a new kanban board.
     ///
     /// pre:  owner is a valid WebID; name is non-empty; columns is non-empty
@@ -123,9 +137,7 @@ impl KanbanService {
         name: &str,
         columns: &[ColumnDef],
     ) -> Result<Board, KanbanError> {
-        if name.is_empty() {
-            return Err(KanbanError::InvalidInput("board name is empty".into()));
-        }
+        let name = Self::validate_board_name(name)?;
         if columns.is_empty() {
             return Err(KanbanError::InvalidInput(
                 "board must have at least one column".into(),
@@ -228,6 +240,61 @@ impl KanbanService {
         } else {
             Ok(None)
         }
+    }
+
+    /// Rename a board.
+    ///
+    /// The name is the board's addressing key (reference model R2/R6), so
+    /// rename is a first-class operation — correcting a name must not
+    /// require deleting and recreating the board (which would orphan the
+    /// task links). The rename is convergent by construction: replaying the
+    /// same call re-applies the same name, so it needs no idempotency key
+    /// (the `task_update` class).
+    ///
+    /// pre:  board_id is valid; new_name is non-empty after trimming
+    /// post: the board h_mem's name is updated in place (same h_mem id, PKO
+    ///       procedure anchoring preserved); returns the renamed Board
+    #[must_use = "result must be used"]
+    pub(crate) fn board_rename(
+        &self,
+        board_id: BoardId,
+        new_name: &str,
+    ) -> Result<Board, KanbanError> {
+        let new_name = Self::validate_board_name(new_name)?;
+        let mut board = self.board_get(board_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: board_id.to_string(),
+            })
+        })?;
+        board.name = new_name.to_string();
+        let value = serde_json::to_value(&board)
+            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
+        // Update the board h_mem in place — the same h_mem row, so the PKO
+        // procedure anchoring (and the h_mem id `board_get` resolves)
+        // survives the rename. Follows `update_task_triple`'s update
+        // pattern.
+        let h_mems = self
+            .store
+            .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
+            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
+        let h_mem = h_mems.into_iter().next().ok_or_else(|| {
+            KanbanError::Internal(format!("board {board_id} has no h_mem row to rename"))
+        })?;
+        self.store
+            .update(&h_mem.id, value, 1.0f64)
+            .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
+
+        // P9: Regulation span
+        tracing::info!(
+            target: "hkask.kanban",
+            operation = "board_renamed",
+            board_id = %board_id,
+            name = %new_name,
+            "REG"
+        );
+
+        Ok(board)
     }
 
     // ── Task operations ───────────────────────────────────────────────────

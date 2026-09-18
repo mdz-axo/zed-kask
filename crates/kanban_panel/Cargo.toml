@@ -20,6 +20,10 @@ hkask-mcp-kata-kanban.workspace = true
 hkask_steer.workspace = true
 hkask_tool_invoker.workspace = true
 hkask_kanban_widget.workspace = true
+# Board picker: the searchable open-by-name control (PopoverMenu + fuzzy
+# match) — the same crates hkask-steer's ThreadPicker consumes.
+fuzzy.workspace = true
+picker.workspace = true
 ui.workspace = true
 workspace.workspace = true
 project.workspace = true

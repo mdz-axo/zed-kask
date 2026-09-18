@@ -297,12 +297,22 @@ mod tests {
 
     #[test]
     fn value_text_round_trips_through_interpretation() {
-        for text in ["123", "12.5", "hello", "TRUE", "false", ""] {
-            let value = text_to_value(text);
-            match (&value, text) {
-                (TableValue::Empty, "") => {}
-                _ => assert_eq!(value_to_text(&value), text.to_uppercase(), "text {text:?}"),
-            }
+        // text → value → text preserves the canonical display form of each
+        // interpreted kind (booleans canonicalize to the TRUE/FALSE
+        // spreadsheet convention; free text is preserved verbatim).
+        for (text, expected) in [
+            ("123", "123"),
+            ("12.5", "12.5"),
+            ("hello", "hello"),
+            ("TRUE", "TRUE"),
+            ("false", "FALSE"),
+            ("", ""),
+        ] {
+            assert_eq!(
+                value_to_text(&text_to_value(text)),
+                expected,
+                "text {text:?}"
+            );
         }
         // Numbers keep shortest round-trip formatting.
         assert_eq!(value_to_text(&text_to_value("0.1")), "0.1");
@@ -340,11 +350,23 @@ mod tests {
         ));
         assert!(matches!(
             &edits[3],
-            CellEdit::SetCell { value: TableValue::Boolean(b), .. } if !*b
+            CellEdit::SetCell { value: TableValue::Boolean(b), .. } if *b
         ));
-        // Ragged input stages what it names, no more.
+        // Ragged and blank cells stage what they name: a pasted empty cell
+        // clears its target (spreadsheet paste semantics), it is not skipped.
         let edits = tsv_to_edits("1\n\n2", (0, 0), "Main");
-        assert_eq!(edits.len(), 2);
+        assert_eq!(edits.len(), 3);
+        assert!(matches!(
+            &edits[1],
+            CellEdit::SetCell {
+                value: TableValue::Empty,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &edits[2],
+            CellEdit::SetCell { value: TableValue::Number(n), .. } if *n == 2.0
+        ));
     }
 
     #[test]

@@ -201,18 +201,22 @@ pub(crate) fn emit_corpus_embedding_env(
     );
 }
 
-pub(crate) fn emit_corpus_template_root_env(
-    corpus: &KaskCorpusSettings,
-    data_dir: &str,
-    env: &mut std::collections::HashMap<String, String>,
-) {
+/// Resolve the host-deployed template registry root by the canonical rule
+/// shared by every template consumer: the operator's
+/// `kask.corpus.template_root` override when set, else
+/// `{data_dir}/skills/registry/` — the path `agent_skills::seed_templates`
+/// writes at startup. The settings default (`"kask/registry"`,
+/// CWD-relative) is treated as unset so production never resolves against
+/// the process CWD.
+///
+/// One rule, two delivery seams: MCP server child processes receive the
+/// root via the `HKASK_TEMPLATE_ROOT` env var
+/// (`emit_corpus_template_root_env`); in-process consumers (curator memory
+/// chunk tagging) read it via `KaskSettings::resolved_template_root` — the
+/// env var is never set in the editor process itself.
+pub(crate) fn resolve_template_root(corpus: &KaskCorpusSettings, data_dir: &str) -> String {
     let corpus_default = KaskCorpusSettings::default();
-    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training)
-    // find templates in production where the CWD-relative default does not
-    // exist. When the operator hasn't overridden the default, resolve to
-    // `{data_dir}/skills/registry/` — the path where `seed_templates` writes.
-    // When overridden, use the operator's value.
-    let template_root = if corpus.template_root != corpus_default.template_root {
+    if corpus.template_root != corpus_default.template_root {
         corpus.template_root.clone()
     } else {
         std::path::Path::new(data_dir)
@@ -220,8 +224,21 @@ pub(crate) fn emit_corpus_template_root_env(
             .join("registry")
             .to_string_lossy()
             .to_string()
-    };
-    env.insert("HKASK_TEMPLATE_ROOT".to_string(), template_root);
+    }
+}
+
+pub(crate) fn emit_corpus_template_root_env(
+    corpus: &KaskCorpusSettings,
+    data_dir: &str,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training,
+    // swarm) find templates in production where the CWD-relative default
+    // does not exist.
+    env.insert(
+        "HKASK_TEMPLATE_ROOT".to_string(),
+        resolve_template_root(corpus, data_dir),
+    );
 }
 
 pub(crate) fn emit_scenarios_env(
@@ -788,6 +805,24 @@ mod tests {
         assert_eq!(
             env.get("HKASK_TEMPLATE_ROOT").map(String::as_str),
             Some("/custom/kask/data/skills/registry")
+        );
+    }
+
+    // The in-process accessor must resolve identically to the env emission —
+    // one rule, two delivery seams. A divergence means curator memory
+    // tagging renders from a different registry than the MCP servers.
+    #[test]
+    fn resolved_template_root_method_matches_env_emission_rule() {
+        let mut settings = KaskSettings::default();
+        settings.data_dir = "/custom/kask/data".to_string();
+        assert_eq!(
+            settings.resolved_template_root(),
+            std::path::PathBuf::from("/custom/kask/data/skills/registry")
+        );
+        settings.corpus.template_root = "/custom/templates".to_string();
+        assert_eq!(
+            settings.resolved_template_root(),
+            std::path::PathBuf::from("/custom/templates")
         );
     }
     // This pins the other direction: the `Default`-based comparison still

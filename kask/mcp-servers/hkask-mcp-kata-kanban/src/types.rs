@@ -571,6 +571,27 @@ pub(crate) struct BoardDeleteResponse {
     pub ontology: Option<String>,
 }
 
+// ── Board update (rename) ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardUpdateRequest {
+    pub board_id: String,
+    /// New board name. Trimmed at the service boundary and required
+    /// non-empty afterwards — the name is the board's addressing key
+    /// (reference model R1/R6;
+    /// `kask/docs/research/kanban-board-reference-models.md` §6.3, §6.6).
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct BoardUpdateResponse {
+    pub board_id: String,
+    pub name: String,
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
 // ── Task delete ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

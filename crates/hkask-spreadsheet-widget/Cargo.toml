@@ -17,6 +17,7 @@ serde_json.workspace = true
 ui.workspace = true
 hkask-types.workspace = true
 hkask-spreadsheet.workspace = true
+gpui_util.workspace = true
 hkask_tool_invoker.workspace = true
 tracing.workspace = true
 uuid.workspace = true

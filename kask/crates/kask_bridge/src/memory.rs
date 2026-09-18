@@ -99,6 +99,12 @@ pub struct RealMemoryPort {
     /// inference port itself is read lazily per turn from the app-wide
     /// global (the memory port wires before the inference stack does).
     classifier_model: Option<String>,
+    /// Host-deployed template registry root for write-time chunk tagging
+    /// (`kask.corpus.template_root` override → `{data_dir}/skills/registry`).
+    /// Threaded from settings at wiring time — `HKASK_TEMPLATE_ROOT` is only
+    /// injected into MCP server child processes, never set in the editor
+    /// process this port runs in.
+    template_root: std::path::PathBuf,
     curator_webid: WebID,
     /// Consolidation service for the curator's store. `None` when
     /// consolidation is disabled (`consolidation_cadence_secs == 0`).
@@ -133,6 +139,7 @@ impl RealMemoryPort {
         embedding_dim: usize,
         embedding_port: Option<LanguageModelEmbeddingPort>,
         classifier_model: Option<String>,
+        template_root: std::path::PathBuf,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
         memory_life_days: f64,
@@ -174,6 +181,7 @@ impl RealMemoryPort {
             embedding_port,
             embedding_model,
             classifier_model,
+            template_root,
             curator_webid,
             curator_consolidation,
             consolidation_cadence_secs,
@@ -397,6 +405,7 @@ impl MemoryPort for RealMemoryPort {
                 embedding_port: self.embedding_port.as_ref(),
                 embedding_model: &self.embedding_model,
                 classifier_model: self.classifier_model.as_deref(),
+                template_root: self.template_root.as_path(),
                 curator_webid: self.curator_webid,
                 tokio_handle: &self.tokio_handle,
                 curator_consolidation: &self.curator_consolidation,
@@ -996,6 +1005,7 @@ pub(crate) mod tests {
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
             classifier_model: None,
+            template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
             consolidation_cadence_secs,
@@ -1035,6 +1045,7 @@ pub(crate) mod tests {
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
             classifier_model: None,
+            template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,
@@ -1682,6 +1693,7 @@ pub(crate) mod tests {
             embedding_port: port.embedding_port.as_ref(),
             embedding_model: &port.embedding_model,
             classifier_model: port.classifier_model.as_deref(),
+            template_root: port.template_root.as_path(),
             curator_webid: port.curator_webid,
             tokio_handle: &port.tokio_handle,
             curator_consolidation: &port.curator_consolidation,
@@ -1717,6 +1729,7 @@ pub(crate) mod tests {
             embedding_port: None,
             embedding_model: &port.embedding_model,
             classifier_model: port.classifier_model.as_deref(),
+            template_root: port.template_root.as_path(),
             curator_webid: port.curator_webid,
             tokio_handle: &port.tokio_handle,
             curator_consolidation: &port.curator_consolidation,
@@ -2452,6 +2465,7 @@ pub(crate) mod tests {
             embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
             embedding_model: "test-model".to_string(),
             classifier_model: None,
+            template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs: 0,

@@ -414,6 +414,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // this entry the per-server filter drops it and swarm KNN recall
             // fails with "no embedding model configured".
             "HKASK_EMBEDDING_MODEL",
+            // Classifier model + template registry root — both read
+            // transitively by `local_knowledge.rs` agent-response chunk
+            // tagging through `hkask_inference`
+            // (`model_constants::classifier_model()` and
+            // `passage_tagging::render_deployed_tagging_prompt`). The reads
+            // live in a dependency crate, so a crate-local env-var grep
+            // cannot see them; without these entries swarm tagging degrades
+            // to structural-only on every delegated turn.
+            "HKASK_CLASSIFIER_MODEL",
+            "HKASK_TEMPLATE_ROOT",
         ]),
     },
     BuiltinMcpServer {
@@ -1284,7 +1294,12 @@ mod tests {
     // added to the swarm server, this list MUST be updated — that is the
     // point (it forces allowlist alignment to be reviewed, not silently
     // drifted). Verified against `grep std::env::var
-    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs`.
+    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs` PLUS the transitive
+    // reads `hkask-inference` performs on the swarm server's behalf
+    // (`model_constants::classifier_model` → `HKASK_CLASSIFIER_MODEL`,
+    // `passage_tagging::render_deployed_tagging_prompt` →
+    // `HKASK_TEMPLATE_ROOT`) — a crate-local grep cannot see those, which is
+    // exactly how the swarm's tagging path shipped unallowlisted.
     #[test]
     fn swarm_config_env_includes_all_read_vars() {
         // The env vars the swarm server reads at runtime (non-test).
@@ -1301,6 +1316,10 @@ mod tests {
             "HKASK_SWARM_CONSENT_STORE",
             "HKASK_MCP_SERVER_IDS",
             "HKASK_DATA_DIR",
+            // Transitive reads through `hkask-inference` (agent-response
+            // chunk tagging in `local_knowledge.rs`).
+            "HKASK_CLASSIFIER_MODEL",
+            "HKASK_TEMPLATE_ROOT",
         ];
         let mut config_env = std::collections::HashMap::new();
         for v in &read_config_vars {

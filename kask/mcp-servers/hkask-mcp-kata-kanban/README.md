@@ -9,6 +9,10 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 |------|-------------|
 | `kanban_board_create` | Create a new kanban board with optional custom columns |
 | `kanban_board_list` | List all kanban boards owned by the caller |
+| `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
+| `kanban_board_delete` | Delete a kanban board and all its tasks |
+| `kanban_board_export` | Export a kanban board as mermaid kanban markdown |
+| `kanban_board_import` | Import mermaid kanban markdown as a new board |
 
 ### Task CRUD
 | Tool | Description |

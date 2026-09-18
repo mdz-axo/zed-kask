@@ -240,7 +240,7 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 |-------|------|---------|-------|
 | `embedding_dim` | `u32` | `1024` | Must match embedding model output |
 | `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` | Corpus-layer default; `models.embedding_model` overrides it |
-| `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; runtime environment resolution publishes the effective template root |
+| `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; `mcp_env()` publishes the effective root to MCP servers and `KaskSettings::resolved_template_root()` resolves the same rule in-process (curator memory chunk tagging) |
 
 These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:355-386`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
 
@@ -515,7 +515,7 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_TRANSACTIONS_DIR` | portfolio | derived from the artifacts dir as `portfolio-mcp/transactions/` |
 | `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
 | `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
-| `HKASK_TEMPLATE_ROOT` | corpus | `corpus.template_root` |
+| `HKASK_TEMPLATE_ROOT` | corpus, swarm | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |

@@ -6,16 +6,24 @@
 //! [`crate::CachedPriceResolver::seed_cache`] before calling `portfolio_returns`.
 
 use crate::{
-    AssetType, CachedPriceResolver, ClassificationObservation, HoldingsSnapshot, LedgerFilter,
-    PortfolioError, PortfolioStore, PriceResolver, ReturnsReport, SecurityObservation, Transaction,
-    attribution, characteristics, contribution, export_csv, export_json, historical_what_if,
-    import_csv, import_json, parse_ymd, prospective_what_if, returns,
+    AssetType, CachedPriceResolver, CharacteristicsReport, ClassificationObservation,
+    HoldingsSnapshot, LedgerFilter, PortfolioError, PortfolioStore, PriceResolver, ReturnsReport,
+    SecurityObservation, Transaction, attribution, characteristics, contribution, export_csv,
+    export_json, historical_what_if, import_csv, import_json, parse_ymd, prospective_what_if,
+    returns,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
+use hkask_spreadsheet::{PublishOptions, SpreadsheetPublication, WorkbookService};
+use hkask_types::spreadsheet::{
+    AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, SpreadsheetError, TableColumn,
+    TableValue,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
+use std::sync::OnceLock;
 
 const PORTFOLIO_SERVER_ID: &str = "hkask-mcp-portfolio";
 
@@ -35,6 +43,179 @@ pub fn map_portfolio_error(e: PortfolioError) -> McpToolError {
         PortfolioError::Database(_) | PortfolioError::Serialize(_) => {
             McpToolError::internal(e.to_string()) // rr0044-ok: mapper-internal-arm
         }
+    }
+}
+
+/// Classify [`SpreadsheetError`] for MCP dispatch — the same per-variant
+/// discipline as [`map_portfolio_error`] (mirrors hkask-mcp-spreadsheet's
+/// mapper so the two surfaces classify identically).
+pub fn map_spreadsheet_error(e: SpreadsheetError) -> McpToolError {
+    match &e {
+        SpreadsheetError::UnknownArtifact { .. } => McpToolError::not_found(e.to_string()),
+        SpreadsheetError::Conflict { .. } => {
+            McpToolError::new(hkask_types::McpErrorKind::FailedPrecondition, e.to_string())
+        }
+        SpreadsheetError::Engine { .. } => McpToolError::internal(e.to_string()),
+        _ => McpToolError::invalid_argument(e.to_string()),
+    }
+}
+
+/// The presentation choice for a what-if report (plan §6: callers
+/// explicitly choose; no hidden mode switches). `DataOnly` keeps the
+/// portfolio-viewer path; `WorkbookWhatIf` additionally publishes the
+/// hypothetical transaction set and report deltas as an editable workbook
+/// revision (an immutable ` ```spreadsheet ` block).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum WhatIfPresentation {
+    #[default]
+    DataOnly,
+    WorkbookWhatIf,
+}
+
+/// The editor-process engine actor for what-if workbook publication, started
+/// lazily on first use at the production spreadsheet artifact root. Start
+/// failures are cached and surface as typed tool errors.
+static WORKBOOK_SERVICE: OnceLock<Result<Arc<WorkbookService>, String>> = OnceLock::new();
+
+fn shared_workbook_service() -> Result<Arc<WorkbookService>, McpToolError> {
+    WORKBOOK_SERVICE
+        .get_or_init(|| {
+            WorkbookService::start_with_root(hkask_spreadsheet::artifact_store::production_root())
+                .map_err(|error| format!("engine actor failed to start: {error}"))
+        })
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|error| {
+            McpToolError::internal(format!("spreadsheet publication unavailable: {error}"))
+        })
+}
+
+/// Build the what-if staging workbook table: the hypothetical transaction
+/// set followed by the before/after characteristic deltas, all values
+/// computed from the portfolio-authoritative reports (the workbook consumes
+/// them; it never reimplements the portfolio mathematics).
+fn what_if_workbook_table(
+    portfolio: &str,
+    date: &str,
+    transactions: &[Transaction],
+    actual: &CharacteristicsReport,
+    hypothetical: &CharacteristicsReport,
+) -> AnalyticalTable {
+    let mut rows: Vec<Vec<TableValue>> = Vec::new();
+    for transaction in transactions {
+        let summary = match (&transaction.symbol, transaction.quantity, transaction.price) {
+            (Some(symbol), Some(quantity), Some(price)) => {
+                format!(
+                    "{} {} {} @ {:.2}",
+                    transaction.tx_type, quantity, symbol, price
+                )
+            }
+            (Some(symbol), Some(quantity), None) => {
+                format!("{} {} {}", transaction.tx_type, quantity, symbol)
+            }
+            _ => format!("{}", transaction.tx_type),
+        };
+        rows.push(vec![
+            TableValue::Text(format!("Hypothetical: {summary}")),
+            TableValue::Empty,
+            TableValue::Empty,
+            TableValue::Empty,
+        ]);
+    }
+    let delta_rows = [
+        (
+            "Total market value",
+            Some(actual.total_market_value),
+            Some(hypothetical.total_market_value),
+        ),
+        (
+            "Cash weight",
+            Some(actual.cash_weight),
+            Some(hypothetical.cash_weight),
+        ),
+        ("Position count", None, None),
+        (
+            "Top-five weight",
+            Some(actual.top_five_weight),
+            Some(hypothetical.top_five_weight),
+        ),
+        (
+            "Concentration HHI",
+            Some(actual.concentration_hhi),
+            Some(hypothetical.concentration_hhi),
+        ),
+        (
+            "Effective holdings",
+            Some(actual.effective_holdings),
+            Some(hypothetical.effective_holdings),
+        ),
+    ];
+    for (name, before, after) in delta_rows {
+        let (before_value, after_value, change) = match (name, before, after) {
+            ("Position count", _, _) => (
+                TableValue::Number(actual.position_count as f64),
+                TableValue::Number(hypothetical.position_count as f64),
+                TableValue::Number(
+                    (hypothetical.position_count as f64) - (actual.position_count as f64),
+                ),
+            ),
+            (_, Some(b), Some(a)) => (
+                TableValue::Number(b),
+                TableValue::Number(a),
+                TableValue::Number(a - b),
+            ),
+            _ => (TableValue::Empty, TableValue::Empty, TableValue::Empty),
+        };
+        rows.push(vec![
+            TableValue::Text(format!("{name}")),
+            before_value,
+            after_value,
+            change,
+        ]);
+    }
+    AnalyticalTable::new(
+        format!("What-if staging — {portfolio} as of {date}"),
+        "What-if".into(),
+        vec![
+            TableColumn {
+                id: "item".into(),
+                label: "Item".into(),
+                kind: ColumnKind::Text,
+            },
+            TableColumn {
+                id: "before".into(),
+                label: "Before".into(),
+                kind: ColumnKind::Number,
+            },
+            TableColumn {
+                id: "after".into(),
+                label: "After".into(),
+                kind: ColumnKind::Number,
+            },
+            TableColumn {
+                id: "change".into(),
+                label: "Change".into(),
+                kind: ColumnKind::Number,
+            },
+        ],
+        rows,
+    )
+    .expect("the what-if staging table is valid by construction")
+}
+
+/// Format a ```` ```spreadsheet ```` fenced display hint from a workbook
+/// publication.
+fn spreadsheet_hint(publication: SpreadsheetPublication) -> Result<String, McpToolError> {
+    match publication {
+        SpreadsheetPublication::Workbook { block, .. } => {
+            let body = serde_json::to_string(&block).map_err(|error| {
+                McpToolError::internal(format!("serialize spreadsheet block: {error}"))
+            })?;
+            Ok(format!("```spreadsheet\n{body}\n```"))
+        }
+        SpreadsheetPublication::Inline(_) => Err(McpToolError::internal(
+            "workbook publication produced an inline table — not an editable what-if",
+        )),
     }
 }
 
@@ -71,6 +252,21 @@ fn report_response(
     report: serde_json::Value,
     provenance: serde_json::Value,
 ) -> Result<serde_json::Value, McpToolError> {
+    report_response_with_hints(portfolio, report_kind, report, provenance, Vec::new())
+}
+
+/// [`report_response`] plus additional fenced display hints appended to the
+/// same `display_hint` string (the hint parsers scan for their own fence, so
+/// one response can carry the portfolio report block AND a ```spreadsheet
+/// workbook block).
+#[allow(clippy::too_many_arguments)]
+fn report_response_with_hints(
+    portfolio: &str,
+    report_kind: &str,
+    report: serde_json::Value,
+    provenance: serde_json::Value,
+    extra_hints: Vec<String>,
+) -> Result<serde_json::Value, McpToolError> {
     let block = serde_json::json!({
         "viz": "portfolio_report",
         "portfolio": portfolio,
@@ -80,9 +276,14 @@ fn report_response(
     });
     let body = serde_json::to_string(&block)
         .map_err(|error| McpToolError::internal(format!("serialize portfolio report: {error}")))?;
+    let mut display_hint = format!("```portfolio\n{body}\n```");
+    for extra in extra_hints {
+        display_hint.push('\n');
+        display_hint.push_str(&extra);
+    }
     Ok(serde_json::json!({
         "report": block["report"],
-        "display_hint": format!("```portfolio\n{body}\n```"),
+        "display_hint": display_hint,
     }))
 }
 
@@ -152,6 +353,11 @@ pub struct PortfolioWhatIfRequest {
     pub hypothetical_transactions: Vec<Transaction>,
     #[serde(default)]
     pub observations: Vec<SecurityObservation>,
+    /// The explicit presentation choice (§6): `DataOnly` (default) keeps the
+    /// portfolio-viewer report; `WorkbookWhatIf` additionally publishes the
+    /// transaction set and report deltas as an editable workbook revision.
+    #[serde(default)]
+    pub presentation: WhatIfPresentation,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -539,11 +745,29 @@ impl PortfolioServer {
             date,
             hypothetical_transactions,
             observations,
+            presentation,
         }): Parameters<PortfolioWhatIfRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "portfolio_what_if", async {
             let response_portfolio = portfolio.clone();
             let response_date = date.clone();
+            let transaction_summaries: Vec<String> = hypothetical_transactions
+                .iter()
+                .map(|transaction| {
+                    match (&transaction.symbol, transaction.quantity, transaction.price) {
+                        (Some(symbol), Some(quantity), Some(price)) => {
+                            format!(
+                                "{} {} {} @ {:.2}",
+                                transaction.tx_type, quantity, symbol, price
+                            )
+                        }
+                        (Some(symbol), Some(quantity), None) => {
+                            format!("{} {} {}", transaction.tx_type, quantity, symbol)
+                        }
+                        _ => format!("{}", transaction.tx_type),
+                    }
+                })
+                .collect();
             let (actual, hypothetical) = run_store(self.store.clone(), move |store| {
                 let resolver = CachedPriceResolver::new(&store, &portfolio);
                 prospective_what_if(
@@ -563,7 +787,39 @@ impl PortfolioServer {
                 "hypothetical": hypothetical,
                 "authoritative_state_changed": false,
             });
-            report_response(
+            // The explicit presentation choice (§6): publish the what-if
+            // staging workbook as an immutable revision and append its
+            // ```spreadsheet hint to the portfolio report hint.
+            let extra_hints = if presentation == WhatIfPresentation::WorkbookWhatIf {
+                let service = shared_workbook_service()?;
+                let origin = ArtifactOrigin::new(
+                    PORTFOLIO_SERVER_ID.to_string(),
+                    "portfolio_what_if".to_string(),
+                    serde_json::json!({"portfolio": response_portfolio, "date": response_date}),
+                )
+                .map_err(map_spreadsheet_error)?;
+                let table = what_if_workbook_table(
+                    &response_portfolio,
+                    &response_date,
+                    &hypothetical_transactions,
+                    &actual,
+                    &hypothetical,
+                );
+                let publication = service
+                    .publish(
+                        origin,
+                        table,
+                        PublishOptions {
+                            access: SpreadsheetAccess::WorkbookWhatIf,
+                        },
+                    )
+                    .await
+                    .map_err(map_spreadsheet_error)?;
+                vec![spreadsheet_hint(publication)?]
+            } else {
+                Vec::new()
+            };
+            report_response_with_hints(
                 &response_portfolio,
                 "what_if",
                 report,
@@ -572,6 +828,7 @@ impl PortfolioServer {
                     "server": PORTFOLIO_SERVER_ID,
                     "args": {"portfolio": response_portfolio},
                 }),
+                extra_hints,
             )
         })
         .await
