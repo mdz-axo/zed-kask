@@ -191,13 +191,12 @@ from rendered model messages.
 
 `max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
 pairs. One compact prepared request per chunk carries the selected level rotation.
-A complete `prepared-qa-adjudication-v2` manifest, when supplied, binds passage and
-ordered per-level mandates to every prompt identity. Reviewed passage skips write
-terminal rows before inference. Reviewed admits bypass the passage-quality call;
-the generator receives the mandates, and its plan gets one exact-error correction
-before a second mismatch fails the prompt. Without a manifest, the generation model
-proposes a focused whole-passage decision: a proposed skip short-circuits, and a
-proposed clean decision continues directly to disposition planning. Planning and
+A complete `prepared-qa-adjudication-v2` manifest is required: it binds passage and
+ordered per-level mandates to every prompt identity — there is no unadjudicated
+generation path. Reviewed passage skips write
+terminal rows before inference. Reviewed admits send the mandates to the generator,
+and its plan gets one exact-error correction
+before a second mismatch fails the prompt. Planning and
 writer calls run when at least one level is mandated or planned for generation. Summary separates
 `prompts_written` from `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
@@ -216,7 +215,7 @@ and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived fro
 source, chunk ref, ordered level set and ordinal zero, stable across partitions.
 The whole input is validated before inference/output creation.
 
-Generation uses typed passage-quality, disposition, and writer contracts. A v2
+Generation uses typed adjudication, disposition, and writer contracts. A v2
 adjudication row has exactly `protocol`, `prompt_id`, `chunk_ref`, `source`, `passage`,
 and `levels`. `passage` is `admit` with null reason or `skip` with one canonical
 prompt-wide reason. `levels` exactly follows `qa_types`; a passage skip repeats the
@@ -225,9 +224,7 @@ and either generation or exact support-absent skips for later levels. Conceptual
 generation names one closed relation. V1, unknown fields/values, duplicate identities,
 wrong order/count/reason/relation, and incomplete coverage are rejected.
 
-Without a reviewed manifest, the generation model's passage gate returns `clean` or a
-prompt-wide skip. A proposed clean decision goes straight to planning; there is no
-second-model review. Both paths use the same generator plan schema:
+The generator plan schema is one ordered object per requested level:
 
 ```json
 ["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]

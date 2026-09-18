@@ -226,19 +226,19 @@ from rendered model messages.
 ### Evidence and generated records
 
 The server partitions primary passage `p0` into overlapping exact source spans with
-local IDs `e0`, `e1`, etc. An optional complete `prepared-qa-adjudication-v2` manifest
-binds one passage decision and one ordered level mandate to every prepared prompt's
-`prompt_id`, `chunk_ref`, and `source`. V1, partial, duplicate, unknown, reordered, or
+local IDs `e0`, `e1`, etc. A complete `prepared-qa-adjudication-v2` manifest is
+required: it binds one passage decision and one ordered level mandate to every
+prepared prompt's
+`prompt_id`, `chunk_ref`, and `source` — there is no unadjudicated generation
+path. V1, partial, duplicate, unknown, reordered, or
 identity-mismatched rows fail before output creation. A reviewed passage skip writes
 all mandated prompt-wide terminal rows without inference. A reviewed admit bypasses
-the passage-quality call: the generator receives the level mandates,
+any passage-quality call: the generator receives the level mandates,
 selects evidence for mandated generation, and its parsed plan is compared to the
 mandates deterministically. One mismatch receives one generator-owned correction with
 the exact error; a second mismatch fails the prompt.
 
-Without a manifest, the generation model proposes one focused whole-passage quality
-decision. A proposed skip short-circuits immediately. A proposed clean decision
-continues to the disposition planner, which returns one ordered plan per requested
+The disposition planner returns one ordered plan per requested
 level; a malformed plan receives exactly one generator-owned schema correction before
 the prompt fails closed. A generated level fixes one to three evidence IDs before any
 question or answer is written; conceptual generation also fixes one closed relation
@@ -267,7 +267,7 @@ short, begins mid-sentence, contains notation or lacks conceptual support.
 `non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
 For an admitted passage, factual must generate; each other level either generates
 (`conceptual` with one closed relation, all others with null relation) or skips with
-its exact `<level>_support_absent` reason. Any malformed quality decision, plan, or
+its exact `<level>_support_absent` reason. Any malformed plan, or
 writer response rejects the whole prompt after its applicable single correction.
 Semantic QA still requires the separate Stage 8 audit; exact evidence restoration does
 not certify answer entailment. Generated rows use

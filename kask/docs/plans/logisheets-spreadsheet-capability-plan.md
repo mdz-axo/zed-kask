@@ -376,6 +376,35 @@ Evidence (scratch harness outside the workspace, Rust 1.97.1):
 - Add exact serialization round-trip tests.
 - Reject nonrectangular rows, duplicate column identities, invalid coordinates, and oversized inline blocks.
 
+**Phase 1 record (2026-09-18): COMPLETE at `90ca4a1ffa`.** `BlockProvenance`
+moved to `hkask_types::block_provenance` — now `Serialize` + `PartialEq` as
+well, so MCP-side block construction can author it directly;
+`hkask-tool-invoker` re-exports it and all six widget/panel consumers compile
+unchanged (zero call-site edits; the media server's hand-mirrored `Provenance`
+duplicate in `hkask-mcp-media/media_block.rs` is now removable as
+follow-up). New `hkask_types::spreadsheet` module: `AnalyticalTable` /
+`TableColumn` / `TableValue` / `ColumnKind`, `CellCoordinate`,
+`SpreadsheetViewport`, `SpreadsheetArtifactRef` (opaque single-segment ids —
+path escape rejected at the contract), `SpreadsheetAccess`
+(DataOnly/InlineTable/WorkbookWhatIf), `CellEdit` / `EditTransaction`
+(idempotency key + expected access + base digest — optimistic concurrency),
+`ArtifactOrigin`, `InlineTableBlock` (capped 1,000 rows / 64 cols / 10,000
+cells — `TooLargeForInline`, never truncation), `SpreadsheetBlock` (§6 field
+list; incomplete mutation provenance rejected), and `SpreadsheetError` (14
+distinct recovery categories, no catch-alls). Non-finite numbers are rejected
+at validation — `serde_json` cannot wire NaN, so the contract refuses what
+the wire would silently break. Gates observed at the committed tree:
+`cargo test -p hkask-types` 68+1 passed (including 22 spreadsheet and 5
+provenance contract tests), `cargo test -p hkask-tool-invoker` 3 passed,
+`cargo check -p zed` clean (every widget consumer), `./script/clippy -p
+hkask-types` and `-p hkask-tool-invoker` clean, `cargo fmt --all -- --check`
+clean. The six public-contract terms (AnalyticalTable, SpreadsheetBlock,
+SpreadsheetArtifact, SpreadsheetViewport, EditTransaction, SpreadsheetError)
+anchor at the coarse `5w1h_core` rung (§2); a derived-concept ruling has
+been requested from the operator. Shared-tree note: this work landed inside
+the operator's commit `90ca4a1ffa`, mixed with corpus changes this program
+did not author or validate.
+
 ### Phase 2 — LogiSheets-backed core
 
 - Add `kask/crates/hkask-spreadsheet` with `[lib] path = "src/hkask_spreadsheet.rs"`.

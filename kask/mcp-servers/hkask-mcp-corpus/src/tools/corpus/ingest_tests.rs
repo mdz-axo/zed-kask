@@ -85,12 +85,17 @@ fn write_grounding(directory: &Path, rows: &[String]) -> anyhow::Result<()> {
             chunk_ref.to_string(),
             json!({"entity_ref":chunk_ref,"source":qa.source,"text":evidence.quote}),
         );
-        let judgment = |field: &str, text: &str| {
+        // The instruction judgment is tool_verified: its cited quote is the
+        // candidate's evidence quote, byte-checkable against the canonical
+        // chunk below. The output judgment is a semantic entailment and stays
+        // model_inference. The gate derives CVR from the tool_verified anchor;
+        // a self-scored all-model_inference manifest fails closed.
+        let judgment = |field: &str, text: &str, provenance: &str, strength: u8| {
             json!({
                 "field":field,
                 "text":text,
-                "provenance":"model_inference",
-                "strength":1,
+                "provenance":provenance,
+                "strength":strength,
                 "entailment":true,
                 "why":"The complete candidate field is supported by the cited canonical source evidence.",
                 "ontology_anchor":{"term":"claim grounding","tier":"core","namespace":"core","concept":"5w1h_core"},
@@ -104,7 +109,10 @@ fn write_grounding(directory: &Path, rows: &[String]) -> anyhow::Result<()> {
             "chunk_ref":chunk_ref,
             "source":qa.source,
             "qa_type":qa.qa_type,
-            "judgments":[judgment("instruction", &qa.instruction), judgment("output", &qa.output)],
+            "judgments":[
+                judgment("instruction", &qa.instruction, "tool_verified", 2),
+                judgment("output", &qa.output, "model_inference", 1)
+            ],
             "fact_score_breakdown":{"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":2},
             "fact_score":1.0,
             "confidence_band":"medium",

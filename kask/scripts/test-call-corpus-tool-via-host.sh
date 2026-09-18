@@ -91,6 +91,13 @@ if kill -0 "$server_pid" 2>/dev/null; then
     exit 1
 fi
 
+# The host-env fallback borrows a live gateway's configuration; stub pgrep so
+# the missing-generation-model case below is hermetic (no host rescue).
+mkdir -p "$tmp/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$tmp/bin/pgrep"
+chmod +x "$tmp/bin/pgrep"
+export PATH="$tmp/bin:$PATH"
+
 unset HKASK_QA_GENERATION_MODEL
 rm -f "$FAKE_SERVER_GRACEFUL_FILE" "$FAKE_SERVER_TERMINATED_FILE"
 if "$host_call" corpus_generate_qa_batch "$tmp/arguments.json" "$tmp/qa-response.json" "$tmp/qa-server.log"; then

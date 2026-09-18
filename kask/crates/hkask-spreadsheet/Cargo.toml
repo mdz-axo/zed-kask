@@ -1,0 +1,28 @@
+[package]
+name = "hkask-spreadsheet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The LogiSheets-backed spreadsheet deep module (plan §5.1): converts AnalyticalTables into immutable XLSX revisions behind a dedicated-thread actor — the LogiSheets Workbook is !Send, so the engine is confined to one thread and callers exchange Send commands and responses only."
+
+[lib]
+path = "src/hkask_spreadsheet.rs"
+
+[dependencies]
+hkask-types.workspace = true
+logisheets-rs = "=1.15.1"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+# oneshot channels for the actor's async handle — runtime-agnostic (no tokio
+# dependency: the widget side can await these on GPUI without a runtime).
+futures.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

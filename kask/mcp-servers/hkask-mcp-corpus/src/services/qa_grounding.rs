@@ -108,6 +108,52 @@ fn expected_strength(provenance: &str) -> Option<u8> {
     }
 }
 
+/// Ratios the gate derives from the judgments vector itself, per the
+/// grounding-verify skill's canonical sub-metric definitions.
+///
+/// A report may not self-attest grounding its judgments do not support:
+/// - SAR counts source-anchored judgments (provenance strength >= 1) over
+///   all claims.
+/// - CVR is the citation-verified ratio over the judgments classified
+///   `tool_verified`; with no tool_verified judgment it is nil — nothing
+///   anchors citation verification, so a self-attested 1.0 is laundering.
+/// - HFR counts surviving judgments (entailment) over all claims.
+/// - NLR is vacuously 1.0 for QA candidates: instruction, output, and
+///   evidence quotes are the only fields and none is narrative prose.
+struct DerivedRatios {
+    sar: f64,
+    cvr: Option<f64>,
+    hfr: f64,
+    // NLR is a constant 1.0 (vacuous for QA candidates); it has no field.
+}
+
+fn derive_ratios(row: &GroundingReportRow) -> DerivedRatios {
+    let claims = row.judgments.len();
+    let anchored = row
+        .judgments
+        .iter()
+        .filter(|judgment| judgment.strength >= 1)
+        .count();
+    let tool_verified = row
+        .judgments
+        .iter()
+        .filter(|judgment| judgment.provenance == "tool_verified")
+        .count();
+    let surviving = row
+        .judgments
+        .iter()
+        .filter(|judgment| judgment.entailment)
+        .count();
+    DerivedRatios {
+        sar: anchored as f64 / claims as f64,
+        // The exact-substring citation check in `validate_judgments` verifies
+        // every tool_verified judgment's quote against canonical chunk bytes,
+        // so a present tool_verified anchor derives CVR 1.0.
+        cvr: (tool_verified > 0).then_some(1.0),
+        hfr: surviving as f64 / claims as f64,
+    }
+}
+
 fn validate_score(row: &GroundingReportRow) -> Result<(), McpToolError> {
     let metrics = &row.fact_score_breakdown;
     if metrics.claims_checked != row.judgments.len() || metrics.claims_checked == 0 {
@@ -131,6 +177,31 @@ fn validate_score(row: &GroundingReportRow) -> Result<(), McpToolError> {
             row.prompt_id
         )));
     }
+    // Ratios are derived server-side from the judgments vector and the
+    // reported values must match: the arithmetic must not be self-attested.
+    // Semantic entailment truth stays the decoupled verifier's judgment.
+    let derived = derive_ratios(row);
+    let Some(cvr) = derived.cvr else {
+        return Err(invalid(format!(
+            "Grounding report '{}' has no tool_verified judgment; a self-scored \
+             citation-verified ratio cannot be derived",
+            row.prompt_id
+        )));
+    };
+    for (name, reported, expected) in [
+        ("sar", metrics.sar, derived.sar),
+        ("cvr", metrics.cvr, cvr),
+        ("hfr", metrics.hfr, derived.hfr),
+        ("nlr", metrics.nlr, 1.0),
+    ] {
+        if (reported - expected).abs() >= SCORE_TOLERANCE {
+            return Err(invalid(format!(
+                "Grounding report '{}' reported {name} {reported} does not match \
+                 the judgments-derived ratios",
+                row.prompt_id
+            )));
+        }
+    }
     let expected =
         0.30 * metrics.sar + 0.25 * metrics.cvr + 0.20 * metrics.hfr + 0.25 * metrics.nlr;
     if (row.fact_score - expected).abs() >= SCORE_TOLERANCE {
@@ -139,6 +210,9 @@ fn validate_score(row: &GroundingReportRow) -> Result<(), McpToolError> {
             row.prompt_id
         )));
     }
+    // Floor kept as defense-in-depth: with derivation-matched ratios every
+    // accepted row scores exactly 1.0, so this branch is currently
+    // unreachable — it remains the bar if the derivation ever generalizes.
     if row.fact_score < MIN_FACT_SCORE {
         return Err(invalid(format!(
             "Grounding report '{}' fact_score {} is below {MIN_FACT_SCORE}",
@@ -315,8 +389,11 @@ pub(crate) fn verify_complete_grounding(
                 report.prompt_id
             )));
         }
-        validate_score(report)?;
+        // Semantic judgments gate before score arithmetic: an entailment or
+        // provenance defect keeps its named reason instead of surfacing as a
+        // derived-ratio mismatch.
         validate_judgments(report, qa, &chunks)?;
+        validate_score(report)?;
     }
     Ok(())
 }
@@ -361,8 +438,8 @@ mod tests {
                 judgment("instruction", "What is the delay?", "tool_verified", 2, "The delay is 72 hours."),
                 judgment("output", "72 hours", "model_inference", 1, "The delay is 72 hours.")
             ],
-            "fact_score_breakdown": {"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":0.5,"claims_checked":2},
-            "fact_score": 0.875,
+            "fact_score_breakdown": {"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":2},
+            "fact_score": 1.0,
             "confidence_band": "medium",
             "decoupling": "spawn_agent",
             "verdict": "accept",
@@ -460,6 +537,71 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// expect: A self-scored all-model_inference manifest fails closed — ratios
+    /// are derived from the judgments vector, and with no tool_verified judgment
+    /// no citation-verified ratio can be derived, so a self-attested 1.0 is
+    /// verification laundering and must be rejected.
+    #[test]
+    fn self_scored_all_model_inference_manifest_fails_closed() {
+        let hash = candidate_hash(CANDIDATE);
+        let mut report = base_report(&hash);
+        report["judgments"] = json!([
+            judgment(
+                "instruction",
+                "What is the delay?",
+                "model_inference",
+                1,
+                "The delay is 72 hours."
+            ),
+            judgment(
+                "output",
+                "72 hours",
+                "model_inference",
+                1,
+                "The delay is 72 hours."
+            )
+        ]);
+        // The row self-reports perfect ratios and a perfect score despite
+        // carrying no tool-verified anchor at all.
+        report["fact_score_breakdown"] =
+            json!({"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":2});
+        report["fact_score"] = json!(1.0);
+        assert_rejected(
+            "self-scored all-model_inference",
+            &[report],
+            &[chunk_value()],
+            &[CANDIDATE],
+            "no tool_verified judgment",
+        );
+    }
+
+    /// expect: Reported ratios must match what the judgments vector supports
+    /// (the grounding-verify skill's canonical definitions); weight-consistent
+    /// drift on any derived ratio is rejected with the named reason.
+    #[test]
+    fn reported_ratios_must_match_judgments_derived_values() {
+        let hash = candidate_hash(CANDIDATE);
+        // (field, drifted value, weight-consistent fact_score for the drift)
+        let drifts = [
+            ("sar", 0.5, 0.85),
+            ("cvr", 0.5, 0.875),
+            ("hfr", 0.5, 0.9),
+            ("nlr", 0.5, 0.875),
+        ];
+        for (field, value, score) in drifts {
+            let mut report = base_report(&hash);
+            report["fact_score_breakdown"][field] = json!(value);
+            report["fact_score"] = json!(score);
+            assert_rejected(
+                &format!("{field} drift"),
+                &[report],
+                &[chunk_value()],
+                &[CANDIDATE],
+                "does not match the judgments-derived ratios",
+            );
+        }
     }
 
     /// expect: Every single-field report defect fails closed with its named reason.
@@ -560,15 +702,11 @@ mod tests {
                 Box::new(|r: &mut Value| r["fact_score"] = json!(0.9)),
                 "does not match the canonical weights",
             ),
-            (
-                "fact_score below threshold",
-                Box::new(|r: &mut Value| {
-                    r["fact_score_breakdown"] =
-                        json!({"sar":0.5,"cvr":0.5,"hfr":0.5,"nlr":0.5,"claims_checked":2});
-                    r["fact_score"] = json!(0.5);
-                }),
-                "is below 0.8",
-            ),
+            // A self-attested below-threshold breakdown ({0.5x4}, score 0.5)
+            // is now rejected earlier by the judgments-derived ratio match —
+            // with honest ratios every accepted row scores exactly 1.0, so a
+            // weight-consistent below-threshold row is structurally impossible.
+            // The MIN_FACT_SCORE floor stays in `validate_score` as the bar.
             (
                 "non-accept verdict",
                 Box::new(|r: &mut Value| r["verdict"] = json!("reject")),

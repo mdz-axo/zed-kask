@@ -66,7 +66,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
 | `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses disposition proposal/review, then QA writing/review only when at least one merged level is supported |
-| `quality_adjudications_jsonl` | Optional complete `prepared-qa-adjudication-v2` manifest: one identity-matched row per prepared prompt, with passage decision and level decisions exactly ordered to `qa_types`; v1 and partial manifests are invalid |
+| `quality_adjudications_jsonl` | Required complete `prepared-qa-adjudication-v2` manifest: one identity-matched row per prepared prompt, with passage decision and level decisions exactly ordered to `qa_types`; there is no unadjudicated generation path, and v1 and partial manifests are invalid |
 | `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB and authorized passphrase |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
