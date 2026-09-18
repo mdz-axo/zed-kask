@@ -12,9 +12,9 @@ mds_categories: [composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
 **Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
-**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:324-338,664-667`).
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:324-338,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:267,1900-1916`).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:266,1900-1916`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
@@ -77,7 +77,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,267,273-1769,1900-1916; kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,266,273-1769,1900-1916; kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->
 

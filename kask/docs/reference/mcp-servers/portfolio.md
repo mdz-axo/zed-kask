@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-portfolio`
 **Tools:** 18 — the 13 ledger/return tools plus `portfolio_contribution`, `portfolio_characteristics`, `portfolio_attribution`, `portfolio_what_if`, and `portfolio_historical_what_if`. (2026-09-17: investor reports moved into their authoritative portfolio server; daily-return data remains an internal calculation/materialization surface, not the portfolio panel's user experience.)
-**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.portfolio=false` disables this server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-79,664-667`).
+**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.portfolio=false` disables this server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-79,704`).
 
 The portfolio server is the general-purpose transaction-ledger portfolio store.
 It is provider-agnostic — it knows nothing about FMP/EODHD stock prices or
@@ -125,4 +125,4 @@ materialize-then-seed never serves stale rows.
 
 ## Credential allowlist
 
-The portfolio server is provider-agnostic: `credentials: Some(&[])`. Its current config allowlist is exactly `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, and `HKASK_TRANSACTIONS_DIR`: the database remains under the internal data root, while transaction import files resolve under the visible artifacts root. The descriptor and an allowlist-alignment test pin this boundary (`kask/crates/kask_bridge/src/mcp_servers.rs:55-79,1037-1074`).
+The portfolio server is provider-agnostic: `credentials: Some(&[])`. Its current config allowlist is exactly `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, and `HKASK_TRANSACTIONS_DIR`: the database remains under the internal data root, while transaction import files resolve under the visible artifacts root. The descriptor and an allowlist-alignment test pin this boundary (`kask/crates/kask_bridge/src/mcp_servers.rs:55-79,1084-1120`).

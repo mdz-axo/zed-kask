@@ -471,7 +471,7 @@ The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-secur
 - **Data/instruction separation** — `sanitize_abw_response` wraps all LLM/ABW output in a `{content, source: "abw", trust: "untrusted"}` container and strips injection prefixes.
 - **Capability gating** — single-use consent tokens for ABW spend; local tool reach is bounded by each card's `mcp_tools` allowlist.
 - **Runtime monitoring** — `with_wallet` algedonic channel, `tracing::warn!` on stale signals, `detect_embedded_error`.
-- **Credential scoping** — `credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"])` (never `None`); the server receives its cloud credential and the one shared SQLCipher passphrase, not other servers' secrets (`kask/crates/kask_bridge/src/mcp_servers.rs:356-417,1143-1179`).
+- **Credential scoping** — `credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"])` (never `None`); the server receives its cloud credential and the one shared SQLCipher passphrase, not other servers' secrets (`kask/crates/kask_bridge/src/mcp_servers.rs:356-417,1218-1250`).
 
 **Local mode adds:**
 
