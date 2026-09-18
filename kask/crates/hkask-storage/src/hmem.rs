@@ -969,6 +969,78 @@ mod tests {
         Ok(())
     }
 
+    /// expect: "A commit failure rolls back data and marker on one connection; a later successful batch survives reopen" [P1]
+    /// post: a second pooled connection never observes partial or failed batch records
+    #[test]
+    fn atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("atomic-batch.sqlite");
+        {
+            let mut conn = rusqlite::Connection::open(&path)?;
+            crate::init_wal_pragmas(&mut conn)?;
+            crate::core::connection::init_sqlite_vec_on(&conn)?;
+            conn.execute_batch(
+                &include_str!("core/sql/schema.sql")
+                    .replace("$DIM", &crate::embedding_dim().to_string()),
+            )?;
+            conn.execute_batch(
+                "CREATE TABLE commit_parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE commit_child (parent_id INTEGER REFERENCES commit_parent(id)
+                     DEFERRABLE INITIALLY DEFERRED);
+                 CREATE TRIGGER fail_at_commit AFTER INSERT ON hmems
+                 WHEN NEW.entity = 'batch:marker'
+                 BEGIN INSERT INTO commit_child VALUES (1); END;",
+            )?;
+        }
+        let pool = r2d2::Pool::builder().max_size(2).build(
+            crate::SqliteConnectionManager::file(&path).with_init(crate::init_wal_pragmas),
+        )?;
+        // Retain the observer so insert_batch_atomic must use a different
+        // connection. Its own leased connection owns BEGIN, writes and COMMIT.
+        let observer = pool.get()?;
+        let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool.clone())))?;
+        let owner = WebID::new();
+        let records = [
+            HMem::new("batch:data", "fact", serde_json::json!("payload"), owner),
+            HMem::new(
+                "batch:marker",
+                "commit",
+                serde_json::json!("complete"),
+                owner,
+            ),
+        ];
+        let error = store
+            .insert_batch_atomic(&records)
+            .expect_err("deferred constraint fails at commit");
+        assert!(error.to_string().contains("FOREIGN KEY"), "{error}");
+        for table in ["hmems", "commit_child"] {
+            let count: i64 =
+                observer.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
+            assert_eq!(count, 0, "failed commit must roll back {table}");
+        }
+        observer.execute_batch("DROP TRIGGER fail_at_commit;")?;
+        store.insert_batch_atomic(&records)?;
+        let count: i64 = observer.query_row("SELECT COUNT(*) FROM hmems", [], |r| r.get(0))?;
+        assert_eq!(count, 2);
+        drop(store);
+        drop(observer);
+        drop(pool);
+
+        let reopened_pool = r2d2::Pool::builder()
+            .max_size(2)
+            .build(crate::SqliteConnectionManager::file(path).with_init(crate::init_wal_pragmas))?;
+        let reopened = HMemStore::from_driver(Arc::new(SqliteDriver::new(reopened_pool)))?;
+        for original in records {
+            let stored = reopened
+                .get_by_id(&original.id)?
+                .expect("committed record survives reopen");
+            assert_eq!(stored.value, original.value);
+            assert_eq!(stored.access.owner_webid, owner);
+        }
+        assert_eq!(reopened.count()?, 2);
+        Ok(())
+    }
+
     #[test]
     fn update_deletes_prior_row_and_preserves_metadata() -> anyhow::Result<()> {
         let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;

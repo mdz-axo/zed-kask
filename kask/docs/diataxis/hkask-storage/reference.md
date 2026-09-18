@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — Reference"
 audience: [developers, architects]
-last_updated: 2026-09-16
-version: "2.2.0"
+last_updated: 2026-09-18
+version: "2.3.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [domain, trust]
@@ -26,7 +26,7 @@ The crate root declares and exports the current modules at
 | Module | Public surface | Evidence |
 |---|---|---|
 | `core` | `Database`, `DatabaseError`, `LeasedSqliteConnection`, `SqliteConnectionManager`, `embedding_dim`, `open_database`, `open_or_repair`, `sanitize_path` | `kask/crates/hkask-storage/src/hkask_storage.rs:20-24` |
-| `database` | `DatabaseDriver`, `SqliteDriver`, `WAL_PRAGMA_BATCH`, `init_wal_pragmas`; transaction and typed SQL values under the module | `kask/crates/hkask-storage/src/hkask_storage.rs:10,25`; `kask/crates/hkask-storage/src/database.rs:6-13` |
+| `database` | `DatabaseDriver`, `SqliteDriver`, `WAL_PRAGMA_BATCH`, `init_wal_pragmas`; typed SQL values. Transactions belong to a leased connection, not the driver | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database.rs:1-14` |
 | `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:12-18` |
 | `rotation` | `rotate_passphrase`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
 | `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
@@ -43,7 +43,7 @@ The crate root declares and exports the current modules at
 | `Database::sqlite_pool` | lazily creates and caches the SQLCipher/in-memory pool | `kask/crates/hkask-storage/src/core/connection.rs:337-366` |
 | Core schema | loaded from `core/sql/schema.sql`, then explicit column migrations run | `kask/crates/hkask-storage/src/core/connection.rs:272-335` |
 | Managed inventory registration | file-backed managed opens record the canonical path before pool creation | `kask/crates/hkask-storage/src/core/connection.rs:417-425` |
-| `DatabaseDriver` | provider-neutral execute/query/transaction boundary | `kask/crates/hkask-storage/src/database/driver.rs:16-109` |
+| `DatabaseDriver` | provider-neutral single-operation execute/query boundary; no transaction facade | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/driver.rs:15-47` |
 | `SqliteDriver` | current driver implementation | `kask/crates/hkask-storage/src/database/sqlite.rs:42-117` |
 | `DbValue` / `DbRow` | typed SQL parameter and row values; not encryption | `kask/crates/hkask-storage/src/database/value.rs:8-70` |
 
@@ -90,8 +90,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:294-306; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
+verified_date: 2026-09-18
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:294-306; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
 status: VERIFIED
 -->
 

@@ -515,14 +515,6 @@ mod tests {
             self.inner.query_optional(sql, params)
         }
 
-        fn commit_tx(&self) -> Result<(), hkask_types::DbError> {
-            self.inner.commit_tx()
-        }
-
-        fn rollback_tx(&self) -> Result<(), hkask_types::DbError> {
-            self.inner.rollback_tx()
-        }
-
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }

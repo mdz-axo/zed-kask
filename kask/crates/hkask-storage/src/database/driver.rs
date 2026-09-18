@@ -4,7 +4,6 @@
 //! Ergonomic query helpers (`query_map`, `query_row`) are provided as free
 //! functions — they call the trait methods and add type mapping on top.
 
-use super::transaction::TransactionHandle;
 use super::types::DbError;
 use super::value::{DbRow, DbValue};
 
@@ -26,14 +25,6 @@ pub trait DatabaseDriver: Send + Sync {
     /// Query a single optional row.
     fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError>;
 
-    /// Internal: commit current transaction (called by TransactionHandle).
-    #[doc(hidden)]
-    fn commit_tx(&self) -> Result<(), DbError>;
-
-    /// Internal: rollback current transaction (called by TransactionHandle).
-    #[doc(hidden)]
-    fn rollback_tx(&self) -> Result<(), DbError>;
-
     /// Access the driver as `Any` for provider-specific downcasting.
     /// Used by stores that need provider-specific operations (e.g.,
     /// sqlite-vec vector search which requires raw rusqlite connection).
@@ -52,18 +43,6 @@ pub trait DatabaseDriver: Send + Sync {
     /// guarantees an in-memory pool cannot keep.
     fn is_durable(&self) -> bool {
         true
-    }
-
-    /// Start a transaction, returning a RAII guard.
-    /// Auto-rollbacks on drop if not committed.
-    ///
-    /// Only available on concrete types, not `dyn DatabaseDriver`.
-    fn transaction(&self) -> Result<TransactionHandle<'_>, DbError>
-    where
-        Self: Sized,
-    {
-        self.execute_batch("BEGIN TRANSACTION")?;
-        Ok(TransactionHandle::new(self))
     }
 }
 

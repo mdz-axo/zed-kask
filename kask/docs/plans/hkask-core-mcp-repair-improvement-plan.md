@@ -2,7 +2,7 @@
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-18
-version: "0.2.0"
+version: "0.2.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -241,6 +241,18 @@ Counterevidence: source explicitly prioritizes recoverability; users can change 
 Plan: make the protection state visible, then obtain the operator's choice of required user secret versus recoverable generated secret. No compatibility requirement justifies preserving the default as a confidentiality claim; it also does not authorize silent rotation or data loss. Test onboarding, recovery, and all-database rotation before changing provisioning.
 
 ### R2 — Generic transaction handle does not own its connection
+
+**Current disposition (2026-09-18, uncommitted): removed, not wrapped.** Caller
+inventory at `6edf354cd739a22cc6f7d1b2e565072b84913738` found no production users
+of the generic driver transaction facade. Deleted its module, trait hooks,
+SQLite forwarding methods and two bridge test-driver forwards. Existing
+`rusqlite::Transaction` operations retain one connection. Public HMem batch
+test `atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen`
+checks deferred COMMIT failure, rollback, subsequent reuse and file reopen with
+two pooled connections. Storage/bridge tests and scoped clippy passed; detailed
+evidence is in the Gödel gap-closure plan's R6 storage entry. R3/H1 and broader
+P3 recovery are not closed by this deletion. The following evidence is the
+**historical pre-deletion finding**, not a claim these APIs still exist.
 
 **Class:** latent API defect/design risk; production use of this API not established. **Severity:** Medium now, High if used for atomic writes. **Confidence:** High.
 
@@ -501,7 +513,7 @@ At save time all packages were **not started**. The following execution record s
 | P1c training input | Repaired; focused verification passed | F3; changes observed in externally created commits `e21e3e5d2d` and `8a1bd7877b`; six fresh regression tests passed |
 | P1d filesystem/gallery policy | Partial; F4 narrowed, not closed | F5 repaired and lifecycle suite passed (prior session). F4: `corpus_cache_work` (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs`) validated only `cache_dir`, then joined and wrote through an unvalidated leaf — an existing symlink at the exact `{slug}.txt` leaf redirected the write outside the cache dir with no rejection. Fixed by re-running `contain_for_write` on the full joined leaf path, closing the "existing symlink leaf" case (verified: RED on the original code, GREEN on the fix, both times against a target genuinely outside all three allowed roots). The live TOCTOU race — a symlink planted in the gap between this check and the later `std::fs::write` — remains open; closing it needs a symlink-resistant atomic open (`O_NOFOLLOW`) shared across corpus/gallery call sites, which is a larger, cross-platform primitive deliberately not built under this session's time/lock pressure. Another actor's concurrent, unrelated edits to `hkask-mcp-corpus`'s OCR modules (`ocr/llm_ocr.rs`, `services/convert.rs`, `tools/document_tests.rs`) were observed causing 9 failing tests in that crate's full `--lib` run during this review; those failures are outside this session's F2/F4/P1a scope and were not touched. |
 | P2 invocation/outcome contract | Open; not repaired | F6, F7, R4 upheld; no replacement invocation contract yet |
-| P3 persistence/recovery | Open; not repaired | R2/R3 upheld; H1 source-supported, not dynamically tested; R1 decision-gated |
+| P3 persistence/recovery | Partial; R2 facade removed (uncommitted) | R2: unused connectionless transaction API deleted, connection-owned commit-failure/reopen test passes. R3/H1 recovery remains open; R1 decision-gated. |
 | P4 packaging/CI/docs | Partial | F8 inventory/install checks repaired; reconnect suite wired but NOT executed. O1 partially repaired concurrently; remaining drift below |
 | P5 optional simplification/formalization | Deferred | O2; only after behavior is pinned |
 
@@ -528,7 +540,7 @@ Source citations below are relative to `/home/mdz-axolotl/Clones/zed-kask/`; the
 | F7 | Upheld: `crates/agent/src/tools/context_server_registry.rs:986–1046` still retries non-timeout errors after possible delivery. Managed typed non-delivery behavior remains intact. |
 | F8 | Reproduced inventory failure; repaired inventory and CI wiring below. Fixture process tests remain permission-gated and unexecuted. |
 | R1 | Upheld by source-only inspection of the provisioning policy at `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `keychain.rs:402–424`; no keychain or deployed database inspected, no secret rotated. Onboarding/recovery decision remains open. |
-| R2 | Upheld: `kask/crates/hkask-storage/src/database/driver.rs:29–35,57–66` and `database/transaction.rs:19–38` retain the connectionless facade; production usage not established. Safe borrowed-connection transactions remain. |
+| R2 | Historical finding upheld; subsequently closed by deletion in the 2026-09-18 working tree (see R2 current disposition). The connectionless facade and hooks no longer exist; safe borrowed-connection transactions remain, with commit-failure/reopen coverage. |
 | R3 | Upheld design risk: `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,193–229` separates revision publication and direct receipt writes. No fault injection or power-loss guarantee established. |
 | R4 | Upheld: `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:428–460` still accepts caller confirmation assertions, not host approval receipts. |
 | H1 | Source-supported, dynamic test still outstanding: cached return at `kask/crates/hkask-spreadsheet/src/service.rs:502–525` precedes digest comparison; public `open` returns the supplied reference. Fresh apply independently verifies its base. |

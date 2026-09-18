@@ -1166,7 +1166,8 @@ mod tests {
         )
         .expect("unbound metrics fixture");
         // Process-local environment avoids races with other tests/runtime workers.
-        let mut child = tokio::process::Command::new(std::env::current_exe().expect("test executable"));
+        let mut child =
+            tokio::process::Command::new(std::env::current_exe().expect("test executable"));
         child
             .args(["--exact", "cybernetics_loop::cycle::tests::unbound_metrics_cannot_become_quality_observations", "--nocapture"])
             .env(CHILD, "1")
@@ -1180,7 +1181,9 @@ mod tests {
                 tokio::time::timeout(std::time::Duration::from_secs(10), child.output()).await
             });
         std::fs::remove_dir_all(&directory).expect("remove isolated fixture");
-        let output = result.expect("child deadline").expect("child test execution");
+        let output = result
+            .expect("child deadline")
+            .expect("child test execution");
         assert!(
             output.status.success()
                 && String::from_utf8_lossy(&output.stdout)

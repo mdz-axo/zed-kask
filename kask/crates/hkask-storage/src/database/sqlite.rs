@@ -328,12 +328,4 @@ impl DatabaseDriver for SqliteDriver {
             }
         }
     }
-
-    fn commit_tx(&self) -> Result<(), DbError> {
-        self.execute_batch("COMMIT")
-    }
-
-    fn rollback_tx(&self) -> Result<(), DbError> {
-        self.execute_batch("ROLLBACK")
-    }
 }

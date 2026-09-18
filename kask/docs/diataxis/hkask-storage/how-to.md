@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — How-to: Add a Store and Review Maintenance Inventory"
 audience: [developers]
-last_updated: 2026-09-16
-version: "2.2.0"
+last_updated: 2026-09-18
+version: "2.3.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [composition]
@@ -29,8 +29,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:272-335,394-415; kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/database/driver.rs:16-109; kask/crates/hkask-storage/src/hmem.rs:404-476
+verified_date: 2026-09-18
+verified_against: kask/crates/hkask-storage/src/core/store_macros.rs:43-106; kask/crates/hkask-storage/src/core/connection.rs:272-335; kask/crates/hkask-storage/src/database/driver.rs:15-97; kask/crates/hkask-storage/src/hmem.rs:295-352,477-502
 status: VERIFIED
 -->
 
@@ -60,15 +60,27 @@ error and `impl_from_db_error!` for error conversion
 
 Use `execute`, `execute_batch`, `query`, and `query_optional` from
 `DatabaseDriver`, plus `query_map` and `query_row` for typed mapping
-(`kask/crates/hkask-storage/src/database/driver.rs:16-109`). Do not present
+(`/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/driver.rs:15-97`). Do not present
 `DbValue` as encrypted data; it is the typed SQL parameter/result representation
 (`kask/crates/hkask-storage/src/database/value.rs:8-46`). File encryption is
 provided at the SQLCipher connection layer.
 
 For an atomic multi-statement operation, hold one pooled connection and one RAII
-transaction. `HMemStore::update` is the reference shape
-(`kask/crates/hkask-storage/src/hmem.rs:404-476`). Separate driver calls may use
+`rusqlite::Transaction`. `HMemStore::insert_batch_atomic` and `HMemStore::update`
+are the reference shapes
+(`/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/hmem.rs:295-352,477-502`). Separate driver calls may use
 separate pooled connections and therefore do not form one transaction.
+The unused connectionless driver transaction facade was deleted; do not recreate
+it or issue separate BEGIN/write/COMMIT driver calls. Connection ownership and
+rollback-on-drop are supplied by rusqlite's concrete transaction type.[^rusqlite-transaction]
+
+`atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/hmem.rs`
+uses a real file, a two-connection pool, and a deferred foreign-key failure to
+check rollback at COMMIT, subsequent successful reuse, and reopen visibility.
+This is transaction/reopen evidence, not power-loss or multi-resource atomicity.
+
+[^rusqlite-transaction]: rusqlite contributors. *Transaction*. https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html. The transaction borrows one connection and rolls back on drop unless committed.
 
 ### 4. Test the behavior
 

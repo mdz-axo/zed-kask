@@ -554,7 +554,7 @@ Read-only triage used current source and tests at `ff43b4e80c`, with the above f
 | High: cache tokens omitted | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/inference_chat.rs:334–344` sums only uncached input/output. `/home/mdz-axolotl/Clones/zed-kask/crates/language_model_core/src/chat_completion.rs:829–859` demonstrates prompt 12 split into 4+3+5. | Bridge maintainer: bridge test expects prompt 12/total 19, not 4/11; include cache categories and preserve cost. Consult D8 seam. |
 | High prerequisite: approval evidence | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/src/runtime.rs:1686–1703` dispatches tool/arguments; `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:420–464` accepts caller confirmation boolean. Host metering identity is not host-observed approval. | Core-repair P2 owner: bind actor/action/artifact approval from host, reject bare `true`; keep caller claim distinct. No automatic R6 activation before this seam is repaired. |
 | High prerequisite: proof evidence binding | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-regulation/src/bin/check_principle_constraints.rs:168–179`: structural checker validates hex shape/file presence, not commit existence/content hashes/proof success. Intentionally honest inventory, unsuitable as runtime authorization. | R6/R7 owner: separate artifact-bound verification receipt/checker from inventory; test changed source/spec/log or nonexistent revision rejected. Do not overstate existing `verified_at_revision`. |
-| Medium latent: transaction ownership | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/transaction.rs:19–53` commits flag before DB success; `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/sqlite.rs:270–290,332–337` independently leases connections. Production misuse not established. | Core-repair P3 owner: inventory callers; delete unused facade or replace with connection-owned transactions. Pin failed commit and pooled concurrency before promotion persistence. |
+| Closed in later working-tree slice: transaction facade | Historical `ff43b4e80c` facade lacked connection ownership; production misuse not established. Deleted in the R6 storage entry below, including hooks/test forwards. | Safe connection-owned batch behavior pinned with deferred commit failure and reopen. Broader persistence/promotion recovery remains P3/R6 work. |
 | Medium: strategy telemetry is not acceptance | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-regulation/src/strategy_evaluator.rs:119–151` rotates named strategies based on acceptance ratios. | Regulation owner: keep out of promotion authority; replace misleading effectiveness/promotion claims only with actual paired evidence in its own slice. |
 | Closed local: inventory only tested on fixtures | Actual-registry test added and passes; existing subtree CI includes the binary tests. Remote CI not observed. | Governance maintainer: retain structural-only semantics. |
 | Closed local: clippy wrapper dependency finding | Removed unused spreadsheet dependency; complete scoped wrapper passes. | Implementing agent: retain lockfile's single corresponding edge deletion. |
@@ -643,6 +643,76 @@ Host `cargo check --locked -p zed` also passed. Installed-card audit confirmed m
 
 **Token-policy cleanup, 2026-09-18:** operator clarified that generic token budgets were removed and legacy comments/code must not recreate them. Removed obsolete debit/funds-check and orphaned funding-constructor comments from swarm execution; corrected misleading “own substrate means nothing is priced” prose to acknowledge configured cloud inference without local token quotas. Deleted the nonexistent `LLMParameters.max_tokens` claim from the types README. Corrected condenser documentation to describe actual profile line-retention limits, not token budgets. Replaced self-improvement template guidance allocating tokens and clarified adapter/self-improvement instructions to use explicit experiment scope and authorized constraints only. The approved retry had no token quota; its inaccurate “output budgets” wording is removed. These are documentation/tool-description corrections, not a new budget mechanism or universal cleanup claim. Scoped code search found chunk-size and edit-prediction controls with separate live purposes; those and concurrent corpus work were not removed. Rejected runner remains absent. Validation: 184 swarm tests pass, 77-skill sweep zero flags, targeted residue sweep and whitespace checks pass. Future implementation must remove obsolete budget callers/types/tests as a complete functional slice when found, not retain a deprecated compatibility path.
 
+### R6 prerequisite: remove connectionless transaction facade — 2026-09-18
+
+**Baseline/scope:** `6edf354cd739a22cc6f7d1b2e565072b84913738`, with concurrent regulation/test-plan work preserved. Operator requested next steps; local execution record `local-r6-storage-2026-09-18` uses the approved goal-tool exception. No provider/model calls, token budgets, installation, commit, real user DB access, or deployment. R5 operator confirmation remains pending; this independent prerequisite does not manufacture calibration closure or promotion approval.
+
+**Functional contract:** a multi-statement operation must own one database connection from BEGIN through commit/rollback. The generic `DatabaseDriver::transaction` returned a reference-only guard while every driver operation could lease a different pooled connection; the guard also suppressed rollback before knowing COMMIT succeeded. Caller inventory across `kask/` and upstream `crates/` found no production call to this API. HMem and company research operations already use concrete connection-owned rusqlite transactions; unrelated upstream `collab::TransactionHandle` is a different implementation and remains untouched.
+
+**Deleted, no compatibility path:** `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/transaction.rs`, its module declaration, `DatabaseDriver::transaction`, `commit_tx`, `rollback_tx`, SQLite forwards, and two bridge test-driver forwards. No replacement transaction abstraction or new dependency. Driver remains a single-operation query/execute port; stores lease one connection for domain-level atomic operations. This follows rusqlite's connection-borrowing RAII transaction and SQLite deferred-constraint semantics, not an invented transaction protocol.[^owned-transaction]
+
+**Characterization:** new public-store test `atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen` in `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/hmem.rs:972–1040` passed on the baseline implementation before deletion and after it. A real temporary SQLite file uses two pool connections; one stays leased as observer, forcing the domain operation onto the other. A trigger inserts an invalid **deferred** foreign key, so both h_mems insert before COMMIT fails. The second connection observes zero h_mems/marker-side rows after rollback; removing the failure trigger permits a later successful batch, which survives pool closure/reopen with values and owner identity preserved. Existing statement-failure and replacement rollback tests also pass. This is commit-failure/reuse/reopen coverage, not a power-loss, cross-resource, encrypted-file, or authenticated-promotion proof. No RED is claimed for a behavior-preserving deletion; the preexisting domain behavior was characterized first.
+
+**Validation so far:** storage **70 tests**, bridge **224 tests** passed; two existing ignored storage doctests remain ignored. Scoped `script/clippy -p hkask-storage -p kask_bridge` including cargo-machete/buf passes. Rust-reference sweep finds zero remaining hKask facade/type/hook references; historical plan findings are explicitly marked superseded. Full subtree and host validation results are recorded at closeout. Artifacts under `/home/mdz-axolotl/.local/state/zed-kask/verification/r6-storage-2026-09-18/` contain before/after characterization, test/check logs, source diff and checksums.
+
+**Disposition/next:** core-repair finding R2 is closed by deletion in the working tree, pending review/integration. The broader R6 milestone is not complete. Next inspect the actual approval boundary and artifact/evaluator identity binding; do not add a general promotion controller until those contracts and the required recovery scope are established. Spreadsheet publication/receipt crash reconciliation and the reported cache-open digest hypothesis remain separate P3 work. No source of operator approval can be replaced by a caller boolean or by these passing storage tests.
+
+### Testing-platform closure — 2026-09-18
+
+**Provenance:** local evidence runner/checker and MCP effect-journal regression
+landed in `23a73a44d4`. The unbound sensor retirement, testing documentation and
+concurrent corpus/media properties landed in `6edf354cd7`; final regression
+formatting and closure records remain working-tree changes until committed.
+This stream did not create either shared-tree commit.
+
+**Real product repair:** `unbound_metrics_cannot_become_quality_observations`
+in `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs` failed against
+baseline `08fddf7020`: a fabricated trace file produced fresh healthy coverage
+and mutation observations. Removal of the file locator, both sensors, their
+registration and unused thresholds makes the same behavioral assertions pass.
+The positive control records real tool outcomes and still observes reliability.
+Child isolation avoids process-environment races; fixture validation and a
+completion marker prevent a renamed/zero-match child test from passing
+vacuously. The child uses Tokio process execution, kill-on-drop and a deadline.
+No production quality claim is inferred from missing measurements. Historical
+metric names remain decodable, without a periodic producer.
+
+**Evidence:** `/home/mdz-axolotl/.local/state/zed-kask/verification/testing-closure-s7V3YU/`
+retains baseline failure, candidate tests, source hashes, integration logs and
+proof outputs. The executable documentation recipe and evidence-runner self-test
+both passed. Regulation tests passed (91 library + 5 inventory + 7 checker).
+Both bounded JSON harnesses verified; all five training decision-core harnesses
+verified on retry using the established Kani cache with unchanged 2 GiB/120 s/
+unwind-12 limits. The cold training attempt failed during linking and its
+lockfile changed concurrently, so its evidence is invalid, not a counterexample.
+Initial locked subtree/host checks also stopped on concurrent lockfile changes.
+
+**Final local matrix:** serial subtree retry passed **2,543 tests, 0 failed,
+1 ignored across 71 target summaries**; separate MCP fixture suite passed
+**16 tests**. Host `cargo check --locked --offline -p zed` and scoped
+`script/clippy -p hkask-regulation -p kask_bridge` passed, including machete/buf.
+The initial lint run caught the new test's synchronous child call; it was
+replaced with Tokio process execution, not suppressed. Dependency direction,
+MCP contract inventory, string-error, canonical namespace, ShellCheck and
+changed-file whitespace checks passed. Source hashes for this repair remained
+unchanged through verification. Other agents continued editing storage/bridge
+files, so these are time-scoped results, not a blanket claim about later edits.
+
+**Open integration blocker:** workspace `cargo fmt --all -- --check` reports
+pre-existing formatting in `crates/agent/src/thread.rs` and
+`crates/zed/src/main.rs`; this slice leaves those unrelated upstream-side files
+untouched. Remote run `35401930835` for `6edf354cd7` likewise failed its formatting
+step; build/test jobs were still running when checked. No fully green remote CI
+claim is made. Final closure records and regression formatting need integration
+without sweeping other agents' changes.
+
+**Documentation:** the existing testing protocol now has a runnable local
+recipe and explicit identity scope; the portal links it; the propagation ledger
+distinguishes committed slices and remaining obligations instead of quotas.
+The corpus remains 69 files. Batch 5 proof-runner generalization, Batch 6 core
+properties and review of uncovered obligations remain separate follow-up work;
+no automatic promotion or curator-authority enforcement is claimed.
+
 [^goedel]: Schmidhuber, J. (2003; revisions through 2006). *Gödel Machines: Self-Referential Universal Problem Solvers Making Provably Optimal Self-Improvements*. IDSIA-19-03. https://arxiv.org/abs/cs/0309048. Theorem: https://people.idsia.ch/~juergen/gmweb4/node11.html. Limits: https://people.idsia.ch/~juergen/gmweb4/node6.html.
 [^chapter]: Schmidhuber, J. (2007). *Gödel Machines: Fully Self-referential Optimal Universal Self-improvers*. In *Artificial General Intelligence*, pp. 199–226. https://doi.org/10.1007/978-3-540-68677-4_7.
 [^steunebrink]: Steunebrink, B. R., & Schmidhuber, J. (2011). *A Family of Gödel Machine Implementations*. https://people.idsia.ch/~juergen/agi2011bas.pdf. Formal continuation-based refinements, not empirical replacement of the target theorem.
@@ -655,3 +725,4 @@ Host `cargo check --locked -p zed` also passed. Installed-card audit confirmed m
 [^strangler]: Fowler, M. (2004). *Strangler Fig Application*. https://martinfowler.com/bliki/StranglerFigApplication.html. Incremental complete behavioral seams, not permanent parallel implementations.
 [^tokio-context]: Tokio contributors. *TokioContext*, tokio-util 0.7.18. https://docs.rs/tokio-util/0.7.18/tokio_util/context/struct.TokioContext.html. Installed source was inspected: context is entered per poll, with runtime lifetime requirements. rmcp 3.3.0 `Peer::call_tool`/request handling were also inspected; local future cancellation does not establish reversal of remote effects.
 [^pure-evaluator]: Rust regex contributors. *Untrusted input*. https://docs.rs/regex/latest/regex/#untrusted-input. Parsing and scoring are response-only; protected acceptance data and semantic correctness remain separate requirements.
+[^owned-transaction]: rusqlite contributors. *Transaction*. https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html. SQLite contributors. *Deferred Foreign Key Constraints*. https://www.sqlite.org/foreignkeys.html#fk_deferred. Connection ownership supplies atomicity; deferred constraints exercise actual COMMIT failure rather than only statement failure.

@@ -1,6 +1,6 @@
 # kask testing-protocol propagation — completion ledger and remaining batches
 
-**Status:** partially implemented; reconciled against git and source, not a fresh verification run. No tests, Clippy, Kani, or evidence-runner self-tests were run for this documentation pass. “Implemented” below means committed code exists, not that current tests or remote CI are green.
+**Status:** partially implemented; reconciled against git and source. “Implemented” below means committed code exists, not that remote CI is green. Closure validation and exclusions are recorded in `kask/docs/plans/goedel-gap-closure-plan.md` under “Testing-platform closure”.
 
 **Governing acceptance:** [testing protocol](../kask/docs/reference/testing-protocol.md), especially expectation contracts and change authority. User-expected outcomes govern, not numeric test/property/proof quotas. Before each remaining batch, record context, functional role, relevant variables, allowed variation, independent oracle/falsifier, and user or explicitly delegated curator authority. Harmful behavior must fail; equivalent implementations must remain free to pass.
 
@@ -18,11 +18,27 @@
 
 The evidence runner selects offline, serial **library tests with default features**, not the full crate suite. It is a trusted local evaluation boundary, not hostile-candidate containment, authenticated curator delegation, automatic correction, coverage/mutation measurement, sensor registration, or promotion authority. It does **not** complete Batch 5's Kani-runner generalization; see the protocol's [runner scope and limits](../kask/docs/reference/testing-protocol.md#running-the-local-evidence-boundary).
 
-## Remaining batches (operator-gated)
+## Later batches and closure
 
-### Batch 4 — corpus chunk/query behavior and media deserialization
+### Batch 4 — corpus chunking/query parsing and media deserialization (implemented slice)
 
-Define the user's chunk-budget/overlap expectations and valid/invalid query behavior before generating inputs. Ground candidates in `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:395–431` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:313–380`. For media, address the explicitly omitted deserialization-totality property (`kask/mcp-servers/hkask-mcp-media/tests/schema_compliance.rs:10–14`): accepted requests deserialize, malformed requests surface errors rather than panics. Preserve the distinct schema-compatibility obligation; adding properties is not itself closure.
+Concurrent work committed in `6edf354cd7` adds corpus properties in
+`kask/mcp-servers/hkask-mcp-corpus/src/property_tests.rs`, query-parser tests in
+`src/tools/storage.rs`, and media deserialization properties in
+`kask/mcp-servers/hkask-mcp-media/tests/schema_compliance.rs`. These are distinct
+from the schema-compatibility checks. Review the implemented generators and
+oracles against word-budget/overlap and accepted/invalid request expectations;
+their presence alone is not exhaustive contract coverage.
+
+### Legacy quality-sensor retirement
+
+`6edf354cd7` removes unbound trace-file sensors, registration, and dead coverage/
+mutation thresholds. The regression
+`unbound_metrics_cannot_become_quality_observations` checks rejection of forged
+quality observations while real tool outcomes remain observable. Child-test
+completion/deadline hardening is recorded by the subsequent closure commits;
+the final verification record names the tested revision and working-tree digest.
+Historical metric names remain decodable; this does not register a new producer.
 
 ### Batch 5 — generalize the bounded-proof runner
 

@@ -1,11 +1,12 @@
 //! Database driver abstraction — provider-agnostic SQL execution.
 //!
 //! Moved from the hkask-database crate during the storage consolidation.
-//! See hkask-storage lib.rs for the merged crate overview.
+//! See hkask_storage.rs for the merged crate overview. Multi-statement atomic
+//! operations lease one connection and use its rusqlite transaction; separate
+//! driver calls do not share transaction ownership.
 
 pub mod driver;
 pub mod sqlite;
-pub mod transaction;
 pub mod types;
 pub mod value;
 

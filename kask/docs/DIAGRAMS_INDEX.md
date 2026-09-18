@@ -107,8 +107,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STATE-KANBAN-MOVE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-08-28 | VERIFIED |
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-16 | VERIFIED |
-| `DIAG-STOR-002` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-16 | VERIFIED |
-| `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STOR-002` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-18 | VERIFIED |
+| `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-006` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-16 | VERIFIED |
