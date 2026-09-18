@@ -146,8 +146,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CLASSIFIER_MODEL",
             // Dedicated QA generator — no default/chat fallback.
             hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
-            // Dedicated independent QA verifier — no model fallback.
-            hkask_inference::model_constants::QA_VERIFICATION_MODEL_ENV,
             // Legacy consolidation selector; not used by QA generation.
             "HKASK_QA_MODEL",
             // Model cache TTL — read by model_cache.rs, falls back to 4h default.
@@ -946,41 +944,6 @@ mod tests {
                 .qa_generation_model
                 .is_empty()
         );
-    }
-
-    /// The verification model is persisted independently and admitted only to
-    /// the corpus child process; an empty default emits nothing.
-    #[test]
-    fn qa_verification_setting_round_trips_and_reaches_only_corpus() {
-        use crate::KaskSettings;
-        use hkask_inference::model_constants::QA_VERIFICATION_MODEL_ENV;
-
-        let mut content = settings::KaskSettingsContent::default();
-        content.models.get_or_insert_default().qa_verification_model =
-            Some("OpenRouter/vendor/independent-verifier".into());
-        let saved = serde_json::to_string(&content).expect("serialize settings content");
-        let reloaded = serde_json::from_str::<settings::KaskSettingsContent>(&saved)
-            .expect("reload settings content");
-        let settings: KaskSettings = reloaded.into();
-        assert_eq!(
-            settings.models.qa_verification_model,
-            "OpenRouter/vendor/independent-verifier"
-        );
-
-        let env = settings.mcp_env();
-        for server in BUILT_IN_MCP_SERVERS {
-            let filtered = filter_config_env_for_server(server.id, &env);
-            assert_eq!(
-                filtered.get(QA_VERIFICATION_MODEL_ENV).map(String::as_str),
-                (server.id == "corpus").then_some("OpenRouter/vendor/independent-verifier"),
-                "{}",
-                server.id
-            );
-        }
-
-        let defaults = KaskSettings::default();
-        assert!(defaults.models.qa_verification_model.is_empty());
-        assert!(!defaults.mcp_env().contains_key(QA_VERIFICATION_MODEL_ENV));
     }
 
     /// The rerank default (operator ruling 2026-09-11) must reach the research

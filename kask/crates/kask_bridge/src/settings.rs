@@ -619,10 +619,6 @@ pub struct KaskModelsSettings {
     /// unconfigured; explicit tool models override this, never chat or training.
     pub qa_generation_model: String,
 
-    /// Dedicated independent QA verifier (provider-prefixed). Empty is
-    /// unconfigured; never falls back to generation, chat, classifier, or training.
-    pub qa_verification_model: String,
-
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, the corpus server falls back to the kask default
     /// (env `HKASK_OCR_MODEL` → `HkaskSettings::ocr_model` →
@@ -638,8 +634,8 @@ pub struct KaskModelsSettings {
 
 // Code defaults (operator ruling 2026-09-04, superseding the
 // no-hidden-models spec): configured models have code defaults; the settings
-// UI / settings.json overrides them. QA generation and verification stay
-// unconfigured (no verified dedicated defaults).
+// UI / settings.json overrides them. QA generation stays unconfigured
+// (no verified dedicated default).
 // The values are the operator's configured models, verbatim.
 //
 // `embedding_model` also stays empty HERE because its
@@ -664,8 +660,6 @@ impl Default for KaskModelsSettings {
             classifier_model: "OpenRouter/z-ai/glm-5.2".to_string(),
             // No verified generator default (operator ruling 2026-09-11).
             qa_generation_model: String::new(),
-            // Independent verification must be explicitly configured.
-            qa_verification_model: String::new(),
             ocr_model: "ollama/glm-ocr:latest".to_string(),
             // DeepInfra Qwen3 reranker (operator ruling 2026-09-11): the
             // research server's rerank stage defaults to the verified
@@ -1005,9 +999,6 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
             classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
             qa_generation_model: c.qa_generation_model.unwrap_or(default.qa_generation_model),
-            qa_verification_model: c
-                .qa_verification_model
-                .unwrap_or(default.qa_verification_model),
             ocr_model: c.ocr_model.unwrap_or(default.ocr_model),
             rerank_model: c.rerank_model.unwrap_or(default.rerank_model),
         }

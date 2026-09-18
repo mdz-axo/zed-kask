@@ -16,8 +16,8 @@ Multi-provider inference router for hKask — OpenRouter, Ollama, RunPod.
   `kask.models.qa_generation_model`), otherwise a visible configuration error.
   The setting defaults empty. Malformed values fail rather than falling through;
   registry/provider lookup checks availability. Chat/default and training base
-  models are never inputs to this QA resolver. The dedicated setting defaults
-  empty. Non-QA inference retains its own defaults below.
+  models are never inputs to this QA resolver. Non-QA inference retains its
+  own defaults below.
 - QA disables thinking: synchronous direct HTTP and bridge OpenRouter requests
   serialize `reasoning.effort: "none"`. The provider-batch formatter does too
   (its sole production caller is corpus QA); `exclude` is not a disable flag.

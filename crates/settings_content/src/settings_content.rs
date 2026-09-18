@@ -1926,9 +1926,6 @@ pub struct KaskModelsSettingsContent {
     /// Dedicated QA generator (provider-prefixed). Empty means unconfigured;
     /// never falls back to the active chat model or training base model.
     pub qa_generation_model: Option<String>,
-    /// Dedicated independent QA verifier (provider-prefixed). Empty means
-    /// unconfigured; never falls back to generation, chat, classifier, or training.
-    pub qa_verification_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
     pub ocr_model: Option<String>,

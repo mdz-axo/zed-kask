@@ -259,7 +259,7 @@ impl QaBatchService {
                 let task_lease = Arc::clone(&lease);
                 let planning_messages = render_disposition_plan_messages(
                     &prompt,
-                    reviewed_adjudication.as_ref(),
+                    &reviewed_adjudication,
                 )?;
                 let worker_prompt = prompt.clone();
                 let prompt_id = prompt.prompt_id.clone();
@@ -283,7 +283,7 @@ impl QaBatchService {
                     };
                     let proposed_response =
                         crate::extract_json_from_response(&planning_response.text);
-                    let reviewed = reviewed_adjudication.as_ref();
+                    let reviewed = &reviewed_adjudication;
                     let mut plan = parse_disposition_plan_response(
                         &proposed_response,
                         &worker_prompt,
@@ -315,7 +315,7 @@ impl QaBatchService {
                         )
                         .and_then(|plan| enforce_reviewed_adjudication(plan, reviewed));
                     }
-                    match plan {
+                    let plan = match plan {
                         Ok(plan) => plan,
                         Err(error) => {
                             return (
@@ -466,8 +466,6 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Mode {
         Success,
-        RejectContaminated,
-        RejectQualityOnly,
         SkipConceptual,
         Malformed,
         WriterMalformed,
@@ -510,7 +508,6 @@ mod tests {
         ) -> Reply<'_> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             assert_eq!(messages.len(), 2);
-            let is_quality = messages[0].content.contains("focused passage-quality gate");
             let is_planning = messages[0].content.contains("disposition plan");
             let is_mandate_correction = messages[0]
                 .content
@@ -529,8 +526,7 @@ mod tests {
                     "reviewed mandate for level 1 requires generate relation Some(\"mechanism\"), generator returned skip reason 'conceptual_support_absent'"
                 ));
             }
-            if matches!(mode, Mode::WriterMalformedOnce) && !is_quality && !is_planning && call == 3
-            {
+            if matches!(mode, Mode::WriterMalformedOnce) && !is_planning && call == 2 {
                 assert!(
                     messages[0]
                         .content
@@ -541,18 +537,12 @@ mod tests {
                 if matches!(mode, Mode::Pending) {
                     return std::future::pending().await;
                 }
-                let malformed_writer = !is_quality && !is_planning;
+                let malformed_writer = !is_planning;
                 let text = if matches!(mode, Mode::Malformed)
                     || matches!(mode, Mode::WriterMalformed) && malformed_writer
-                    || matches!(mode, Mode::WriterMalformedOnce) && malformed_writer && call == 2
+                    || matches!(mode, Mode::WriterMalformedOnce) && malformed_writer && call == 1
                 {
                     "[".to_string()
-                } else if matches!(mode, Mode::RejectContaminated)
-                    || matches!(mode, Mode::RejectQualityOnly) && is_quality
-                {
-                    json!(["skip", "contaminated_or_garbled"]).to_string()
-                } else if is_quality {
-                    json!(["clean"]).to_string()
                 } else if is_planning {
                     let skip_conceptual = matches!(mode, Mode::SkipConceptual)
                         || matches!(mode, Mode::ReviewedGenerateMismatchAlways)
@@ -625,11 +615,32 @@ mod tests {
             body.push('\n');
         }
         std::fs::write(&input, body)?;
+        // Generation requires a complete manifest: the default fixture admits
+        // every prompt and mandates generation for both ordered levels.
+        let adjudications = directory.path().join("adjudications.jsonl");
+        let mut manifest = String::new();
+        for prompt in prompts {
+            manifest.push_str(
+                &serde_json::to_string(&json!({
+                    "protocol": QA_ADJUDICATION_PROTOCOL,
+                    "prompt_id": prompt.prompt_id,
+                    "chunk_ref": prompt.primary().chunk_ref,
+                    "source": prompt.primary().source,
+                    "passage": {"decision":"admit","reason":null},
+                    "levels": [
+                        {"level":"factual","decision":"generate","relation":null,"reason":null},
+                        {"level":"conceptual","decision":"generate","relation":"mechanism","reason":null}
+                    ],
+                }))?,
+            );
+            manifest.push('\n');
+        }
+        std::fs::write(&adjudications, manifest)?;
         Ok((
             directory,
             QaBatchRequest {
                 prompts_jsonl: input.to_string_lossy().into_owned(),
-                quality_adjudications_jsonl: None,
+                quality_adjudications_jsonl: adjudications.to_string_lossy().into_owned(),
                 output: input
                     .with_file_name("generated.jsonl")
                     .to_string_lossy()
@@ -654,7 +665,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let path = directory.path().join("adjudications.jsonl");
         std::fs::write(&path, format!("{}\n", serde_json::to_string(&row)?))?;
-        request.quality_adjudications_jsonl = Some(path.to_string_lossy().into_owned());
+        request.quality_adjudications_jsonl = path.to_string_lossy().into_owned();
         Ok(())
     }
 
@@ -728,17 +739,17 @@ mod tests {
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 4);
         assert_eq!(summary["grounding_status"], "pending_external_verification");
-        assert_eq!(summary["provider_responses"], 6);
-        assert_eq!(summary["tokens_used"], 60);
+        assert_eq!(summary["provider_responses"], 4);
+        assert_eq!(summary["tokens_used"], 40);
         assert!(
             (summary["reported_cost_usd"]
                 .as_f64()
                 .expect("reported cost")
-                - 0.06)
+                - 0.04)
                 .abs()
                 < 1e-12
         );
-        assert_eq!(port.calls.load(Ordering::SeqCst), 6);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|row| row["source"] == "source.txt"));
@@ -750,32 +761,6 @@ mod tests {
                 .as_str()
                 .is_some_and(|chunk| chunk.starts_with("chunk-qa-"))
         }));
-        Ok(())
-    }
-
-    /// expect: A passage rejected before generation produces one prompt-wide skip per requested level.
-    #[tokio::test]
-    async fn passage_admission_rejection_skips_every_level_before_generation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::RejectContaminated));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 2);
-        assert_eq!(summary["provider_responses"], 1);
-        assert_eq!(summary["reported_cost_usd"], 0.01);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 1);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| row["status"] == "skipped"));
-        assert!(
-            rows.iter()
-                .all(|row| row["reason"] == "contaminated_or_garbled")
-        );
         Ok(())
     }
 
@@ -812,14 +797,15 @@ mod tests {
         Ok(())
     }
 
-    /// expect: A reviewed admit bypasses passage quality; candidates are generated
-    /// per the reviewed level mandates and marked pending external verification.
+    /// expect: A reviewed admit generates candidates per the reviewed level
+    /// mandates and the summary accounts every reviewed decision.
     #[tokio::test]
-    async fn reviewed_admit_bypasses_passage_quality() -> Result<(), Box<dyn std::error::Error>> {
+    async fn reviewed_admit_generates_under_reviewed_mandates()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (directory, mut request) = fixture(&[prompt("qa-1")])?;
         attach_adjudication(&directory, &mut request, "admit", None)?;
         let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::RejectQualityOnly));
+        let port = Arc::new(StubPort::new(Mode::Success));
         let summary = QaBatchService::new(port.clone())
             .generate_qa_batch(request)
             .await?;
@@ -911,11 +897,13 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Per-level planning can retain factual QA while skipping unsupported conceptual QA before writing.
+    /// expect: A reviewed conceptual skip mandate retains factual QA while the
+    /// unsupported conceptual level becomes a terminal skip before writing.
     #[tokio::test]
     async fn level_plan_skips_unsupported_conceptual_before_writing()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_directory, request) = fixture(&[prompt("qa-1")])?;
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_conceptual_skip_adjudication(&directory, &mut request)?;
         let output = request.output.clone();
         let port = Arc::new(StubPort::new(Mode::SkipConceptual));
         let summary = QaBatchService::new(port.clone())
@@ -924,8 +912,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 1);
         assert_eq!(summary["qa_levels_skipped"], 1);
-        assert_eq!(summary["provider_responses"], 3);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["qa_type"], "factual");
@@ -1006,8 +994,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["prompts_failed"], 0);
         assert_eq!(summary["qa_rows_written"], 2);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         assert_eq!(records(&output)?.len(), 2);
         Ok(())
     }
@@ -1024,8 +1012,8 @@ mod tests {
         assert_eq!(summary["prompts_succeeded"], 0);
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["provider_responses"], 4);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(summary["provider_responses"], 3);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 3);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["prompt_id"], "qa-1");
