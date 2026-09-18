@@ -94,85 +94,71 @@ fn shared_workbook_service() -> Result<Arc<WorkbookService>, McpToolError> {
 /// set followed by the before/after characteristic deltas, all values
 /// computed from the portfolio-authoritative reports (the workbook consumes
 /// them; it never reimplements the portfolio mathematics).
+/// Build the what-if staging workbook table: the hypothetical transaction
+/// set followed by the before/after characteristic deltas, all values
+/// computed from the portfolio-authoritative reports (the workbook consumes
+/// them; it never reimplements the portfolio mathematics). The transaction
+/// summaries arrive pre-formatted from the caller (the transaction values
+/// are moved into the store closure — one formatting site, no duplication).
 fn what_if_workbook_table(
     portfolio: &str,
     date: &str,
-    transactions: &[Transaction],
+    transaction_summaries: &[String],
     actual: &CharacteristicsReport,
     hypothetical: &CharacteristicsReport,
 ) -> AnalyticalTable {
-    let mut rows: Vec<Vec<TableValue>> = Vec::new();
-    for transaction in transactions {
-        let summary = match (&transaction.symbol, transaction.quantity, transaction.price) {
-            (Some(symbol), Some(quantity), Some(price)) => {
-                format!(
-                    "{} {} {} @ {:.2}",
-                    transaction.tx_type, quantity, symbol, price
-                )
-            }
-            (Some(symbol), Some(quantity), None) => {
-                format!("{} {} {}", transaction.tx_type, quantity, symbol)
-            }
-            _ => format!("{}", transaction.tx_type),
-        };
-        rows.push(vec![
-            TableValue::Text(format!("Hypothetical: {summary}")),
-            TableValue::Empty,
-            TableValue::Empty,
-            TableValue::Empty,
-        ]);
-    }
-    let delta_rows = [
+    let delta_rows: [(String, TableValue, TableValue, TableValue); 6] = [
         (
-            "Total market value",
-            Some(actual.total_market_value),
-            Some(hypothetical.total_market_value),
+            "Total market value".into(),
+            TableValue::Number(actual.total_market_value),
+            TableValue::Number(hypothetical.total_market_value),
+            TableValue::Number(hypothetical.total_market_value - actual.total_market_value),
         ),
         (
-            "Cash weight",
-            Some(actual.cash_weight),
-            Some(hypothetical.cash_weight),
-        ),
-        ("Position count", None, None),
-        (
-            "Top-five weight",
-            Some(actual.top_five_weight),
-            Some(hypothetical.top_five_weight),
+            "Cash weight".into(),
+            TableValue::Number(actual.cash_weight),
+            TableValue::Number(hypothetical.cash_weight),
+            TableValue::Number(hypothetical.cash_weight - actual.cash_weight),
         ),
         (
-            "Concentration HHI",
-            Some(actual.concentration_hhi),
-            Some(hypothetical.concentration_hhi),
+            "Position count".into(),
+            TableValue::Number(actual.position_count as f64),
+            TableValue::Number(hypothetical.position_count as f64),
+            TableValue::Number(hypothetical.position_count as f64 - actual.position_count as f64),
         ),
         (
-            "Effective holdings",
-            Some(actual.effective_holdings),
-            Some(hypothetical.effective_holdings),
+            "Top-five weight".into(),
+            TableValue::Number(actual.top_five_weight),
+            TableValue::Number(hypothetical.top_five_weight),
+            TableValue::Number(hypothetical.top_five_weight - actual.top_five_weight),
+        ),
+        (
+            "Concentration HHI".into(),
+            TableValue::Number(actual.concentration_hhi),
+            TableValue::Number(hypothetical.concentration_hhi),
+            TableValue::Number(hypothetical.concentration_hhi - actual.concentration_hhi),
+        ),
+        (
+            "Effective holdings".into(),
+            TableValue::Number(actual.effective_holdings),
+            TableValue::Number(hypothetical.effective_holdings),
+            TableValue::Number(hypothetical.effective_holdings - actual.effective_holdings),
         ),
     ];
-    for (name, before, after) in delta_rows {
-        let (before_value, after_value, change) = match (name, before, after) {
-            ("Position count", _, _) => (
-                TableValue::Number(actual.position_count as f64),
-                TableValue::Number(hypothetical.position_count as f64),
-                TableValue::Number(
-                    (hypothetical.position_count as f64) - (actual.position_count as f64),
-                ),
-            ),
-            (_, Some(b), Some(a)) => (
-                TableValue::Number(b),
-                TableValue::Number(a),
-                TableValue::Number(a - b),
-            ),
-            _ => (TableValue::Empty, TableValue::Empty, TableValue::Empty),
-        };
-        rows.push(vec![
-            TableValue::Text(format!("{name}")),
-            before_value,
-            after_value,
-            change,
-        ]);
-    }
+    let rows = transaction_summaries
+        .iter()
+        .map(|summary| {
+            vec![
+                TableValue::Text(format!("Hypothetical: {summary}")),
+                TableValue::Empty,
+                TableValue::Empty,
+                TableValue::Empty,
+            ]
+        })
+        .chain(delta_rows.into_iter().map(|(name, before, after, change)| {
+            vec![TableValue::Text(name), before, after, change]
+        }))
+        .collect();
     AnalyticalTable::new(
         format!("What-if staging — {portfolio} as of {date}"),
         "What-if".into(),
@@ -246,21 +232,12 @@ impl PriceResolver for CombinedPriceResolver {
     }
 }
 
+/// Format a tool response carrying a server-authored ```` ```portfolio ````
+/// report block, with optional additional fenced display hints appended to
+/// the same `display_hint` string (the hint parsers scan for their own
+/// fence, so one response can carry the portfolio report block AND a
+/// ```` ```spreadsheet ```` workbook block).
 fn report_response(
-    portfolio: &str,
-    report_kind: &str,
-    report: serde_json::Value,
-    provenance: serde_json::Value,
-) -> Result<serde_json::Value, McpToolError> {
-    report_response_with_hints(portfolio, report_kind, report, provenance, Vec::new())
-}
-
-/// [`report_response`] plus additional fenced display hints appended to the
-/// same `display_hint` string (the hint parsers scan for their own fence, so
-/// one response can carry the portfolio report block AND a ```spreadsheet
-/// workbook block).
-#[allow(clippy::too_many_arguments)]
-fn report_response_with_hints(
     portfolio: &str,
     report_kind: &str,
     report: serde_json::Value,
@@ -644,6 +621,7 @@ impl PortfolioServer {
                     "server": PORTFOLIO_SERVER_ID,
                     "args": {"portfolio": response_portfolio, "from": response_from, "to": response_to},
                 }),
+                Vec::new(),
             )
         })
         .await
@@ -680,6 +658,7 @@ impl PortfolioServer {
                     "server": PORTFOLIO_SERVER_ID,
                     "args": {"portfolio": response_portfolio, "date": response_date},
                 }),
+                Vec::new(),
             )
         })
         .await
@@ -730,6 +709,7 @@ impl PortfolioServer {
                     "server": PORTFOLIO_SERVER_ID,
                     "args": {"portfolio": response_portfolio, "benchmark": response_benchmark, "from": response_from, "to": response_to},
                 }),
+                Vec::new(),
             )
         })
         .await
@@ -801,7 +781,7 @@ impl PortfolioServer {
                 let table = what_if_workbook_table(
                     &response_portfolio,
                     &response_date,
-                    &hypothetical_transactions,
+                    &transaction_summaries,
                     &actual,
                     &hypothetical,
                 );
@@ -819,7 +799,7 @@ impl PortfolioServer {
             } else {
                 Vec::new()
             };
-            report_response_with_hints(
+            report_response(
                 &response_portfolio,
                 "what_if",
                 report,
@@ -874,6 +854,7 @@ impl PortfolioServer {
                     "server": PORTFOLIO_SERVER_ID,
                     "args": {"portfolio": response_portfolio, "from": response_from, "to": response_to},
                 }),
+                Vec::new(),
             )
         })
         .await

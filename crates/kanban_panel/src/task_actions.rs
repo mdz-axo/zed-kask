@@ -20,9 +20,9 @@ use ui::prelude::*;
 
 use crate::KanbanPanel;
 use crate::{
-    BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL, BOARD_IMPORT_TOOL, KANBAN_SERVER,
-    RefreshTarget, TASK_ASSIGN_TOOL, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
-    TASK_UNASSIGN_TOOL, TASK_UPDATE_TOOL, TaskActionKind,
+    BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL, BOARD_IMPORT_TOOL, BOARD_UPDATE_TOOL,
+    KANBAN_SERVER, RefreshTarget, TASK_ASSIGN_TOOL, TASK_CREATE_TOOL, TASK_DELETE_TOOL,
+    TASK_SPAWN_TOOL, TASK_UNASSIGN_TOOL, TASK_UPDATE_TOOL, TaskActionKind,
 };
 
 /// The form state for creating a new task.
@@ -502,6 +502,69 @@ pub(crate) fn render_create_board_form(
         )
 }
 
+/// The inline rename form for the selected board. Same shape as the create
+/// form — a single-line name editor with submit/cancel — differing only in
+/// framing labels (reference model R6: rename is first-class).
+pub(crate) fn render_rename_board_form(
+    name_editor: &Entity<Editor>,
+    cx: &mut Context<KanbanPanel>,
+) -> impl IntoElement {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_md()
+        .border_1()
+        .border_color(border_color)
+        .bg(bg)
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(Label::new("Rename Board").size(LabelSize::Small))
+                .child(div().flex_1().child(name_editor.clone())),
+        )
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .id("kanban-rename-board-submit")
+                        .cursor_pointer()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .bg(Color::Accent.color(cx))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.submit_rename_board(cx);
+                        }))
+                        .child(
+                            Label::new("Rename")
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("kanban-rename-board-cancel")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.active_action = None;
+                            cx.notify();
+                        }))
+                        .child(
+                            Label::new("Cancel")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                ),
+        )
+}
+
 impl KanbanPanel {
     // ── Task action handlers ───────────────────────────────────────────────
 
@@ -630,25 +693,68 @@ impl KanbanPanel {
         cx.notify();
     }
 
-    /// Submit the create-board form.
+    /// Submit the create-board form. Sends the trimmed name, captures the
+    /// minted board id from the response, and the following board-list
+    /// refresh opens the created board (reference model R7: creating a
+    /// board lands you in it). The service also trims — the single
+    /// enforcement point — so the gesture stays clean regardless of
+    /// caller.
     pub(crate) fn submit_create_board(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = &self.create_board_editor else {
             return;
         };
-        let name = editor.read(cx).text(cx);
-        if name.trim().is_empty() {
+        let name = editor.read(cx).text(cx).trim().to_string();
+        if name.is_empty() {
             return;
         }
         self.active_action = None;
         self.create_board_editor = None;
         let args = json!({ "name": name });
-        self.dispatch_mutation(
+        self.dispatch_mutation_with(
             BOARD_CREATE_TOOL,
             args,
             "create board",
             RefreshTarget::Boards,
+            None,
+            true,
             cx,
         );
+    }
+
+    /// Start the rename flow for the selected board.
+    pub(crate) fn start_rename_board(&mut self, cx: &mut Context<Self>) {
+        // The form is created lazily in `render` where a Window is available.
+        self.rename_board_editor = None;
+        self.active_action = Some(TaskActionKind::RenameBoard);
+        cx.notify();
+    }
+
+    /// Submit the rename form. The identity surfaces pick up the new name
+    /// from the board-list refresh's reconcile step (no re-selection needed);
+    /// the Steer conversation is dropped so its next rebuild binds the new
+    /// name — the same invalidation `select_board` performs on a board
+    /// switch (reference model R2/R6).
+    pub(crate) fn submit_rename_board(&mut self, cx: &mut Context<Self>) {
+        let (Some(editor), Some(board_id)) =
+            (&self.rename_board_editor, self.selected_board_id.clone())
+        else {
+            return;
+        };
+        let name = editor.read(cx).text(cx).trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        self.active_action = None;
+        self.rename_board_editor = None;
+        let args = json!({ "board_id": board_id, "name": name });
+        self.dispatch_mutation(
+            BOARD_UPDATE_TOOL,
+            args,
+            "rename board",
+            RefreshTarget::Boards,
+            cx,
+        );
+        self.steer.invalidate();
     }
 
     /// Show the delete-board confirmation dialog.
@@ -778,11 +884,16 @@ impl KanbanPanel {
             // The server falls back to the parsed board name or "Imported Board",
             // so we do not set board_name here — preserve the exported name.
         });
-        self.dispatch_mutation(
+        self.dispatch_mutation_with(
             BOARD_IMPORT_TOOL,
             args,
             "import board",
             RefreshTarget::Boards,
+            None,
+            // Reference model R7: importing a board lands you in it — capture
+            // the minted board id from the response and open it once the
+            // refreshed list lands.
+            true,
             cx,
         );
     }

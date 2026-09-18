@@ -382,31 +382,26 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
 
 // ── Response models (mirror the MCP server's response shapes) ───────────────
 
-/// One board from `kanban_board_list`. Mirrors the server's `BoardInfo`.
+/// One board from `kanban_board_list`. Mirrors the subset of the server's
+/// `BoardInfo` the panel reads — the wire's `column_count` is ignored
+/// (redundant with `columns.len()`).
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct BoardInfo {
     #[serde(default)]
     board_id: String,
     #[serde(default)]
     name: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    column_count: usize,
     /// Column definitions including WIP limits. Populated by the server's
     /// `kanban_board_list` response so the panel can render WIP limits.
     #[serde(default)]
     columns: Vec<ColumnDef>,
 }
 
-/// One column definition from the server. Mirrors the server's `ColumnInfo`.
+/// One column definition from the server. Mirrors the subset of the
+/// server's `ColumnInfo` the panel reads (status + WIP limit); the wire's
+/// id/name fields are ignored — the widget groups tasks by status.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ColumnDef {
-    #[serde(default)]
-    #[allow(dead_code)]
-    id: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    name: String,
     #[serde(default)]
     status: String,
     #[serde(default)]
@@ -1653,7 +1648,7 @@ impl Render for KanbanPanel {
                     self.rename_board_editor = Some(cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
                         editor.set_placeholder_text("Board name", window, cx);
-                        editor.set_text(name, window, cx);
+                        editor.set_text(name.to_string(), window, cx);
                         editor
                     }));
                 }
@@ -2253,7 +2248,6 @@ mod tests {
         let fetched_boards = [BoardInfo {
             board_id: "xyz".into(),
             name: "Other Board".into(),
-            column_count: 3,
             columns: vec![],
         }];
 
@@ -2277,7 +2271,6 @@ mod tests {
         let fetched_boards = [BoardInfo {
             board_id: "abc".into(),
             name: "Alpha Board".into(),
-            column_count: 3,
             columns: vec![],
         }];
 
@@ -2349,17 +2342,12 @@ mod tests {
         let boards = [BoardInfo {
             board_id: "abc".into(),
             name: "Renamed Board".into(),
-            column_count: 2,
             columns: vec![
                 ColumnDef {
-                    id: "c1".into(),
-                    name: "Backlog".into(),
                     status: "backlog".into(),
                     wip_limit: None,
                 },
                 ColumnDef {
-                    id: "c2".into(),
-                    name: "Done".into(),
                     status: "done".into(),
                     wip_limit: Some(1),
                 },
@@ -2389,7 +2377,6 @@ mod tests {
         let boards = [BoardInfo {
             board_id: "b-1".into(),
             name: "New Board".into(),
-            column_count: 3,
             columns: vec![],
         }];
         assert_eq!(

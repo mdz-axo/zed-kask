@@ -14,7 +14,8 @@ use crate::KanbanPanel;
 use crate::REFRESH_INTERVAL;
 use crate::RefreshTarget;
 use crate::{
-    BOARD_LIST_TOOL, KANBAN_SERVER, TASK_LIST_TOOL, classify_kanban_fetch_error, refresh_target,
+    BOARD_LIST_TOOL, KANBAN_SERVER, TASK_LIST_TOOL, classify_kanban_fetch_error,
+    pending_board_to_select, refresh_target, selected_identity_from_boards,
 };
 use crate::{BoardListResponse, CommentsResponse, TaskListResponse};
 use hkask_tool_invoker::shared_tool_invoker;
@@ -82,6 +83,34 @@ impl KanbanPanel {
                                 .is_some_and(|id| this.boards.iter().any(|b| &b.board_id == id));
                             if !selected_still_exists {
                                 this.clear_board_selection();
+                            }
+                            // Identity reconciliation (reference model R4/R6 —
+                            // the G8 fix): the selected board's name and
+                            // columns come from the fresh list row, so
+                            // renames and external edits reach the panel's
+                            // surfaces instead of freezing at selection time.
+                            if let Some((name, columns)) = selected_identity_from_boards(
+                                this.selected_board_id.as_deref(),
+                                &this.boards,
+                            ) {
+                                this.board_name = Some(name.into());
+                                this.columns = columns.to_vec();
+                            }
+                            // The picker's rows mirror the board list —
+                            // refresh them so opens and renames are
+                            // reflected the next time the popover is used.
+                            this.refresh_board_picker(cx);
+                            // Reference model R7: a create/import gesture
+                            // stashed the minted board id; open it now that
+                            // its row is in the fresh list. `select_board`
+                            // triggers the task fetch itself.
+                            if let Some(board_id) = pending_board_to_select(
+                                this.pending_select_board.as_deref(),
+                                &this.boards,
+                            ) {
+                                this.pending_select_board = None;
+                                this.select_board(board_id, cx);
+                                return;
                             }
                             if this.selected_board_id.is_none() && !this.boards.is_empty() {
                                 let first = this.boards[0].clone();
@@ -208,12 +237,11 @@ impl KanbanPanel {
     /// `REFRESH_INTERVAL` seconds. The task is stored in `refresh_task` so it
     /// is cancelled when the panel is dropped.
     ///
-    /// Refreshes the *board list* when no board is selected, and the task list
-    /// otherwise. The board-list branch is what makes the panel self-healing: the
-    /// loop previously `continue`d whenever `selected_board_id` was `None`, so a
-    /// `board_list` that failed at construction (MCP server still starting, or
-    /// restarting) was never retried and the panel stayed empty for the rest of
-    /// the session.
+    /// Every tick re-reads the board list so the selected board's identity
+    /// reconciles (reference model R4 — renames and external edits reach
+    /// the panel) and the panel self-heals when the MCP server was not yet
+    /// reachable; with a board open, the tick also re-fetches that board's
+    /// tasks. See `refresh_target` for the pure decision and its history.
     pub(crate) fn start_refresh_task(&mut self, cx: &mut Context<Self>) {
         self.refresh_task = Some(cx.spawn(async move |this, cx| {
             loop {
@@ -225,6 +253,10 @@ impl KanbanPanel {
                     .update(cx, |this, cx| match refresh_target(has_board) {
                         RefreshTarget::Tasks => this.fetch_tasks(cx),
                         RefreshTarget::Boards => this.fetch_boards(cx),
+                        RefreshTarget::BoardsAndTasks => {
+                            this.fetch_boards(cx);
+                            this.fetch_tasks(cx);
+                        }
                     })
                     .log_err()
                     .is_none()
