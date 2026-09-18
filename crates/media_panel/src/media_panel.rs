@@ -17,8 +17,8 @@ pub mod media_viewer;
 pub mod panel_button;
 
 use gpui::{
-    App, Bounds, ClickEvent, Context, DefiniteLength, DragMoveEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Pixels, SharedString, Task, WeakEntity, Window, actions, px,
+    App, ClickEvent, Context, DefiniteLength, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Task, WeakEntity, Window, actions, px,
 };
 use ui::{Icon, IconName, prelude::*};
 use util::ResultExt as _;
@@ -34,22 +34,6 @@ pub use panel_button::MediaPanelButton;
 /// The MCP server id this panel's Steer conversation is scoped to.
 /// Matches `kask_bridge::mcp_servers::BUILT_IN_MCP_SERVERS` (id: "media").
 const MEDIA_SERVER: &str = "media";
-
-/// The drag value carried by GPUI's drag system: the split handle's
-/// `on_drag` starts the drag, the panel root's `on_drag_move` consumes it
-/// for the drag's duration (the git-graph split's pattern).
-struct DraggedSplitHandle;
-
-/// Height of the divider's invisible grab area. The visible rule is 1px;
-/// 8px is grabbable without covering either pane's content.
-const SPLIT_HANDLE_HIT_HEIGHT: f32 = 8.0;
-
-/// The steer pane's share of the panel height: the default split, and the
-/// drag clamp. The floor keeps the director's header + prompt editor
-/// usable; the ceiling keeps the viewer's tab bar + player visible.
-const DEFAULT_STEER_FRACTION: f32 = 0.5;
-const MIN_STEER_FRACTION: f32 = 0.2;
-const MAX_STEER_FRACTION: f32 = 0.8;
 
 actions!(
     media_panel,
@@ -137,7 +121,7 @@ pub struct MediaPanel {
     /// The steer pane's share of the panel height (the bottom of the
     /// split). Drag the divider to change it; double-click the divider to
     /// reset it. In-memory only — the split is not serialized.
-    steer_split_fraction: f32,
+    split: hkask_steer::VerticalSplitState,
 }
 
 impl MediaPanel {
@@ -171,7 +155,7 @@ impl MediaPanel {
                 thread_observation: None,
                 thread_picker,
                 pending_resume: None,
-                steer_split_fraction: DEFAULT_STEER_FRACTION,
+                split: hkask_steer::VerticalSplitState::default(),
             }
         })
     }
@@ -195,11 +179,6 @@ impl MediaPanel {
     /// Apply a divider drag to the split. `event.bounds` is the panel root
     /// (the element carrying `on_drag_move`) — the reference frame the
     /// fraction is taken against.
-    fn update_split_from_drag(&mut self, event: &DragMoveEvent<DraggedSplitHandle>) {
-        if let Some(fraction) = steer_fraction_from_drag(event.event.position.y, event.bounds) {
-            self.steer_split_fraction = fraction;
-        }
-    }
 
     /// The split divider: a 1px rule with an invisible grab area. Drag to
     /// resize the panes; double-click to reset the split. The same handle
@@ -216,19 +195,21 @@ impl MediaPanel {
                 div()
                     .id("media-panel-split-handle")
                     .absolute()
-                    .top(px(-SPLIT_HANDLE_HIT_HEIGHT / 2.0))
-                    .h(px(SPLIT_HANDLE_HIT_HEIGHT))
+                    .top(px(-hkask_steer::SPLIT_HANDLE_HIT_HEIGHT / 2.0))
+                    .h(px(hkask_steer::SPLIT_HANDLE_HIT_HEIGHT))
                     .w_full()
                     .cursor_row_resize()
                     .block_mouse_except_scroll()
                     .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
                         if event.click_count() >= 2 {
-                            this.steer_split_fraction = DEFAULT_STEER_FRACTION;
+                            this.split.reset();
                             cx.notify();
                         }
                         cx.stop_propagation();
                     }))
-                    .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+                    .on_drag(hkask_steer::VerticalSplitDrag, |_, _, _, cx| {
+                        cx.new(|_| gpui::Empty)
+                    }),
             )
     }
 
@@ -316,19 +297,6 @@ fn steer_system_prompt() -> SharedString {
     prompt.into()
 }
 
-/// The steer pane's height fraction implied by a divider drag: the distance
-/// from the pointer to the panel's bottom edge over the panel height,
-/// clamped so neither pane starves. `None` on a zero-height panel — the
-/// divide would produce a NaN fraction that poisons every later layout.
-fn steer_fraction_from_drag(pointer_y: Pixels, panel: Bounds<Pixels>) -> Option<f32> {
-    let panel_height = panel.bottom() - panel.top();
-    if panel_height <= px(0.) {
-        return None;
-    }
-    let steer_height = panel.bottom() - pointer_y;
-    Some((steer_height / panel_height).clamp(MIN_STEER_FRACTION, MAX_STEER_FRACTION))
-}
-
 impl gpui::Render for MediaPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Lazily ensure the Steer surface the first time the panel draws —
@@ -361,7 +329,7 @@ impl gpui::Render for MediaPanel {
         // leaves.
         let director = div()
             .w_full()
-            .h(DefiniteLength::Fraction(self.steer_split_fraction))
+            .h(DefiniteLength::Fraction(self.split.bottom_fraction()))
             // The director is a flex-column child: without min_h_0 its
             // content's min-content height would override the dragged
             // fraction (the conversation would hold the pane open).
@@ -383,13 +351,15 @@ impl gpui::Render for MediaPanel {
         v_flex()
             .size_full()
             // The drag surface for the split divider: the handle's `on_drag`
-            // starts a `DraggedSplitHandle` drag, and this root receives
+            // starts a shared `VerticalSplitDrag`, and this root receives
             // every move event for the drag's duration with `event.bounds`
             // = the whole panel — the reference frame the split math uses.
-            .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, _window, cx| {
-                this.update_split_from_drag(event);
-                cx.notify();
-            }))
+            .on_drag_move::<hkask_steer::VerticalSplitDrag>(cx.listener(
+                |this, event, _window, cx| {
+                    this.split.update_from_drag(event);
+                    cx.notify();
+                },
+            ))
             // The viewing pane (top): what the tools produced, structurally.
             // flex_1 + min_h_0 — the pane is a flex-column child and must
             // shrink below its content's min-content height as the divider
@@ -540,42 +510,5 @@ mod tests {
                 "hkask_mcp_media::TOOL_NAMES lists `{tool}` but the Steer prompt never mentions it"
             );
         }
-    }
-
-    /// The divider drag math: the steer pane's height is the distance from
-    /// the pointer to the panel's bottom, clamped so neither pane starves.
-    /// Orientation is the likely bug — this pins top-vs-bottom.
-    #[test]
-    fn split_fraction_follows_pointer_and_clamps() {
-        let panel = Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(800.), px(600.)));
-        // Pointer mid-panel → the default equal split.
-        assert_eq!(steer_fraction_from_drag(px(300.), panel), Some(0.5));
-        // Pointer at the bottom edge → the steer pane collapses to its floor.
-        assert_eq!(
-            steer_fraction_from_drag(px(600.), panel),
-            Some(MIN_STEER_FRACTION)
-        );
-        // Pointer at the top edge → the steer pane takes its ceiling.
-        assert_eq!(
-            steer_fraction_from_drag(px(0.), panel),
-            Some(MAX_STEER_FRACTION)
-        );
-        // Overshoots beyond either edge clamp, never extrapolate.
-        assert_eq!(
-            steer_fraction_from_drag(px(900.), panel),
-            Some(MIN_STEER_FRACTION)
-        );
-        assert_eq!(
-            steer_fraction_from_drag(px(-50.), panel),
-            Some(MAX_STEER_FRACTION)
-        );
-    }
-
-    /// A zero-height panel must not produce a fraction — 0/0 is NaN, and a
-    /// NaN fraction would poison every layout after it.
-    #[test]
-    fn split_fraction_guards_zero_height_panel() {
-        let flat = Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(800.), px(0.)));
-        assert_eq!(steer_fraction_from_drag(px(0.), flat), None);
     }
 }

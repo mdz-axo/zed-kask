@@ -52,7 +52,6 @@ enum PlannedQaLevel {
 #[derive(Clone)]
 pub(crate) struct QaDispositionPlan {
     levels: Vec<PlannedQaLevel>,
-    reviewed_mandates: bool,
 }
 
 pub(crate) enum PassageQuality {
@@ -299,7 +298,6 @@ pub(crate) fn prompt_wide_skip_plan(prompt: &PreparedQaPrompt, reason: &str) -> 
                 reason: reason.to_string(),
             })
             .collect(),
-        reviewed_mandates: false,
     }
 }
 
@@ -438,7 +436,6 @@ pub(crate) fn parse_disposition_plan_response(
                         reason: reason.clone(),
                     })
                     .collect(),
-                reviewed_mandates: false,
             })
         }
         [Value::String(decision), Value::Array(raw_levels)] if decision == "clean" => {
@@ -545,10 +542,7 @@ pub(crate) fn parse_disposition_plan_response(
                     }
                 }
             }
-            Ok(QaDispositionPlan {
-                levels,
-                reviewed_mandates: false,
-            })
+            Ok(QaDispositionPlan { levels })
         }
         _ => Err("QA disposition plan must be one canonical prompt-wide skip or a clean ordered level plan".to_string()),
     }
@@ -694,13 +688,8 @@ pub(crate) fn render_planned_qa_review_messages(
         McpToolError::internal("Cannot review QA when the disposition plan has no generated levels")
     })?;
     messages[0].content = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept, correct, or skip. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings when the fixed evidence can support a corrected QA at the planned level. skip is allowed only when subject, condition, premise, entailment, and completeness are true but actual_difficulty is false because the fixed evidence cannot support the planned level; include a specific nonblank finding. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
+        "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept or correct. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings. Level support and relation are already fixed by the plan; judge only the generated QA and never replace rejection with a support skip. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
     );
-    if plan.reviewed_mandates {
-        messages[0].content.push_str(
-            " Level support and relation were externally adjudicated. Judge only the generated QA; verdict skip is forbidden. Use correct for repairable QA defects and accept only when the generated QA passes every check.",
-        );
-    }
     let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
         McpToolError::internal(format!("Cannot parse rendered QA writer request: {error}"))
     })?;
@@ -824,7 +813,7 @@ pub(crate) fn render_planned_qa_correction_messages(
 }
 
 pub(crate) fn enforce_reviewed_adjudication(
-    mut plan: QaDispositionPlan,
+    plan: QaDispositionPlan,
     reviewed: &ReviewedQaAdjudication,
 ) -> Result<QaDispositionPlan, String> {
     if plan.levels.len() != reviewed.levels().len() {
@@ -885,7 +874,6 @@ pub(crate) fn enforce_reviewed_adjudication(
             }
         }
     }
-    plan.reviewed_mandates = true;
     Ok(plan)
 }
 

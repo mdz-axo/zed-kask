@@ -155,6 +155,9 @@ impl PortfolioViewer {
     }
 
     fn render_report(&self, report: &PortfolioReportBlock, cx: &mut Context<Self>) -> AnyElement {
+        if report.portfolio.trim().is_empty() {
+            return render_error("Portfolio report omitted its portfolio identity");
+        }
         match report.report_kind.as_str() {
             "characteristics" => {
                 serde_json::from_value::<CharacteristicsReport>(report.report.clone())
@@ -203,6 +206,7 @@ impl Render for PortfolioViewer {
             )
             .child(
                 div()
+                    .id("portfolio-report-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -542,7 +546,7 @@ fn format_percent(value: f64) -> String {
 }
 
 fn format_currency(value: f64) -> String {
-    format!("${value:,.2}")
+    format!("${value:.2}")
 }
 
 #[cfg(test)]

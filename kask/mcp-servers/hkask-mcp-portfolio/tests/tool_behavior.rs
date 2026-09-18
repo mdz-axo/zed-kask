@@ -11,7 +11,8 @@
 #![forbid(unsafe_code)]
 
 use hkask_mcp_portfolio::server::{
-    LedgerApplyRequest, PortfolioCreateRequest, PortfolioNameRequest, PortfolioReturnsRequest,
+    LedgerApplyRequest, LedgerReadRequest, PortfolioContributionRequest, PortfolioCreateRequest,
+    PortfolioHistoricalWhatIfRequest, PortfolioNameRequest, PortfolioReturnsRequest,
     PortfolioServer, PortfolioSnapshotRequest, PriceSeedEntry, PriceSeedRequest,
 };
 use hkask_mcp_portfolio::{AssetType, PortfolioStore, Transaction, TxType};
@@ -410,4 +411,136 @@ async fn delete_tool_removes_portfolio_and_ledger() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn investor_reports_emit_viewer_hints_and_what_if_keeps_the_ledger_immutable() {
+    let (server, dir) = make_server();
+    server
+        .portfolio_create(Parameters(PortfolioCreateRequest {
+            name: "investor".into(),
+            asset_type: AssetType::Stock,
+        }))
+        .await
+        .expect("create portfolio");
+    for tx in [
+        transaction(
+            "2025-01-01",
+            TxType::Deposit,
+            None,
+            None,
+            None,
+            Some(1_000.0),
+        ),
+        transaction(
+            "2025-01-01",
+            TxType::Buy,
+            Some("A"),
+            Some(50.0),
+            Some(10.0),
+            None,
+        ),
+    ] {
+        server
+            .ledger_apply(Parameters(LedgerApplyRequest {
+                portfolio: "investor".into(),
+                transaction: tx,
+            }))
+            .await
+            .expect("apply transaction");
+    }
+    server
+        .portfolio_seed_price(Parameters(PriceSeedRequest {
+            portfolio: "investor".into(),
+            symbol: None,
+            date: None,
+            close: None,
+            source: None,
+            prices: Some(vec![
+                PriceSeedEntry {
+                    symbol: "A".into(),
+                    date: "2025-01-01".into(),
+                    close: 10.0,
+                    source: Some("fixture".into()),
+                },
+                PriceSeedEntry {
+                    symbol: "A".into(),
+                    date: "2025-12-31".into(),
+                    close: 11.0,
+                    source: Some("fixture".into()),
+                },
+                PriceSeedEntry {
+                    symbol: "B".into(),
+                    date: "2025-12-31".into(),
+                    close: 20.0,
+                    source: Some("fixture".into()),
+                },
+            ]),
+        }))
+        .await
+        .expect("seed prices");
+
+    let contribution_output = server
+        .portfolio_contribution(Parameters(PortfolioContributionRequest {
+            portfolio: "investor".into(),
+            from: "2025-01-01".into(),
+            to: "2025-12-31".into(),
+        }))
+        .await
+        .expect("contribution report");
+    let contribution = unwrap_content(&contribution_output);
+    let hint = contribution
+        .get("display_hint")
+        .and_then(serde_json::Value::as_str)
+        .expect("server-authored portfolio display hint");
+    assert!(hint.starts_with("```portfolio\n"));
+    assert!(hint.contains("\"report_kind\":\"contribution\""));
+    assert_eq!(contribution["report"]["reconciliation_residual"], 0.0);
+
+    let before = server
+        .ledger_read(Parameters(LedgerReadRequest {
+            portfolio: "investor".into(),
+            symbol: None,
+            tx_type: None,
+            asset_type: None,
+            from_date: None,
+            to_date: None,
+        }))
+        .await
+        .expect("read ledger before");
+    let before_count = unwrap_content(&before)["count"].clone();
+    let what_if_output = server
+        .portfolio_historical_what_if(Parameters(PortfolioHistoricalWhatIfRequest {
+            portfolio: "investor".into(),
+            from: "2025-01-01".into(),
+            to: "2025-12-31".into(),
+            hypothetical_transactions: vec![transaction(
+                "2025-06-30",
+                TxType::Buy,
+                Some("B"),
+                Some(10.0),
+                Some(10.0),
+                None,
+            )],
+        }))
+        .await
+        .expect("historical what-if report");
+    let what_if = unwrap_content(&what_if_output);
+    assert_eq!(what_if["report"]["authoritative_state_changed"], false);
+    assert_eq!(what_if["report"]["value_difference"], 100.0);
+
+    let after = server
+        .ledger_read(Parameters(LedgerReadRequest {
+            portfolio: "investor".into(),
+            symbol: None,
+            tx_type: None,
+            asset_type: None,
+            from_date: None,
+            to_date: None,
+        }))
+        .await
+        .expect("read ledger after");
+    assert_eq!(unwrap_content(&after)["count"], before_count);
+
+    std::fs::remove_dir_all(&dir).expect("remove test directory");
 }

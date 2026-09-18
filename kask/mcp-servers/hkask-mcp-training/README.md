@@ -59,11 +59,11 @@ continue to refresh recall clocks.
 
 Two cloud hosts: **Runpod** (primary, with completion detection via
 HuggingFace artifacts) and **Nebius** (no completion detection
-yet — `training_status` reports `Running` indefinitely). Three harnesses:
-**Axolotl** (YAML, SFT), **TRL** (Python, SFT + preference optimization), and
-**Ludwig** (YAML, SFT + preference + GRPO/advanced PEFT).
+yet — `training_status` reports `Running` indefinitely). Two declarative YAML
+harnesses are retained: **Axolotl** (SFT) and **Ludwig**
+(SFT + DPO/KTO/ORPO/GRPO and advanced PEFT).
 
-All three harnesses use the **same generic Docker image**
+Both harnesses use the **same generic Docker image**
 (`docker.io/mdzaxo/hkask-training-base:latest`, ~130MB). The harness-specific
 packages are pip-installed at pod startup via a dynamically generated install
 script (`HKASK_INSTALL_SCRIPT`). No per-harness images.
@@ -71,13 +71,12 @@ script (`HKASK_INSTALL_SCRIPT`). No per-harness images.
 Harness selection is per-job via `TrainingParams.harness` (operator-accepted
 from the lora-training skill's G6 gate), defaulting to Axolotl. The RunPod
 host's `submit()` method calls `generate_install_script()` which:
-1. Renders the harness-native config (YAML or Python)
+1. Renders the harness-native YAML config
 2. Generates a bash install script that pip-installs the harness packages,
    writes the config, runs training, uploads the adapter, and writes the manifest
 3. Passes the script to the pod as `HKASK_INSTALL_SCRIPT`
 
-All trainers are implemented: Axolotl SFT, TRL SFT/DPO/KTO/ORPO/Reward,
-Ludwig SFT/DPO/KTO/ORPO/GRPO.
+Implemented methods: Axolotl SFT and Ludwig SFT/DPO/KTO/ORPO/GRPO.
 
 Ludwig (Linux Foundation AI & Data, Apache-2.0) is the only harness in the
 candidate set covering GRPO (reward-model-free RLHF) and the full advanced-PEFT
@@ -86,7 +85,6 @@ declares. Source: https://ludwig.ai/latest/ · https://github.com/ludwig-ai/ludw
 
 Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). Deleted providers (2026-08-20): the Deep-Infra GPU-container host (provider removed from the repo). The Runpod host is sufficient for all training workloads.
 
-Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a concrete data/training need — Axolotl + TRL + Ludwig are sufficient until then.
 
 ## Configuration
 

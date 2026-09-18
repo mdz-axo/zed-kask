@@ -30,7 +30,9 @@ use project::Project;
 use workspace::Workspace;
 
 pub mod thread_picker;
+pub mod vertical_split;
 pub use thread_picker::ThreadPicker;
+pub use vertical_split::{SPLIT_HANDLE_HIT_HEIGHT, VerticalSplitDrag, VerticalSplitState};
 
 // The zed-free half of the Steer prompt surface (tool-advertisement
 // rendering + verification), re-exported so panel call sites

@@ -50,8 +50,8 @@ INPUT: task_distance = {{ task_distance | default("moderate") }} (light | modera
 INPUT: quality_vs_cost = {{ quality_vs_cost | default("default") }} (cost-sensitive | quality-critical | default)
 INPUT: knowledge_preservation_required = {{ knowledge_preservation_required | default(false) }} (bool)
 INPUT: host = {{ host | default("REQUIRED") }} (P12 — no anonymous training config)
-INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (axolotl | trl | ludwig | undetermined)
-INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | reward | grpo | undetermined)
+INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (axolotl | ludwig | undetermined)
+INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | grpo | undetermined)
 INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
 INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }} (chatml | preference_dpo | preference_kto | preference_orpo | raw_text | undetermined)
 INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (v0.31.0 — capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
@@ -81,8 +81,8 @@ RECOMMENDATION RECORD (compose fields; never replace the whole record):
 - preservation: standard | corda_kp | post_training_intruder_mitigation | undetermined
 - rank_range: {min: <int>, max: <int>} | undetermined
 - target_module_strategy: minimal | attention | all_linear | operator_requested | undetermined
-- harness: axolotl | trl | ludwig | undetermined
-- trainer: sft | dpo | kto | orpo | reward | grpo | undetermined (only meaningful when harness=trl or ludwig)
+- harness: axolotl | ludwig | undetermined
+- training_method: sft | dpo | kto | orpo | grpo | undetermined
 - alternatives: []
 - constraints: []
 - conflicts: []
@@ -264,11 +264,9 @@ G-D0. dataset_analysis? (runs alongside G0; probes the actual dataset file)
       contamination). Recommend subsampling to a high-quality subset.
       [Citation: QLoRA paper §5]
     - max_token_estimate > sequence_len: warn that some examples will be
-      truncated. Recommend increasing sequence_len or using packing.
-      [Citation: TRL SFTTrainer packing — huggingface.co/docs/trl/main/en/sft_trainer]
-    - avg_messages_per_example > 4 (multi-turn): recommend assistant_only_loss
-      if harness=trl, to focus training on assistant responses.
-      [Citation: TRL SFTTrainer assistant_only_loss — huggingface.co/docs/trl/main/en/sft_trainer]
+      truncated. Recommend increasing sequence_len or enabling sample packing.
+    - avg_messages_per_example > 4 (multi-turn): recommend sample packing when
+      the selected declarative harness supports it.
     - has_system_messages: note that the system prompt will be part of training;
       if the system prompt is a fixed persona, consider whether it should be
       baked into the adapter or kept as a runtime prompt.
@@ -277,9 +275,8 @@ G-D0. dataset_analysis? (runs alongside G0; probes the actual dataset file)
       longer/shorter responses rather than better ones.
       [Citation: DPO arXiv:2305.18290 — length bias in preference optimization;
        SimPO (sigmoid_norm loss_type) addresses length bias]
-    - has_vision_data: set adapter_purpose=vision if not already declared.
-      Recommend harness=trl (SFTTrainer supports VLMs) or harness=ludwig.
-      [Citation: TRL SFTTrainer VLM — huggingface.co/docs/trl/main/en/sft_trainer]
+    - has_vision_data: set adapter_purpose=vision if not already declared and
+      recommend harness=ludwig.
     - format detected as preference (DPO/KTO/ORPO): override adapter_purpose
       to `preference` if it was undetermined or `instruction`.
     - format detected as raw_text: suggest adapter_purpose=instruction with
@@ -412,9 +409,8 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
     ## v0.31.0: Deep capability reasoning over the full capability space
     provider_capabilities is available. Reason over the full capability matrix:
     - **available_hosts**: which training hosts (runpod, nebius) are
-      configured and have API keys? This affects which harnesses are practically
-      usable (all three hosts support all three harnesses, but GPU type
-      availability may constrain model size).
+      configured and have API keys? This affects which retained harnesses are
+      practically usable; GPU availability may constrain model size.
     - **host_gpu_types**: which GPU types are available on each host? This affects
       memory_budget_gb refinement (e.g., if only 24GB GPUs are available, QLoRA
       is more likely needed for large models).
@@ -426,8 +422,7 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
       composition? This affects inference_constraint reasoning (if no provider
       supports dynamic switching, must-merge becomes more attractive).
     Use this capability matrix to produce a more informed recommendation. When
-    provider_capabilities is absent, fall back to harness-method compatibility
-    only (the pre-v0.31.0 behavior).
+    provider_capabilities is absent, fall back to harness-method compatibility.
     {% endif %}
     - If harness_preference is declared (not undetermined): preserve it as
       `operator_requested`. Do not overwrite. Validate compatibility with
@@ -441,51 +436,26 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
     - If both are undetermined or absent: select the harness based on
       adapter_purpose (from G0) and dataset_format_hint:
       - adapter_purpose=instruction + dataset=chatml:
-        harness=undetermined; list all three harnesses as alternatives:
-        - axolotl: YAML config, mature, single-file, SFT-only. Best for
-          simple instruction tuning with standard ChatML.
-        - trl/sft: Python script, HF-native, supports assistant_only_loss,
-          packing strategies (bfd/bfd_split/wrapped), VLMs, chunked cross-entropy.
-          Best when assistant_only_loss or packing is needed.
-        [Citation: TRL SFTTrainer — huggingface.co/docs/trl/main/en/sft_trainer]
-        - ludwig: YAML config (declarative, like axolotl), Linux Foundation AI &
-          Data, Apache-2.0. Covers SFT plus the full alignment spectrum
-          (DPO/KTO/ORPO/GRPO) and advanced PEFT initializers (PiSSA, EVA, CorDA,
-          LoftQ) that axolotl cannot render. Best when the accepted initializer
-          is one axolotl does not support.
-        [Citation: Ludwig — ludwig.ai/latest/]
-      - adapter_purpose=reasoning + dataset=chatml:
-        harness=trl (preferred) or ludwig. TRL supports assistant_only_loss
-        and packing for efficient reasoning training. Ludwig supports GRPO
-        for reward-model-free RLHF reasoning.
-        [Citation: Raschka 2025 — LoRA rank 16 sweet spot for reasoning + RL;
-         TRL SFTTrainer packing — huggingface.co/docs/trl/main/en/sft_trainer]
-      - adapter_purpose=vision:
-        harness=trl (preferred). TRL SFTTrainer supports VLM training with
-        image columns. Ludwig also supports VLMs. Axolotl does not support VLMs.
-        [Citation: TRL SFTTrainer VLM — huggingface.co/docs/trl/main/en/sft_trainer;
-         DoRA arXiv:2402.09353 — DoRA outperforms LoRA on VLMs]
+        recommend harness=axolotl and training_method=sft. Ludwig is the
+        declarative alternative when its broader method support is needed.
+      - adapter_purpose=reasoning or vision:
+        recommend harness=ludwig and select the supported training method from
+        the declared evidence.
       - adapter_purpose=preference:
-        harness=trl (preferred for DPO/KTO/ORPO) or ludwig (for GRPO).
-        Trainer based on dataset_format_hint:
-        - preference_dpo → trainer=dpo [Citation: DPO arXiv:2305.18290]
-        - preference_kto → trainer=kto [Citation: KTO arXiv:2402.01306]
-        - preference_orpo → trainer=orpo [Citation: ORPO arXiv:2403.07691]
-        Ludwig also covers DPO/KTO/ORPO, but TRL is the HF-native path.
+        recommend harness=ludwig. Select training_method from dataset_format_hint:
+        - preference_dpo → dpo [Citation: DPO arXiv:2305.18290]
+        - preference_kto → kto [Citation: KTO arXiv:2402.01306]
+        - preference_orpo → orpo [Citation: ORPO arXiv:2403.07691]
       - adapter_purpose=reward_model:
-        harness=trl; trainer=reward.
-        [Citation: TRL RewardTrainer — huggingface.co/docs/trl/main/en/reward_trainer]
+        record a conflict: no retained declarative harness implements a reward
+        model training method.
       - adapter_purpose=reasoning + trainer_preference=grpo:
-        harness=ludwig; trainer=grpo. Ludwig is the only harness covering GRPO.
+        recommend harness=ludwig and training_method=grpo.
         [Citation: GRPO arXiv:2402.03300; Ludwig — ludwig.ai/latest/configuration/]
-    - If harness=trl and trainer is undetermined, list applicable trainers as
-      alternatives with their data format requirements.
-    - If harness=ludwig and trainer is undetermined, list applicable Ludwig
-      trainer types (finetune, dpo, kto, orpo, grpo) as alternatives with their
-      data format requirements.
-    - Axolotl remains the runtime default when harness=undetermined and
-      adapter_purpose=instruction (preserves existing behavior — no silent
-      migration). For non-instruction purposes, axolotl is not a valid default.
+    - If harness=ludwig and the method is undetermined, list finetune, dpo, kto,
+      orpo, and grpo as alternatives with their data format requirements.
+    - Axolotl is the runtime default only for SFT. For all other methods,
+      recommend Ludwig explicitly.
     - G6 cannot override G0-G5 constraints. If a harness selection conflicts
       with an earlier gate (e.g., axolotl selected but preference data declared,
       or axolotl selected but adapter_purpose=vision), record as a conflict
@@ -535,8 +505,8 @@ OUTPUT (JSON; emit only derivable values and explicit undetermined states):
     "preservation": "standard" | "corda_kp" | "post_training_intruder_mitigation" | "undetermined",
     "rank_range": {"min": <int>, "max": <int>} | "undetermined",
     "target_module_strategy": "minimal" | "attention" | "all_linear" | "operator_requested" | "undetermined",
-    "harness": "axolotl" | "trl" | "ludwig" | "undetermined",
-    "trainer": "sft" | "dpo" | "kto" | "orpo" | "reward" | "grpo" | "undetermined",
+    "harness": "axolotl" | "ludwig" | "undetermined",
+    "training_method": "sft" | "dpo" | "kto" | "orpo" | "grpo" | "undetermined",
     "alternatives": [
       {"field": "...", "value": "...", "condition": "...", "citation": "..."}
     ],
@@ -637,20 +607,13 @@ SOURCE REFERENCES (concrete — P8):
   per-job BO alternative.
 - PEFT v0.19.0: huggingface.co/docs/peft/v0.19.0/package_reference/lora
   — LoraConfig fields and initializer requirements.
-- TRL v1.8.0: huggingface.co/docs/trl/main/en/sft_trainer — SFTTrainer,
-  SFTConfig, packing, assistant_only_loss, completion_only_loss, VLMs.
-  huggingface.co/docs/trl/main/en/dpo_trainer — DPOTrainer, DPOConfig,
-  loss_type variants. huggingface.co/docs/trl/main/en/kto_trainer —
-  KTOTrainer (unpaired preference). huggingface.co/docs/trl/main/en/orpo_trainer
-  — ORPOTrainer (single-stage SFT + preference).
-  huggingface.co/docs/trl/main/en/reward_trainer — RewardTrainer.
+
 - Ludwig v0.17: ludwig.ai/latest/ — declarative YAML deep-learning framework
   (Linux Foundation AI & Data, Apache-2.0). Covers SFT, DPO, KTO, ORPO, and
   GRPO (reward-model-free RLHF) via trainer.type. Advanced PEFT initializers
   (PiSSA, EVA, CorDA, LoftQ) native in config. github.com/ludwig-ai/ludwig.
 - GRPO: arXiv:2402.03300 — Group Relative Policy Optimization (reward-model-free
-  RLHF). Implemented in Ludwig via trainer.type: grpo; TRL's online RL trainers
-  are deferred (require vLLM co-location).
+  RLHF). Implemented in Ludwig via trainer.type: grpo.
 - DPO: arXiv:2305.18290 — Direct Preference Optimization.
 - KTO: arXiv:2402.01306 — Kahneman-Tversky Optimization.
 - ORPO: arXiv:2403.07691 — Odds Ratio Preference Optimization.

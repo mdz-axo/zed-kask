@@ -1565,7 +1565,7 @@ mod tests {
         assert!(
             rows[0]["error"]
                 .as_str()
-                .is_some_and(|error| error.contains("cannot re-litigate"))
+                .is_some_and(|error| error.contains("unknown variant `skip`"))
         );
         Ok(())
     }

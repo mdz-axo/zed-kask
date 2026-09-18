@@ -21,9 +21,9 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - To report training findings, readiness, and contract gaps.
 - To compute convergence for the current lifecycle phase and expose preflight,
   runtime-contract, and post-training posture separately.
-- To recommend a training harness (Axolotl, TRL, or Ludwig) and trainer based
-  on task requirements, data shape, and — when supplied — the full capability
-  space (3 harnesses × 6 trainers × 3 hosts × cost models).
+- To recommend a declarative training harness (Axolotl or Ludwig) and method
+  based on task requirements, data shape, and — when supplied — the full
+  capability space (2 harnesses × 5 methods × 3 hosts × cost models).
 - When prior training history, prior PDCA iteration output, prior outcome
   evidence, or prior operator feedback is available, to refine the
   recommendation via Good Regulator compliance and self-improvement loop
@@ -113,27 +113,18 @@ This skill does not train, load, initialize, merge, or evaluate models.
    determined by G0-G5. The harness must be able to efficiently process the
    declared dataset and produce the adapter type implied by G0. When
    `provider_capabilities` is supplied, G6 reasons over the full capability
-   space (3 harnesses × 6 trainers × 3 hosts × cost models): available_hosts,
+   space (2 harnesses × 5 methods × 3 hosts × cost models): available_hosts,
    host_gpu_types, host_cost_models, and inference_provider_capabilities.
    When absent, G6 falls back to harness-method compatibility only. If the
    operator declares `harness_preference` or `trainer_preference` inputs,
    preserve them as `operator_requested` and validate compatibility. If both
    are absent, select based on adapter_purpose and dataset_format_hint. The
-   three harnesses have distinct capability profiles:
-   - **Axolotl** (YAML, SFT + DPO + KTO + ORPO + GRPO + GDPO + RM + Full FT):
-     mature, single-file config, the runtime default for instruction adapters.
-     Uses `rl:` parameter for preference tuning and GRPO. Supports advanced PEFT
-     initializers via `peft_init_lora_weights`. Cannot render TRL-specific
-     trainers (trl_trainer is ignored — warn, not refuse).
-   - **TRL** (Python, SFT + preference): HF-native, supports SFTTrainer,
-     DPOTrainer, KTOTrainer, ORPOTrainer, RewardTrainer. Best for
-     assistant_only_loss, packing strategies, VLMs, and preference
-     optimization from paired/unpaired data.
-   - **Ludwig** (YAML, SFT + preference + GRPO): declarative like axolotl,
-     but covers the full alignment spectrum including GRPO
-     (reward-model-free RLHF) and advanced PEFT initializers (PiSSA, EVA,
-     CorDA, LoftQ) that axolotl cannot render. Best when the operator needs
-     GRPO or an initializer axolotl doesn't support.
+   two retained harnesses have distinct capability profiles:
+   - **Axolotl** (YAML, SFT): mature, single-file configuration and the runtime
+     default for instruction adapters.
+   - **Ludwig** (YAML, SFT + DPO + KTO + ORPO + GRPO): declarative like Axolotl,
+     but covers preference optimization, GRPO, and advanced PEFT initializers
+     (PiSSA, EVA, CorDA, LoftQ).
    Axolotl remains the runtime default when harness is undetermined and
    adapter_purpose is instruction — no silent migration. For non-instruction
    purposes, axolotl is not a valid default.
@@ -234,7 +225,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 | Template | Purpose |
 |----------|---------|
 | `preflight-dataset.j2` | v0.32.0: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
-| `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. v0.31.0: G6 reasons over the full capability space (3 harnesses × 6 trainers × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (mechanical PDCA loop closure via manifest). |
+| `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (mechanical PDCA loop closure via manifest). |
 | `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. v0.31.0: emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. v0.32.0: consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. v0.32.0: G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
 | `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
@@ -305,13 +296,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
   Policy Optimization (reward-model-free RLHF).
 - PEFT v0.19.0:
   [LoraConfig reference](https://huggingface.co/docs/peft/v0.19.0/package_reference/lora).
-- TRL v1.8.0:
-  [SFTTrainer](https://huggingface.co/docs/trl/main/en/sft_trainer),
-  [DPOTrainer](https://huggingface.co/docs/trl/main/en/dpo_trainer),
-  [KTOTrainer](https://huggingface.co/docs/trl/main/en/kto_trainer),
-  [ORPOTrainer](https://huggingface.co/docs/trl/main/en/orpo_trainer),
-  [RewardTrainer](https://huggingface.co/docs/trl/main/en/reward_trainer),
-  [TRL index](https://huggingface.co/docs/trl/index).
+
 - Ludwig v0.17: [Ludwig docs](https://ludwig.ai/latest/),
   [Ludwig config](https://ludwig.ai/latest/configuration/),
   [GitHub](https://github.com/ludwig-ai/ludwig) — declarative YAML framework

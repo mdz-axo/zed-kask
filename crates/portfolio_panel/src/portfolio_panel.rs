@@ -1,18 +1,18 @@
-//! Portfolio Steer panel — a Steer-only surface for the `hkask-mcp-portfolio`
-//! MCP server.
+//! Portfolio analysis panel — investor reports above a Steer workspace for
+//! the `hkask-mcp-portfolio` MCP server.
 //!
-//! Unlike the kanban/swarm panels, this panel deliberately has **no browse
-//! forms** — the portfolio widget already renders artifacts inline in chat
-//! (the D18 seam), and hand-written management forms would duplicate the
-//! Steer conversation's chat-driven CRUD. The panel's sole affordance is a
-//! scoped curator `ConversationView` (via `hkask_steer::SteerSurface`) whose
-//! prompt advertises the portfolio server's generated `TOOL_NAMES`.
+//! The upper viewer renders server-authored characteristics, contribution,
+//! benchmark-relative attribution, and what-if reports. The lower Steer
+//! conversation drives portfolio operations and can resume existing threads.
+//! A shared draggable split keeps both surfaces usable without duplicating the
+//! media panel's split-state mathematics.
 
 pub mod panel_button;
+pub mod portfolio_viewer;
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Task, WeakEntity,
-    Window, actions,
+    App, ClickEvent, Context, DefiniteLength, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Task, WeakEntity, Window, actions, px,
 };
 use ui::{Icon, IconName, prelude::*};
 use util::ResultExt as _;
@@ -23,6 +23,7 @@ use workspace::{
 };
 
 pub use panel_button::PortfolioPanelButton;
+pub use portfolio_viewer::PortfolioViewer;
 
 /// The MCP server id this panel's Steer conversation is scoped to.
 const PORTFOLIO_SERVER: &str = "hkask-mcp-portfolio";
@@ -84,16 +85,19 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-/// The Steer panel. Deliberately Steer-only: all portfolio CRUD (create,
-/// import/export, ledger edits) is reachable through the scoped curator
-/// conversation. The browse forms a traditional management panel would
-/// carry duplicate what the chat can already do.
+/// Investor reports above a Steer workspace, split by a draggable divider.
 pub struct PortfolioPanel {
     focus_handle: FocusHandle,
     steer: hkask_steer::SteerSurface,
     project: Entity<project::Project>,
     fs: std::sync::Arc<dyn fs::Fs>,
     workspace_handle: WeakEntity<Workspace>,
+    /// Investor report surface in the upper pane.
+    viewer: Entity<PortfolioViewer>,
+    /// Observation of the active or resumed conversation thread.
+    thread_observation: Option<gpui::Subscription>,
+    /// Shared viewer/director split state.
+    split: hkask_steer::VerticalSplitState,
     /// The "Open Thread" picker — resumes a database thread in this panel's
     /// Steer surface.
     thread_picker: Entity<hkask_steer::ThreadPicker>,
@@ -129,6 +133,9 @@ impl PortfolioPanel {
                 project,
                 fs,
                 workspace_handle: workspace_handle.clone(),
+                viewer: cx.new(|_| PortfolioViewer::new()),
+                thread_observation: None,
+                split: hkask_steer::VerticalSplitState::default(),
                 thread_picker,
                 pending_resume: None,
             }
@@ -165,8 +172,39 @@ impl PortfolioPanel {
     ) {
         self.pending_resume = Some(session_id);
         self.steer.invalidate();
+        self.thread_observation = None;
         self.ensure_steer(window, cx);
         cx.notify();
+    }
+
+    fn render_split_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("portfolio-panel-split-divider")
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .h(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("portfolio-panel-split-handle")
+                    .absolute()
+                    .top(px(-hkask_steer::SPLIT_HANDLE_HIT_HEIGHT / 2.0))
+                    .h(px(hkask_steer::SPLIT_HANDLE_HIT_HEIGHT))
+                    .w_full()
+                    .cursor_row_resize()
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.split.reset();
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_drag(hkask_steer::VerticalSplitDrag, |_, _, _, cx| {
+                        cx.new(|_| gpui::Empty)
+                    }),
+            )
     }
 }
 
@@ -187,30 +225,45 @@ fn steer_system_prompt() -> SharedString {
     let prompt = format!(
         "## Portfolio Panel — Steer Mode\n\
          You are operating in the Portfolio panel's Steer mode, scoped to the \
-         `hkask-mcp-portfolio` MCP server. All portfolio management is driven \
-         through chat — there are no management forms in this panel.\n\
+         `hkask-mcp-portfolio` MCP server. Use the portfolio report tools for \
+         investor-oriented characteristics, contribution, benchmark-relative \
+         attribution, and current or historical what-if analysis. Do not frame \
+         the workspace around daily-return monitoring.\n\
          \n\
          {tool_section}\
          \n\
-         The portfolio widget (the ```markdown portfolio block) already renders \
-         artifacts inline — use it for visualization; this conversation is the \
-         management surface."
+         Server-authored ```portfolio display hints render in the viewer above. \
+         Contribution is absolute; attribution requires an explicit benchmark. \
+         Historical what-if output is hindsight, not an ex-ante forecast."
     );
     prompt.into()
 }
 
 impl gpui::Render for PortfolioPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Lazily ensure the Steer surface the first time the panel draws —
-        // `ensure_steer` needs `&mut Window`.
         self.ensure_steer(window, cx);
+
+        if self.thread_observation.is_none()
+            && let Some(conversation) = self.steer.conversation()
+            && let Some(thread_view) = conversation.read(cx).active_thread()
+        {
+            let thread = thread_view.read(cx).thread.clone();
+            let viewer = self.viewer.clone();
+            self.thread_observation = Some(cx.observe(&thread, move |_, thread, cx| {
+                viewer.update(cx, |viewer, cx| viewer.ingest_thread(thread.clone(), cx));
+            }));
+            let thread_for_ingest = thread.clone();
+            self.viewer
+                .update(cx, |viewer, cx| viewer.ingest_thread(thread_for_ingest, cx));
+        }
+
         let conversation = self.steer.conversation().cloned();
-        div()
-            .size_full()
+        let director = div()
+            .w_full()
+            .h(DefiniteLength::Fraction(self.split.bottom_fraction()))
+            .min_h_0()
             .flex()
             .flex_col()
-            // The Open Thread affordance sits above the conversation so the
-            // operator can resume a previous steer session at any time.
             .child(
                 h_flex()
                     .px_2()
@@ -219,7 +272,28 @@ impl gpui::Render for PortfolioPanel {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.thread_picker.clone()),
             )
-            .when_some(conversation, |div, conversation| div.child(conversation))
+            .when_some(conversation, |element, conversation| {
+                element.child(conversation)
+            });
+
+        v_flex()
+            .size_full()
+            .on_drag_move::<hkask_steer::VerticalSplitDrag>(cx.listener(
+                |this, event, _window, cx| {
+                    this.split.update_from_drag(event);
+                    cx.notify();
+                },
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(self.viewer.clone()),
+            )
+            .child(self.render_split_handle(cx))
+            .child(director)
     }
 }
 

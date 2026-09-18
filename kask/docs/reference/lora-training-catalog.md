@@ -1,7 +1,7 @@
 ---
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
-last_updated: 2026-09-16
+last_updated: 2026-09-17
 version: "0.39.0"
 status: "Active"
 domain: "Training"
@@ -10,7 +10,7 @@ mds_categories: [domain, trust]
 
 # LoRA Training — Method & Gate Catalog
 
-Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/SKILL.md`, 320 lines) and its runtime enforcement point, the `hkask-mcp-training` MCP server (`kask/mcp-servers/hkask-mcp-training/`). The `SKILL.md` body is the process authority. The four templates under `kask/registry/templates/lora-training/` are companion resources rendered where that process directs; this document is a derived lookup reference.
+Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/SKILL.md`) and its runtime enforcement point, the `hkask-mcp-training` MCP server (`kask/mcp-servers/hkask-mcp-training/`). The `SKILL.md` body is the process authority. The four templates under `kask/registry/templates/lora-training/` are companion resources rendered where that process directs; this document is a derived lookup reference.
 
 ## MCP Server Surface (9 tools)
 
@@ -56,30 +56,23 @@ them (P7) — not speculatively.[^peft-catalog]
 
 ## Harness Capability Matrix
 
-Three harnesses are supported. Each has a distinct capability profile.
+Two declarative YAML harnesses are supported.
 
-| Capability | Axolotl | TRL | Ludwig |
-|---|---|---|---|
-| Config format | YAML | Python script | YAML (declarative) |
-| SFT | ✅ | ✅ (SFTTrainer) | ✅ (trainer.type: finetune) |
-| DPO | ✅ (rl: dpo) | ✅ (DPOTrainer) | ✅ (trainer.type: dpo) |
-| KTO | ✅ (rl: kto) | ✅ (KTOTrainer) | ✅ (trainer.type: kto) |
-| ORPO | ✅ (rl: orpo) | ✅ (ORPOTrainer) | ✅ (trainer.type: orpo) |
-| Reward modeling | ✅ (rl: reward_model) | ✅ (RewardTrainer) | ❌ |
-| GRPO (reward-model-free RLHF) | ✅ (rl: grpo) | ✅ (GRPOTrainer, requires vLLM) | ✅ (trainer.type: grpo) |
-| Advanced PEFT initializers (PiSSA, CorDA, LoftQ) | ✅ (via peft_init_lora_weights) | ✅ (via PEFT) | ✅ (native in config) |
-| EVA initializer | ✅ (via peft_init_lora_weights) | ✅ (via PEFT) | ✅ (native in config) |
-| assistant_only_loss | ❌ | ✅ | ❌ |
-| Packing strategies (bfd/bfd_split/wrapped) | ✅ (sample_packing) | ✅ | ❌ |
-| VLM support | ✅ | ✅ | ✅ |
-| Chunked cross-entropy | ✅ (cut_cross_entropy) | ✅ | ❌ |
-| Full fine-tuning | ✅ (adapter: qlora or none) | ✅ | ✅ |
-| Runtime default | ✅ (when harness=undetermined) | ❌ | ❌ |
+| Capability | Axolotl | Ludwig |
+|---|---|---|
+| Config format | YAML | YAML |
+| SFT | ✅ | ✅ (`trainer.type: finetune`) |
+| DPO | ❌ | ✅ (`trainer.type: dpo`) |
+| KTO | ❌ | ✅ (`trainer.type: kto`) |
+| ORPO | ❌ | ✅ (`trainer.type: orpo`) |
+| GRPO | ❌ | ✅ (`trainer.type: grpo`) |
+| Advanced PEFT initializers | `peft_init_lora_weights` | Native config |
+| Runtime default | ✅ | ❌ |
 
 Harness selection is driven by the G6 gate (harness capability) in the
 `select-method` phase. The operator accepts, overrides, or rejects the
 recommendation. The runtime enforces harness-method compatibility via G-H1
-(`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:429-500`).[^trl-catalog][^ludwig-catalog]
+(`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs`).[^ludwig-catalog]
 
 ## Gate Catalog
 
@@ -99,7 +92,7 @@ citation.[^lora-contract-gates]
 | Task distance | G3 | Refines rank_range within G0 baseline. Light/moderate/heavy. | LoRA §4.3; Biderman et al. |
 | Quality vs cost | G4 | Refines adapter_form and/or initializer. | LoRA §4.1; PiSSA; LoRA-GA; DoRA |
 | Knowledge preservation | G5 | Refines preservation and initializer (CorDA-KP). | PEFT corda_config; Razin et al. |
-| Harness capability | G6 | Selects harness based on training approach from G0-G5. Harness must process dataset and produce adapter type from G0. | TRL; Ludwig; Axolotl |
+| Harness capability | G6 | Selects a retained declarative harness based on training approach from G0-G5. Harness must process the dataset and produce the adapter type from G0. | Ludwig; Axolotl |
 
 ### Math-Contract Gates (from LoRA paper, arXiv:2106.09685)
 
@@ -143,7 +136,7 @@ Only apply if QLoRA mode selected (G2).
 
 | Gate | ID | Assertion | Source |
 |------|----|-----------|--------|
-| Harness-method compatibility | G-H1 | Selected harness supports the selected method/trainer. axolotl=SFT/DPO/KTO/ORPO/GRPO/GDPO/RM/FullFT (via `rl:`); trl=SFT/DPO/KTO/ORPO/Reward; ludwig=SFT/DPO/KTO/ORPO/GRPO + advanced PEFT initializers. `trl_trainer` is TRL-specific — warn (not refuse) when set with axolotl or ludwig. Runtime enforcement: `validate_harness_compatibility` (`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:442-507`). | Axolotl — https://docs.axolotl.ai/docs/rlhf.html; TRL — huggingface.co/docs/trl/index; Ludwig — ludwig.ai/latest/configuration/ |
+| Harness-method compatibility | G-H1 | Axolotl accepts SFT. Ludwig accepts SFT, DPO, KTO, ORPO, and GRPO. Unsupported combinations are refused rather than ignored. Runtime enforcement: `validate_harness_compatibility` (`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs`). | Ludwig — https://ludwig.ai/latest/configuration/ |
 
 ### Runtime Gates
 
@@ -171,8 +164,6 @@ re-entering the cycle, which routes `convergence_metric`, `blockers`, and
 [^peft-catalog]: Liu, Y., et al. (2024). *Parameter-Efficient Fine-Tuning (PEFT)*. Hugging Face. https://huggingface.co/docs/peft
     Cited for the PEFT library that exposes the adapter methods the catalog tracks.
 
-[^trl-catalog]: Hugging Face. (2024). *TRL: Transformer Reinforcement Learning*. https://huggingface.co/docs/trl
-    Cited for the TRL harness the G6 gate selects when SFT/DPO/KTO/ORPO/Reward training is needed.
 
 [^ludwig-catalog]: Ludwig. (2024). *Ludwig: Declarative Deep Learning Framework*. Linux Foundation AI & Data. https://ludwig.ai/latest/
     Cited for the Ludwig harness the G6 gate selects for declarative YAML-configured training.
@@ -204,12 +195,11 @@ re-entering the cycle, which routes `convergence_metric`, `blockers`, and
 - **KTO:** arXiv:2402.01306 — arxiv.org/abs/2402.01306
 - **ORPO:** arXiv:2403.07691 — arxiv.org/abs/2403.07691
 - **PEFT v0.19.0:** huggingface.co/docs/peft/v0.19.0/package_reference/lora
-- **TRL v1.8.0:** huggingface.co/docs/trl/index — SFTTrainer, DPOTrainer, KTOTrainer, ORPOTrainer, RewardTrainer
+
 - **Ludwig v0.17:** ludwig.ai/latest/ — declarative YAML deep-learning framework
   (Linux Foundation AI & Data, Apache-2.0). Covers SFT, DPO, KTO, ORPO, GRPO
   via trainer.type. Advanced PEFT initializers (PiSSA, EVA, CorDA, LoftQ)
   native in config. github.com/ludwig-ai/ludwig.
 - **GRPO:** arXiv:2402.03300 — Group Relative Policy Optimization
-  (reward-model-free RLHF). Implemented in Ludwig via trainer.type: grpo;
-  TRL's online RL trainers are deferred (require vLLM co-location).
+  (reward-model-free RLHF). Implemented in Ludwig via `trainer.type: grpo`.
 - **Practitioner consensus:** Raschka (magazine.sebastianraschka.com), Brenndoerfer (mbrenndoerfer.com), Spheron (spheron.network/blog/peft-methods-2026-dora-galore-pissa-vera-guide), Databricks (databricks.com/blog/efficient-fine-tuning-lora-guide-llms), Gradient Flow (gradientflow.com/lora-or-full-fine-tuning/)
