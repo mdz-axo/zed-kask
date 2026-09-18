@@ -17,6 +17,8 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+const PORTFOLIO_SERVER_ID: &str = "hkask-mcp-portfolio";
+
 hkask_mcp_server::mcp_server!(
     pub struct PortfolioServer {
         pub store: PortfolioStore,
@@ -401,6 +403,221 @@ impl PortfolioServer {
                     "span_id": serde_json::Value::Null,
                 },
             }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Decompose absolute portfolio profit into security contributions over a period. Contributions reconcile to portfolio return and include trades, commissions, and symbol-assigned dividends."
+    )]
+    pub async fn portfolio_contribution(
+        &self,
+        Parameters(PortfolioContributionRequest {
+            portfolio,
+            from,
+            to,
+        }): Parameters<PortfolioContributionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "portfolio_contribution", async {
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let report = run_store(self.store.clone(), move |store| {
+                let resolver = CachedPriceResolver::new(&store, &portfolio);
+                contribution(&store, &portfolio, &from, &to, &resolver)
+            })
+            .await?;
+            let report = serde_json::to_value(report)
+                .map_err(|error| McpToolError::internal(format!("serialize contribution: {error}")))?;
+            report_response(
+                &response_portfolio,
+                "contribution",
+                report,
+                serde_json::json!({
+                    "tool": "portfolio_contribution",
+                    "server": PORTFOLIO_SERVER_ID,
+                    "args": {"portfolio": response_portfolio, "from": response_from, "to": response_to},
+                }),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Analyze current portfolio composition, concentration, classifications, and supplied company metrics. Valuation multiples use harmonic aggregation; other supported metrics use market-value-weighted arithmetic aggregation. Every metric reports data coverage."
+    )]
+    pub async fn portfolio_characteristics(
+        &self,
+        Parameters(PortfolioCharacteristicsRequest {
+            portfolio,
+            date,
+            observations,
+        }): Parameters<PortfolioCharacteristicsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "portfolio_characteristics", async {
+            let response_portfolio = portfolio.clone();
+            let response_date = date.clone();
+            let report = run_store(self.store.clone(), move |store| {
+                let resolver = CachedPriceResolver::new(&store, &portfolio);
+                characteristics(&store, &portfolio, &date, &resolver, &observations)
+            })
+            .await?;
+            let report = serde_json::to_value(report).map_err(|error| {
+                McpToolError::internal(format!("serialize characteristics: {error}"))
+            })?;
+            report_response(
+                &response_portfolio,
+                "characteristics",
+                report,
+                serde_json::json!({
+                    "tool": "portfolio_characteristics",
+                    "server": PORTFOLIO_SERVER_ID,
+                    "args": {"portfolio": response_portfolio, "date": response_date},
+                }),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Decompose benchmark-relative active return with the Brinson-Fachler model into allocation, selection, and separately reported interaction effects. The benchmark is another portfolio in the same ledger store; missing classifications are shown as Unclassified."
+    )]
+    pub async fn portfolio_attribution(
+        &self,
+        Parameters(PortfolioAttributionRequest {
+            portfolio,
+            benchmark,
+            from,
+            to,
+            classifications,
+        }): Parameters<PortfolioAttributionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "portfolio_attribution", async {
+            let response_portfolio = portfolio.clone();
+            let response_benchmark = benchmark.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let report = run_store(self.store.clone(), move |store| {
+                let resolver = CombinedPriceResolver {
+                    primary: CachedPriceResolver::new(&store, &portfolio),
+                    fallback: CachedPriceResolver::new(&store, &benchmark),
+                };
+                attribution(
+                    &store,
+                    &portfolio,
+                    &benchmark,
+                    &from,
+                    &to,
+                    &resolver,
+                    &classifications,
+                )
+            })
+            .await?;
+            let report = serde_json::to_value(report)
+                .map_err(|error| McpToolError::internal(format!("serialize attribution: {error}")))?;
+            report_response(
+                &response_portfolio,
+                "attribution",
+                report,
+                serde_json::json!({
+                    "tool": "portfolio_attribution",
+                    "server": PORTFOLIO_SERVER_ID,
+                    "args": {"portfolio": response_portfolio, "benchmark": response_benchmark, "from": response_from, "to": response_to},
+                }),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Compare current portfolio characteristics with a hypothetical set of same-date stock buys and sells. The calculation uses cloned ledger state and never changes the authoritative portfolio."
+    )]
+    pub async fn portfolio_what_if(
+        &self,
+        Parameters(PortfolioWhatIfRequest {
+            portfolio,
+            date,
+            hypothetical_transactions,
+            observations,
+        }): Parameters<PortfolioWhatIfRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "portfolio_what_if", async {
+            let response_portfolio = portfolio.clone();
+            let response_date = date.clone();
+            let (actual, hypothetical) = run_store(self.store.clone(), move |store| {
+                let resolver = CachedPriceResolver::new(&store, &portfolio);
+                prospective_what_if(
+                    &store,
+                    &portfolio,
+                    &date,
+                    &hypothetical_transactions,
+                    &resolver,
+                    &observations,
+                )
+            })
+            .await?;
+            let report = serde_json::json!({
+                "mode": "prospective_composition",
+                "date": response_date,
+                "actual": actual,
+                "hypothetical": hypothetical,
+                "authoritative_state_changed": false,
+            });
+            report_response(
+                &response_portfolio,
+                "what_if",
+                report,
+                serde_json::json!({
+                    "tool": "portfolio_what_if",
+                    "server": PORTFOLIO_SERVER_ID,
+                    "args": {"portfolio": response_portfolio},
+                }),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Run a retrospective historical counterfactual by adding dated hypothetical stock buys and sells to cloned ledger state. Compares realized terminal value and return with the actual portfolio, never mutates the ledger, and labels the result as hindsight rather than an ex-ante forecast."
+    )]
+    pub async fn portfolio_historical_what_if(
+        &self,
+        Parameters(PortfolioHistoricalWhatIfRequest {
+            portfolio,
+            from,
+            to,
+            hypothetical_transactions,
+        }): Parameters<PortfolioHistoricalWhatIfRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "portfolio_historical_what_if", async {
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let report = run_store(self.store.clone(), move |store| {
+                let resolver = CachedPriceResolver::new(&store, &portfolio);
+                historical_what_if(
+                    &store,
+                    &portfolio,
+                    &from,
+                    &to,
+                    &hypothetical_transactions,
+                    &resolver,
+                )
+            })
+            .await?;
+            let report = serde_json::to_value(report).map_err(|error| {
+                McpToolError::internal(format!("serialize historical what-if: {error}"))
+            })?;
+            report_response(
+                &response_portfolio,
+                "historical_what_if",
+                report,
+                serde_json::json!({
+                    "tool": "portfolio_historical_what_if",
+                    "server": PORTFOLIO_SERVER_ID,
+                    "args": {"portfolio": response_portfolio, "from": response_from, "to": response_to},
+                }),
+            )
         })
         .await
     }

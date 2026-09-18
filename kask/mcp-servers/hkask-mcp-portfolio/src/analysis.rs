@@ -70,7 +70,7 @@ pub struct CharacteristicsReport {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AggregatedMetric {
     pub value: Option<f64>,
-    pub method: &'static str,
+    pub method: String,
     pub weight_coverage: f64,
     pub holding_coverage: usize,
 }
@@ -87,7 +87,7 @@ pub struct AttributionReport {
     pub benchmark: String,
     pub from: String,
     pub to: String,
-    pub model: &'static str,
+    pub model: String,
     pub portfolio_return: f64,
     pub benchmark_return: f64,
     pub active_return: f64,
@@ -113,7 +113,7 @@ pub struct AttributionRow {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WhatIfReport {
     pub portfolio: String,
-    pub mode: &'static str,
+    pub mode: String,
     pub from: String,
     pub to: String,
     pub actual_end_value: f64,
@@ -124,7 +124,7 @@ pub struct WhatIfReport {
     pub return_difference: f64,
     pub hypothetical_transactions: Vec<String>,
     pub authoritative_state_changed: bool,
-    pub interpretation: &'static str,
+    pub interpretation: String,
 }
 
 #[derive(Debug, Clone)]
@@ -244,7 +244,7 @@ pub fn attribution(
         benchmark: benchmark.to_string(),
         from: from.to_string(),
         to: to.to_string(),
-        model: "Brinson-Fachler (interaction separate)",
+        model: "Brinson-Fachler (interaction separate)".to_string(),
         portfolio_return: portfolio_report.portfolio_return,
         benchmark_return: benchmark_report.portfolio_return,
         active_return,
@@ -283,7 +283,7 @@ pub fn historical_what_if(
 
     Ok(WhatIfReport {
         portfolio: portfolio.to_string(),
-        mode: "retrospective_counterfactual",
+        mode: "retrospective_counterfactual".to_string(),
         from: from.to_string(),
         to: to.to_string(),
         actual_end_value: actual.end_value,
@@ -297,7 +297,9 @@ pub fn historical_what_if(
             .map(|transaction| transaction.id.clone())
             .collect(),
         authoritative_state_changed: false,
-        interpretation: "Hindsight comparison using realized subsequent prices; not an ex-ante forecast.",
+        interpretation:
+            "Hindsight comparison using realized subsequent prices; not an ex-ante forecast."
+                .to_string(),
     })
 }
 
@@ -523,7 +525,8 @@ fn characteristics_from_transactions(
                     "market-value-weighted harmonic mean"
                 } else {
                     "market-value-weighted arithmetic mean"
-                },
+                }
+                .to_string(),
                 weight_coverage: covered_weight,
                 holding_coverage,
             },

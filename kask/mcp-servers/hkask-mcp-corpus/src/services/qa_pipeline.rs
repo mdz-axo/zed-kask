@@ -632,7 +632,6 @@ struct PreparedQaDraft {
 enum PreparedQaVerdictKind {
     Accept,
     Correct,
-    Skip,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -671,60 +670,13 @@ impl QaVerificationVerdicts {
             .any(|level| level.verdict == PreparedQaVerdictKind::Correct)
     }
 
-    pub fn apply_terminal_skips(
-        &self,
-        completed: &str,
-        plan: &QaDispositionPlan,
-    ) -> Result<String, String> {
-        self.apply_terminal_verdicts(completed, plan, false)
-    }
-
-    pub fn apply_final_rejections_as_skips(
-        &self,
-        completed: &str,
-        plan: &QaDispositionPlan,
-    ) -> Result<String, String> {
-        self.apply_terminal_verdicts(completed, plan, true)
-    }
-
-    fn apply_terminal_verdicts(
-        &self,
-        completed: &str,
-        plan: &QaDispositionPlan,
-        skip_corrections: bool,
-    ) -> Result<String, String> {
-        let mut rows: Vec<Value> = serde_json::from_str(completed)
-            .map_err(|error| format!("invalid completed QA before verification skips: {error}"))?;
-        if rows.len() != plan.levels.len() {
-            return Err(format!(
-                "completed QA has {} levels but the disposition plan has {}",
-                rows.len(),
-                plan.levels.len()
-            ));
-        }
-        let mut verdicts = self.levels.iter();
-        for (index, planned) in plan.levels.iter().enumerate() {
-            let PlannedQaLevel::Generate { bloom_level, .. } = planned else {
-                continue;
-            };
-            let verdict = verdicts
-                .next()
-                .ok_or_else(|| format!("verification omitted generated level {index}"))?;
-            if verdict.verdict == PreparedQaVerdictKind::Skip
-                || skip_corrections && verdict.verdict == PreparedQaVerdictKind::Correct
-            {
-                rows[index] = json!([
-                    bloom_level,
-                    null,
-                    format!("{bloom_level}_support_absent"),
-                    []
-                ]);
-            }
-        }
-        if verdicts.next().is_some() {
-            return Err("verification returned more levels than the disposition plan".to_string());
-        }
-        Ok(Value::Array(rows).to_string())
+    pub fn correction_findings(&self) -> String {
+        self.levels
+            .iter()
+            .filter(|level| level.verdict == PreparedQaVerdictKind::Correct)
+            .map(|level| format!("{}: {}", level.level, level.findings.join("; ")))
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 }
 
@@ -806,24 +758,11 @@ pub(crate) fn parse_planned_qa_verdicts(
                 "verification level {index} contains a blank finding"
             ));
         }
-        if plan.reviewed_mandates && level.verdict == PreparedQaVerdictKind::Skip {
-            return Err(format!(
-                "verification level {index} cannot re-litigate an externally reviewed generate mandate as skip"
-            ));
-        }
         match level.verdict {
             PreparedQaVerdictKind::Accept
                 if level.all_checks_pass() && level.findings.is_empty() => {}
             PreparedQaVerdictKind::Correct
                 if !level.all_checks_pass() && !level.findings.is_empty() => {}
-            PreparedQaVerdictKind::Skip
-                if level.subject
-                    && level.condition
-                    && level.premise
-                    && level.entailment
-                    && level.completeness
-                    && !level.actual_difficulty
-                    && !level.findings.is_empty() => {}
             PreparedQaVerdictKind::Accept => {
                 return Err(format!(
                     "verification level {index} accept requires all checks true and no findings"
@@ -832,11 +771,6 @@ pub(crate) fn parse_planned_qa_verdicts(
             PreparedQaVerdictKind::Correct => {
                 return Err(format!(
                     "verification level {index} correct requires a false check and nonempty findings"
-                ));
-            }
-            PreparedQaVerdictKind::Skip => {
-                return Err(format!(
-                    "verification level {index} skip requires only actual_difficulty false and nonempty findings"
                 ));
             }
         }
@@ -1959,24 +1893,7 @@ mod tests {
             }
         ])
         .to_string();
-        let terminal_verdicts = parse_planned_qa_verdicts(&terminal_skip, &conceptual_plan)
-            .expect("valid terminal support skip");
-        assert!(!terminal_verdicts.requires_correction());
-        let completed = json!([
-            ["factual", "What is grounded?", "The answer.", ["e0"]],
-            ["conceptual", "How does it work?", "It works.", ["e0"]]
-        ])
-        .to_string();
-        assert_eq!(
-            terminal_verdicts
-                .apply_terminal_skips(&completed, &conceptual_plan)
-                .expect("apply support skip"),
-            json!([
-                ["factual", "What is grounded?", "The answer.", ["e0"]],
-                ["conceptual", null, "conceptual_support_absent", []]
-            ])
-            .to_string()
-        );
+        assert!(parse_planned_qa_verdicts(&terminal_skip, &conceptual_plan).is_err());
 
         let final_correction = json!([
             {

@@ -720,10 +720,7 @@ impl QaBatchService {
                     if !verdicts.requires_correction() {
                         return (
                             prior_responses,
-                            Ok(qa_completion(
-                                review_response,
-                                verdicts.apply_terminal_skips(&writer_completed, &plan),
-                            )),
+                            Ok(qa_completion(review_response, Ok(writer_completed))),
                         );
                     }
 
@@ -801,19 +798,16 @@ impl QaBatchService {
                     match final_verdicts {
                         Ok(final_verdicts) if !final_verdicts.requires_correction() => (
                             prior_responses,
-                            Ok(qa_completion(
-                                final_review_response,
-                                final_verdicts.apply_terminal_skips(&corrected_completed, &plan),
-                            )),
+                            Ok(qa_completion(final_review_response, Ok(corrected_completed))),
                         ),
                         Ok(final_verdicts) => (
                             prior_responses,
                             Ok(qa_completion(
                                 final_review_response,
-                                final_verdicts.apply_final_rejections_as_skips(
-                                    &corrected_completed,
-                                    &plan,
-                                ),
+                                Err(format!(
+                                    "second correct verdict rejected the corrected QA: {}",
+                                    final_verdicts.correction_findings()
+                                )),
                             )),
                         ),
                         Err(error) => (
@@ -1340,10 +1334,10 @@ mod tests {
         Ok(())
     }
 
-    /// expect: A second correct verdict exhausts bounded recovery and becomes a
-    /// terminal support-absent skip without leaking either generator draft.
+    /// expect: A second correct verdict exhausts bounded recovery and fails the
+    /// whole prompt without leaking either generator draft or inventing support skips.
     #[tokio::test]
-    async fn second_correct_verdict_becomes_terminal_skips()
+    async fn second_correct_verdict_fails_prompt_without_terminal_skips()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_directory, request) = fixture(&[prompt("qa-1")])?;
         let output = request.output.clone();
@@ -1351,16 +1345,20 @@ mod tests {
         let summary = QaBatchService::new(port.clone())
             .generate_qa_batch(request)
             .await?;
-        assert_eq!(summary["prompts_succeeded"], 1);
-        assert_eq!(summary["prompts_failed"], 0);
+        assert_eq!(summary["prompts_succeeded"], 0);
+        assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
-        assert_eq!(summary["qa_levels_skipped"], 2);
+        assert_eq!(summary["qa_levels_skipped"], 0);
         assert_eq!(summary["provider_responses"], 8);
         assert_eq!(port.calls.load(Ordering::SeqCst), 8);
         let rows = records(&output)?;
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| row["status"] == "skipped"));
-        assert!(rows.iter().all(|row| row.get("response").is_none()));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("response").is_none());
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("second correct verdict"))
+        );
         Ok(())
     }
 

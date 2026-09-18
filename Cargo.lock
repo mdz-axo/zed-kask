@@ -15310,14 +15310,18 @@ dependencies = [
 name = "portfolio_panel"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent-client-protocol",
  "anyhow",
  "fs",
  "gpui",
  "hkask-mcp-portfolio",
  "hkask-steer",
+ "hkask-types",
  "marketplace_ui_common",
  "project",
+ "serde",
+ "serde_json",
  "ui",
  "util",
  "workspace",
