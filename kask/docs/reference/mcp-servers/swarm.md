@@ -453,7 +453,6 @@ injected by the governed `build_mcp_server_env` credential path — it never app
 | `kask.swarm.api_url`                  | `HKASK_ABW_API_URL`                 | `https://agent-bestiary.world`   | ABW base URL override                                         |
 | `kask.swarm.max_credits_per_dispatch` | `HKASK_ABW_MAX_CREDITS`             | `50`                             | Per-dispatch ceiling for ABW spend; local execution is unpriced |
 | `kask.swarm.curator_consent_default`  | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | `false`                          | When `false`, `swarm_xaman` needs a consent token (S5 policy) |
-| `kask.swarm.skills_dir`               | `HKASK_SKILLS_DIR`                  | (empty)                          | Retained settings compatibility field; the swarm server no longer reads it |
 | `kask.swarm.default_agent_model`      | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | `qwen/qwen3-235b-a22b-thinking-2507` | Default model for new ABW agents (KA-05; open-weight platform default) |
 | `kask.swarm.a2a_http_enabled`         | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
 | —                                     | `HKASK_DB_PASSPHRASE`               | `allostery`                      | The ONE shared SQLCipher passphrase (credential; the swarm memory DB opens with it) |

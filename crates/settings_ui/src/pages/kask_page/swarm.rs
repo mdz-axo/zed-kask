@@ -27,7 +27,6 @@ pub(crate) fn render_swarm_page(
     let api_url = swarm.api_url;
     let max_credits = swarm.max_credits_per_dispatch.to_string();
     let curator_consent_default = swarm.curator_consent_default;
-    let skills_dir = swarm.skills_dir;
     let default_agent_model = swarm.default_agent_model;
     let a2a_http_enabled = swarm.a2a_http_enabled;
     let embedding_dim = swarm.embedding_dim.to_string();
@@ -183,33 +182,6 @@ pub(crate) fn render_swarm_page(
             }
         });
 
-    let skills_dir_input = SettingsInputField::new("kask-swarm-skills-dir")
-        .tab_index(4)
-        .with_initial_text(skills_dir)
-        .with_placeholder(".agents/skills")
-        .aria_label("Skills Directory")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .skills_dir = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
-
     let default_agent_model_input = SettingsInputField::new("kask-swarm-default-agent-model")
         .tab_index(5)
         .with_initial_text(default_agent_model)
@@ -354,23 +326,6 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 )
                 .child(max_credits_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Skills Directory"))
-                .child(
-                    Label::new(
-                        "Directory containing the zed-kask skill corpus (.agents/skills/). \
-                         Read to inject skill descriptions into the local agent's system \
-                         prompt (skill-awareness). Leave empty to run skill-blind. Or set \
-                         HKASK_SKILLS_DIR.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(skills_dir_input),
         )
         .child(Divider::horizontal())
         .child(

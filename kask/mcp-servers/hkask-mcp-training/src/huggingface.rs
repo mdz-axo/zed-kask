@@ -36,17 +36,21 @@ pub(crate) struct LocalModelResolver;
 
 impl LocalModelResolver {
     pub fn resolve(&self, model_id: &str) -> Result<ModelProvenance, HuggingFaceError> {
-        if model_id.len() > 193 || !model_id.split_once('/').is_some_and(|(org, model)| {
-            [org, model].iter().all(|part| {
-                !part.is_empty()
-                    && part.len() <= 96
-                    && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-                    && !part.starts_with(['-', '.'])
-                    && !part.ends_with(['-', '.'])
-                    && !part.contains("..")
-                    && !part.contains("--")
+        if model_id.len() > 193
+            || !model_id.split_once('/').is_some_and(|(org, model)| {
+                [org, model].iter().all(|part| {
+                    !part.is_empty()
+                        && part.len() <= 96
+                        && part
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+                        && !part.starts_with(['-', '.'])
+                        && !part.ends_with(['-', '.'])
+                        && !part.contains("..")
+                        && !part.contains("--")
+                })
             })
-        }) {
+        {
             return Err(HuggingFaceError::ModelNotFound(model_id.to_string()));
         }
         let (org, model) = model_id

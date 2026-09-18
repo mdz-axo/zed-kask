@@ -82,6 +82,15 @@ const DEFAULT_STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 /// Override: `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` env var.
 const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
 
+/// Deadline for a spawned server's handshake and tool discovery. Deliberately
+/// independent of `DEFAULT_HEALTH_CHECK_INTERVAL` (the two mechanisms are
+/// unrelated — F6 removed the latent coupling where tuning the health
+/// interval silently re-timed startup handshakes); the 60s value is the
+/// D3-intended startup allowance.
+///
+/// Override: `HKASK_MCP_STARTUP_TIMEOUT_SECS` env var.
+const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Interval between proactive health checks. The supervisor checks each
 /// server's transport liveness and, if closed, removes the dead connection
 /// and attempts a restart. The restart is the proactive self-healing path —
@@ -221,7 +230,7 @@ impl Default for McpRuntimeConfig {
             ),
             startup_timeout: resolve_duration_env_secs(
                 "HKASK_MCP_STARTUP_TIMEOUT_SECS",
-                DEFAULT_HEALTH_CHECK_INTERVAL,
+                DEFAULT_STARTUP_TIMEOUT,
             ),
             startup_max_retries: resolve_u32_env(
                 "HKASK_MCP_STARTUP_MAX_RETRIES",
@@ -2448,5 +2457,36 @@ mod metering_tests {
             }
             other => panic!("an unknown tool must report NotFound. Got: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// F6 pin: the startup handshake/discovery deadline has its own dedicated
+    /// 60s constant (the D3-intended value) — `McpRuntimeConfig::default()`
+    /// carries that constant, NOT `DEFAULT_HEALTH_CHECK_INTERVAL`. Before F6
+    /// the default borrowed the health-check interval, so any future tuning
+    /// of the interval would have silently re-timed startup handshakes
+    /// (latent cross-wiring between unrelated mechanisms).
+    #[test]
+    fn startup_timeout_default_is_the_dedicated_sixty_second_constant() {
+        assert_eq!(
+            DEFAULT_STARTUP_TIMEOUT,
+            Duration::from_secs(60),
+            "startup deadline is its own mechanism; its constant must stay 60s"
+        );
+        assert_eq!(
+            McpRuntimeConfig::default().startup_timeout,
+            DEFAULT_STARTUP_TIMEOUT,
+            "the config default must carry DEFAULT_STARTUP_TIMEOUT, not a borrowed interval"
+        );
+        // The two mechanisms remain independently overridable and documented;
+        // the health interval keeps its own default, unchanged by this seam.
+        assert_eq!(
+            McpRuntimeConfig::default().health_check_interval,
+            DEFAULT_HEALTH_CHECK_INTERVAL
+        );
     }
 }

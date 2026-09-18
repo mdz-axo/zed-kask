@@ -85,24 +85,31 @@ impl NebiusHost {
     }
 }
 
-pub(crate) fn build_cloud_init(job: &TrainingJob, ssh_key: &str) -> Result<String, HostProviderError> {
+pub(crate) fn build_cloud_init(
+    job: &TrainingJob,
+    ssh_key: &str,
+) -> Result<String, HostProviderError> {
     let script = crate::providers::runpod::generate_install_script(
-        job, job.params.harness.unwrap_or(job.harness),
+        job,
+        job.params.harness.unwrap_or(job.harness),
     )?;
     // JSON is a YAML subset: neither script bytes nor the key become YAML syntax.
-    Ok(format!("#cloud-config\n{}\n", serde_json::json!({
-        "users": [{
-            "name": "user", "sudo": "ALL=(ALL) NOPASSWD:ALL", "shell": "/bin/bash",
-            "ssh_authorized_keys": [ssh_key],
-        }],
-        "write_files": [{
-            "path": "/workspace/install_and_train.sh", "content": script, "permissions": "0755",
-        }],
-        "runcmd": [
-            "mkdir -p /workspace/logs /workspace/outputs",
-            "bash /workspace/install_and_train.sh 2>&1 | tee /workspace/logs/entrypoint.log",
-        ],
-    })))
+    Ok(format!(
+        "#cloud-config\n{}\n",
+        serde_json::json!({
+            "users": [{
+                "name": "user", "sudo": "ALL=(ALL) NOPASSWD:ALL", "shell": "/bin/bash",
+                "ssh_authorized_keys": [ssh_key],
+            }],
+            "write_files": [{
+                "path": "/workspace/install_and_train.sh", "content": script, "permissions": "0755",
+            }],
+            "runcmd": [
+                "mkdir -p /workspace/logs /workspace/outputs",
+                "bash /workspace/install_and_train.sh 2>&1 | tee /workspace/logs/entrypoint.log",
+            ],
+        })
+    ))
 }
 
 #[async_trait::async_trait]

@@ -267,7 +267,6 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/s
 | `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
 | `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
-| `skills_dir` | `String` | `""` | `HKASK_SKILLS_DIR` | Empty disables local-agent skill awareness |
 | `default_agent_model` | `String` | `""` | server configuration | Empty uses the server's own default agent model |
 | `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
 | `embedding_dim` | `usize` | `1024` | `HKASK_EMBEDDING_DIM` | Shared semantic-memory vector dimension |
@@ -541,7 +540,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_RESEARCH_DB` | research | Operator override for research DB path (default `mcp/research/research.db`) |
 | `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
 | `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |
-| `HKASK_SKILLS_DIR` | swarm | `swarm.skills_dir` (default `{kask_data_dir}/skills/`) |
 
 The collab server is launched directly by zed-kask (not via `mcp_env()`), so
 there are no `collab.*`-derived env vars.
