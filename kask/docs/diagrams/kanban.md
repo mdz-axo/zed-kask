@@ -50,8 +50,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-TASK-STATUS
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24, can_transition_to L65); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_reopen L704)
+verified_date: 2026-09-18
+verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24, can_transition_to L65); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_reopen L832)
 status: VERIFIED
 -->
 

@@ -71,7 +71,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 | Document | Description |
 | --- | --- |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
-| [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Prior-art study of kanban board naming/navigation reference models (Wekan, Planka, Kan, Kanboard), and the kata-kanban's alignment and gaps against them, with shaping recommendations and a test plan. Recommendations only — not implemented. |
+| [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 
 ## Document lifecycle ledger
 

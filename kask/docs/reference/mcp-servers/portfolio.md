@@ -95,7 +95,7 @@ one over the guideline; each has a distinct purpose).
 | `portfolio_contribution` | Absolute security profit contribution; includes trades, commissions, and symbol-assigned dividends and reconciles to portfolio return |
 | `portfolio_characteristics` | Composition, concentration, classifications, and supplied company metrics with metric-specific aggregation and coverage |
 | `portfolio_attribution` | Explicit-benchmark Brinson–Fachler allocation, selection, and separately reported interaction effects |
-| `portfolio_what_if` | Prospective same-date composition changes and characteristic comparison over cloned ledger state |
+| `portfolio_what_if` | Prospective same-date composition changes and characteristic comparison over cloned ledger state. Optional `presentation: "workbook_what_if"` additionally publishes the transaction set and report deltas as an editable workbook revision (a ` ```spreadsheet ` block rendered by the spreadsheet widget; the portfolio report hint is unchanged) |
 | `portfolio_historical_what_if` | Retrospective opportunity-cost comparison using realized subsequent prices; explicitly not an ex-ante forecast |
 | `ledger_import` | Import CSV/JSON (auto-creates portfolio) |
 | `ledger_export` | Export CSV/JSON |

@@ -2,7 +2,7 @@
 title: "Kanban Boards — Reference Models from Established Open-Source Implementations"
 audience: [architects, developers, agents]
 last_updated: 2026-09-18
-version: "1.1.0"
+version: "1.2.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -20,9 +20,8 @@ to use "the kanban board" as a generic single board, and opening the panel
 did not present a named board.
 
 The reference models below are the anchor for shaping and testing our kanban
-surfaces. **Recommendations only — not implemented** (the status line follows
-the precedent of
-[`research/chunking-for-rag-research.md`](chunking-for-rag-research.md)).
+surfaces. **Implemented 2026-09-18** — §10 records the implementation
+state and evidence.
 
 Version 1.1.0 is the reviewed revision: the v1.0.0 plan was stress-tested
 through the `metacognition` (measured-vs-inferred audit), `grill-me` (edge-case
@@ -360,8 +359,11 @@ name-validation tests finds none):
   current code: `kanban_board_create {"name": "   "}` succeeds today.
 - **T2 (R1)**: the panel's create gesture sends the trimmed name (red-first:
   `task_actions.rs:638-644` sends untrimmed today).
-- **T3 (R5)**: pin the existing service behavior — `task_create` with an
-  unknown board returns `NotFound` (`service.rs:278-284`; no test found).
+- **T3 (R5)**: `task_create` with an unknown board returns `NotFound`
+  (`service.rs:278-284`) — correction (2026-09-18): this was already pinned
+  by `task_create_rejects_unknown_board` in
+  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/tests.rs`;
+  verified passing, no new test needed.
 - **T4 (R6)**: rename round-trip — create → rename → `board_list` returns
   the new name; rename by a non-owner rejected; empty-after-trim rejected;
   rename-to-same-name is a convergent no-op success.
@@ -395,7 +397,48 @@ refresh/steer/stale-selection coverage but no board-identity coverage):
 - **T13 (R2, decision 2)**: duplicate names are allowed and disambiguated by
   the picker sub-label — or rejected, if the operator picks uniqueness.
 
-## 10. Review record (v1.0.0 → v1.1.0)
+## 10. Review record (v1.0.0 → v1.1.0) and implementation
+
+### Implementation record (2026-09-18)
+
+The v1.1.0 plan was implemented with the operator's three decision
+defaults (dropdown + searchable picker; no name uniqueness; persistence
+deferred):
+
+- **Server (G7, G9)**: `kanban_board_update` (rename; owner-only, convergent,
+  no idempotency key) with `KanbanService::board_rename` updating the board
+  h_mem in place via the store's `update` path; `validate_board_name` trims
+  and rejects empty-after-trim at the service boundary for create, rename,
+  and import. Tool-seam tests (`tests/board_rename.rs`: owner round-trip,
+  non-owner permission denial, whitespace rejection, unknown-board NotFound)
+  and service tests (trim storage, whitespace rejection, rename round-trip
+  preserving id/columns/created_at and task links, convergent same-name
+  rename) all pass.
+- **Panel (G1–G6, G8)**: the `≤1`-hidden label-row selector is **deleted**;
+  a named board switcher (ui Button → `BoardPickerDelegate` popover,
+  fuzzy-matched by name with duplicate-name id-suffix disambiguation in
+  `crates/kanban_panel/src/board_picker.rs`) opens any board by name;
+  headline and tab carry the open board's name (`panel_titles`); create and
+  import capture the response's `board_id` and open the created board once
+  its row lands (`pending_select_board` + `pending_board_to_select`);
+  every 10s tick re-reads the board list so identity reconciles
+  (`selected_identity_from_boards` + `RefreshTarget::BoardsAndTasks`);
+  the Steer prompt binds `name` + `id`, and a rename invalidates the open
+  Steer conversation.
+- **Tests (T1–T12)**: 27 panel tests pass (new: panel titles, reconcile,
+  pending-select, refresh-both-lists, steer name+id, rename convergent in
+  the keyless class; updated: steer scoping, tick behavior); server suites
+  pass. `cargo check -p zed` passes; clippy is clean for both crates
+  (after repairing four `redundant_clone` errors in the
+  `hkask-spreadsheet-widget` crate that were committed at HEAD and blocked
+  the shared clippy gate for every downstream crate — gate repair, clearly
+  outside the kanban change's scope).
+- **Commit state**: partially harvested into `e3644b2904` (fetch.rs,
+  Cargo.toml, part of the panel work, mixed with the spreadsheet stream's
+  portfolio change); the remaining panel work (board_picker.rs,
+  kanban_panel.rs, task_actions.rs) was uncommitted at report time.
+
+### Review deltas (v1.0.0 → v1.1.0)
 
 The plan was re-reviewed through the `metacognition`, `grill-me`,
 `falsifiability`, and `refactor-architecture` lenses on 2026-09-18, with a

@@ -510,6 +510,51 @@ clean; docs gates: 65 files (<70), 0 broken links, complete frontmatter.
 - Update D18/D26/D45-related divergence records as required by the actual touched seams.
 - Add interaction, layout, and viewport-performance tests.
 
+**Phase 4 record (2026-09-18): COMPLETE in the working tree (uncommitted at
+record time).** `crates/hkask-spreadsheet-widget` ships three modules over the
+shared wire contract: `block.rs` (two-stage parsing — a tolerant
+`SpreadsheetBlockBody` for the viz discriminator so foreign shapes never
+log as malformed, then the strict `SpreadsheetBlock` contract after the
+claim, with claimed-but-malformed bodies surfacing as a visible error
+state), `logic.rs` (the pure interaction core: navigation with ceiling
+clamping, block-aligned window math, TSV clipboard serialization/parsing,
+editor-text mapping that prefers the formula so editing never destroys
+`=SUM(B2:B3)` by round-tripping its evaluated number), and `view.rs` (the
+GPUI widget). §8 initial interaction scope: row/column headers, windowed
+viewport rendering (≤ 64×16 = 1,024 painted cells, pinned by
+`painted_cells_are_bounded_for_any_navigation`), active cell + rectangular
+selection, Arrow/Tab/Enter/Home/End/PageUp/PageDown navigation, TSV
+copy/paste, Enter/F2 editing (double-click dropped: `ClickEvent`'s
+shape is unverified in this tree; the §8 "or Enter" arm covers it — noted
+as a follow-up if double-click is wanted), unified formula-bar + cell
+editor, local undo/redo with a mirrored staged-batch/redo-buffer pair
+(staging clears the redo buffer, matching engine semantics), sheet tabs
+over the document's real sheet list, and Save dispatch through the governed
+ToolInvoker with all four `InvokeError` states rendered distinctly plus
+conflict detection (failed_precondition digest mismatch). `Interrupted`
+surfaces the §7 reconciliation instruction verbatim and never auto-replays.
+Layout per ui-layout-discipline: 3 primary actions (≤5), fixed elements
+`flex_shrink_0`, flexible text `min_w_0` + `truncate()`. Registration:
+viz-core `VizWidget` impl + factory (pin updated 5→6), the upstream-side D18
+fence gate in `crates/markdown/src/markdown.rs` widened with `spreadsheet`
+(the viz-core fence-language pin updated in the same pass), the system
+prompt's display-hint instruction extended (agent 902 tests pass), and the
+DIVERGENCE.md D18 row updated (title, surface list, admitted languages,
+widget list) in the same pass. Gates observed:
+`cargo test -p hkask-spreadsheet-widget` 17 passed;
+`cargo test -p hkask-viz-core` 10; `cargo test -p markdown` 166;
+`cargo test -p agent` 902; `./script/clippy` clean on
+hkask-spreadsheet-widget, hkask-viz-core, markdown, hkask-tool-invoker;
+`cargo fmt --all --check` clean; `cargo check -p zed` clean.
+**No-shims ruling (operator, 2026-09-18: "no backward compatibility
+requirements"):** the Phase-1 `BlockProvenance` re-export in
+`hkask-tool-invoker` is deleted — all ten consumer imports across six
+crates point at `hkask_types::BlockProvenance`, the re-export's doc comment
+died with it, and the now-unused `hkask-types` dependency was removed from
+`hkask-tool-invoker` (machete clean). The `report_response`/
+`report_response_with_hints` delegation collapsed into one
+`report_response(extra_hints: Vec<String>)` with every call site updated.
+
 ### Phase 5 — Portfolio proving slice
 
 The portfolio domain first publishes its specialized reports through the portfolio viewer:
@@ -521,6 +566,37 @@ The portfolio domain first publishes its specialized reports through the portfol
 - `portfolio_historical_what_if` — retrospective opportunity-cost analysis using realized subsequent prices, explicitly labelled as hindsight.
 
 The spreadsheet capability may subsequently present the hypothetical transaction set and report deltas as a `WorkbookWhatIf`. It consumes these portfolio-authoritative calculations; it does not reimplement them.
+
+**Phase 5 record (2026-09-18): COMPLETE in the working tree (uncommitted at
+record time).** `portfolio_what_if` gained the explicit presentation choice
+(`WhatIfPresentation`: `DataOnly` default — the portfolio viewer path — or
+`WorkbookWhatIf`, plan §6's no-hidden-threshold rule). Under
+`WorkbookWhatIf`, the server publishes the hypothetical transaction set
+(pre-formatted summaries — one formatting site) and the before/after
+characteristic deltas (all values computed from the authoritative
+`prospective_what_if` reports; the workbook consumes them, it never
+reimplements the portfolio mathematics) as an immutable workbook revision
+through the server-owned `WorkbookService` actor, and appends the
+` ```spreadsheet ` hint to the portfolio report hint (both widgets render;
+the hint parsers scan for their own fence). The engine actor is a
+**per-server-instance dependency** (a struct field like the store, moved in
+via `run()`'s factory), not a process global — the initial `OnceLock`
+global was deleted when the proving-slice test revealed it forced tests to
+publish into the production artifacts tree. Acceptance item 10 plus the §11
+ledger-isolation invariant are pinned end-to-end by
+`what_if_workbook_is_immutable_and_never_touches_the_ledger`
+(`tests/tool_behavior.rs`): the published block parses and validates as the
+strict wire contract; the ledger is byte-identical before/after publication
+and after an applied workbook edit; staged edits never write through (a
+fresh open shows the published values); and an applied edit mints a new
+immutable revision while the base reopens digest-intact. Gates observed:
+`cargo test -p hkask-mcp-portfolio` 49 + 2 + 8 passed (including the proving
+slice); `./script/clippy -p hkask-mcp-portfolio` and `-p hkask-spreadsheet`
+clean; `cargo check -p zed` clean. Doc updated
+(`kask/docs/reference/mcp-servers/portfolio.md`: the `portfolio_what_if`
+tool row + the fleet README's spreadsheet row from Phase 3).
+Phases 6–7 (companies, scenarios, research expansion) remain unchartered
+post-proving-slice candidates, as the plan reserves them.
 
 Acceptance sequence:
 

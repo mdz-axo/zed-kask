@@ -2,7 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 //! hkask-mcp-kata-kanban — Kata-Kanban workflow coordination MCP server.
 //!
-//! Provides 24 MCP tools for kanban board, task, and goal management.
+//! Provides 25 MCP tools for kanban board, task, and goal management.
 //! All tools carry the caller's WebID for P12 compliance.
 //!
 //! The KanbanServer struct and tool methods are exported from the library

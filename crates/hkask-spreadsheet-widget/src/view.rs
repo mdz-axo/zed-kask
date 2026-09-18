@@ -470,7 +470,7 @@ impl SpreadsheetWidget {
         }
         let edits: Vec<CellEdit> = self.staged_batches.iter().flatten().cloned().collect();
         let transaction = match EditTransaction::new(
-            block.artifact.clone(),
+            block.artifact,
             uuid::Uuid::new_v4().simple().to_string(),
             SpreadsheetAccess::WorkbookWhatIf,
             edits,
@@ -571,7 +571,7 @@ impl SpreadsheetWidget {
         self.selection_extent = None;
         self.editor = None;
         self.active_sheet = new_block.active_sheet.clone();
-        self.window = Some(new_block.viewport.clone());
+        self.window = Some(new_block.viewport);
         self.content = None;
         self.reload_document(cx);
     }
@@ -584,13 +584,13 @@ impl SpreadsheetWidget {
         let Ok(service) = shared_spreadsheet_service().map(Arc::clone) else {
             return;
         };
-        let artifact = block.artifact.clone();
+        let artifact = block.artifact;
         cx.spawn(async move |this, cx| {
             let outcome = service.open(&artifact).await;
             this.update(cx, |widget, cx| {
                 match outcome {
                     Ok(document) => {
-                        widget.document = Some(document.clone());
+                        widget.document = Some(document);
                         widget.load_error = None;
                         widget.fetch_window(cx);
                     }

@@ -1,8 +1,8 @@
 //! Task action forms and their handlers — create, edit, spawn, and delete
-//! task UI, plus the board lifecycle handlers (create/delete/export/import
-//! board). Extracted from `kanban_panel.rs` — the handlers stay methods on
-//! `KanbanPanel` (they mutate panel state and dispatch through the panel's
-//! mutation pipeline); this module owns the form structs, the form
+//! task UI, plus the board lifecycle handlers (create/rename/delete/export/
+//! import board). Extracted from `kanban_panel.rs` — the handlers stay
+//! methods on `KanbanPanel` (they mutate panel state and dispatch through the
+//! panel's mutation pipeline); this module owns the form structs, the form
 //! renderers, and the action handlers.
 //!
 //! Each form is a lightweight inline panel rendered below the board header.

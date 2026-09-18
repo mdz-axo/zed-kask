@@ -21,8 +21,13 @@ use crate::{BoardListResponse, CommentsResponse, TaskListResponse};
 use hkask_tool_invoker::shared_tool_invoker;
 
 impl KanbanPanel {
-    /// Fetch the list of boards from the kanban MCP server. Auto-selects the
-    /// first board if none is selected, which triggers a task fetch.
+    /// Fetch the list of boards from the kanban MCP server. Every read:
+    /// reconciles the selected board's identity from the fresh rows
+    /// (renames and external edits reach the panel — reference model R4/R6),
+    /// refreshes the board picker's rows, consumes a pending create/import
+    /// selection (R7 — opens the created board once its row lands), and
+    /// auto-selects the first board if none is selected, which triggers a
+    /// task fetch.
     pub(crate) fn fetch_boards(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = shared_tool_invoker() else {
             // The invoker is wired asynchronously by the deferred post-login task,
@@ -93,8 +98,18 @@ impl KanbanPanel {
                                 this.selected_board_id.as_deref(),
                                 &this.boards,
                             ) {
+                                let name_changed = this.board_name.as_deref() != Some(name);
                                 this.board_name = Some(name.into());
                                 this.columns = columns.to_vec();
+                                if name_changed && this.kanban_widget.is_some() {
+                                    // A rename landed: rebuild the widget so its
+                                    // header shows the new name on this read,
+                                    // not on the next task fetch (up to 10s
+                                    // later). set_body preserves pending
+                                    // moves, expanded descriptions, and the
+                                    // detail panel.
+                                    this.build_or_update_widget(cx);
+                                }
                             }
                             // The picker's rows mirror the board list —
                             // refresh them so opens and renames are
