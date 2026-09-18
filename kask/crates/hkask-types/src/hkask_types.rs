@@ -37,6 +37,9 @@ pub mod time;
 pub mod tool_response;
 pub mod tool_schema;
 
+#[cfg(test)]
+mod property_tests;
+
 pub mod voice;
 
 pub use voice::VoiceDesign;

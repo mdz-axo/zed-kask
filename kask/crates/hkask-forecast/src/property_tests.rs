@@ -150,4 +150,30 @@ proptest! {
     fn isotonic_apply_empty_fit_is_identity(p in 0.0..=1.0) {
         prop_assert!((isotonic_apply(&[], p) - p).abs() < 1e-15);
     }
+
+    /// Hypothesis: the calibration is constant within each knot interval —
+    /// two generated points in the same inter-knot region map to the same
+    /// calibrated value (the ledger's piecewise-constancy follow-up).
+    #[test]
+    fn isotonic_apply_is_constant_within_knot_intervals(
+        pairs in proptest::collection::vec((0.0f64..=1.0, any::<bool>()), 2..16),
+        a in 0.0f64..=1.0,
+    ) {
+        let fit = isotonic_fit(&pairs).expect("two or more pairs always fit");
+        let upper = fit
+            .iter()
+            .map(|(threshold, _)| *threshold)
+            .find(|threshold| a < *threshold)
+            .unwrap_or(1.0);
+        let b = (a + upper) / 2.0;
+        if b > a {
+            prop_assert_eq!(
+                isotonic_apply(&fit, a),
+                isotonic_apply(&fit, b),
+                "points {} and {} share a knot interval and must calibrate equal",
+                a,
+                b
+            );
+        }
+    }
 }

@@ -8797,6 +8797,7 @@ dependencies = [
 name = "hkask-lisp"
 version = "0.40.0"
 dependencies = [
+ "proptest",
  "serde_json",
  "stacksafe",
  "thiserror 2.0.17",

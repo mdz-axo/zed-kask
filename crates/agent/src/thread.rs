@@ -8730,9 +8730,7 @@ mod tests {
     /// — never a spoofable value, since nothing about a tool call's JSON
     /// input feeds this derivation.
     #[gpui::test]
-    async fn test_calling_actor_is_distinct_per_thread_and_deterministic(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_calling_actor_is_distinct_per_thread_and_deterministic(cx: &mut TestAppContext) {
         let (thread_a, _events_a) = setup_thread_for_test(cx).await;
         let (thread_b, _events_b) = setup_thread_for_test(cx).await;
 

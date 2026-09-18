@@ -273,3 +273,50 @@ async fn forecast_record_without_probability_uses_pinned_fallback() {
         "the fallback must be the pinned 0.7 prior: (1−0.7)² = 0.09, got {brier}"
     );
 }
+
+/// expect: the price-derived path computes the forecast price change —
+/// persisting without forecast_price_change but with forecast_price and
+/// current_price stores (fp − cp)/cp, surfaces it in the response, and the
+/// read-back snapshot carries it (the review's price-path follow-up).
+#[tokio::test]
+async fn forecast_persist_computes_price_change_from_prices() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let server = server(directory.path());
+    let persisted = content(
+        &server
+            .forecast_persist(Parameters(types::ForecastPersistRequest {
+                symbol: "ACME.US".into(),
+                forecast_date: "2026-01-15".into(),
+                horizon: types::Horizon::SixMo,
+                forecast_price_change: None,
+                forecast_multiple: Some(12.0),
+                forecast_price: Some(110.0),
+                current_price: Some(100.0),
+                forecast_probability: Some(0.6),
+                revision_of: None,
+                forecast_id: Some("loop-price-derived-1".into()),
+            }))
+            .await
+            .expect("forecast_persist tool"),
+    );
+    let change = persisted["forecast_price_change"]
+        .as_f64()
+        .expect("computed price change in the response");
+    assert!(
+        (change - 0.10).abs() < 1e-12,
+        "(110 − 100)/100 must compute to 0.10, got {change}"
+    );
+
+    let read = content(
+        &server
+            .forecast_get(Parameters(types::ForecastGetRequest {
+                forecast_id: "loop-price-derived-1".into(),
+            }))
+            .await
+            .expect("read-back"),
+    );
+    let stored = read["snapshot"]["forecast_price_change"]
+        .as_f64()
+        .expect("computed price change in the snapshot");
+    assert!((stored - 0.10).abs() < 1e-12);
+}

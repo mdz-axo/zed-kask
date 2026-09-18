@@ -294,6 +294,15 @@ an hKask crate behind one of these seams instead.
 
 Retired seams (numbers are never reused): **D4** — guard layer (`hkask-guard` crate removed in b89a28359e; the `RoleOverride` scanner's false positives blocked legitimate template rendering); **D10** — kask panel (redundant with the agent panel + curator threads; standalone viz views replaced by the D18 inline widgets); **D17, D19** — retired (kask-seam-audit); **D30** — local skill marketplace (deleted; skill sharing moved to the ABW cloud); **D38** — folded into D37 (same bug class — reasoning-model request guards — same fix pattern, two surfaces); **D49** — folded into D42 (D13's residual budget removal belongs under the uncapped-thinking ruling); **D50** — folded into D46 (explicitly "extends D46"); **D53** — folded into D54 (one anchoring feature, one seam — the prompt identity, the tool, and the skill).
 
+**2026-09-18 maintenance (D3/D7):** rustfmt-only normalization of
+`test_calling_actor_is_distinct_per_thread_and_deterministic` in
+`crates/agent/src/thread.rs` and the caller-identity fallback in
+`crates/zed/src/main.rs`; attribution behavior and its existing test are unchanged.
+The D7 isolation script no longer greps the deleted updater source: its existing
+`crates/auto_update*` directory-absence checks enforce removal, while host
+initialization checks remain active. Verification: workspace `cargo fmt --check`
+and `kask/scripts/build/check-zed-isolation.sh`.
+
 ## Other zed-kask-modified files (supporting D1–D66)
 
 These files carry `// zed-kask:` comments but are supporting edits, not

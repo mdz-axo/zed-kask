@@ -970,7 +970,7 @@ mod tests {
     }
 
     /// expect: "A commit failure rolls back data and marker on one connection; a later successful batch survives reopen" [P1]
-    /// post: a second pooled connection never observes partial or failed batch records
+    /// post: after the operation returns, a second pooled connection sees no failed batch records
     #[test]
     fn atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;

@@ -51,8 +51,7 @@ fi
 # zed-kask: the auto_update, auto_update_helper, and auto_update_ui
 # crates are deleted (D7). App self-update is handled by the terminal-based
 # update-zed-kask.sh script. The assertions above pin that the crates stay
-# deleted. The old init-check is now vacuous (the crates don't exist),
-# but the crate-absence assertions supersede it.
+# deleted; also reject reintroduced initialization in the surviving host.
 assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_update_ui::init' \
     "zed-kask initializes upstream Zed's updater"
 
@@ -89,8 +88,6 @@ assert_no_match "$repo_root/crates/zed/src/zed.rs" 'auto_update::|install_releas
     "zed-kask safe action reaches the upstream updater"
 assert_no_match "$repo_root/crates/zed/src/zed/app_menus.rs" 'auto_update::Check|auto_update::UpdateZedKask' \
     "menu reaches the upstream updater"
-assert_no_match "$repo_root/crates/auto_update/src/auto_update.rs" 'UpdateZedKask|poll_zed_kask|UpdateFeed::Github' \
-    "removed zed-kask GitHub updater remains"
 assert_absent "$repo_root/kask/crates/kask_bridge/src/github_update.rs"
 
 # zed-kask icons live in kask/assets/icons/ — the upstream icon files in

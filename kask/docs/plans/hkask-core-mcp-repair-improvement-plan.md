@@ -242,7 +242,7 @@ Plan: make the protection state visible, then obtain the operator's choice of re
 
 ### R2 — Generic transaction handle does not own its connection
 
-**Current disposition (2026-09-18, uncommitted): removed, not wrapped.** Caller
+**Current disposition (2026-09-18): removed, not wrapped; implementation committed by another stream in `74df6916b7`.** Caller
 inventory at `6edf354cd739a22cc6f7d1b2e565072b84913738` found no production users
 of the generic driver transaction facade. Deleted its module, trait hooks,
 SQLite forwarding methods and two bridge test-driver forwards. Existing
@@ -310,7 +310,7 @@ Plan: generate inventory facts, validate links, restore or replace the missing c
 
 **Class:** optional improvement opportunity. **Severity:** Low unless tied to a defect. **Confidence:** Medium.
 
-Keep the spreadsheet actor: deleting it spreads non-Send engine ownership, executor bridging, staging, and revision management across MCP and GPUI. Keep typed uncertain-delivery errors: they encode essential retry information. Question the transaction facade because it hides ownership incorrectly.
+Keep the spreadsheet actor: deleting it spreads non-Send engine ownership, executor bridging, staging, and revision management across MCP and GPUI. Keep typed uncertain-delivery errors: they encode essential retry information. The unused connectionless transaction facade has been removed in the later R2 slice; preserve connection-owned domain transactions instead.
 
 Mechanical samples during review: event-store root had 8 public methods and 1 type with approximately 138 nonblank/noncomment pre-test lines; spreadsheet service had 12 public methods and 5 types with approximately 503 such lines. These are navigation signals, not reasons to split cohesive modules.
 

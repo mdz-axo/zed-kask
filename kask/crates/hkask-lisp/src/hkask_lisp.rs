@@ -1711,6 +1711,9 @@ pub fn eval_sandboxed_with_budget(
 // stack (depth budget), or escape the environment (no ambient access).
 
 #[cfg(test)]
+mod property_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

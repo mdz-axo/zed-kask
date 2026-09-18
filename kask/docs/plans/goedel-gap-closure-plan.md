@@ -657,13 +657,17 @@ Host `cargo check --locked -p zed` also passed. Installed-card audit confirmed m
 
 **Disposition/next:** core-repair finding R2 is closed by deletion in the working tree, pending review/integration. The broader R6 milestone is not complete. Next inspect the actual approval boundary and artifact/evaluator identity binding; do not add a general promotion controller until those contracts and the required recovery scope are established. Spreadsheet publication/receipt crash reconciliation and the reported cache-open digest hypothesis remain separate P3 work. No source of operator approval can be replaced by a caller boolean or by these passing storage tests.
 
+**Final validation:** full serial hKask subtree **2,544 passed / 0 failed / 1 ignored across 71 target summaries**, host `cargo check --locked -p zed` exit 0, storage/bridge clippy wrapper including cargo-machete/buf exit 0. Targeted transaction characterization rerun passes on the final source. Dependency direction, MCP contract inventory, governance inventory, rustfmt and whitespace checks pass; 69 documentation files, zero unresolved local file links. Review found no missed hKask transaction-hook caller or production behavior replacement; the similarly named upstream collaboration type is unchanged. No formal or crash-power-loss guarantee is claimed. Source hashes/logs are in the artifact manifest. Another agent's staged regulation and testing-closure records remain preserved; this agent made no commit.
+
+**Commit reconciliation:** during closeout the operator/another stream committed the deletion and test in `74df6916b7a3d75ed72ef233523085d8a1ff65d5` (also contains concurrent regulation/closure records). This supersedes the entry's earlier uncommitted disposition for implementation. Only the more precise test comment and final documentation/validation updates remain uncommitted; executable code matches that commit. This agent did not create it.
+
 ### Testing-platform closure — 2026-09-18
 
 **Provenance:** local evidence runner/checker and MCP effect-journal regression
 landed in `23a73a44d4`. The unbound sensor retirement, testing documentation and
-concurrent corpus/media properties landed in `6edf354cd7`; final regression
-formatting and closure records remain working-tree changes until committed.
-This stream did not create either shared-tree commit.
+concurrent corpus/media properties landed in `6edf354cd7`; regression formatting
+and closure records were subsequently integrated in `74df6916b7` alongside the
+independent storage cleanup. This stream did not create those shared-tree commits.
 
 **Real product repair:** `unbound_metrics_cannot_become_quality_observations`
 in `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs` failed against
@@ -698,13 +702,23 @@ changed-file whitespace checks passed. Source hashes for this repair remained
 unchanged through verification. Other agents continued editing storage/bridge
 files, so these are time-scoped results, not a blanket claim about later edits.
 
-**Open integration blocker:** workspace `cargo fmt --all -- --check` reports
-pre-existing formatting in `crates/agent/src/thread.rs` and
-`crates/zed/src/main.rs`; this slice leaves those unrelated upstream-side files
-untouched. Remote run `35401930835` for `6edf354cd7` likewise failed its formatting
-step; build/test jobs were still running when checked. No fully green remote CI
-claim is made. Final closure records and regression formatting need integration
-without sweeping other agents' changes.
+**Formatting blocker resolved locally, 2026-09-18:** normalized the two rustfmt
+hunks in `crates/agent/src/thread.rs` and `crates/zed/src/main.rs`, without changing
+attribution behavior. Workspace `cargo fmt --all -- --check` now passes. Removed
+the isolation script's redundant grep of deleted updater source; directory-absence
+and surviving-host checks remain. These maintenance edits are uncommitted until
+separately integrated. Remote run `35401930835` for the older `6edf354cd7` failed
+formatting; that historical result is not a verdict on this working-tree fix.
+No fully green remote CI claim is made, and property-test expansion remains paused.
+
+**Maintenance verification:** workspace formatting, host `cargo check --locked
+--offline -p zed`, 103 regulation tests, the evidence-runner self-test, all ten
+fast invariant scripts from the CI check job, and staged/unstaged whitespace
+checks pass. Isolation/desktop checks emit no missing-source error. ShellCheck
+warning/error checks pass for the isolation script; its informational diagnostics
+are unchanged from baseline (no new suppression). The two Rust diffs contain only
+whitespace and an optional trailing comma. No property tests or product behavior
+were changed by this maintenance pass; concurrent storage cleanup was preserved.
 
 **Documentation:** the existing testing protocol now has a runnable local
 recipe and explicit identity scope; the portal links it; the propagation ledger
