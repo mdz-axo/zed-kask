@@ -87,4 +87,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Ashby's Law of Requisite Variety — the alert backlog is the variety the regulator could not absorb autonomously; human review is the external variety amplifier.
 - Conant-Ashby theorem — "every good regulator of a system must be a model of that system." The triage briefing is the operator's model of the regulation system's state.
 - Toyota Andon cord — algedonic alerts are the digital Andon; this skill is the structured response (not just acknowledgment).
-- `docs/reports/gemba-loop-specification.md` — the gemba loop's Observe → Decide → Act phases map to this skill's TRIAGE → PRESENT → ACT phases.

@@ -8657,7 +8657,7 @@ mod internal_tests {
     /// Panel workflow prompts are appended to the Curator context without
     /// narrowing the conversation's cross-domain MCP tool surface.
     #[gpui::test]
-    async fn test_curator_sessions_carry_panel_prompt_without_server_scope(
+    async fn test_curator_sessions_carry_panel_prompt_with_full_tool_surface(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);

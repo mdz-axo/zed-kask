@@ -76,7 +76,7 @@ pub(crate) fn render_media_page(
                  speech-to-text, vision, image generation, and video generation. \
                  When empty, the server falls back to the kask default models. \
                  The media panel (View > Media or the status bar button) provides \
-                 a Steer-mode conversation scoped to the media MCP server.",
+                 a cross-domain Steer conversation framed around media work.",
             )
             .color(Color::Muted)
             .size(LabelSize::Small),

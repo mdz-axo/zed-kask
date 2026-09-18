@@ -87,10 +87,10 @@ verified_against: crates/agent/src/templates.rs; crates/agent/src/curator_agent_
 status: VERIFIED
 -->
 
-The Curator context is stored on `KaskThreadState`. Panel Steer overlays instead
-construct scoped conversation views through the shared `hkask_steer` lifecycle;
-changing panel state invalidates and rebuilds that conversation. Conflating these
-paths would hide failures at the editor-panel seam.
+The Curator context is stored on `KaskThreadState`. Panel Steer overlays construct
+cross-domain conversation views through the shared `hkask_steer` lifecycle;
+changing panel state invalidates and rebuilds that conversation. The overlay frames
+the workflow but does not filter the MCP tool surface.
 
 ### 3.1 Conditional sections
 

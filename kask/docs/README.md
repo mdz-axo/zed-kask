@@ -74,7 +74,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 65 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 64 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 
@@ -120,6 +120,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 | Deleted artifact | Named successor |
 | --- | --- |
 | `reports/prediction-markets/` (5 files) | Current implementation and tool surface in `reference/mcp-servers/prediction-markets.md`; git history remains the research archive. |
+| `reports/gemba-loop-specification.md` | Active procedures in `.agents/skills/gemba-walk/SKILL.md` and `.agents/skills/algedonic-review/SKILL.md`; git history remains the design archive. |
 
 ### Verification gate
 
@@ -128,7 +129,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links in the previously blocked hkask-tool-port documents target retained reference/how-to documents.
 - [x] Diagram metadata has unique-ID/location registry parity.
 - [x] Edited citations use full repository-relative paths.
-- [x] Document count is 65 and remains fewer than 70.
+- [x] Document count is 64 and remains fewer than 70.
 
 ## See also
 

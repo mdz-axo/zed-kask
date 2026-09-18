@@ -852,9 +852,9 @@ impl KanbanPanel {
         cx.notify();
     }
 
-    /// Lazily construct the cross-domain ConversationView for Steer mode.
-    /// kanban MCP server. The curator can create tasks, spawn subagents,
-    /// move tasks, and decompose work via the kanban MCP tools.
+    /// Lazily construct the cross-domain ConversationView for Steer mode. The
+    /// curator can create tasks, spawn subagents, move tasks, and compose work
+    /// with any other domain tools the analysis requires.
     fn ensure_steer_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;

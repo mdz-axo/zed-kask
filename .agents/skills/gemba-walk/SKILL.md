@@ -84,4 +84,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Meyer "The Gemba Was Always There" — flow kaizen, not point kaizen. The gemba walk makes the hidden flow visible.
 - GembaCore — two-plane architecture (WorkPlane + OrchestrationPlane) maps to kask's separation of skill execution from regulation.
 - C.H. Robinson "What Is Lean AI?" — start with a real problem, test solutions, integrate human oversight, measure results.
-- `docs/reports/gemba-loop-specification.md` — the six-phase gemba loop specification.

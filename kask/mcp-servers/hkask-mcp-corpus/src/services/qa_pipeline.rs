@@ -18,8 +18,7 @@ use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response}
 pub(crate) const PREPARED_QA_PROTOCOL: &str = "prepared-qa-local-evidence-v1";
 const PASSAGE_QUALITY_PROTOCOL: &str = "prepared-qa-passage-quality-v1";
 const QA_DISPOSITION_PROTOCOL: &str = "prepared-qa-disposition-plan-v1";
-const QA_GENERATION_PROTOCOL: &str = "prepared-qa-staged-quality-v8";
-const QA_VERIFICATION_PROTOCOL: &str = "prepared-qa-verification-verdict-v1";
+const QA_GENERATION_PROTOCOL: &str = "prepared-qa-grounding-candidate-v1";
 const PASSAGE_QUALITY_POLICY: &str = "Judge the complete primary passage before any QA planning. The passage is contaminated_or_garbled when OCR or layout materially corrupts words, interleaves page or line furniture with prose, splices footnotes into a sentence, embeds unrelated bare page-number fragments, interface controls, media titles, or navigation residue between otherwise usable prose, appends bibliographic navigation or an isolated table or figure caption, joins unrelated sections, or truncates a thought required for an answer. The passage is non_substantive_passage when it is only navigation, marketing, legal or publication furniture, an unfilled template, an isolated caption, or an isolated anecdote or cross-document fragment whose purpose is not inferable from the passage. Do not reject a coherent continuation fragment or short legible factual passage merely because it begins mid-sentence, contains notation, lacks conceptual support, or has a single broken word or line-break hyphen, footnote marker, or page number that does not obstruct meaning.";
 const EVIDENCE_CANDIDATE_WORDS: usize = 24;
 const EVIDENCE_CANDIDATE_OVERLAP_WORDS: usize = 6;
@@ -235,38 +234,6 @@ pub(crate) fn render_passage_quality_messages(
     ])
 }
 
-/// expect: An initially clean passage receives an independent quality decision before QA planning.
-/// [P9] Motivating: A single model miss cannot admit contaminated or non-substantive training prose.
-/// pre: prompt is valid and proposed_quality is the first pass's compact response.
-/// post: the verification model receives the complete passage, proposal, and identical closed decision schema.
-/// [P1] Constraining: Preserve the prepared passage without rewriting or inferred identity.
-pub(crate) fn render_passage_quality_review_messages(
-    prompt: &PreparedQaPrompt,
-    proposed_quality: &str,
-) -> Result<[ChatMessage; 2], McpToolError> {
-    let mut messages = render_passage_quality_messages(prompt)?;
-    messages[0].content.push_str(
-        " Independently review the proposed passage-quality decision against the complete passage. The proposal is not authoritative. Return one complete corrected decision in the identical compact schema and nothing else.",
-    );
-    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
-        McpToolError::internal(format!(
-            "Cannot parse rendered passage quality request: {error}"
-        ))
-    })?;
-    let object = user.as_object_mut().ok_or_else(|| {
-        McpToolError::internal("Rendered passage quality request is not a JSON object")
-    })?;
-    object.insert(
-        "proposed_passage_quality".to_string(),
-        serde_json::from_str(proposed_quality)
-            .unwrap_or_else(|_| Value::String(proposed_quality.into())),
-    );
-    messages[1].content = serde_json::to_string(&user).map_err(|error| {
-        McpToolError::internal(format!("Cannot render passage quality review: {error}"))
-    })?;
-    Ok(messages)
-}
-
 pub(crate) fn parse_passage_quality_response(response: &str) -> Result<PassageQuality, String> {
     let fields: Vec<String> = serde_json::from_str(response)
         .map_err(|error| format!("invalid compact passage-quality JSON: {error}"))?;
@@ -377,37 +344,6 @@ pub(crate) fn render_disposition_plan_messages(
             content: user,
         },
     ])
-}
-
-pub(crate) fn render_disposition_review_messages(
-    prompt: &PreparedQaPrompt,
-    proposed_plan: &str,
-    validation_error: Option<&str>,
-) -> Result<[ChatMessage; 2], McpToolError> {
-    let mut messages = render_disposition_plan_messages(prompt, None)?;
-    messages[0].content.push_str(
-        " Independently review the proposed disposition against the complete passage. Correct missed contamination, false prompt-wide skips, false level skips, recall mislabeled as conceptual, missing evidence IDs, and unsupported relation labels. The proposed plan is not authoritative. Return one complete corrected plan in the same typed schema and nothing else.",
-    );
-    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
-        McpToolError::internal(format!(
-            "Cannot parse rendered disposition request: {error}"
-        ))
-    })?;
-    let object = user.as_object_mut().ok_or_else(|| {
-        McpToolError::internal("Rendered disposition request is not a JSON object")
-    })?;
-    object.insert(
-        "proposed_plan".to_string(),
-        serde_json::from_str(proposed_plan).unwrap_or_else(|_| Value::String(proposed_plan.into())),
-    );
-    object.insert(
-        "validation_error".to_string(),
-        validation_error.map_or(Value::Null, |error| Value::String(error.into())),
-    );
-    messages[1].content = serde_json::to_string(&user).map_err(|error| {
-        McpToolError::internal(format!("Cannot render disposition review: {error}"))
-    })?;
-    Ok(messages)
 }
 
 pub(crate) fn parse_disposition_plan_response(
@@ -619,197 +555,6 @@ struct PreparedQaDraft {
     level: String,
     question: String,
     answer: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum PreparedQaVerdictKind {
-    Accept,
-    Correct,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PreparedQaVerdict {
-    level: String,
-    verdict: PreparedQaVerdictKind,
-    subject: bool,
-    condition: bool,
-    premise: bool,
-    entailment: bool,
-    completeness: bool,
-    actual_difficulty: bool,
-    findings: Vec<String>,
-}
-
-impl PreparedQaVerdict {
-    fn all_checks_pass(&self) -> bool {
-        self.subject
-            && self.condition
-            && self.premise
-            && self.entailment
-            && self.completeness
-            && self.actual_difficulty
-    }
-}
-
-pub(crate) struct QaVerificationVerdicts {
-    levels: Vec<PreparedQaVerdict>,
-}
-
-impl QaVerificationVerdicts {
-    pub fn requires_correction(&self) -> bool {
-        self.levels
-            .iter()
-            .any(|level| level.verdict == PreparedQaVerdictKind::Correct)
-    }
-
-    pub fn correction_findings(&self) -> String {
-        self.levels
-            .iter()
-            .filter(|level| level.verdict == PreparedQaVerdictKind::Correct)
-            .map(|level| format!("{}: {}", level.level, level.findings.join("; ")))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    }
-}
-
-/// Render independent checks only. Self-Refine (arXiv:2303.17651) supplies
-/// feedback/refine separation; Chain-of-Verification (arXiv:2309.11495) supplies
-/// independent checks. A distinct model mitigates MT-Bench self-enhancement bias
-/// (arXiv:2306.05685), while the bounded recovery block preserves N-version
-/// design diversity by preventing the verifier from becoming a second writer.
-pub(crate) fn render_planned_qa_review_messages(
-    prompt: &PreparedQaPrompt,
-    plan: &QaDispositionPlan,
-    proposed_qa: &str,
-) -> Result<[ChatMessage; 2], McpToolError> {
-    let mut messages = render_planned_qa_messages(prompt, plan)?.ok_or_else(|| {
-        McpToolError::internal("Cannot review QA when the disposition plan has no generated levels")
-    })?;
-    messages[0].content = format!(
-        "{CONTENT_GUARD_INSTRUCTION}Independently verify each proposed QA object against only its fixed evidence and plan. Return exactly one ordered verdict object per generated level and nothing else. Each object has exactly level, verdict, subject, condition, premise, entailment, completeness, actual_difficulty, and findings. verdict is accept or correct. subject checks that the grammatical subject and source category are unchanged. condition checks conditions, negation, modality, timing, and intentionality. premise checks that the question assumes nothing unstated. entailment checks every question and answer claim against the evidence. completeness checks that the answer fully answers the bounded question without claiming a complete list absent complete evidence. For a multi-edge conceptual relation, completeness requires every named edge: a question asking why something is double-edged must have evidence and an answer for both contrasting effects, not one adverse effect. actual_difficulty checks that the QA performs the planned Bloom level and conceptual relation rather than easier recall. accept requires all six checks true and findings []. correct requires at least one false check and one or more specific nonblank findings. Level support and relation are already fixed by the plan; judge only the generated QA and never replace rejection with a support skip. Do not output question, answer, replacement_qa, revised_qa, or any other QA content; the generator alone writes QA. Protocol: {QA_VERIFICATION_PROTOCOL}."
-    );
-    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
-        McpToolError::internal(format!("Cannot parse rendered QA writer request: {error}"))
-    })?;
-    let object = user
-        .as_object_mut()
-        .ok_or_else(|| McpToolError::internal("Rendered QA writer request is not a JSON object"))?;
-    object.insert(
-        "verification_protocol".to_string(),
-        Value::String(QA_VERIFICATION_PROTOCOL.to_string()),
-    );
-    object.insert(
-        "proposed_qa".to_string(),
-        serde_json::from_str(proposed_qa).unwrap_or_else(|_| Value::String(proposed_qa.into())),
-    );
-    messages[1].content = serde_json::to_string(&user).map_err(|error| {
-        McpToolError::internal(format!("Cannot render planned QA review: {error}"))
-    })?;
-    Ok(messages)
-}
-
-pub(crate) fn parse_planned_qa_verdicts(
-    response: &str,
-    plan: &QaDispositionPlan,
-) -> Result<QaVerificationVerdicts, String> {
-    let levels: Vec<PreparedQaVerdict> = serde_json::from_str(response)
-        .map_err(|error| format!("invalid compact QA verification verdict JSON: {error}"))?;
-    let generated_levels = plan
-        .levels
-        .iter()
-        .filter_map(|level| match level {
-            PlannedQaLevel::Generate { bloom_level, .. } => Some(bloom_level.as_str()),
-            PlannedQaLevel::Skipped { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    if levels.len() != generated_levels.len() {
-        return Err(format!(
-            "expected {} QA verification verdicts, received {}",
-            generated_levels.len(),
-            levels.len()
-        ));
-    }
-    for (index, (level, expected)) in levels.iter().zip(generated_levels).enumerate() {
-        if level.level != expected {
-            return Err(format!(
-                "verification level {index} expected '{expected}', received '{}'",
-                level.level
-            ));
-        }
-        if level
-            .findings
-            .iter()
-            .any(|finding| finding.trim().is_empty())
-        {
-            return Err(format!(
-                "verification level {index} contains a blank finding"
-            ));
-        }
-        match level.verdict {
-            PreparedQaVerdictKind::Accept
-                if level.all_checks_pass() && level.findings.is_empty() => {}
-            PreparedQaVerdictKind::Correct
-                if !level.all_checks_pass() && !level.findings.is_empty() => {}
-            PreparedQaVerdictKind::Accept => {
-                return Err(format!(
-                    "verification level {index} accept requires all checks true and no findings"
-                ));
-            }
-            PreparedQaVerdictKind::Correct => {
-                return Err(format!(
-                    "verification level {index} correct requires a false check and nonempty findings"
-                ));
-            }
-        }
-    }
-    Ok(QaVerificationVerdicts { levels })
-}
-
-pub(crate) fn render_planned_qa_correction_messages(
-    prompt: &PreparedQaPrompt,
-    plan: &QaDispositionPlan,
-    proposed_qa: &str,
-    verdicts: &QaVerificationVerdicts,
-) -> Result<[ChatMessage; 2], McpToolError> {
-    if !verdicts.requires_correction() {
-        return Err(McpToolError::internal(
-            "Cannot correct QA when every verification verdict accepts",
-        ));
-    }
-    let mut messages = render_planned_qa_messages(prompt, plan)?.ok_or_else(|| {
-        McpToolError::internal(
-            "Cannot correct QA when the disposition plan has no generated levels",
-        )
-    })?;
-    messages[0].content.push_str(
-        " This is the single bounded refinement step. Correct the proposed QA using only the typed verification findings. The supplied plan, levels, conceptual relations, and evidence are fixed. Return the complete corrected ordered named-object array in the original writer schema only; do not output verdicts or commentary.",
-    );
-    let mut user: Value = serde_json::from_str(&messages[1].content).map_err(|error| {
-        McpToolError::internal(format!(
-            "Cannot parse rendered QA correction request: {error}"
-        ))
-    })?;
-    let object = user.as_object_mut().ok_or_else(|| {
-        McpToolError::internal("Rendered QA correction request is not a JSON object")
-    })?;
-    object.insert(
-        "proposed_qa".to_string(),
-        serde_json::from_str(proposed_qa).unwrap_or_else(|_| Value::String(proposed_qa.into())),
-    );
-    object.insert(
-        "verification_findings".to_string(),
-        serde_json::to_value(&verdicts.levels).map_err(|error| {
-            McpToolError::internal(format!(
-                "Cannot serialize QA verification findings: {error}"
-            ))
-        })?,
-    );
-    messages[1].content = serde_json::to_string(&user).map_err(|error| {
-        McpToolError::internal(format!("Cannot render planned QA correction: {error}"))
-    })?;
-    Ok(messages)
 }
 
 pub(crate) fn enforce_reviewed_adjudication(
@@ -1125,7 +870,6 @@ pub(crate) struct QaOutput<W: Write> {
     provider_responses: usize,
     cost_reports: usize,
     reported_cost_usd: f64,
-    verification_model: Option<String>,
     adjudication_protocol: Option<String>,
     reviewed_passage_admits: usize,
     reviewed_passage_skips: usize,
@@ -1152,17 +896,12 @@ impl<W: Write> QaOutput<W> {
             provider_responses: 0,
             cost_reports: 0,
             reported_cost_usd: 0.0,
-            verification_model: None,
             adjudication_protocol: None,
             reviewed_passage_admits: 0,
             reviewed_passage_skips: 0,
             reviewed_level_generates: 0,
             reviewed_level_skips: 0,
         }
-    }
-
-    pub fn set_verification_model(&mut self, model: &str) {
-        self.verification_model = Some(model.to_string());
     }
 
     pub fn set_reviewed_adjudications(
@@ -1226,7 +965,6 @@ impl<W: Write> QaOutput<W> {
                 qa_type.as_str(),
                 reason,
                 model,
-                self.verification_model.as_deref(),
                 self.adjudication_protocol.as_deref(),
             ))?;
             self.qa_levels_skipped += 1;
@@ -1299,7 +1037,6 @@ impl<W: Write> QaOutput<W> {
                                 prompt,
                                 pair,
                                 model,
-                                self.verification_model.as_deref(),
                                 self.adjudication_protocol.as_deref(),
                             ))?;
                             self.qa_rows_written += 1;
@@ -1313,7 +1050,6 @@ impl<W: Write> QaOutput<W> {
                                 &bloom_level,
                                 &reason,
                                 model,
-                                self.verification_model.as_deref(),
                                 self.adjudication_protocol.as_deref(),
                             ))?;
                             self.qa_levels_skipped += 1;
@@ -1375,7 +1111,7 @@ impl<W: Write> QaOutput<W> {
             "qa_rows_written": self.qa_rows_written,
             "qa_levels_skipped": self.qa_levels_skipped,
             "skip_reason_counts": self.skip_reason_counts,
-            "verification_model": self.verification_model,
+            "grounding_status": "pending_external_verification",
             "adjudication_protocol": self.adjudication_protocol,
             "reviewed_passage_admits": self.reviewed_passage_admits,
             "reviewed_passage_skips": self.reviewed_passage_skips,
@@ -1421,7 +1157,6 @@ fn qa_result_envelope(
     prompt: &PreparedQaPrompt,
     pair: QaPair,
     model: &str,
-    verification_model: Option<&str>,
     adjudication_protocol: Option<&str>,
 ) -> serde_json::Value {
     json!({

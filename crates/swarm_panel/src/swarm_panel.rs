@@ -878,8 +878,8 @@ impl SwarmPanel {
     }
 
     /// Lazily construct the `ConversationView` for Steer mode if it doesn't
-    /// exist yet. Constructs a `CuratorAgentServer` with the swarm workflow
-    /// server, with a system prompt that tells the curator about the
+    /// exist yet. Constructs a `CuratorAgentServer` with a system prompt that
+    /// tells the curator about the
     /// `swarm-intelligence` skill and the active swarm. The curator's
     /// `SkillTool` invokes the cascade when the operator asks to compose/steer
     /// a swarm.

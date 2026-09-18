@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records every deliberate seam from D1 through D56, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 11 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, scoped Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records every deliberate seam from D1 through D56, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 11 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
