@@ -99,7 +99,6 @@ const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// first healthy check resets the counter. The threshold bounds the
 /// crash-loop defect — a dying binary respawned forever with no
 /// operator-visible stop condition (observed live 2026-08-29).
-/// up. Reset to zero on the first healthy connection seen.
 ///
 /// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
 const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
@@ -141,12 +140,6 @@ fn configured_spawn_runtime() -> Option<tokio::runtime::Handle> {
     SPAWN_RUNTIME.get()
 }
 
-/// Interval between health checks once the supervisor has exceeded
-/// `max_consecutive_health_failures`. Slower than the normal interval so a
-/// crash-looping binary does not burn CPU, but still attempts restarts so a
-/// transient cause (a DB lock that released, a disk that freed) is recovered
-/// without operator intervention.
-///
 /// Resolve a duration from an env var (seconds), falling back to `default`.
 /// Logs a warning on parse failure per `.rules` (numeric env vars that fail
 /// to parse must `log::warn!` naming the malformed value).
@@ -354,9 +347,6 @@ pub enum ServerStartError {
 /// 1. Check `HKASK_MCP_{SERVER_ID_UPPER}_BIN` environment variable.
 ///    Example: `HKASK_MCP_FILESYSTEM_BIN` for server_id="filesystem".
 /// 2. Fall back to the provided command name (PATH-based resolution).
-///
-/// This is the implementation of the contract documented in
-/// `crates/hkask-cli/src/repl/builtin_servers.rs`.
 fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
     let env_var = format!("HKASK_MCP_{}_BIN", server_id.to_uppercase());
     if let Ok(explicit_path) = std::env::var(&env_var)

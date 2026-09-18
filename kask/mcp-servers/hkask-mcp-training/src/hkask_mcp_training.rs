@@ -650,6 +650,26 @@ mod smoke {
         )
     }
 
+    /// expect: [P1] invalid model resolution fails before dataset reads or credential/provider access.
+    #[tokio::test]
+    async fn f3_submit_rejects_invalid_model_before_effects() {
+        let server = make_server();
+        for model in ["missing-org", "org/model$(printf marker)", "org/model\nHKASK_CONFIG", "/model", "org/../model"] {
+            let error = server.training_submit(Parameters(crate::types::TrainSubmitRequest {
+                dataset_path: "/does-not-exist-f3/dataset.jsonl".into(),
+                base_model: model.into(),
+                params: None,
+                feedback_path: None,
+                skill_name: None,
+                adapter_name: None,
+                merged_output_path: None,
+                confirmed: true,
+            })).await.expect_err("invalid model");
+            assert!(error.to_string().contains("Invalid base_model"), "{error}");
+        }
+    }
+
+
     struct AssemblyFixtureDir(std::path::PathBuf);
 
     impl AssemblyFixtureDir {

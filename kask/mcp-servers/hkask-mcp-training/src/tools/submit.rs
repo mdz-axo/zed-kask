@@ -51,6 +51,10 @@ impl TrainingServer {
                 ));
             }
 
+            let provenance = crate::huggingface::LocalModelResolver.resolve(&base_model)
+                .map_err(|error| McpToolError::invalid_argument(format!("Invalid base_model: {error}")))?;
+            tracing::info!(target: "hkask.training.provenance.resolved", model_id = %provenance.model_id, architecture = %provenance.architecture, lora_compatible = provenance.lora_compatible, is_gated = provenance.is_gated, "Model provenance resolved");
+
             // Contain the caller-supplied dataset path before any read: an
             // absolute path like /etc/passwd or a traversal must not reach the
             // pipeline reads (CWE-200).
@@ -234,12 +238,6 @@ impl TrainingServer {
                         token_warnings.push(json!({"line": i + 1, "approx_tokens": approx_tokens, "severity": "warning", "message": "Example approaches 8K context limit — consider truncation"}));
                     }
                 }
-            }
-
-            let resolver = crate::huggingface::LocalModelResolver;
-            let provenance = resolver.resolve(&base_model);
-            if let Ok(ref p) = provenance {
-                tracing::info!(target: "hkask.training.provenance.resolved", model_id = %p.model_id, architecture = %p.architecture, lora_compatible = p.lora_compatible, is_gated = p.is_gated, "Model provenance resolved");
             }
 
             let num_epochs = params.as_ref().map(|p| p.num_epochs).unwrap_or(3);

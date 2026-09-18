@@ -16,8 +16,9 @@ and C6 (reconfigure) in the next swarm-intelligence iteration.
 
 ## Substrate: local swarms (zed-kask v2 §15)
 
-A local swarm runs on the zed-kask substrate: `hkask-inference` (Ollama/cloud),
-`hkask-ledger` (operator-funded credits). The
+A local swarm runs on the zed-kask substrate: `hkask-inference` (Ollama/cloud).
+Local delegation carries no credit cost — the `hkask-ledger` budget system
+was removed 2026-09-08 and the runtime measures and records, never debits. The
 Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the in-process agent
 with governed tool access (the MCP servers via `McpRuntime`), sovereign
 memory, and the regulation/metacognition loops. In steering mode it executes

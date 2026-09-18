@@ -93,6 +93,10 @@ jobs:
         run: bash kask/scripts/check-string-errors.sh
       - name: MCP tool-behavior contract tests — Parameters seam coverage
         run: bash kask/scripts/check-mcp-tool-tests.sh
+      - name: MCP packaging — installer inventory matches runtime
+        run: |
+          bash kask/scripts/check-mcp-servers.sh
+          bash kask/scripts/check-mcp-servers-selftest.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
 
@@ -112,6 +116,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm
       - name: Kask subtree — cargo test (hkask-* + kask_bridge)
         run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+      - name: MCP reconnect — isolated fixture processes (serial)
+        run: cargo test --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
 
   zed-check:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

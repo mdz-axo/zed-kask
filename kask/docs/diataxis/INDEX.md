@@ -49,7 +49,7 @@ verification dates.
 
 ### MCP server crates — complete 11-server inventory
 
-The 11 managed server crates are documented cross-cuttingly under
+The 12 managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
 than receiving another per-crate set:
 

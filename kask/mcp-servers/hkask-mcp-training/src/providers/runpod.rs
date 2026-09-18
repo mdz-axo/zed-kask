@@ -1224,6 +1224,97 @@ mod tests {
     use super::*;
 
     /// Pin: the HTTP client built in `RunpodHost::new` carries explicit
+    fn hostile_job(harness: TrainingHarnessId) -> TrainingJob {
+        TrainingJob {
+            id: "f3-job".into(),
+            base_model: "org/model$(printf expanded > marker)`printf expanded > marker`\nHKASK_CONFIG\nprintf expanded > marker\n# ' \" \\ 雪\n".into(),
+            dataset_path: "dataset.jsonl".into(),
+            params: TrainingParams::default(),
+            status: TrainingJobStatus::Queued,
+            created_at: chrono::Utc::now(),
+            host: TrainingHostId::Runpod,
+            harness,
+            owner: None,
+            skill_name: None,
+            estimated_cost_micro_usd: 0,
+            artifacts: None,
+        }
+    }
+
+    // Execute only generated data-transfer sections, never the install/training script.
+    fn execute_transfer(snippet: &str) -> (Vec<u8>, bool) {
+        let dir = std::env::temp_dir().join(format!("hkask-f3-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).expect("fixture directory");
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", &snippet.replace("/workspace/", "./")])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(&dir)
+            .output()
+            .expect("local bash");
+        let marker = dir.join("marker").exists();
+        let bytes = std::fs::read(dir.join("result")).expect("transferred data");
+        std::fs::remove_dir_all(&dir).expect("cleanup fixture");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        (bytes, marker)
+    }
+
+    /// expect: [P1] caller config bytes round-trip without executing delimiter/substitution payloads.
+    /// dcterms:identifier: providers::runpod::generate_install_script; subject: Composition
+    #[test]
+    fn f3_config_transfer_is_literal() {
+        for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
+            let job = hostile_job(harness);
+            let script = generate_install_script(&job, harness).expect("generate");
+            let config = match harness {
+                TrainingHarnessId::Axolotl => crate::providers::AxolotlHarness.render_config(&job),
+                TrainingHarnessId::Ludwig => crate::providers::LudwigHarness.render_config(&job),
+            }.expect("render");
+            let section = script.split("# ── Step 2:").nth(1).expect("config section")
+                .split("# ── Step 3:").next().expect("end section");
+            let section = format!("# {section}\ncat /workspace/{} > result\n", match harness {
+                TrainingHarnessId::Axolotl => "config.yml",
+                TrainingHarnessId::Ludwig => "model.yaml",
+            });
+            let (bytes, marker) = execute_transfer(&section);
+            assert!(!marker, "caller data executed a command");
+            assert_eq!(bytes, config.as_bytes());
+        }
+    }
+
+    /// expect: [P1] manifest model bytes remain JSON data, not shell substitutions.
+    #[test]
+    fn f3_manifest_transfer_is_literal() {
+        for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
+            let mut job = hostile_job(harness);
+            job.base_model = "org/model$(printf expanded > marker)`printf expanded > marker`".into();
+            let script = generate_install_script(&job, harness).expect("generate");
+            let section = script.split("# ── Step 5:").nth(1).expect("manifest section")
+                .split("# ── Step 6:").next().expect("end section");
+            let snippet = format!("TRAINING_STATUS=success; TRAINING_DURATION=7; OUTPUT_DIR=outputs; FINAL_LOSS_JSON=null; FINAL_GRAD_NORM_JSON=null; FINAL_STEP_JSON=2; TOTAL_STEPS_JSON=3\n# {section}\ncat /workspace/completion.json > result\n");
+            let (bytes, marker) = execute_transfer(&snippet);
+            assert!(!marker, "caller data executed a command");
+            let manifest: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
+            assert_eq!(manifest["base_model"], job.base_model);
+            assert_eq!(manifest["training_duration_secs"], 7);
+        }
+    }
+
+    /// expect: [P1] both templates encode the model as one literal YAML string scalar.
+    #[test]
+    fn f3_model_yaml_scalar_is_literal() {
+        for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
+            let job = hostile_job(harness);
+            let config = match harness {
+                TrainingHarnessId::Axolotl => crate::providers::AxolotlHarness.render_config(&job),
+                TrainingHarnessId::Ludwig => crate::providers::LudwigHarness.render_config(&job),
+            }.expect("render");
+            let scalar = config.lines().find_map(|line| line.strip_prefix("base_model: ")).expect("model scalar");
+            assert_eq!(serde_json::from_str::<String>(scalar).expect("JSON-quoted YAML scalar"), job.base_model);
+        }
+    }
+
+
     /// connect and request timeouts so a stalled RunPod API call fails fast
     /// before the 60s MCP `tools/call` cap kills and restarts the server.
     /// reqwest exposes no client-config inspection, so this pins the named

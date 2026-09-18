@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 
 
-**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via the project-aware `SkillTool` resolver → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:146-155,184-288`; resolver at `crates/agent/src/agent.rs:4339-4383`, registered at `:1016-1021`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) and 12 MCP servers are listed in the architecture plan §2.2/§2.4.
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via the project-aware `SkillTool` resolver → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:146-155,184-288`; resolver at `crates/agent/src/agent.rs:4339-4383`, registered at `:1016-1021`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 12 MCP servers are listed in the architecture plan §2.2/§2.4.
 
 **Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
 
@@ -26,7 +26,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 The domain ontology is grounded in **Ontology Design Pattern (ODP) methodology** as described by Norouzi et al. (2025, arXiv:2509.23776): compact, requirement-driven extraction patterns rather than navigating entire complex ontologies.[^norouzi-odp]
 
-The ontology is re-anchored to the **18 surviving hKask crates** (17 `hkask-*` + `kask_bridge`) compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
+The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` + `kask_bridge`) compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
 
 ### 1.1 Core Entities
 
@@ -463,7 +463,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.41.0 — five categories. Re-anchored to the 18 surviving hKask crates (17 `hkask-*` + `kask_bridge`) loaded into the editor process and 11 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist through resolution until curator-memory acknowledgment. The SpecStore surface in §4 is not implemented.*
+*MDS v0.41.0 — five categories. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) loaded into the editor process and 12 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist through resolution until curator-memory acknowledgment. The SpecStore surface in §4 is not implemented.*
 
 ---
 

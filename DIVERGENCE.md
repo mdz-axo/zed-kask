@@ -236,8 +236,8 @@ primary divergence seams:
 The following are added to the root `Cargo.toml` `[workspace.members]` array.
 Upstream merges never conflict with these paths.
 
-- `kask/crates/` — hKask crates (`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-tool-port`, `hkask-keystore`, `hkask-ledger`, `hkask-event-store`, `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-condenser`, `hkask-bridge-ontology`, `hkask-services-core`, `hkask-email`, `hkask-forecast`, `hkask-lisp`) plus the `kask_bridge` bidirectional seam (D8, zed-kask-side). The `hkask-{media,graph}-widget` and `hkask-viz-core` viz crates live under `crates/` (zed-kask-side, see D18) because they render GPUI elements and must depend on `gpui`/`theme`, which §13.1 forbids for hKask crates.
-- `kask/mcp-servers/` — 11 MCP server crates (`hkask-mcp-{companies,corpus,curator,kata-kanban,media,portfolio,prediction-markets,research,scenarios,swarm,training}`). The condenser library crate (`kask/crates/hkask-condenser`) provides in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
+- `kask/crates/` — hKask crates (`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-tool-port`, `hkask-keystore`, `hkask-event-store`, `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-condenser`, `hkask-bridge-ontology`, `hkask-services-core`, `hkask-email`, `hkask-forecast`, `hkask-lisp`, `hkask-steer-core`, `hkask-spreadsheet`) plus the `kask_bridge` bidirectional seam (D8, zed-kask-side). The `hkask-{media,graph}-widget` and `hkask-viz-core` viz crates live under `crates/` (zed-kask-side, see D18) because they render GPUI elements and must depend on `gpui`/`theme`, which §13.1 forbids for hKask crates.
+- `kask/mcp-servers/` — 12 MCP server crates (`hkask-mcp-{companies,corpus,curator,kata-kanban,media,portfolio,prediction-markets,research,scenarios,spreadsheet,swarm,training}`). The condenser library crate (`kask/crates/hkask-condenser`) provides in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
 - `crates/marketplace_ui_common` — shared catalog-page chrome (`MarketplaceCard`, search bar, empty state) used by `swarm_panel` and `kanban_panel`
 
 ## Governing invariant (§13.1)
@@ -251,7 +251,7 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (D1–D58; D4, D10, D17, D19, D30, D38, D49, D50 and D53 are retired — numbers are never reused)
+   - The D-seam files listed above (D1–D66; D4, D10, D17, D19, D30, D38, D49, D50 and D53 are retired — numbers are never reused)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
      and `crates/zed/Cargo.toml` (kask deps + upstream's crate renames, e.g.
      `csv_preview` → `tabular_data_preview`).

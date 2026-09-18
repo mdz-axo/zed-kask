@@ -1,6 +1,7 @@
 //! Standalone (non-zed) settings layer — single source of truth for the
-//! settings file location used by CLI, API, and REPL surfaces. Magna Carta
-//! P3: standalone surfaces read the same `~/.config/zed-kask/settings.json`
+//! settings file location read by MCP servers under direct launch (not
+//! launched by zed — no IPC bridge). Magna Carta
+//! P3: those surfaces read the same `~/.config/zed-kask/settings.json`
 //! as the host, with compatible JSONC syntax. This layer never writes it.
 //! Also provides `HkaskSettings` for model defaults shared across all servers.
 //!
@@ -10,8 +11,8 @@
 //! **standalone layer**, not the zed layer. Do not confuse them:
 //!
 //! - **This file** (`hkask-services-core/src/standalone_settings.rs`):
-//!   `~/.config/zed-kask/settings.json` + env vars. Read by CLI, API, REPL,
-//!   and by MCP servers when they are NOT launched by zed (no IPC bridge).
+//!   `~/.config/zed-kask/settings.json` + env vars. Read by MCP servers when
+//!   they are NOT launched by zed (no IPC bridge).
 //!   Priority: env var > settings.json > hardcoded default.
 //! - **The zed layer** (`kask/crates/kask_bridge/src/settings.rs`): zed's
 //!   settings store (`KaskSettings`, `From<Content>` conversions, schema in
