@@ -34,7 +34,7 @@
 
 use std::path::Path;
 
-use crate::core::connection::{DatabaseError, QuiescedDatabase};
+use crate::core::connection::{Database, DatabaseError, QuiescedDatabase};
 
 /// Error type for passphrase rotation.
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +42,13 @@ pub enum RotationError {
     /// The old passphrase does not match the existing DB.
     #[error("Old passphrase does not match the database at {path}: {source}")]
     OldPassphraseMismatch {
+        path: String,
+        #[source]
+        source: DatabaseError,
+    },
+    /// The database does not open with the supplied passphrase (key probe).
+    #[error("Database at {path} does not open with the supplied passphrase: {source}")]
+    PassphraseMismatch {
         path: String,
         #[source]
         source: DatabaseError,
@@ -281,6 +288,51 @@ pub fn rotate_passphrase(
     Ok(())
 }
 
+/// Verify that an existing database opens with the supplied passphrase.
+///
+/// The probe mirrors `rotate_passphrase`'s source verification: open the
+/// database and force its connection pool — the probe connection's trivial
+/// query is where a wrong passphrase actually fails. The database is never
+/// written to, and a missing file is a `Filesystem` error rather than a
+/// manufactured empty database. Used by the startup-coordinated passphrase
+/// rotation to classify databases as on-the-old-key, already-on-the-new-key,
+/// or requiring manual recovery.
+///
+/// expect: "Key changes never silently strand my data behind the wrong key" [P1]
+/// pre:  the database file exists
+/// post: Ok(()) proves the passphrase matches; Err names the path and never mutates it
+pub fn verify_database_key(db_path: &str, passphrase: &str) -> Result<(), RotationError> {
+    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error,
+    })?;
+    let db_path = canonical
+        .to_str()
+        .ok_or_else(|| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical database path is not UTF-8",
+            ),
+        })?;
+    let database = Database::open(db_path, passphrase).map_err(|source| {
+        RotationError::PassphraseMismatch {
+            path: db_path.to_string(),
+            source,
+        }
+    })?;
+    // Force pool creation — this is where passphrase verification actually
+    // happens (the probe connection runs a trivial query; a wrong key fails
+    // here rather than on first use).
+    let _pool = database
+        .sqlite_pool()
+        .map_err(|source| RotationError::PassphraseMismatch {
+            path: db_path.to_string(),
+            source,
+        })?;
+    Ok(())
+}
+
 /// SQLCipher owns schema export, including contentless FTS shadow tables,
 /// indexes, triggers, rowids, and AUTOINCREMENT high-water marks. Rebuilding
 /// only the vector index from canonical rows avoids preserving an incomplete
@@ -464,6 +516,36 @@ pub(crate) mod tests {
         )
         .expect("insert embedding");
         path
+    }
+
+    /// expect: "Key changes never silently strand my data behind the wrong key" [P1]
+    #[test]
+    fn verify_database_key_accepts_the_matching_passphrase_and_rejects_a_wrong_one() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "probe.db", "old-passphrase");
+        verify_database_key(&path, "old-passphrase").expect("matching key verifies");
+        let mismatch =
+            verify_database_key(&path, "wrong-passphrase").expect_err("wrong key rejected");
+        assert!(
+            mismatch
+                .to_string()
+                .contains("does not open with the supplied passphrase"),
+            "probe error names the failure class: {mismatch}"
+        );
+    }
+
+    #[test]
+    fn verify_database_key_never_manufactures_a_missing_database() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let missing = directory
+            .path()
+            .join("absent.db")
+            .to_string_lossy()
+            .into_owned();
+        let error =
+            verify_database_key(&missing, "any-passphrase").expect_err("missing file rejected");
+        assert!(matches!(error, RotationError::Filesystem { .. }));
+        assert!(!Path::new(&missing).exists());
     }
 
     /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]

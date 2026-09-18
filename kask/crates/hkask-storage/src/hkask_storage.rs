@@ -24,7 +24,7 @@ pub use core::connection::{
 pub use core::{embedding_dim, open_database, open_or_repair, sanitize_path};
 pub use database::{DatabaseDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas};
 pub use hkask_types::time::now_rfc3339;
-pub use rotation::{RotationError, rotate_passphrase};
+pub use rotation::{RotationError, rotate_passphrase, verify_database_key};
 
 pub(crate) mod embeddings;
 pub(crate) mod escalation;

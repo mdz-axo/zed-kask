@@ -14,5 +14,15 @@
 /// databases (curator, corpus, kanban, swarm memory) — no per-DB keys.
 pub const KEY_DB_PASSPHRASE: &str = "hkask_db_passphrase";
 
+/// Keychain key for a scheduled database passphrase rotation.
+///
+/// The Security page stores the not-yet-applied new passphrase here; the
+/// next editor startup applies it before any database opens (rotation
+/// completes first, then the main `hkask_db_passphrase` slot is written,
+/// then this pending entry is deleted — the keychain write is always last,
+/// per the rotation-ordering invariant). An entry here means "a change is
+/// scheduled", never "applied".
+pub const KEY_DB_PASSPHRASE_PENDING: &str = "hkask_db_passphrase_pending";
+
 /// Keychain key for the capability probe (internal diagnostics).
 pub const KEY_CAPABILITY_PROBE: &str = "__hkask_capability_probe__";
