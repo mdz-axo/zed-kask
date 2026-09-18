@@ -300,16 +300,21 @@ pub(crate) fn extract_viewport(
             detail: format!("viewport read failed: {error:?}"),
         })?;
     let mut cells: Vec<Vec<TableValue>> = Vec::with_capacity(window.row_count);
+    let mut formulas: Vec<Vec<String>> = Vec::with_capacity(window.row_count);
     for row in 0..window.row_count {
         let mut row_values = Vec::with_capacity(window.col_count);
+        let mut row_formulas = Vec::with_capacity(window.col_count);
         for col in 0..window.col_count {
             let index = row * window.col_count + col;
             row_values.push(value_to_table_value(infos[index].value.clone()));
+            row_formulas.push(infos[index].formula.clone());
         }
         cells.push(row_values);
+        formulas.push(row_formulas);
     }
     Ok(crate::ViewportContent {
         window: window.clone(),
         cells,
+        formulas,
     })
 }

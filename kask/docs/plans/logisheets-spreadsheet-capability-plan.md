@@ -466,6 +466,42 @@ Add `kask/mcp-servers/hkask-mcp-spreadsheet` with the minimal tools:
 
 Register it in the built-in MCP server inventory, settings surface, tool-surface checks, and documentation. Credential and configuration allowlists are both empty and explicit.
 
+**Phase 3 record (2026-09-18): COMPLETE in the working tree (uncommitted at
+record time).** `hkask-mcp-spreadsheet` ships both tools over the real
+engine actor (`Arc<WorkbookService>` on its dedicated thread, started at
+`run()` with the production artifact root). `spreadsheet_apply` verifies the
+base digest, publishes a NEW immutable revision, and returns the workbook
+block as a server-authoritative ` ```spreadsheet ` display hint;
+`spreadsheet_operation_get` reconciles by idempotency key — `completed`
+with the recorded result or explicitly `unknown` (never "not applied"; the
+response forbids blind retry). `SpreadsheetError` maps per-variant:
+caller-shape errors → invalid_argument, `UnknownArtifact` → not_found,
+`Conflict` → failed_precondition, `Engine` → internal. §11 MCP behavior
+pinned by the fully-capable tool-behavior suite (7 tests over the real actor
++ tempdir): immutable-revision + display hint, idempotent replay (no new
+file), reconciliation in both states, error-kind specificity, write
+containment beneath the artifact root (the ledger-isolation invariant —
+the server links no domain crate, and every write is asserted under the
+root), and no-write-through staging. Registration: `BUILT_IN_MCP_SERVERS`
+entry (id `spreadsheet`, appended — index-stable), a pinned
+`spreadsheet_allowlist_matches_actual_reads` test, generic settings surface
+(`kask.mcp.overrides` is a per-id `HashMap<String, bool>` — no settings
+edit), build.rs-generated `TOOL_NAMES` + live-router pin, fleet docs updated
+(README 12 servers / 376 tools + catalog row + verification line + new
+`spreadsheet.md` reference page). **One deviation from this section's
+letter:** the plan says both allowlists are empty; the config allowlist
+carries `HKASK_ARTIFACTS_DIR` because the server reads it (via
+`production_root` → `agent_paths`) and the repo's allowlist-alignment rule
+plus the portfolio entry's documented trap (operator overrides silently
+dropped) make an empty list a broken feedback loop. Credentials are
+`Some(&[])`. Gates observed on the final working tree: `cargo test -p
+hkask-mcp-spreadsheet` 1+6 passed; `cargo test -p kask_bridge` 218 passed
+(including the new allowlist pin); `cargo test -p hkask-spreadsheet` 12 and
+`cargo test -p hkask-types` 68+1 (regression, with JsonSchema derives added
+to the ten input-reachable contract types); `./script/clippy` clean on all
+four touched crates; `cargo fmt --all --check` clean; `cargo check -p zed`
+clean; docs gates: 65 files (<70), 0 broken links, complete frontmatter.
+
 ### Phase 4 — Native widget
 
 - Add `crates/hkask-spreadsheet-widget`.

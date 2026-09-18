@@ -9306,6 +9306,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-spreadsheet-widget"
+version = "0.40.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "gpui",
+ "hkask-spreadsheet",
+ "hkask-tool-invoker",
+ "hkask-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "ui",
+ "uuid",
+]
+
+[[package]]
 name = "hkask-steer"
 version = "0.40.0"
 dependencies = [

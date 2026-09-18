@@ -24,11 +24,11 @@ mds_categories: [composition, domain]
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. The `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs:55-503` enumerates the 11 on-disk servers.
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 12 on-disk servers.
 
 ## Server Catalog
 
-11 built-in MCP servers, **374 registered tools** fleet-wide (verified 2026-09-15 against the live routers, generated tool-name sets, and pinning tests below). `KaskMcpSettings::default()` sets `load_default: true`, so all eleven auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:55-506`).
+12 built-in MCP servers, **376 registered tools** fleet-wide (verified 2026-09-15 against the live routers, generated tool-name sets, and pinning tests below; spreadsheet added 2026-09-18 with its own pin). `KaskMcpSettings::default()` sets `load_default: true`, so all twelve auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -41,6 +41,7 @@ mds_categories: [composition, domain]
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
+| [Spreadsheet](spreadsheet.md) | `kask/mcp-servers/hkask-mcp-spreadsheet` | Central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits and interrupted-operation reconciliation over immutable workbook revisions | 2 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 87 |
 | Training | `kask/mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
@@ -53,8 +54,9 @@ mds_categories: [composition, domain]
 - **Swarm = 87** — pinned end-to-end by `tool_surface_is_exactly_87_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:173-178,731-792`). The live partition is 48 cloud plus 39 non-cloud: 32 local + 3 A2A + 4 knowledge.
 - **Kata Kanban = 25 and Portfolio = 13** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1906-1923`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:149-520`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
 - **Curator = 20, Prediction Markets = 32, Research = 26, Training = 9** — verified from their currently wired router blocks and registered `#[tool]` methods (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:357`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:161`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:285-309`).
+- **Spreadsheet = 2** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `spreadsheet_router` surface (`kask/mcp-servers/hkask-mcp-spreadsheet/src/hkask_mcp_spreadsheet.rs:36-55`); the tool-behavior suite additionally drives both tools end-to-end over the real engine actor (`kask/mcp-servers/hkask-mcp-spreadsheet/tests/tool_behavior.rs`).
 
-Arithmetic: `40 + 23 + 20 + 25 + 80 + 13 + 32 + 26 + 19 + 87 + 9 = 374`.
+Arithmetic: `40 + 23 + 20 + 25 + 80 + 13 + 32 + 26 + 19 + 87 + 9 + 2 = 376`.
 
 ## Common Patterns
 

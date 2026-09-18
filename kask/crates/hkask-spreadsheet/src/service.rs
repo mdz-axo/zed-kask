@@ -50,6 +50,11 @@ pub struct ViewportContent {
     pub window: SpreadsheetViewport,
     /// Row-major cells: `window.row_count` rows × `window.col_count` columns.
     pub cells: Vec<Vec<TableValue>>,
+    /// Row-major formula text per cell (empty string = data cell). An editor
+    /// shows the formula, not the evaluated value — editing
+    /// `=SUM(B2:B3)` as the number `40000` would silently destroy the
+    /// formula.
+    pub formulas: Vec<Vec<String>>,
 }
 
 /// Commands cross the actor boundary; every field type is `Send`.
@@ -90,6 +95,10 @@ enum Command {
     Redo {
         key: DocumentKey,
         respond: oneshot::Sender<Result<bool, SpreadsheetError>>,
+    },
+    Sheets {
+        key: DocumentKey,
+        respond: oneshot::Sender<Result<Vec<String>, SpreadsheetError>>,
     },
 }
 
@@ -226,7 +235,10 @@ impl WorkbookService {
 
 /// An open workbook document (plan §5.1): staged edits are local and
 /// undoable; `viewport` reads the staged state; persistence happens through
-/// the service's `apply`, never here.
+/// the service's `apply`, never here. Cheap to clone (an `Arc` and an
+/// artifact reference) so widgets can hold one handle across async
+/// operations.
+#[derive(Clone)]
 pub struct WorkbookDocument {
     service: Arc<WorkbookService>,
     artifact: SpreadsheetArtifactRef,
@@ -297,6 +309,19 @@ impl WorkbookDocument {
     pub async fn redo(&self) -> Result<bool, SpreadsheetError> {
         let (respond, receiver) = oneshot::channel();
         self.service.send(Command::Redo {
+            key: (
+                self.artifact.artifact_id.clone(),
+                self.artifact.revision_id.clone(),
+            ),
+            respond,
+        })?;
+        receiver.await.map_err(|_| actor_down())?
+    }
+
+    /// The sheet names of the open workbook, in workbook order.
+    pub async fn sheets(&self) -> Result<Vec<String>, SpreadsheetError> {
+        let (respond, receiver) = oneshot::channel();
+        self.service.send(Command::Sheets {
             key: (
                 self.artifact.artifact_id.clone(),
                 self.artifact.revision_id.clone(),
@@ -380,6 +405,15 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
             Command::Redo { key, respond } => {
                 let result = match state.documents.get_mut(&key) {
                     Some(workbook) => Ok(workbook.redo()),
+                    None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
+                };
+                deliver(respond, result);
+            }
+            Command::Sheets { key, respond } => {
+                let result = match state.documents.get(&key) {
+                    Some(workbook) => Ok((0..workbook.get_sheet_count())
+                        .filter_map(|index| workbook.get_sheet_name_by_idx(index).ok())
+                        .collect()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
                 deliver(respond, result);

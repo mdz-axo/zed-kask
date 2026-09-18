@@ -296,6 +296,7 @@ members = [
     "crates/hkask-kanban-widget",
     "crates/hkask-steer",
     "crates/hkask-portfolio-widget",
+    "crates/hkask-spreadsheet-widget",
     "crates/portfolio_panel",
     "crates/media_panel",
     "crates/hkask-scenarios-widget",
@@ -399,6 +400,7 @@ hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-grap
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
 hkask_steer = { path = "crates/hkask-steer", package = "hkask-steer" }
 hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
+hkask_spreadsheet_widget = { path = "crates/hkask-spreadsheet-widget", package = "hkask-spreadsheet-widget" }
 portfolio_panel = { path = "crates/portfolio_panel" }
 media_panel = { path = "crates/media_panel" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }

@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-17
+last_updated: 2026-09-18
 version: "2.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 63 files under `kask/docs/` on 2026-09-16, within the fewer-than-70 cap.
+**Corpus size:** 66 files under `kask/docs/` on 2026-09-18 (measured with `find kask/docs -type f`), within the fewer-than-70 cap.
 
 ## Architecture
 
@@ -71,10 +71,11 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 | Document | Description |
 | --- | --- |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
+| [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Prior-art study of kanban board naming/navigation reference models (Wekan, Planka, Kan, Kanboard), and the kata-kanban's alignment and gaps against them, with shaping recommendations and a test plan. Recommendations only — not implemented. |
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 64 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 66 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 
@@ -129,7 +130,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links in the previously blocked hkask-tool-port documents target retained reference/how-to documents.
 - [x] Diagram metadata has unique-ID/location registry parity.
 - [x] Edited citations use full repository-relative paths.
-- [x] Document count is 64 and remains fewer than 70.
+- [x] Document count is 66 and remains fewer than 70.
 
 ## See also
 
