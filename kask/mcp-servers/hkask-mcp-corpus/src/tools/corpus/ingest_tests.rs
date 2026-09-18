@@ -1,14 +1,16 @@
 //! Brooks ingestion requirements exercised at the public tool boundary, offline.
-use super::IngestQaRequest;
+use super::{GroundQaRequest, IngestQaRequest};
 use crate::CorpusServer;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
 const PASSPHRASE: &str = "ingest-test-passphrase";
 const ANSWERS: [&str; 4] = ["Thirty", "72 hours", "A collision", "exp(-E/kB T)"];
+const PARAPHRASE_ANSWER: &str = "about thirty, give or take";
 
 struct NoInference;
 impl InferencePort for NoInference {
@@ -44,7 +46,11 @@ fn fixture() -> anyhow::Result<tempfile::TempDir> {
 fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
     IngestQaRequest {
         generated_jsonl: directory.join("generated.jsonl").to_string_lossy().into(),
-        grounding_verification_jsonl: directory.join("grounding.jsonl").to_string_lossy().into(),
+        grounding_manifest: directory
+            .join("grounding")
+            .join("manifest.json")
+            .to_string_lossy()
+            .into(),
         source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
         output: directory.join("training.jsonl").to_string_lossy().into(),
         db_path: directory.join("memory.db").to_string_lossy().into(),
@@ -64,15 +70,28 @@ fn flat(index: usize, answer: &str) -> Value {
         "concepts":["test concept"], "difficulty":2})
 }
 
-fn write_grounding(directory: &Path, rows: &[String]) -> anyhow::Result<()> {
-    let mut reports = Vec::new();
+/// A canonical source chunk classified under the current published-ontology
+/// protocol with reconciling candidate terms — the only source shape the
+/// grounding standard admits.
+fn tagged_chunk_json(entity_ref: &str, source: &str, text: &str) -> Value {
+    let canonical = hkask_bridge_ontology::term_resolution::canonicalize_terms(["test concept"]);
+    json!({
+        "entity_ref": entity_ref,
+        "classification": {"status":"classified","ontology_protocol":"published-term-resolution-v1"},
+        "source": source,
+        "text": text,
+        "candidate_terms": canonical.candidate_terms,
+        "ontology_tags": canonical.ontology_tags,
+        "concepts": canonical.concepts,
+    })
+}
+
+/// One canonical chunk per cited chunk_ref, with the evidence quote as its
+/// bytes: the fixture answers are then byte-exact inside their own evidence.
+fn chunk_rows_from_candidates(rows: &[String]) -> anyhow::Result<Vec<Value>> {
     let mut chunks = std::collections::BTreeMap::new();
     for line in rows {
         let qa = super::parse_qa_record(line).map_err(|error| anyhow::anyhow!("{error:?}"))?;
-        let prompt_id = qa
-            .prompt_id
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("prompt_id"))?;
         let chunk_ref = qa
             .chunk_ref
             .as_deref()
@@ -83,59 +102,75 @@ fn write_grounding(directory: &Path, rows: &[String]) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("evidence"))?;
         chunks.insert(
             chunk_ref.to_string(),
-            json!({"entity_ref":chunk_ref,"source":qa.source,"text":evidence.quote}),
+            tagged_chunk_json(chunk_ref, &qa.source, &evidence.quote),
         );
-        // The instruction judgment is tool_verified: its cited quote is the
-        // candidate's evidence quote, byte-checkable against the canonical
-        // chunk below. The output judgment is a semantic entailment and stays
-        // model_inference. The gate derives CVR from the tool_verified anchor;
-        // a self-scored all-model_inference manifest fails closed.
-        let judgment = |field: &str, text: &str, provenance: &str, strength: u8| {
-            json!({
-                "field":field,
-                "text":text,
-                "provenance":provenance,
-                "strength":strength,
-                "entailment":true,
-                "why":"The complete candidate field is supported by the cited canonical source evidence.",
-                "ontology_anchor":{"term":"claim grounding","tier":"core","namespace":"core","concept":"5w1h_core"},
-                "source_reference":{"chunk_ref":evidence.chunk_ref,"source":evidence.source,"quote":evidence.quote}
-            })
-        };
-        reports.push(json!({
-            "protocol":"prepared-qa-grounding-verification-v1",
-            "candidate_sha256":qa.row_sha256,
-            "prompt_id":prompt_id,
-            "chunk_ref":chunk_ref,
-            "source":qa.source,
-            "qa_type":qa.qa_type,
-            "judgments":[
-                judgment("instruction", &qa.instruction, "tool_verified", 2),
-                judgment("output", &qa.output, "model_inference", 1)
-            ],
-            "fact_score_breakdown":{"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":2},
-            "fact_score":1.0,
-            "confidence_band":"medium",
-            "decoupling":"spawn_agent",
-            "verdict":"accept",
-            "findings":[]
-        }));
     }
+    Ok(chunks.into_values().collect())
+}
+
+fn manifest_path(directory: &Path) -> std::path::PathBuf {
+    directory.join("grounding").join("manifest.json")
+}
+
+fn rows_path(directory: &Path) -> std::path::PathBuf {
+    directory.join("grounding").join("grounding-rows.jsonl")
+}
+
+/// Ground through the real public tool — the same producer the pipeline uses.
+async fn ground(server: &CorpusServer, directory: &Path) -> anyhow::Result<Value> {
+    let rows = std::fs::read_to_string(directory.join("generated.jsonl"))?
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let chunks = chunk_rows_from_candidates(&rows)?;
     std::fs::write(
-        directory.join("grounding.jsonl"),
-        reports
+        directory.join("chunks.jsonl"),
+        chunks
             .iter()
             .map(Value::to_string)
             .collect::<Vec<_>>()
             .join("\n"),
     )?;
+    content(
+        server
+            .corpus_ground_generated_qa(Parameters(GroundQaRequest {
+                generated_jsonl: directory.join("generated.jsonl").to_string_lossy().into(),
+                source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
+                output_dir: directory.join("grounding").to_string_lossy().into(),
+            }))
+            .await?,
+    )
+}
+
+fn read_bundle_rows(directory: &Path) -> anyhow::Result<Vec<Value>> {
+    Ok(std::fs::read_to_string(rows_path(directory))?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Write a self-consistent forged bundle: the rows file hash is recomputed, so
+/// only re-execution (not the artifact hash) can catch the forgery.
+fn write_forged_bundle(directory: &Path, rows: &[Value]) -> anyhow::Result<()> {
+    let rows_body = rows
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(rows_path(directory), &rows_body)?;
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path(directory))?)?;
+    manifest["artifacts"]["grounding_rows"]["sha256"] = json!(sha256_hex(rows_body.as_bytes()));
+    manifest["artifacts"]["grounding_rows"]["rows"] = json!(rows.len());
     std::fs::write(
-        directory.join("chunks.jsonl"),
-        chunks
-            .values()
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
+        manifest_path(directory),
+        serde_json::to_string_pretty(&manifest)?,
     )?;
     Ok(())
 }
@@ -166,7 +201,18 @@ fn reconciles(value: &Value) {
     }
 }
 
-/// expect: Clean concise candidates ingest only after complete source-grounded acceptance.
+async fn write_candidates_and_ground(
+    server: &CorpusServer,
+    directory: &Path,
+    rows: &[String],
+) -> anyhow::Result<()> {
+    std::fs::write(directory.join("generated.jsonl"), rows.join("\n"))?;
+    ground(server, directory).await?;
+    Ok(())
+}
+
+/// expect: Clean concise candidates ingest only after complete re-executed
+/// source grounding, and the summary carries the gate's identity.
 #[tokio::test]
 async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
     let directory = fixture()?;
@@ -176,8 +222,7 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
         .enumerate()
         .map(|(index, answer)| flat(index, answer).to_string())
         .collect::<Vec<_>>();
-    std::fs::write(directory.path().join("generated.jsonl"), rows.join("\n"))?;
-    write_grounding(directory.path(), &rows)?;
+    write_candidates_and_ground(&server, directory.path(), &rows).await?;
 
     let dry = content(
         server
@@ -186,6 +231,13 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
     )?;
     reconciles(&dry);
     assert_eq!(dry["retained"], 4);
+    assert_eq!(dry["grounding_protocol"], "corpus-qa-grounding-v1");
+    assert!(
+        dry["grounding_manifest_sha256"]
+            .as_str()
+            .is_some_and(|sha| !sha.is_empty())
+    );
+    assert_eq!(dry["grounding_rows"], 4);
     assert!(!directory.path().join("training.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
 
@@ -204,6 +256,13 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
         .map(serde_json::from_str)
         .collect::<Result<Vec<Value>, _>>()?;
     assert_eq!(training.len(), ANSWERS.len());
+    for (index, row) in training.iter().enumerate() {
+        assert_eq!(row["grounding"]["protocol"], "corpus-qa-grounding-v1");
+        assert_eq!(
+            row["grounding"]["row_key"],
+            json!(format!("qa-{index}|factual|line-{}", index + 1))
+        );
+    }
     let store =
         crate::helpers::open_memory_store(&request(directory.path(), false).db_path, PASSPHRASE)?;
     assert_eq!(store.h_mem_count()?, 4);
@@ -283,10 +342,9 @@ async fn ingest_rejects_invalid_requests_and_unsafe_inputs() -> anyhow::Result<(
 async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let mut req = request(directory.path(), false);
     let row = flat(0, ANSWERS[0]).to_string();
-    std::fs::write(&req.generated_jsonl, &row)?;
-    write_grounding(directory.path(), &[row])?;
+    write_candidates_and_ground(&server, directory.path(), &[row]).await?;
+    let mut req = request(directory.path(), false);
     req.output = directory.path().to_string_lossy().into_owned();
     assert!(server.corpus_ingest_qa(Parameters(req)).await.is_err());
     assert!(!directory.path().join("memory.db").exists());
@@ -307,13 +365,13 @@ async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
 #[tokio::test]
 async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
     let directory = fixture()?;
+    let server = server();
     let req = request(directory.path(), false);
     let rows = [
         flat(0, ANSWERS[0]).to_string(),
         flat(1, ANSWERS[1]).to_string(),
     ];
-    std::fs::write(&req.generated_jsonl, rows.join("\n"))?;
-    write_grounding(directory.path(), &rows)?;
+    write_candidates_and_ground(&server, directory.path(), &rows).await?;
     let store = crate::helpers::open_memory_store(&req.db_path, PASSPHRASE)?;
     let database = hkask_storage::Database::open(&req.db_path, PASSPHRASE)?;
     database
@@ -325,7 +383,7 @@ async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
          WHEN NEW.entity = 'training:qa:brooks-test:brooks.txt:1'
          BEGIN SELECT RAISE(ABORT, 'injected QA storage failure'); END;",
         )?;
-    let result = content(server().corpus_ingest_qa(Parameters(req)).await?)?;
+    let result = content(server.corpus_ingest_qa(Parameters(req)).await?)?;
     reconciles(&result);
     assert_eq!(result["status"], "partial_failure");
     assert_eq!(result["retained"], 2);
@@ -346,6 +404,275 @@ async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
             .query_deduped_untouched("training:qa:brooks-test:brooks.txt:1")?
             .is_empty()
     );
+    Ok(())
+}
+
+/// expect: A missing grounding manifest is rejected before any write, and the
+/// superseded self-reported report shape cannot stand in for one.
+#[tokio::test]
+async fn ingest_requires_grounding_manifest_before_any_write() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = flat(0, ANSWERS[0]).to_string();
+    std::fs::write(directory.path().join("generated.jsonl"), &row)?;
+    let chunks = chunk_rows_from_candidates(&[row.clone()])?;
+    std::fs::write(
+        directory.path().join("chunks.jsonl"),
+        chunks
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    let mut req = request(directory.path(), false);
+    req.grounding_manifest = directory
+        .path()
+        .join("does-not-exist")
+        .join("manifest.json")
+        .to_string_lossy()
+        .into();
+    let error = server
+        .corpus_ingest_qa(Parameters(req))
+        .await
+        .expect_err("missing grounding manifest");
+    assert!(
+        error.to_string().contains("does-not-exist"),
+        "the error must name the missing manifest: {error}"
+    );
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
+
+    // The superseded prepared-qa-grounding-verification-v1 report is not a
+    // manifest: a self-reported verdict file cannot open the gate.
+    let old_report = json!({
+        "protocol":"prepared-qa-grounding-verification-v1",
+        "candidate_sha256":"irrelevant",
+        "prompt_id":"qa-0","chunk_ref":"corpus:brooks:0","source":"brooks.txt",
+        "judgments":[],"fact_score_breakdown":{"sar":1.0,"cvr":1.0,"hfr":1.0,"nlr":1.0,"claims_checked":1},
+        "fact_score":1.0,"confidence_band":"high","decoupling":"spawn_agent","verdict":"accept","findings":[]
+    });
+    let old_path = directory.path().join("old-report.jsonl");
+    std::fs::write(&old_path, old_report.to_string())?;
+    let mut req = request(directory.path(), false);
+    req.grounding_manifest = old_path.to_string_lossy().into();
+    let error = server
+        .corpus_ingest_qa(Parameters(req))
+        .await
+        .expect_err("old report shape cannot open the gate");
+    assert!(
+        error.to_string().contains("corpus-qa-grounding-v1"),
+        "{error}"
+    );
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
+    Ok(())
+}
+
+/// expect: A forged bundle that self-reports a verified answer is caught by
+/// re-execution — the artifact's claims cannot substitute for derived facts.
+#[tokio::test]
+async fn self_reported_verification_cannot_open_ingestion_gate() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
+        "concepts":["test concept"], "difficulty":2})
+        .to_string();
+    write_candidates_and_ground(&server, directory.path(), &[row]).await?;
+
+    // The honest bundle records the paraphrase as model_inference.
+    let rows = read_bundle_rows(directory.path())?;
+    let answer = rows[0]["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["role"] == "answer")
+        .expect("answer claim");
+    assert_eq!(answer["provenance"], "model_inference");
+    assert_eq!(answer["strength"], 1);
+
+    // Forge: claim tool_verified strength 2 with a fabricated byte span, and
+    // rebind the manifest hash so only re-execution can catch it.
+    let mut forged = rows;
+    for claim in forged[0]["claims"].as_array_mut().expect("claims") {
+        if claim["role"] == "answer" {
+            claim["provenance"] = json!("tool_verified");
+            claim["strength"] = json!(2);
+            claim["byte_span"] = json!({"kind":"evidence_quote","evidence_index":0,"offset":0,"length":PARAPHRASE_ANSWER.len()});
+        }
+    }
+    write_forged_bundle(directory.path(), &forged)?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("forged strength cannot open the gate");
+    assert!(
+        error.to_string().contains("does not match re-execution"),
+        "{error}"
+    );
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
+    Ok(())
+}
+
+/// expect: A bundle whose rows file was modified after writing fails on the
+/// manifest hash binding.
+#[tokio::test]
+async fn grounding_manifest_hash_mismatch_fails_closed() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let rows = [
+        flat(0, ANSWERS[0]).to_string(),
+        flat(1, ANSWERS[1]).to_string(),
+    ];
+    write_candidates_and_ground(&server, directory.path(), &rows).await?;
+    // Mutate the rows file after the manifest bound its hash.
+    let body = std::fs::read_to_string(rows_path(directory.path()))?;
+    std::fs::write(rows_path(directory.path()), format!("{body}\n"))?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("modified rows file fails closed");
+    assert!(error.to_string().contains("manifest SHA-256"), "{error}");
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
+    Ok(())
+}
+
+/// expect: The bundle must cover exactly the ingestible candidates — no
+/// missing rows, no duplicates, no extras.
+#[tokio::test]
+async fn grounding_manifest_requires_bijective_row_coverage() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let rows = [
+        flat(0, ANSWERS[0]).to_string(),
+        flat(1, ANSWERS[1]).to_string(),
+    ];
+    write_candidates_and_ground(&server, directory.path(), &rows).await?;
+
+    // A self-consistent bundle that covers only the first candidate.
+    let bundle_rows = read_bundle_rows(directory.path())?;
+    write_forged_bundle(directory.path(), &bundle_rows[..1])?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("missing coverage fails closed");
+    assert!(error.to_string().contains("covers 1 of 2"), "{error}");
+
+    // A bundle that repeats one row_key for two candidates.
+    let duplicated = [bundle_rows[0].clone(), bundle_rows[0].clone()];
+    write_forged_bundle(directory.path(), &duplicated)?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("duplicate row keys fail closed");
+    assert!(error.to_string().contains("repeats row key"), "{error}");
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
+    Ok(())
+}
+
+/// expect: Ontology resolutions are recomputed at the gate; a tampered
+/// resolution fails closed, while a coarse 5w1h_core ruling is an honest
+/// record that ingests.
+#[tokio::test]
+async fn grounding_gate_recomputes_ontology_resolutions() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let rows = [flat(0, ANSWERS[0]).to_string()];
+    write_candidates_and_ground(&server, directory.path(), &rows).await?;
+
+    // The fixture term resolves coarsely — an honest core anchor, not a failure.
+    let bundle_rows = read_bundle_rows(directory.path())?;
+    let resolution = &bundle_rows[0]["term_resolutions"][0];
+    assert_eq!(resolution["tier"], "core");
+    assert_eq!(resolution["namespace"], "core");
+    assert_eq!(resolution["concept"], "5w1h_core");
+    assert_eq!(bundle_rows[0]["candidate_terms"], json!(["test concept"]));
+
+    // Tamper the resolution; the gate recomputes and fails the comparison.
+    let mut forged = bundle_rows;
+    forged[0]["term_resolutions"][0]["concept"] = json!("http://forged.example/private-concept");
+    forged[0]["term_resolutions"][0]["tier"] = json!("domain_supplement");
+    write_forged_bundle(directory.path(), &forged)?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("tampered resolution fails closed");
+    assert!(
+        error.to_string().contains("does not match re-execution"),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// expect: A genuinely paraphrased answer is recorded honestly as
+/// model_inference by the grounding tool and fails ingestion closed — no
+/// compensatory score can lift it to verified.
+#[tokio::test]
+async fn model_inference_cannot_be_ingested_as_verified() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
+        "concepts":["test concept"], "difficulty":2})
+        .to_string();
+    write_candidates_and_ground(&server, directory.path(), &[row]).await?;
+    // The honest bundle over a paraphrase is a valid record — the tool records
+    // the finding rather than rejecting the input.
+    let bundle_rows = read_bundle_rows(directory.path())?;
+    assert_eq!(bundle_rows.len(), 1);
+    assert!(
+        bundle_rows[0]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding == "answer_not_source_exact")
+    );
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("paraphrase answers cannot be ingested as verified");
+    assert!(
+        error.to_string().contains("not strength-2 grounded"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("model_inference"), "{error}");
+    Ok(())
+}
+
+/// expect: The gate runs before dedup, the dry-run return, output, and DB
+/// access — a gate failure leaves no side effects in either mode.
+#[tokio::test]
+async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
+        "concepts":["test concept"], "difficulty":2})
+        .to_string();
+    write_candidates_and_ground(&server, directory.path(), &[row]).await?;
+    for dry_run in [true, false] {
+        assert!(
+            server
+                .corpus_ingest_qa(Parameters(request(directory.path(), dry_run)))
+                .await
+                .is_err(),
+            "gate failure must not be masked by dry_run={dry_run}"
+        );
+    }
+    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
 
@@ -387,9 +714,11 @@ impl InferencePort for CitationGeneration {
             ])
         } else {
             assert!(rendered.contains("planned_levels"));
+            // Byte-exact extractive answers: the V1 grounding standard admits
+            // only answers that occur verbatim inside the row's own evidence.
             json!([
-                {"level":"factual","question":"What is the measured count?","answer":"Thirty"},
-                {"level":"conceptual","question":"Why does the duration constrain timing?","answer":"It determines when the next step can begin."}
+                {"level":"factual","question":"What is the measured count?","answer":"thirty"},
+                {"level":"conceptual","question":"Why does the duration constrain timing?","answer":"The duration of 72 hours constrains when the next step can begin."}
             ])
         };
         Box::pin(async move {
@@ -410,11 +739,12 @@ impl InferencePort for CitationGeneration {
     }
 }
 
-/// expect: Actual public generation -> public ingest -> audit preserves each
-/// structured source identity and generator metadata, including short answers.
-/// A quote match cannot launder prose, wrong-source attribution or fabrication.
+/// expect: Actual public generation → public grounding → public ingest → audit
+/// preserves each structured source identity, generator metadata, grounding
+/// identity, and canonical ontology. Only byte-exact answers round-trip
+/// through the gate; a quote match alone cannot launder prose.
 #[tokio::test]
-async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
+async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<()> {
     use crate::services::qa_pipeline::{PREPARED_QA_PROTOCOL, PreparedQaPassage, PreparedQaPrompt};
     use crate::tools::corpus::QaType;
     use crate::tools::semantic::GenerateQaBatchRequest;
@@ -428,6 +758,7 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
         Default::default(),
         ocr,
     );
+    let passage = "The measured count is thirty. The duration of 72 hours constrains when the next step can begin.";
     let prompt = PreparedQaPrompt {
         prompt_id: hkask_types::corpus::qa_prompt_id(
             "brooks.txt",
@@ -441,7 +772,7 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
                 local_id: "p0".into(),
                 chunk_ref: "corpus:brooks:0".into(),
                 source: "brooks.txt".into(),
-                text: "The measured count is thirty. The duration of 72 hours constrains when the next step can begin.".into(),
+                text: passage.into(),
             },
             PreparedQaPassage {
                 local_id: "p1".into(),
@@ -486,11 +817,37 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     )?;
     assert_eq!(generated["qa_rows_written"], 2);
     assert_eq!(generated["prompts_failed"], 0);
-    let generated_lines = std::fs::read_to_string(&req.generated_jsonl)?
-        .lines()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    write_grounding(directory.path(), &generated_lines)?;
+
+    // Ground through the real tool over canonical tagged chunks.
+    std::fs::write(
+        directory.path().join("chunks.jsonl"),
+        [
+            tagged_chunk_json("corpus:brooks:0", "brooks.txt", passage),
+            tagged_chunk_json("corpus:other:1", "other.txt", "72 hours"),
+        ]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )?;
+    let grounded = content(
+        server
+            .corpus_ground_generated_qa(Parameters(GroundQaRequest {
+                generated_jsonl: req.generated_jsonl.clone(),
+                source_chunks_jsonl: directory
+                    .path()
+                    .join("chunks.jsonl")
+                    .to_string_lossy()
+                    .into(),
+                output_dir: directory.path().join("grounding").to_string_lossy().into(),
+            }))
+            .await?,
+    )?;
+    assert_eq!(grounded["candidates"], 2);
+    assert_eq!(grounded["tool_verified_answers"], 2);
+    assert_eq!(grounded["model_inference_answers"], 0);
+
+    let manifest_sha256 = grounded["manifest_sha256"].as_str().expect("manifest sha");
     let summary = content(
         server
             .corpus_ingest_qa(Parameters(request(directory.path(), false)))
@@ -498,6 +855,7 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     )?;
     reconciles(&summary);
     assert_eq!(summary["stored"], 2);
+    assert_eq!(summary["grounding_manifest_sha256"], manifest_sha256);
     let generated_rows: Vec<Value> = std::fs::read_to_string(&req.generated_jsonl)?
         .lines()
         .map(serde_json::from_str)
@@ -515,6 +873,13 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
             flat["evidence_quotes"],
             envelope["response"]["evidence_quotes"]
         );
+        // Grounding identity persists with every stored row.
+        assert_eq!(flat["grounding"]["protocol"], "corpus-qa-grounding-v1");
+        assert_eq!(flat["grounding"]["manifest_sha256"], manifest_sha256);
+        let row_key = flat["grounding"]["row_key"].as_str().expect("row key");
+        let prompt_id = envelope["prompt_id"].as_str().expect("prompt id");
+        assert!(row_key.starts_with(&format!("{prompt_id}|")));
+        assert!(row_key.ends_with(&format!("|line-{}", index + 1)));
         let records = store
             .query_deduped_untouched(&format!("training:qa:brooks-test:brooks.txt:{index}"))?;
         let record = records
@@ -530,12 +895,24 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
         ] {
             assert_eq!(record.value[key], flat[key], "memory {key}");
         }
+        assert_eq!(record.value["grounding"]["row_key"], row_key);
+        // Canonical ontology persists through the shared published resolver.
+        let ontology = record
+            .ontology
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing ontology"))?;
+        assert_eq!(
+            ontology.ontology_protocol.as_deref(),
+            Some("published-term-resolution-v1")
+        );
+        assert_eq!(ontology.candidate_terms, vec!["test concept".to_string()]);
+        assert!(ontology.ontology_tags.contains_key("core"));
     }
     let sources = directory.path().join("sources.jsonl");
     std::fs::write(
         &sources,
         [
-            json!({"entity_ref":"corpus:brooks:0","source":"brooks.txt","text":"The measured count is thirty. The duration of 72 hours constrains when the next step can begin."}),
+            json!({"entity_ref":"corpus:brooks:0","source":"brooks.txt","text":passage}),
             json!({"entity_ref":"corpus:other:1","source":"other.txt","text":"72 hours"}),
         ]
         .iter()
@@ -578,14 +955,14 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
         rows[0]["verified_claims"][1]["provenance"],
         "model_inference"
     );
-    assert_eq!(rows[0]["answer"], "Thirty");
+    assert_eq!(rows[0]["answer"], "thirty");
     assert_eq!(
         rows[1]["verified_claims"][0]["source_reference"]["source"],
         "brooks.txt"
     );
     assert_eq!(
         rows[1]["answer"],
-        "It determines when the next step can begin."
+        "The duration of 72 hours constrains when the next step can begin."
     );
     assert_eq!(rows[1]["fact_score"], Value::Null);
     assert_eq!(flat_report["quality_evidence"]["fact_score"], Value::Null);

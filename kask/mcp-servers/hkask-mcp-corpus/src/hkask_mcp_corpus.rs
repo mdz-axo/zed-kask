@@ -12,8 +12,8 @@
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
 //!   corpus_build_chunk_representations, corpus_embedding_inventory, corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
-//! - QA output:  corpus_build_prompts, corpus_generate_qa_batch, corpus_ingest_qa,
-//!   corpus_prepare_training_dataset, corpus_purge_qa
+//! - QA output:  corpus_build_prompts, corpus_generate_qa_batch, corpus_ground_generated_qa,
+//!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
 //! - Compose:    corpus_compose, corpus_rewrite, corpus_centroid
 //! - Manage:     corpus_cache, corpus_query, corpus_clear_index
 //!
@@ -269,15 +269,31 @@ impl rmcp::ServerHandler for CorpusServer {}
 mod tool_surface_tests {
     use crate::CorpusServer;
 
-    /// The corpus server registers exactly 25 tools. A `#[tool]` method in an
+    /// The corpus server registers exactly 26 tools. A `#[tool]` method in an
     /// impl block WITHOUT `#[tool_router]` silently registers nothing while
     /// `cargo check` passes — `corpus_prepare_training_dataset` shipped that
     /// way (attributed, implemented, unreachable) until this pin caught the
     /// class. Mirrors the media/scenarios pin tests.
     #[test]
-    fn tool_surface_is_exactly_25_registered_tools() {
+    fn tool_surface_is_exactly_26_registered_tools() {
         let tools = CorpusServer::combined_router().list_all();
-        assert_eq!(tools.len(), 25, "corpus registered tool surface changed");
+        assert_eq!(tools.len(), 26, "corpus registered tool surface changed");
+        let grounding = tools
+            .iter()
+            .find(|tool| tool.name == "corpus_ground_generated_qa")
+            .expect("grounding bundle tool must be registered");
+        let grounding_schema =
+            serde_json::to_value(&grounding.input_schema).expect("grounding schema JSON");
+        for required in ["generated_jsonl", "source_chunks_jsonl", "output_dir"] {
+            assert!(
+                grounding_schema["required"]
+                    .as_array()
+                    .expect("grounding required fields")
+                    .iter()
+                    .any(|field| field == required),
+                "grounding schema must require {required}"
+            );
+        }
         let calibration = tools
             .iter()
             .find(|tool| tool.name == "corpus_build_chunk_representations")

@@ -16,6 +16,7 @@ use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationSer
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
+use crate::services::qa_grounding::{GroundQaRequest, QA_GROUNDING_PROTOCOL};
 use crate::{
     Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool, json, owner_webid,
     tool, tool_router,
@@ -157,7 +158,7 @@ impl CorpusServer {
     // ── Ingest QA ─────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Ingest generated QA candidates. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows) and requires a complete identity-bound prepared-qa-grounding-verification-v1 manifest plus canonical source_chunks_jsonl: every candidate needs one accepted report row whose candidate_sha256 equals its raw-line SHA-256, whose prompt_id/chunk_ref/source/qa_type match the candidate, whose instruction/output judgments cite the candidate's own evidence quotes as exact substrings of canonical chunk bytes, whose fact_score reconciles under the canonical weights at >= 0.80, and whose verdict is a clean decoupled acceptance (accept, no findings, decoupling spawn_agent, band medium/high). Case-insensitive exact-instruction dedup keeps the first valid row. Reads contained, size-capped JSONL; preserves evidence and source metadata in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run writes nothing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
+        description = "Ingest generated QA candidates behind the corpus-qa-grounding-v1 gate. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows). Before dedup, output, or DB access, the gate re-hashes the bundle, checks row bijection, requires sources classified under the current published-ontology protocol, recomputes ontology resolutions, re-executes every mechanical check — evidence quotes byte-exact in uniquely identified canonical chunks, answers byte-exact within their own source-grounded evidence — requires each artifact row to equal its re-execution, and fails closed on any applicable claim that is not tool-verified or platform-derived: model_inference answers cannot be ingested as verified. Case-insensitive exact-instruction dedup keeps the first valid row. Preserves evidence, source metadata, grounding manifest identity, and canonical ontology in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run validates without storing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
     )]
     pub async fn corpus_ingest_qa(
         &self,
@@ -176,11 +177,14 @@ impl CorpusServer {
             let mut total_nonblank_rows = 0usize;
             let mut generator_errors = 0usize;
             let mut malformed = 0usize;
-            let mut qas = Vec::new();
-            for line in content.lines().filter(|line| !line.trim().is_empty()) {
+            let mut qas: Vec<(usize, ParsedQa)> = Vec::new();
+            for (index, line) in content.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
                 total_nonblank_rows += 1;
                 match parse_qa_record(line) {
-                    Ok(qa) => qas.push(qa),
+                    Ok(qa) => qas.push((index + 1, qa)),
                     Err(QaRecordError::GeneratorError) => generator_errors += 1,
                     Err(QaRecordError::Malformed) => malformed += 1,
                 }
@@ -198,9 +202,9 @@ impl CorpusServer {
             }
 
             // Structural admission only: concise answers are not low-quality answers.
-            let filtered: Vec<&ParsedQa> = qas
+            let filtered: Vec<(usize, &ParsedQa)> = qas
                 .iter()
-                .filter(|q| {
+                .filter(|(_, q)| {
                     !q.instruction.trim().is_empty()
                         && !q.output.trim().is_empty()
                         && !q.qa_type.trim().is_empty()
@@ -209,6 +213,7 @@ impl CorpusServer {
                             .as_ref()
                             .is_some_and(|value| !value.trim().is_empty())
                 })
+                .map(|(line, qa)| (*line, qa))
                 .collect();
             tracing::info!(
                 "  Structural filter: {} (removed {})",
@@ -221,10 +226,13 @@ impl CorpusServer {
                     qas.len() - filtered.len()
                 )));
             }
-            crate::services::qa_grounding::verify_complete_grounding(
-                &req.grounding_verification_jsonl,
+            // Grounding gate: authority is re-executed from the candidates and
+            // canonical chunks before dedup, output, or DB access. The bundle
+            // is a record, never a source of authority.
+            let gate = crate::services::qa_grounding::verify_grounding_gate(
+                &req.grounding_manifest,
+                &filtered,
                 &req.source_chunks_jsonl,
-                &qas,
             )?;
 
             // Exact-match dedup (case-insensitive on instruction).
@@ -238,11 +246,11 @@ impl CorpusServer {
             // <0.01% duplicates on this corpus. If semantic near-dup removal is
             // later shown to matter, use MinHash/LSH on instructions or an ANN
             // index on stored QA embeddings — not the O(N·K) K-means.
-            let mut deduped: Vec<&ParsedQa> = Vec::new();
+            let mut deduped: Vec<(usize, &ParsedQa)> = Vec::new();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for qa in &filtered {
-                if seen.insert(qa.instruction.to_lowercase()) {
-                    deduped.push(qa);
+            for pair in &filtered {
+                if seen.insert(pair.1.instruction.to_lowercase()) {
+                    deduped.push(*pair);
                 }
             }
 
@@ -267,6 +275,9 @@ impl CorpusServer {
                 "stored_h_mems": 0,
                 "failed": 0,
                 "storage_errors": [],
+                "grounding_protocol": QA_GROUNDING_PROTOCOL,
+                "grounding_manifest_sha256": gate.manifest_sha256,
+                "grounding_rows": gate.rows,
                 "dry_run": req.dry_run,
                 "status": "dry_run",
             });
@@ -276,7 +287,15 @@ impl CorpusServer {
 
             // Keep evidence available for downstream audits, outside the training text.
             let mut train = String::new();
-            for qa in &deduped {
+            for (line, qa) in &deduped {
+                let prompt_id = qa.prompt_id.as_deref().ok_or_else(|| {
+                    McpToolError::internal("Gated candidate lost its prompt_id")
+                })?;
+                let row_key = crate::services::qa_grounding::candidate_row_key(
+                    prompt_id,
+                    &qa.qa_type,
+                    *line,
+                );
                 let row = json!({
                     "instruction": qa.instruction, "input": "", "output": qa.output,
                     "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
@@ -284,6 +303,11 @@ impl CorpusServer {
                     "evidence_quotes": qa.evidence_quotes,
                     "prompt_id": qa.prompt_id, "provenance": qa.provenance,
                     "difficulty": qa.difficulty, "concepts": qa.concepts,
+                    "grounding": {
+                        "protocol": QA_GROUNDING_PROTOCOL,
+                        "manifest_sha256": gate.manifest_sha256,
+                        "row_key": row_key,
+                    },
                 });
                 train.push_str(
                     &serde_json::to_string(&row)
@@ -301,8 +325,17 @@ impl CorpusServer {
             let mut stored = 0usize;
             let mut storage_errors = Vec::new();
 
-            for (i, qa) in deduped.iter().enumerate() {
+            for (i, (line, qa)) in deduped.iter().enumerate() {
                 let entity = format!("training:qa:{}:{}:{}", req.dataset, qa.source, i);
+                let prompt_id = qa
+                    .prompt_id
+                    .as_deref()
+                    .ok_or_else(|| McpToolError::internal("Gated candidate lost its prompt_id"))?;
+                let row_key = crate::services::qa_grounding::candidate_row_key(
+                    prompt_id,
+                    &qa.qa_type,
+                    *line,
+                );
                 let v = serde_json::json!({
                     "question": qa.instruction,
                     "answer": qa.output,
@@ -317,6 +350,11 @@ impl CorpusServer {
                     "evidence_quotes": qa.evidence_quotes,
                     "prompt_id": qa.prompt_id,
                     "provenance": qa.provenance,
+                    "grounding": {
+                        "protocol": QA_GROUNDING_PROTOCOL,
+                        "manifest_sha256": gate.manifest_sha256,
+                        "row_key": row_key,
+                    },
                 });
                 // Dual-axis anchoring (P5.4) in the first-class `ontology`
                 // column rather than the value blob: a generated QA pair is
@@ -330,6 +368,12 @@ impl CorpusServer {
                     qa.concepts.clone(),
                     qa.source.clone(),
                 );
+                // Canonical ontology through the shared published-ontology
+                // resolver: candidate terms are re-anchored and the record
+                // carries the current protocol stamp.
+                for term in &qa.concepts {
+                    ontology = ontology.with_candidate_term(term.clone());
+                }
                 ontology.pko_procedure = Some("corpus_generate_qa_batch".to_string());
                 ontology.pko_step = qa.chunk_ref.clone();
                 let h_mem = hkask_storage::HMem::new(&entity, "training_qa_pair", v, webid)
@@ -360,6 +404,22 @@ impl CorpusServer {
         })
         .await
     }
+
+    // ── Ground generated QA ──────────────────────────────────────────────
+
+    #[tool(
+        description = "Produce a hash-bound corpus-qa-grounding-v1 bundle (manifest.json plus grounding-rows.jsonl) for generated QA candidates. Deterministic and zero-inference: verifies every evidence quote byte-exactly against uniquely identified canonical tagged chunks classified under the current published-ontology protocol, records byte spans, and recomputes ontology resolutions for the preserved candidate terms through the published ladder. The bundle records mechanical facts only — no verified, authorized, or confidence fields exist in it, and rows with paraphrase answers are recorded honestly as model_inference. corpus_ingest_qa re-executes every check before admission; this tool authorizes nothing."
+    )]
+    pub async fn corpus_ground_generated_qa(
+        &self,
+        Parameters(req): Parameters<GroundQaRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_ground_generated_qa", async {
+            crate::services::qa_grounding::build_grounding_bundle(&req)
+        })
+        .await
+    }
+
     /// Prepare a training dataset from corpus QA pairs for LoRA fine-tuning.
     ///
     /// This tool bridges the docproc corpus pipeline and the training server:
@@ -641,9 +701,14 @@ fn default_type_distribution() -> String {
 pub struct IngestQaRequest {
     /// Path to generated QA candidates JSONL (from corpus_generate_qa_batch).
     pub generated_jsonl: String,
-    /// Complete identity-bound `prepared-qa-grounding-verification-v1` JSONL.
-    pub grounding_verification_jsonl: String,
-    /// Canonical chunk JSONL used to verify every grounding evidence quote.
+    /// Path to the manifest.json of a `corpus-qa-grounding-v1` bundle produced by
+    /// `corpus_ground_generated_qa`. The gate re-executes every mechanical check
+    /// from the candidates and canonical chunks; the artifact is never trusted
+    /// as authority, and self-reported verification cannot open the gate.
+    pub grounding_manifest: String,
+    /// Canonical tagged-chunk JSONL used to re-execute every grounding check.
+    /// Every chunk must be classified under `published-term-resolution-v1` with
+    /// reconciling candidate terms.
     pub source_chunks_jsonl: String,
     /// Output path for training JSONL (instruction/input/output plus QA evidence metadata).
     pub output: String,

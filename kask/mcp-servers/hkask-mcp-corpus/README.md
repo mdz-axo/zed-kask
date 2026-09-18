@@ -36,7 +36,7 @@ anchors do not turn generated assertions or exact citations into verified prose.
 |---|---|
 | Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
 | Process (11) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
-| QA output (4) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
+| QA output (5) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
@@ -278,25 +278,33 @@ not certify answer entailment. Generated rows use
 `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
 Generated rows are **candidates, never verified QA** — no model can promote its own
-output to verified. Acceptance happens only at ingestion through the identity-bound
-external grounding gate: `corpus_ingest_qa` fails closed unless every candidate has
-one row in a complete `prepared-qa-grounding-verification-v1` manifest whose
-`candidate_sha256` is the candidate raw line's SHA-256 and whose `prompt_id`,
-`chunk_ref`, `source`, and `qa_type` match the candidate exactly. Each row must judge
-exactly `instruction` and `output` once each with the exact candidate text,
-`entailment`, a 40+ character `why`, a closed provenance lattice
-(`tool_verified`/`platform_derived` at strength 2 — the ceiling for exact mechanical
-citation matches — or `model_inference` at strength 1), a valid ontology anchor
-(nonblank term/namespace/concept, tier ∈ domain, derived, upper, core), and a
-`source_reference` that equals one of the candidate's own evidence quotes, resolves
-to a canonical chunk in `source_chunks_jsonl`, and is an exact substring of that
-chunk's text. `fact_score_breakdown` must reconcile (`claims_checked` equals the
-judgment count, finite ratios in [0,1], weighted score within 1e-12 of
-0.30·sar + 0.25·cvr + 0.20·hfr + 0.25·nlr) with `fact_score ≥ 0.80`, and the row must
-be a clean decoupled acceptance: `verdict: accept`, no findings,
-`decoupling: spawn_agent`, confidence band medium or high. Nothing generated before
-this gate is ingestible; historical pilot artifacts (v2–v8) are immutable evidence
-only.
+output to verified. Acceptance happens only at ingestion, behind the re-executed
+`corpus-qa-grounding-v1` gate. `corpus_ground_generated_qa` first produces a
+hash-bound bundle (`manifest.json` + `grounding-rows.jsonl`) — deterministic,
+zero-inference — whose rows carry `row_key` (prompt_id + qa_type + physical
+line), the candidate's raw-line SHA-256, source identity, preserved candidate
+terms, **server-recomputed** `TermResolution`s through the published ladder, and
+per-claim records: every evidence quote checked byte-exactly against its
+uniquely identified canonical chunk (provenance `tool_verified`, strength 2,
+byte span), the answer checked byte-exact inside the row's own source-grounded
+evidence (`tool_verified`, strength 2) or recorded honestly as
+`model_inference` strength 1, and the instruction premise recorded
+`not_applicable` with its unperformed check. No verified/authorized/confidence
+fields exist anywhere in the bundle — it records mechanical facts and
+authorizes nothing.
+
+`corpus_ingest_qa` then re-executes everything before dedup, output, or DB
+access: it re-hashes the bundle, checks row bijection against the candidate
+file, requires sources classified under `published-term-resolution-v1` with
+reconciling terms, recomputes the ontology resolutions, re-derives every claim,
+and requires each artifact row to equal its re-execution — self-reported
+strengths, spans, or resolutions cannot open the gate. Admission requires **all
+applicable factual claims at strength 2** (`tool_verified`/`platform_derived`);
+`model_inference` answers fail closed — paraphrase and conceptual answers stay
+blocked until an independent semantic oracle is specified. Manifest identity
+and the canonical ontology persist into the training JSONL and QA h_mems.
+Nothing generated before this gate is ingestible; historical pilot artifacts
+(v2–v8) are immutable evidence only.
 
 One generated pair becomes one unverified candidate envelope:
 
@@ -318,32 +326,35 @@ than fabricated. Skips and failed prompts are never training data.
 
 ### Grounding-gate architecture references
 
-The QA pipeline generates unverified candidates and defers acceptance to an
-identity-bound external grounding gate, not to a second model:
+The QA pipeline generates unverified candidates and defers acceptance to a
+re-executed mechanical gate — not to a second model:
 
 - W3C, *PROV-O: The PROV Ontology*
   ([w3.org/TR/prov-o](https://www.w3.org/TR/prov-o/)) supplies the provenance
   model: a candidate is an entity attributed to its generator, and acceptance
-  is a separate activity bound to entities the generator did not author.
-  The `candidate_sha256` identity binding is the derivation link that makes
-  a report row checkable against the exact bytes it claims to accept.
+  is a separate activity bound to entities the generator did not author. The
+  `row_key`/`candidate_sha256` bindings and the artifact-equals-re-execution
+  requirement make every acceptance checkable against the exact bytes it
+  derives from.
 - Thorne et al., *FEVER: a large-scale dataset for Fact Extraction and
   VERification* ([arXiv:1803.05355](https://arxiv.org/abs/1803.05355))
   grounds claim verification in retrieved textual evidence recorded by
   annotators without knowledge of the sentence a claim was derived from —
-  the same separation the grounding manifest enforces: evidence quotes are
-  mechanically matched to canonical source bytes, never to generator output.
-- Es et al., *Ragas: Automated Evaluation of Retrieval Augmented Generation*
-  ([arXiv:2309.15217](https://arxiv.org/abs/2309.15217)) supplies the
-  faithfulness/context metric framing the fact_score breakdown follows
-  (weighted component ratios with nil-propagation for unperformed checks
-  and a release threshold of 0.80).
+  the same separation the gate enforces: evidence quotes and answers are
+  mechanically matched to canonical source bytes, never to generator output
+  or a model's judgment about it.
 - The project's Verification Commons Protocol v1.0 (2026-09-07), adapted from
   Elinor Ostrom's institutional design for governing common-pool resources
-  (see `.agents/skills/grounding-verify/SKILL.md`), supplies bounded provenance,
-  decoupled monitoring (the `decoupling: spawn_agent` requirement — the
-  verifier must be a different process from the generator), graduated
-  sanctions, conflict precedence, and nested verification layers.
+  (see `.agents/skills/grounding-verify/SKILL.md`), supplies the bounded
+  provenance lattice (`tool_verified`/`platform_derived` at strength 2,
+  `model_inference` as observation) and the explicit-unperformed-check
+  discipline. The decoupled-verifier variant (a spawned model judging
+  entailment) was rejected 2026-09-18: model-mediated judgments are
+  observations, never authority, so admission is all-strength-2 by
+  re-execution with no compensatory score.
+- Coarse `5w1h_core` resolutions are honest anchors from the published
+  fallback ladder (`hkask-bridge-ontology/src/term_resolution.rs`), never
+  failures, and never model-supplied namespaces or URIs.
 
 The adaptation here is: generator writes candidate → external grounding
 manifest cites canonical source bytes and binds to the candidate's SHA-256 →
@@ -413,20 +424,25 @@ metadata/evidence. It uses contained, size-capped UTF-8 input. `dataset` and
 and evidence are in `response`; primary `qa_type`, `source`, `chunk_ref` are
 outside. Flat rows carry them beside instruction/output.
 
-Admission is **structural only**: nonblank instruction, output, QA type, source
+Structural admission is unchanged: nonblank instruction, output, QA type, source
 and chunk ref, required structured evidence array, and complete evidence entries.
-Concise answers are valid; retained text is not trimmed or rewritten. Invalid
-concepts, blank supplied prompt IDs, non-object provenance or malformed evidence
-are malformed rows. First structurally valid case-insensitive exact instructions
-win in file order; there is no semantic dedup or existing-DB dedup
-(`src/tools/corpus/qa_parsing.rs:53–112`; `src/tools/corpus.rs:181–239`).
+On top of structure, every ingestion runs the `corpus-qa-grounding-v1` gate
+before dedup, output, and DB access (see the grounding contract above): the
+manifest is required, every check is re-executed server-side, and only
+all-strength-2 rows ingest. Concise answers are valid; retained text is not
+trimmed or rewritten. Invalid concepts, blank supplied prompt IDs, non-object
+provenance or malformed evidence are malformed rows. First structurally valid
+case-insensitive exact instructions win in file order; there is no semantic
+dedup or existing-DB dedup (`src/tools/corpus/qa_parsing.rs:53–112`;
+`src/tools/corpus.rs`).
 
 Training JSONL retains `instruction`, empty `input`, `output`, `qa_type`, `type`,
-`source`, `chunk_ref`, `evidence_quotes`, `prompt_id`, `provenance`, `difficulty`
-and `concepts`. h_mem values preserve these alongside question/answer,
-`bloom_level` and dataset; DC/BIBO and PKO metadata are in the ontology column.
-An absent supplied `type` uses `qa_type`. No embeddings are generated and no
-quotation/answer semantic verification occurs (`src/tools/corpus.rs:264–354`).
+`source`, `chunk_ref`, `evidence_quotes`, `prompt_id`, `provenance`, `difficulty`,
+`concepts`, and the `grounding` identity object (protocol, manifest SHA-256,
+`row_key`). h_mem values preserve these alongside question/answer, `bloom_level`
+and dataset; DC/BIBO and PKO metadata plus the candidate terms resolved through
+the shared published-ontology resolver are in the ontology column. An absent
+supplied `type` uses `qa_type`. No embeddings are generated (`src/tools/corpus.rs`).
 
 | Reconciliation | Meaning |
 |---|---|

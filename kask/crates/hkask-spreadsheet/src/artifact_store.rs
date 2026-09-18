@@ -65,7 +65,7 @@ pub fn production_root() -> PathBuf {
 
 /// Lowercase hex SHA-256 of `bytes` — the content digest of a revision.
 pub fn digest_of(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256.digest(bytes))
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 impl ArtifactStore {

@@ -14,7 +14,6 @@ logisheets-rs = "=1.15.1"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 # oneshot channels for the actor's async handle — runtime-agnostic (no tokio

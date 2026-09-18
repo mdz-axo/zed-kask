@@ -288,6 +288,7 @@ members = [
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
     "kask/crates/hkask-steer-core",
+    "kask/crates/hkask-spreadsheet",
     "crates/hkask-tool-invoker",
     "crates/hkask-conversation-injector",
     "crates/hkask-viz-core",
@@ -758,6 +759,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 libwebrtc = "0.3.26"
 linkify = "0.10.0"
+logisheets-rs = "=1.15.1"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lru = "0.16"
@@ -914,6 +916,7 @@ hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
+hkask-spreadsheet = { path = "kask/crates/hkask-spreadsheet" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 
 hkask-memory = { path = "kask/crates/hkask-memory" }

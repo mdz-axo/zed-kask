@@ -16,9 +16,10 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use futures::channel::oneshot;
+use hkask_types::BlockProvenance;
 use hkask_types::spreadsheet::{
-    AnalyticalTable, ArtifactOrigin, BlockProvenance, CellEdit, SpreadsheetAccess,
-    SpreadsheetArtifactRef, SpreadsheetBlock, SpreadsheetError, SpreadsheetViewport,
+    AnalyticalTable, ArtifactOrigin, CellEdit, SpreadsheetAccess, SpreadsheetArtifactRef,
+    SpreadsheetBlock, SpreadsheetError, SpreadsheetViewport, TableValue,
 };
 use hkask_types::spreadsheet::{InlineTableBlock, MAX_VIEWPORT_COLS, MAX_VIEWPORT_ROWS};
 
@@ -61,7 +62,7 @@ enum Command {
     },
     Open {
         artifact: SpreadsheetArtifactRef,
-        respond: oneshot::Sender<Result<SpreadsheetArtifactRef, SpreadsheetError>>,
+        respond: oneshot::Sender<Result<(), SpreadsheetError>>,
     },
     Apply {
         transaction: hkask_types::spreadsheet::EditTransaction,
@@ -93,6 +94,15 @@ type DocumentKey = (String, String);
 fn actor_down() -> SpreadsheetError {
     SpreadsheetError::Engine {
         detail: "spreadsheet engine actor is down (thread exited or panicked)".into(),
+    }
+}
+
+/// Deliver a response to its requester. A send fails only when the requester
+/// dropped its receiver (cancelled); that is a normal cancellation, logged at
+/// debug — never a silent discard.
+fn deliver<T>(sender: oneshot::Sender<T>, value: T) {
+    if sender.send(value).is_err() {
+        tracing::debug!(target: "hkask.spreadsheet", "response channel dropped before delivery");
     }
 }
 
@@ -152,7 +162,7 @@ impl WorkbookService {
     /// revision. The stored revision's digest is verified at open (§6:
     /// digest mismatch is a conflict, not silent acceptance).
     pub async fn open(
-        &self,
+        self: &Arc<Self>,
         artifact: &SpreadsheetArtifactRef,
     ) -> Result<WorkbookDocument, SpreadsheetError> {
         artifact.validate()?;
@@ -161,9 +171,9 @@ impl WorkbookService {
             artifact: artifact.clone(),
             respond,
         })?;
-        receiver.await.map_err(|_| actor_down())?;
+        receiver.await.map_err(|_| actor_down())??;
         Ok(WorkbookDocument {
-            service: Arc::clone(&self_arc_holder(self)),
+            service: Arc::clone(self),
             artifact: artifact.clone(),
         })
     }
@@ -187,15 +197,9 @@ impl WorkbookService {
     }
 }
 
-/// The `Arc<Self>` reborrow helper (open() holds `&self`, but the document
-/// handle needs an `Arc` of the service it dispatches through).
-fn self_arc_holder(service: &WorkbookService) -> &Arc<WorkbookService> {
-    // SAFETY-free formulation: open() is defined on Arc<Self> callers; the
-    // service is always constructed behind an Arc, so this is a projection
-    // through the same Arc via the thread-safe sender clone instead.
-    // Implemented below via Arc::downgrade-free pattern:
-    unreachable!("replaced by Arc-internal dispatch; see open_impl")
-}
+// The `Arc<Self>` reborrow note: `open` uses the `&Arc<Self>` receiver so
+// the returned `WorkbookDocument` shares the service handle it dispatches
+// through — no Arc is conjured from `&self`.
 
 /// An open workbook document (plan §5.1): staged edits are local and
 /// undoable; `viewport` reads the staged state; persistence happens through
@@ -203,6 +207,14 @@ fn self_arc_holder(service: &WorkbookService) -> &Arc<WorkbookService> {
 pub struct WorkbookDocument {
     service: Arc<WorkbookService>,
     artifact: SpreadsheetArtifactRef,
+}
+
+impl std::fmt::Debug for WorkbookDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkbookDocument")
+            .field("artifact", &self.artifact)
+            .finish()
+    }
 }
 
 impl WorkbookDocument {
@@ -255,7 +267,7 @@ impl WorkbookDocument {
             ),
             respond,
         })?;
-        receiver.await.map_err(|_| actor_down())
+        receiver.await.map_err(|_| actor_down())?
     }
 
     /// Redo one undone staged step; returns whether a step existed.
@@ -268,7 +280,7 @@ impl WorkbookDocument {
             ),
             respond,
         })?;
-        receiver.await.map_err(|_| actor_down())
+        receiver.await.map_err(|_| actor_down())?
     }
 }
 
@@ -292,18 +304,18 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                 respond,
             } => {
                 let result = handle_publish(&mut state, origin, table, access);
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Open { artifact, respond } => {
                 let result = handle_open(&mut state, &artifact);
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Apply {
                 transaction,
                 respond,
             } => {
                 let result = handle_apply(&mut state, transaction);
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Viewport {
                 key,
@@ -314,7 +326,7 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                     Some(workbook) => engine::extract_viewport(workbook, &window),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Stage {
                 key,
@@ -325,21 +337,21 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                     Some(workbook) => engine::apply_edits(workbook, &edits, true),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Undo { key, respond } => {
                 let result = match state.documents.get_mut(&key) {
                     Some(workbook) => Ok(workbook.undo()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
             Command::Redo { key, respond } => {
                 let result = match state.documents.get_mut(&key) {
                     Some(workbook) => Ok(workbook.redo()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
-                let _ = respond.send(result);
+                deliver(respond, result);
             }
         }
     }
@@ -352,8 +364,8 @@ fn build_block(
     meta: &ArtifactMeta,
     artifact: &SpreadsheetArtifactRef,
 ) -> Result<SpreadsheetBlock, SpreadsheetError> {
-    let row_count = meta.rows.min(MAX_VIEWPORT_ROWS).max(1);
-    let col_count = meta.cols.min(MAX_VIEWPORT_COLS).max(1);
+    let row_count = meta.rows.clamp(1, MAX_VIEWPORT_ROWS);
+    let col_count = meta.cols.clamp(1, MAX_VIEWPORT_COLS);
     let viewport = SpreadsheetViewport::new(meta.sheet_name.clone(), 0, 0, row_count, col_count)?;
     SpreadsheetBlock::new(
         meta.title.clone(),
@@ -425,7 +437,7 @@ fn handle_publish(
 fn handle_open(
     state: &mut ActorState,
     artifact: &SpreadsheetArtifactRef,
-) -> Result<SpreadsheetArtifactRef, SpreadsheetError> {
+) -> Result<(), SpreadsheetError> {
     let bytes = state
         .store
         .read_revision(&artifact.artifact_id, &artifact.revision_id)?;
@@ -445,7 +457,7 @@ fn handle_open(
         (artifact.artifact_id.clone(), artifact.revision_id.clone()),
         workbook,
     );
-    Ok(artifact.clone())
+    Ok(())
 }
 
 fn handle_apply(
@@ -464,7 +476,7 @@ fn handle_apply(
             let meta = state.store.read_metadata(&record.result.artifact_id)?;
             let block = build_block(&meta, &record.result)?;
             return Ok(SpreadsheetPublication::Workbook {
-                artifact: record.result.clone(),
+                artifact: record.result,
                 block,
             });
         }
@@ -483,8 +495,8 @@ fn handle_apply(
     let actual = digest_of(&base_bytes);
     if actual != transaction.base_artifact.content_digest {
         return Err(SpreadsheetError::Conflict {
-            artifact_id: artifact_id.clone(),
-            expected: transaction.base_artifact.content_digest.clone(),
+            artifact_id: artifact_id,
+            expected: transaction.base_artifact.content_digest,
             found: actual,
         });
     }
@@ -527,4 +539,577 @@ fn handle_apply(
         artifact: result_ref,
         block,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use hkask_types::spreadsheet::{
+        AnalyticalTable, CellEdit, EditTransaction, SpreadsheetArtifactRef, SpreadsheetViewport,
+        TableColumn,
+    };
+
+    fn sample_table() -> AnalyticalTable {
+        AnalyticalTable::new(
+            "What-if staging".into(),
+            "Main".into(),
+            vec![
+                TableColumn {
+                    id: "2024".into(),
+                    label: "2024".into(),
+                    kind: hkask_types::spreadsheet::ColumnKind::Text,
+                },
+                TableColumn {
+                    id: "actual".into(),
+                    label: "Actual".into(),
+                    kind: hkask_types::spreadsheet::ColumnKind::Number,
+                },
+                TableColumn {
+                    id: "hypothetical".into(),
+                    label: "Hypothetical".into(),
+                    kind: hkask_types::spreadsheet::ColumnKind::Number,
+                },
+            ],
+            vec![
+                vec![
+                    hkask_types::spreadsheet::TableValue::Text("123".into()),
+                    hkask_types::spreadsheet::TableValue::Number(15000.0),
+                    hkask_types::spreadsheet::TableValue::Number(18000.0),
+                ],
+                vec![
+                    hkask_types::spreadsheet::TableValue::Text("'quoted".into()),
+                    hkask_types::spreadsheet::TableValue::Number(25000.0),
+                    hkask_types::spreadsheet::TableValue::Boolean(false),
+                ],
+                vec![
+                    hkask_types::spreadsheet::TableValue::Empty,
+                    hkask_types::spreadsheet::TableValue::Boolean(true),
+                    hkask_types::spreadsheet::TableValue::Empty,
+                ],
+            ],
+        )
+        .expect("sample table is valid")
+    }
+
+    fn origin() -> ArtifactOrigin {
+        ArtifactOrigin::new(
+            "hkask-mcp-portfolio".into(),
+            "portfolio_what_if".into(),
+            serde_json::json!({"portfolio": "main"}),
+        )
+        .expect("origin is valid")
+    }
+
+    fn publish_workbook(
+        service: &Arc<WorkbookService>,
+        table: AnalyticalTable,
+    ) -> (SpreadsheetArtifactRef, SpreadsheetBlock) {
+        let publication = block_on(service.publish(
+            origin(),
+            table,
+            PublishOptions {
+                access: SpreadsheetAccess::WorkbookWhatIf,
+            },
+        ))
+        .expect("publish succeeds");
+        match publication {
+            SpreadsheetPublication::Workbook { artifact, block } => (artifact, block),
+            other => panic!("expected a workbook publication, got {other:?}"),
+        }
+    }
+
+    fn full_viewport(sheet: &str, rows: usize, cols: usize) -> SpreadsheetViewport {
+        SpreadsheetViewport::new(
+            sheet.into(),
+            0,
+            0,
+            rows.min(hkask_types::spreadsheet::MAX_VIEWPORT_ROWS),
+            cols.min(hkask_types::spreadsheet::MAX_VIEWPORT_COLS),
+        )
+        .expect("viewport is valid")
+    }
+
+    fn cell(
+        content: &ViewportContent,
+        row: usize,
+        col: usize,
+    ) -> &hkask_types::spreadsheet::TableValue {
+        &content.cells[row][col]
+    }
+
+    /// §11: AnalyticalTable → XLSX → reopen preserves values. Text fidelity
+    /// is pinned hard: numeric-looking text, already-quoted text, a
+    /// numeric-looking header label, booleans, and empty cells all survive
+    /// publish → reopen exactly.
+    #[test]
+    fn table_to_xlsx_roundtrip_preserves_values() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let table = sample_table();
+        let (artifact, _block) = publish_workbook(&service, table);
+
+        let document = block_on(service.open(&artifact)).expect("reopen");
+        let content = block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport");
+        // Header labels (numeric-looking label must stay text).
+        assert_eq!(cell(&content, 0, 0), &TableValue::Text("2024".into()));
+        assert_eq!(cell(&content, 0, 1), &TableValue::Text("Actual".into()));
+        // Data fidelity.
+        assert_eq!(cell(&content, 1, 0), &TableValue::Text("123".into()));
+        assert_eq!(cell(&content, 1, 1), &TableValue::Number(15000.0));
+        assert_eq!(cell(&content, 1, 2), &TableValue::Number(18000.0));
+        assert_eq!(cell(&content, 2, 0), &TableValue::Text("'quoted".into()));
+        assert_eq!(cell(&content, 2, 1), &TableValue::Number(25000.0));
+        assert_eq!(cell(&content, 2, 2), &TableValue::Boolean(false));
+        assert_eq!(cell(&content, 3, 0), &TableValue::Empty);
+        assert_eq!(cell(&content, 3, 1), &TableValue::Boolean(true));
+        assert_eq!(cell(&content, 3, 2), &TableValue::Empty);
+    }
+
+    /// §11: formula edits recalculate dependent cells (after apply, the new
+    /// revision evaluates the formula).
+    #[test]
+    fn formula_edits_recalculate_dependents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (base, _block) = publish_workbook(&service, sample_table());
+
+        let transaction = EditTransaction::new(
+            base.clone(),
+            "idem-formula".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::SetFormula {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 4, 1)
+                    .expect("coordinate"),
+                formula: "=SUM(B2:B4)".into(),
+            }],
+        )
+        .expect("transaction is valid");
+        let publication = block_on(service.apply(transaction)).expect("apply succeeds");
+        let (applied, _block) = match publication {
+            SpreadsheetPublication::Workbook { artifact, block } => (artifact, block),
+            other => panic!("expected a workbook publication, got {other:?}"),
+        };
+        assert_ne!(
+            applied.revision_id, base.revision_id,
+            "apply must mint a new revision"
+        );
+
+        let document = block_on(service.open(&applied)).expect("reopen applied revision");
+        let content = block_on(document.viewport(full_viewport("Main", 5, 3))).expect("viewport");
+        // B2:B4 = 15000 + 25000 + TRUE(1)? — the sum covers data rows 1..3 of
+        // column B: 15000, 25000, and TRUE. Booleans are ignored by SUM in
+        // Excel, so the result is 40000.
+        assert_eq!(cell(&content, 4, 1), &TableValue::Number(40000.0));
+    }
+
+    /// §11: base revision remains unchanged after commit — reopening the base
+    /// (digest-verified) still shows the original values.
+    #[test]
+    fn base_revision_unchanged_after_apply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (base, _block) = publish_workbook(&service, sample_table());
+
+        let publication = block_on(
+            service.apply(
+                EditTransaction::new(
+                    base.clone(),
+                    "idem-base".into(),
+                    SpreadsheetAccess::WorkbookWhatIf,
+                    vec![CellEdit::SetCell {
+                        coordinate: hkask_types::spreadsheet::CellCoordinate::new(
+                            "Main".into(),
+                            1,
+                            1,
+                        )
+                        .expect("coordinate"),
+                        value: TableValue::Number(999.0),
+                    }],
+                )
+                .expect("transaction is valid"),
+            ),
+        )
+        .expect("apply succeeds");
+
+        // The base reopens with its digest intact — immutability, not a
+        // rewrite — and still shows the original value.
+        let base_document = block_on(service.open(&base)).expect("base reopens (digest intact)");
+        let content =
+            block_on(base_document.viewport(full_viewport("Main", 4, 3))).expect("base viewport");
+        assert_eq!(cell(&content, 1, 1), &TableValue::Number(15000.0));
+
+        // The applied revision shows the edit.
+        let applied = match publication {
+            SpreadsheetPublication::Workbook { artifact, .. } => artifact,
+            other => panic!("expected a workbook publication, got {other:?}"),
+        };
+        let applied_document = block_on(service.open(&applied)).expect("applied reopens");
+        let content = block_on(applied_document.viewport(full_viewport("Main", 4, 3)))
+            .expect("applied viewport");
+        assert_eq!(cell(&content, 1, 1), &TableValue::Number(999.0));
+    }
+
+    /// §11: path traversal and unknown artifact identities are rejected
+    /// (path escape at the contract; unknown id at the store).
+    #[test]
+    fn path_traversal_and_unknown_ids_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+
+        let escape = SpreadsheetArtifactRef::new("a/b".into(), "rev".into(), "a".repeat(64));
+        assert!(matches!(escape, Err(SpreadsheetError::PathEscape { .. })));
+
+        let unknown =
+            SpreadsheetArtifactRef::new("no-such-artifact".into(), "rev-1".into(), "a".repeat(64))
+                .expect("ref shape is valid");
+        let error = block_on(service.open(&unknown)).expect_err("unknown artifact must fail");
+        assert!(
+            matches!(error, SpreadsheetError::UnknownArtifact { .. }),
+            "unexpected error: {error}"
+        );
+
+        let transaction = EditTransaction::new(
+            unknown,
+            "idem".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::ClearCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+            }],
+        )
+        .expect("transaction is valid");
+        let error = block_on(service.apply(transaction)).expect_err("unknown base must fail");
+        assert!(
+            matches!(error, SpreadsheetError::UnknownArtifact { .. }),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// §11: digest mismatch produces Conflict — never a silent overwrite of a
+    /// stale base. Also at open: a corrupted/tampered revision is a conflict.
+    #[test]
+    fn digest_mismatch_produces_conflict() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (base, _block) = publish_workbook(&service, sample_table());
+
+        let stale =
+            SpreadsheetArtifactRef::new(base.artifact_id.clone(), base.revision_id, "b".repeat(64))
+                .expect("ref shape is valid");
+        let error = block_on(service.open(&stale)).expect_err("wrong digest at open must fail");
+        assert!(
+            matches!(error, SpreadsheetError::Conflict { .. }),
+            "unexpected error: {error}"
+        );
+
+        let transaction = EditTransaction::new(
+            stale,
+            "idem-stale".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::ClearCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+            }],
+        )
+        .expect("transaction is valid");
+        let error = block_on(service.apply(transaction)).expect_err("stale base must conflict");
+        assert!(
+            matches!(error, SpreadsheetError::Conflict { .. }),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// §11: repeated idempotency identity returns the same result — and does
+    /// not mint a second revision.
+    #[test]
+    fn repeated_idempotency_returns_same_result() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (base, _block) = publish_workbook(&service, sample_table());
+
+        let transaction = EditTransaction::new(
+            base.clone(),
+            "idem-repeat".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::SetCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+                value: TableValue::Number(1234.0),
+            }],
+        )
+        .expect("transaction is valid");
+        let first = block_on(service.apply(transaction.clone())).expect("first apply");
+        let first_ref = match &first {
+            SpreadsheetPublication::Workbook { artifact, .. } => artifact.clone(),
+            other => panic!("expected a workbook publication, got {other:?}"),
+        };
+        let revision_files = || {
+            std::fs::read_dir(dir.path().join("workbooks").join(&base.artifact_id))
+                .expect("artifact dir")
+                .filter_map(|entry| {
+                    let path = entry.expect("entry").path();
+                    (path.extension().is_some_and(|e| e == "xlsx")).then_some(path)
+                })
+                .count()
+        };
+        assert_eq!(revision_files(), 2, "base + first applied revision");
+
+        let second = block_on(service.apply(transaction))
+            .expect("repeated apply returns the recorded result");
+        let second_ref = match &second {
+            SpreadsheetPublication::Workbook { artifact, .. } => artifact.clone(),
+            other => panic!("expected a workbook publication, got {other:?}"),
+        };
+        assert_eq!(
+            first_ref, second_ref,
+            "repeated identity must return the same result"
+        );
+        assert_eq!(revision_files(), 2, "no new revision minted on repeat");
+
+        // A key reused for a different base is a typed error.
+        let wrong_base = EditTransaction::new(
+            SpreadsheetArtifactRef::new(
+                base.artifact_id.clone(),
+                second_ref.revision_id.clone(),
+                second_ref.content_digest,
+            )
+            .expect("ref shape is valid"),
+            "idem-repeat".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::ClearCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+            }],
+        )
+        .expect("transaction is valid");
+        let error = block_on(service.apply(wrong_base))
+            .expect_err("key reuse for a different base must fail");
+        assert!(
+            matches!(error, SpreadsheetError::InvalidTransaction { .. }),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// §11: oversized inline data returns a visible typed error (never
+    /// truncation) — and the caller may then explicitly choose a workbook.
+    #[test]
+    fn oversized_inline_publishes_typed_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let big = AnalyticalTable::new(
+            "Big".into(),
+            "Main".into(),
+            vec![TableColumn {
+                id: "n".into(),
+                label: "N".into(),
+                kind: hkask_types::spreadsheet::ColumnKind::Number,
+            }],
+            (0..(hkask_types::spreadsheet::MAX_INLINE_ROWS + 1))
+                .map(|_| vec![TableValue::Number(1.0)])
+                .collect(),
+        )
+        .expect("table is valid");
+        let error = block_on(service.publish(
+            origin(),
+            big,
+            PublishOptions {
+                access: SpreadsheetAccess::InlineTable,
+            },
+        ))
+        .expect_err("over-cap inline must reject");
+        assert!(
+            matches!(error, SpreadsheetError::TooLargeForInline { .. }),
+            "unexpected error: {error}"
+        );
+        // The bounded table itself publishes fine as an inline block.
+        let small = AnalyticalTable::new(
+            "Small".into(),
+            "Main".into(),
+            vec![TableColumn {
+                id: "n".into(),
+                label: "N".into(),
+                kind: hkask_types::spreadsheet::ColumnKind::Number,
+            }],
+            vec![vec![TableValue::Number(1.0)]],
+        )
+        .expect("table is valid");
+        let publication = block_on(service.publish(
+            origin(),
+            small,
+            PublishOptions {
+                access: SpreadsheetAccess::InlineTable,
+            },
+        ))
+        .expect("small table publishes inline");
+        assert!(matches!(publication, SpreadsheetPublication::Inline(_)));
+    }
+
+    /// §11: the published SpreadsheetBlock round-trips exactly (byte-exact
+    /// JSON) and revalidates.
+    #[test]
+    fn published_block_round_trips_and_revalidates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_artifact, block) = publish_workbook(&service, sample_table());
+
+        let json = serde_json::to_string(&block).expect("serialize block");
+        let back: SpreadsheetBlock = serde_json::from_str(&json).expect("deserialize block");
+        assert_eq!(&back, &block, "round trip changed the block");
+        let again = serde_json::to_string(&back).expect("reserialize block");
+        assert_eq!(json, again, "round trip changed the bytes");
+        back.validate().expect("wire shape revalidates");
+        assert_eq!(back.viz, hkask_types::spreadsheet::SPREADSHEET_VIZ);
+        assert_eq!(back.mutation.tool.as_deref(), Some(SPREADSHEET_APPLY_TOOL));
+    }
+
+    /// §11: unsupported formulas surface as spreadsheet errors. A
+    /// parse-invalid formula is rejected typed before apply; a parse-valid
+    /// formula with an unknown function is admitted and its cell reads back
+    /// as the engine's error value — surfaced, never silent.
+    #[test]
+    fn unsupported_formula_surfaces_as_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (base, _block) = publish_workbook(&service, sample_table());
+
+        let parse_invalid = EditTransaction::new(
+            base.clone(),
+            "idem-parse".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::SetFormula {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 4, 1)
+                    .expect("coordinate"),
+                formula: "=SUM(B2:B3".into(),
+            }],
+        )
+        .expect("transaction is valid");
+        let error =
+            block_on(service.apply(parse_invalid)).expect_err("parse-invalid formula must reject");
+        assert!(
+            matches!(error, SpreadsheetError::FormulaInvalid { .. }),
+            "unexpected error: {error}"
+        );
+
+        let unknown_function = EditTransaction::new(
+            base,
+            "idem-unknown-fn".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::SetFormula {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 4, 1)
+                    .expect("coordinate"),
+                formula: "=DEFINITELY_NOT_A_FUNCTION(1)".into(),
+            }],
+        )
+        .expect("transaction is valid");
+        let publication =
+            block_on(service.apply(unknown_function)).expect("parse-valid formula applies");
+        let applied = match publication {
+            SpreadsheetPublication::Workbook { artifact, .. } => artifact,
+            other => panic!("expected a workbook publication, got {other:?}"),
+        };
+        let document = block_on(service.open(&applied)).expect("reopen");
+        let content = block_on(document.viewport(full_viewport("Main", 5, 3))).expect("viewport");
+        match cell(&content, 4, 1) {
+            TableValue::Text(s) if s.starts_with('#') => {}
+            other => {
+                panic!("unknown-function cell must surface an engine error value, got {other:?}")
+            }
+        }
+    }
+
+    /// §6/§5.1: staged edits are local and undoable; viewport reads the
+    /// staged state; nothing persists until apply.
+    #[test]
+    fn staged_edits_undo_redo_via_viewport() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (artifact, _block) = publish_workbook(&service, sample_table());
+        let document = block_on(service.open(&artifact)).expect("open");
+
+        let edit = |row: usize, col: usize, value: f64| CellEdit::SetCell {
+            coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), row, col)
+                .expect("coordinate"),
+            value: TableValue::Number(value),
+        };
+
+        let before =
+            block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport before");
+        assert_eq!(cell(&before, 1, 1), &TableValue::Number(15000.0));
+
+        block_on(document.stage(vec![edit(1, 1, 424242.0)])).expect("stage");
+        let staged =
+            block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport staged");
+        assert_eq!(cell(&staged, 1, 1), &TableValue::Number(424242.0));
+
+        assert!(
+            block_on(document.undo()).expect("undo"),
+            "an undo step existed"
+        );
+        let undone =
+            block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport undone");
+        assert_eq!(cell(&undone, 1, 1), &TableValue::Number(15000.0));
+
+        assert!(
+            block_on(document.redo()).expect("redo"),
+            "a redo step existed"
+        );
+        let redone =
+            block_on(document.viewport(full_viewport("Main", 4, 3))).expect("viewport redone");
+        assert_eq!(cell(&redone, 1, 1), &TableValue::Number(424242.0));
+
+        // Staging never persisted: a fresh open still shows the original.
+        let fresh = block_on(service.open(&artifact)).expect("fresh open");
+        let original =
+            block_on(fresh.viewport(full_viewport("Main", 4, 3))).expect("fresh viewport");
+        assert_eq!(cell(&original, 1, 1), &TableValue::Number(15000.0));
+    }
+
+    /// §6: DataOnly publishes no block — a typed rejection, not a JSON dump.
+    #[test]
+    fn dataonly_publish_rejects() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let error = block_on(service.publish(
+            origin(),
+            sample_table(),
+            PublishOptions {
+                access: SpreadsheetAccess::DataOnly,
+            },
+        ))
+        .expect_err("DataOnly must reject");
+        assert!(
+            matches!(error, SpreadsheetError::AccessMismatch { .. }),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// §11 (block constraints): the published block carries no absolute
+    /// filesystem path, no workbook bytes, and a bounded viewport.
+    #[test]
+    fn published_block_carries_only_opaque_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_artifact, block) = publish_workbook(&service, sample_table());
+        let json = serde_json::to_value(&block).expect("serialize block");
+        let text = json.to_string();
+        assert!(
+            !text.contains(dir.path().to_str().expect("utf8 tempdir")),
+            "block leaks a filesystem path"
+        );
+        assert!(block.viewport.row_count <= hkask_types::spreadsheet::MAX_VIEWPORT_ROWS);
+        assert!(block.viewport.col_count <= hkask_types::spreadsheet::MAX_VIEWPORT_COLS);
+    }
 }

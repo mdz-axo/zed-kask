@@ -40,9 +40,10 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
 | | `corpus_dedup_chunks` | Source-local similarity clustering; retain highest-salience representatives |
 | | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified |
-| QA output (4) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
+| QA output (5) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
-| | `corpus_ingest_qa` | Grounding-gated admission: complete `prepared-qa-grounding-verification-v1` manifest plus canonical source chunks, then exact dedup with evidence retention and explicit storage status |
+| | `corpus_ground_generated_qa` | Deterministic zero-inference `corpus-qa-grounding-v1` bundle: byte-span claim records over canonical chunks plus server-recomputed ontology resolutions; records facts only, authorizes nothing |
+| | `corpus_ingest_qa` | Re-executed grounding-gated admission: `corpus-qa-grounding-v1` manifest plus canonical source chunks, all-strength-2 claims required, then exact dedup with evidence retention and explicit storage status |
 | | `corpus_prepare_training_dataset` | Alpaca → ChatML plus dataset-size gate and advisory PEFT recommendations |
 | Compose (3) | `corpus_compose` | Retrieve exemplars, generate prose, optionally measure centroid distance |
 | | `corpus_rewrite` | Rewrite using a quality dimension and that dimension's centroid |
@@ -89,7 +90,8 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
-| `corpus_ingest_qa` | `generated_jsonl`, `grounding_verification_jsonl`, `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
+| `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v1`), `output_dir` — must not already exist |
+| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
 | `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
@@ -290,20 +292,32 @@ Wait for owners/workers to stop before inspection and an explicit overwrite reru
 
 Flat QA and generated envelopes use the same evidence schema. Ingestion fails closed
 on partial input (malformed, generator-error, or structurally incomplete rows) and
-then requires a complete identity-bound external grounding manifest: every candidate
-needs one `prepared-qa-grounding-verification-v1` report row whose
-`candidate_sha256` matches the candidate raw line, whose identity fields match the
-candidate, whose instruction/output judgments cite the candidate's own evidence
-quotes as exact substrings of canonical `source_chunks_jsonl` chunk bytes, whose
-fact score reconciles under the canonical weights at ≥ 0.80, and whose verdict is a
-clean decoupled acceptance (`verdict: accept`, no findings,
-`decoupling: spawn_agent`, band medium/high). With the gate satisfied, ingest
-structurally requires nonblank instruction/output/QA type/source/chunk ref and
-complete evidence entries; it keeps concise answers and first valid case-insensitive
-exact instructions. It neither deduplicates against the DB nor verifies semantics —
-Stage 8 and operator acceptance remain external.
-`prompt_id`, `provenance`, citations and metadata survive into retained JSONL and
-QA h_mems; this tool creates no embeddings
+then runs the re-executed `corpus-qa-grounding-v1` gate before dedup, output, and
+DB access. `corpus_ground_generated_qa` produces the required hash-bound bundle
+(`manifest.json` + `grounding-rows.jsonl`) deterministically with zero inference:
+each row carries `row_key` (prompt_id + qa_type + physical line), the candidate
+raw-line SHA-256, source identity, preserved candidate terms, server-recomputed
+`TermResolution`s through the published ladder, and per-claim records — every
+evidence quote checked byte-exactly against its uniquely identified canonical
+chunk, the answer checked byte-exact inside the row's own source-grounded
+evidence or recorded honestly as `model_inference`, and the instruction premise
+recorded `not_applicable` with its unperformed check. No verified/authorized/
+confidence fields exist in the bundle. The gate re-hashes the bundle, checks row
+bijection, requires `source_chunks_jsonl` chunks classified under
+`published-term-resolution-v1` with reconciling terms, recomputes the ontology
+resolutions, re-derives every claim, requires each artifact row to equal its
+re-execution, and admits only rows whose applicable factual claims are all
+strength 2 — `model_inference` answers fail closed; paraphrase and conceptual
+answers stay blocked until an independent semantic oracle is specified. Self-
+reported strengths, spans, or resolutions cannot open the gate. With the gate
+satisfied, ingest structurally requires nonblank instruction/output/QA type/
+source/chunk ref and complete evidence entries; it keeps concise answers and first
+valid case-insensitive exact instructions. It neither deduplicates against the DB
+nor performs semantic review — Stage 8 and operator acceptance remain external.
+`prompt_id`, `provenance`, citations, metadata, the grounding identity object
+(protocol, manifest SHA-256, `row_key`), and candidate terms resolved through the
+shared published-ontology resolver survive into retained JSONL and QA h_mems;
+this tool creates no embeddings
 (`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`;
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs`;
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs`).

@@ -415,6 +415,48 @@ did not author or validate.
 - Implement digest and idempotency validation.
 - Generate server-authoritative display hints.
 
+**Phase 2 record (2026-09-18): COMPLETE in the working tree (uncommitted at
+record time).** The crate ships three modules over `logisheets-rs =1.15.1`:
+
+- `artifact_store` — contained resolution beneath
+  `~/Documents/zk-data/spreadsheet-mcp/workbooks/` via `agent_paths`
+  (`mcp_artifacts_subdir`), atomic revision publication (temp + fsync +
+  rename, base files never rewritten), SHA-256 content digests, hashed
+  idempotency op records (caller keys never touch the filesystem as-is),
+  per-artifact metadata (origin, title, sheet, dimensions).
+- `engine` — LogiSheets operations confined to the actor thread:
+  chunked table→workbook conversion (`BULK_APPLY_CHUNK_CELLS = 1,000`, per
+  the Phase 0 superlinearity finding), sheet rename verified by read-back
+  (the engine payload silently no-ops on a miss), formula gating via
+  `check_formula`, row-major viewport extraction. Text fidelity is
+  probe-pinned: `CellInput.content` auto-interprets, so text is always
+  apostrophe-prefixed (`"'123"` → `Str("123")`, `"''x"` → `Str("'x")`).
+- `service` — the dedicated-thread actor (`Workbook` is `!Send + !Sync`;
+  commands in, futures-oneshot responses out, runtime-agnostic so the
+  widget can await on GPUI without tokio), `WorkbookService::publish / open
+  / apply` and `WorkbookDocument::viewport / stage / undo / redo`. Staging
+  is local and undoable; persistence only through `apply`, which verifies
+  the base digest (Conflict on mismatch), mints a new immutable revision,
+  and records the idempotency result (repeat → same result, no new
+  revision; key reuse for a different base → typed error).
+
+§11 core behavior is pinned by 12 tests against the real engine and real
+files (no stubs): value round-trip (numeric-looking text, quoted text,
+booleans, empties), formula recalculation after reopen, base-unchanged-after-
+apply, path-escape/unknown-id rejection, digest-mismatch Conflict at both
+open and apply, idempotent replay, oversized-inline typed error, published
+block byte-exact round-trip + revalidation, unsupported formulas surfacing
+as errors (parse-invalid rejected pre-apply; unknown function evaluates to
+a visible `#` error value), staging undo/redo with no write-through,
+DataOnly rejection, and opaque-identity-only blocks (no filesystem path
+leak, bounded viewport). Gates observed on the final working tree:
+`cargo test -p hkask-spreadsheet` 12 passed; `./script/clippy -p
+hkask-spreadsheet` clean (machete: no unused deps); `cargo fmt --all
+--check` clean; `cargo check -p zed` clean. Shared-tree note: operator commit
+`519e97dde0` carries a pre-clippy intermediate of this crate; the working
+tree + staged diff hold the validated final state — the hash binds at the
+operator's next commit.
+
 ### Phase 3 — Spreadsheet MCP server
 
 Add `kask/mcp-servers/hkask-mcp-spreadsheet` with the minimal tools:

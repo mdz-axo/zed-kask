@@ -121,8 +121,8 @@ pub(crate) fn build_workbook(
 
     // Header row (labels are text, always apostrophe-prefixed) then data rows.
     let mut pending: Vec<logisheets_rs::CellInput> = Vec::with_capacity(BULK_APPLY_CHUNK_CELLS);
-    let mut flush = |pending: &mut Vec<logisheets_rs::CellInput>,
-                     workbook: &mut logisheets_rs::Workbook|
+    let flush = |pending: &mut Vec<logisheets_rs::CellInput>,
+                 workbook: &mut logisheets_rs::Workbook|
      -> Result<(), SpreadsheetError> {
         if pending.is_empty() {
             return Ok(());
@@ -192,27 +192,29 @@ pub(crate) fn apply_edits(
         content: Option<String>,
     }
     let mut pending: Vec<Pending> = Vec::with_capacity(BULK_APPLY_CHUNK_CELLS);
-    let mut flush = |pending: &mut Vec<Pending>,
-                     workbook: &mut logisheets_rs::Workbook|
+    let flush = |pending: &mut Vec<Pending>,
+                 workbook: &mut logisheets_rs::Workbook|
      -> Result<(), SpreadsheetError> {
         if pending.is_empty() {
             return Ok(());
         }
         let mut action = logisheets_rs::PayloadsAction::new();
         for item in pending.drain(..) {
-            action = match item.content {
-                Some(content) => action.add_payload(logisheets_rs::CellInput {
+            // `CellClear` has no `Payload` impl (add_payload bound); the
+            // payloads vec is public, so push the typed variant directly.
+            action.payloads.push(match item.content {
+                Some(content) => logisheets_rs::EditPayload::CellInput(logisheets_rs::CellInput {
                     sheet_idx: item.sheet_idx,
                     row: item.row,
                     col: item.col,
                     content,
                 }),
-                None => action.add_payload(logisheets_rs::CellClear {
+                None => logisheets_rs::EditPayload::CellClear(logisheets_rs::CellClear {
                     sheet_idx: item.sheet_idx,
                     row: item.row,
                     col: item.col,
                 }),
-            };
+            });
         }
         let action = if undoable {
             action.set_undoable(true)

@@ -593,53 +593,67 @@ for bounded synthetic controls in scratch; preserve real controls read-only.
 The checker loads inputs in memory: bound controls before full-artifact audits
 and disclose coverage. No synthetic controls belong in production input paths.
 
-**Semantic gate before pilot expansion, full generation or ingestion:** require
-every applicable canonical `grounding-verify` report to have non-null
-`fact_score >= 0.80`, no high/critical findings, all missing applicable checks
-resolved with evidence, plus semantic review of boilerplate, actual cognitive
-difficulty and subject matter. Record genuinely inapplicable checks explicitly.
-Operator review must actually resolve the missing checks; it is not a blanket
-waiver. A partial mechanical audit cannot open this gate. Retain current
-verification evidence and correction findings, not duplicate corpus versions.
+**Semantic gate before pilot expansion, full generation or ingestion:** the
+`corpus-qa-grounding-v1` gate is mechanical — it admits only byte-exact
+answers and citations. Before pilot expansion or full generation, run the
+canonical `grounding-verify` skill decoupled from generation to review
+boilerplate, actual cognitive difficulty and subject matter, and reconcile
+its findings with the gate's `model_inference` records. Its model-mediated
+judgments are observations for operator review, never authority: they do not
+open ingestion, and no compensatory score can lift a `model_inference` answer
+to verified. Record genuinely inapplicable checks explicitly. A partial
+mechanical audit cannot open this gate. Retain current verification evidence
+and correction findings, not duplicate corpus versions.
 
-## Stage 9 — Ingest, assemble and seek training approval
+## Stage 9 — Ground, ingest, assemble and seek training approval
 
-1. Dry-run `corpus_ingest_qa(generated_jsonl, grounding_verification_jsonl,
-   source_chunks_jsonl, output, db_path, passphrase,
-   dataset, owner, dry_run=true)`. Ingestion fails closed without the complete
-   identity-bound `prepared-qa-grounding-verification-v1` manifest and the
-   canonical source chunks — every candidate needs one accepted report row whose
-   `candidate_sha256` matches its raw line, whose judgments cite the candidate's
-   own evidence quotes as exact substrings of canonical chunk bytes, whose
-   fact score reconciles at ≥ 0.80, and whose verdict is a clean decoupled
-   acceptance (`verdict: accept`, no findings, `decoupling: spawn_agent`,
-   band medium/high). With the gate satisfied, admission also requires
-   nonblank instruction, output, QA type, source and chunk ref; complete
-   structured evidence entries. Concise answers survive. First valid
-   case-insensitive exact instructions win; no minimum length, semantic dedup,
-   DB dedup or semantic quality test is implied. Stage 8 remains the external
-   semantic oracle; the manifest's exact-citation matching does not certify
-   answer entailment.
-2. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
+1. Ground the candidates with `corpus_ground_generated_qa(generated_jsonl,
+   source_chunks_jsonl, output_dir)`. Deterministic and zero-inference: it
+   verifies every evidence quote byte-exactly against the canonical tagged
+   chunks (which must be classified under `published-term-resolution-v1` with
+   reconciling candidate terms), records byte spans, and recomputes ontology
+   resolutions for the preserved candidate terms. The bundle records
+   mechanical facts only — no verified/authorized/confidence fields exist in
+   it, and rows whose answers are not byte-exact inside their own evidence are
+   recorded honestly as `model_inference`. It authorizes nothing.
+2. Dry-run `corpus_ingest_qa(generated_jsonl, grounding_manifest,
+   source_chunks_jsonl, output, db_path, passphrase, dataset, owner,
+   dry_run=true)`. The gate runs before dedup, output, and DB access: it
+   re-hashes the bundle, checks row bijection against the candidate file,
+   recomputes the ontology resolutions, re-derives every claim, requires each
+   artifact row to equal its re-execution, and admits only rows whose
+   applicable factual claims are all strength 2. `model_inference` answers
+   fail closed — paraphrase and conceptual answers stay blocked until an
+   independent semantic oracle is specified by the operator; self-reported
+   strengths, spans, or resolutions cannot open the gate. With the gate
+   satisfied, admission also requires nonblank instruction, output, QA type,
+   source and chunk ref; complete structured evidence entries. Concise
+   answers survive. First valid case-insensitive exact instructions win; no
+   minimum length, semantic dedup, DB dedup or semantic quality test is
+   implied. Stage 8 remains the external semantic oracle; byte-exactness does
+   not certify conceptual quality.
+3. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
    inspect the exact `training:qa:{dataset}:` prefix in the named DB and explicitly
    purge it before replacement. Do not infer/broaden a purge or retain parallel
    datasets. Retained-row indices restart per call; arbitrary partitioned calls
    to the same dataset are not a safe replacement for whole-dataset reconciliation.
-3. Reconcile `total_nonblank_rows = generator_errors + malformed + parsed`,
+4. Reconcile `total_nonblank_rows = generator_errors + malformed + parsed`,
    `parsed = filter_drops + duplicates + retained`, and non-dry
    `retained = stored + failed`. `stored_h_mems = stored`, `deduped = retained`,
    `filtered = duplicates + retained`. `status=partial_failure` and each
    `storage_errors` entry block completion. The file includes all retained rows
    even if storage fails; file writing and DB inserts are not one transaction.
-4. Preserve `evidence_quotes`, source/chunk identity, `prompt_id`, `provenance`,
-   concepts, difficulty and QA type in the retained training JSONL/h_mems for
+5. Preserve `evidence_quotes`, source/chunk identity, `prompt_id`, `provenance`,
+   concepts, difficulty, QA type, the grounding identity object (protocol,
+   manifest SHA-256, `row_key`), and the candidate terms resolved through the
+   shared published-ontology resolver in the retained training JSONL/h_mems for
    audits. For ChatML, call `training_assemble_dataset` with the same explicit
    corpus `db_path` and `passphrase`, `dataset`, `train_split`, `output_path`;
    omitting the DB queries the training server's separate store. Reconcile actual
    train/validation totals with stored survivors and the agreed size target.
    If using `corpus_prepare_training_dataset`, supply the operator-approved
    `base_model`; its PEFT recommendation is advisory, not approval to train.
-5. Stop before training submission until the operator approves the base model
+6. Stop before training submission until the operator approves the base model
    and LoRA configuration under `lora-training`. Do not infer approval from a
    valid dataset, recommendation or audit exit code.
 
