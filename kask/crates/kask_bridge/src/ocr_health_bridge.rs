@@ -119,11 +119,18 @@ mod tests {
             Ok(hkask_regulation::AdviceReviewReconciliation::default())
         }
 
-        fn persist_alert(&self, output: &str, _confidence: f64, _error_context: &str) {
+        fn try_persist_alert(
+            &self,
+            output: &str,
+            _confidence: f64,
+            _error_context: &str,
+        ) -> Result<hkask_regulation::AlertQueueOutcome, hkask_regulation::AlertPersistError>
+        {
             self.alerts
                 .lock()
                 .expect("alerts lock")
                 .push(output.to_string());
+            Ok(hkask_regulation::AlertQueueOutcome::Attempted)
         }
     }
 

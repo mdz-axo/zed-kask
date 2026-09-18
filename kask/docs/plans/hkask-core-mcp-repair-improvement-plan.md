@@ -561,8 +561,11 @@ Prediction/observation: existing `bash kask/scripts/check-mcp-servers.sh` failed
 
 ### Cross-slice checks and next experiment
 
+- Final observation: another actor committed the progress/portal/media docs as `700e6f3c1342cd7659ff76309f4d5f2be017dd16`; later verification additions to this record are **uncommitted**. The implementing agents still issued no stage/commit commands. An unrelated `kask/crates/kask_bridge/src/memory.rs` edit was left untouched.
 - `timeout 240s env CARGO_NET_OFFLINE=true HKASK_BUILD_JOBS=2 HKASK_SCCACHE_DIR=/nonexistent GITHUB_ACTIONS=true ./script/clippy --offline --locked -p hkask-mcp-media -p hkask-mcp-training` — **exit 0**, all targets/features with warnings denied. `GITHUB_ACTIONS=true` skips optional local machete/buf extras; those are not claimed as run. No tools installed.
+- Final clippy rerun after the strengthened assertions, same environment/packages with `timeout 180s`, also finished **exit 0** (51.45 seconds including Cargo-lock contention).
 - `bash kask/scripts/check-hkask-no-zed-deps.sh` — passed. Scoped `check-mcp-tool-tests.sh` over media/training — **0 violations, 0 gaps** (heuristic, not behavioral coverage). `bash -n kask/scripts/build/install-common.sh` and staged/unstaged `git diff --check` passed.
+- Targeted media `rustfmt --check` passed. All three edited documentation files passed required-metadata and relative-file-link checks; `kask/docs/` contains **67 files**. This is not a full documentation-health pass: the prescribed `verify-docs.sh` does not exist. No diagram or additional document was introduced.
 - Focused static review found no blocker in inspected F3/F5 paths; a missing unlink-failure availability assertion was added. No compatibility paths, new dependencies, upstream Rust changes or broad refactors were introduced. Full workspace build/tests, live MCP, reconnect fixtures and deployed providers were not run.
 - Learning: data/source separation closes shell substitution independently of identifier validation; file policy needs assertions over persisted relationships and partial effects, not just the error return. Next priority is the P1a authority decision, P1b bounded Stop/unknown-outcome behavior, then F4 destination-handle containment. P2–P3 remain substantive unfinished work, not compiler-only follow-ups.
 

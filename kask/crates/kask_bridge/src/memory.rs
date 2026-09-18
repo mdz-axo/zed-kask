@@ -3048,7 +3048,7 @@ pub(crate) mod tests {
 
     // ── BridgeAlertEscalationSink tests ──────────────────────────────────
 
-    /// `BridgeAlertEscalationSink::persist_alert` must write to the
+    /// `BridgeAlertEscalationSink::try_persist_alert` must write to the
     /// `EscalationQueue` so the entry is readable via `list_pending` — this
     /// pins the Store seam end-to-end (sink → queue → `curator_escalations`).
     /// If the adapter drops the call or the queue write fails silently, the
@@ -3063,11 +3063,20 @@ pub(crate) mod tests {
         let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         let sink = BridgeAlertEscalationSink::new(queue.clone());
 
-        // Persist a critical alert
-        sink.persist_alert(
-            "Variety deficit 150 exceeds threshold 100",
-            1.0,
-            r#"{"domain":"test","deficit":150,"threshold":100,"severity":"Critical"}"#,
+        // Persist a critical alert; a fresh insert reports Confirmed(id).
+        let outcome = sink
+            .try_persist_alert(
+                "Variety deficit 150 exceeds threshold 100",
+                1.0,
+                r#"{"domain":"test","deficit":150,"threshold":100,"severity":"Critical"}"#,
+            )
+            .expect("try_persist_alert");
+        assert!(
+            matches!(
+                &outcome,
+                hkask_regulation::AlertQueueOutcome::Confirmed(Some(_))
+            ),
+            "a fresh queue insert reports Confirmed with its id, got {outcome:?}"
         );
 
         // The alert must be readable via list_pending (the same method
@@ -3102,15 +3111,31 @@ pub(crate) mod tests {
         let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         let sink = BridgeAlertEscalationSink::new(queue.clone());
 
-        sink.persist_alert(
-            "variety_deficit_exceeded — value 53 exceeds threshold 20",
-            1.0,
-            r#"{"deficit":53}"#,
+        let first = sink
+            .try_persist_alert(
+                "variety_deficit_exceeded — value 53 exceeds threshold 20",
+                1.0,
+                r#"{"deficit":53}"#,
+            )
+            .expect("first persist");
+        let second = sink
+            .try_persist_alert(
+                "variety_deficit_exceeded — value 2149 exceeds threshold 20",
+                1.0,
+                r#"{"deficit":2149}"#,
+            )
+            .expect("second persist");
+        assert!(
+            matches!(
+                &first,
+                hkask_regulation::AlertQueueOutcome::Confirmed(Some(_))
+            ),
+            "the insert reports Confirmed with its id"
         );
-        sink.persist_alert(
-            "variety_deficit_exceeded — value 2149 exceeds threshold 20",
-            1.0,
-            r#"{"deficit":2149}"#,
+        assert_eq!(
+            second,
+            hkask_regulation::AlertQueueOutcome::Confirmed(None),
+            "superseding an existing pending row updates in place — no new id"
         );
 
         let pending = queue.list_pending().expect("list_pending must succeed");
@@ -3139,11 +3164,12 @@ pub(crate) mod tests {
         let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         let sink = BridgeAlertEscalationSink::new(queue);
 
-        sink.persist_alert(
+        sink.try_persist_alert(
             "variety_deficit_exceeded — value 53 exceeds threshold 20",
             1.0,
             "{}",
-        );
+        )
+        .expect("try_persist_alert");
         assert!(
             sink.has_pending_alert("variety_deficit_exceeded — value 999 exceeds threshold 20"),
             "a different value for the same condition must count as pending"
@@ -3167,11 +3193,12 @@ pub(crate) mod tests {
         let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         let sink = BridgeAlertEscalationSink::new(queue.clone());
 
-        sink.persist_alert(
+        sink.try_persist_alert(
             "variety_deficit_exceeded — value 53 exceeds threshold 20",
             1.0,
             "{}",
-        );
+        )
+        .expect("try_persist_alert");
         sink.auto_resolve_cleared(
             "variety_deficit_exceeded — value 0 exceeds threshold 20",
             "Auto-resolved by verify_impact: metric improved.",
@@ -3181,8 +3208,9 @@ pub(crate) mod tests {
         assert_eq!(pending.len(), 0, "the stale escalation must be resolved");
     }
 
-    /// When the queue write fails, `persist_alert` must not panic — it logs
-    /// and swallows. This pins the best-effort contract: a failing queue
+    /// When the queue write fails, `try_persist_alert` must not panic — it
+    /// reports the error to the caller, which logs and never propagates.
+    /// This pins the best-effort contract: a failing queue
     /// never breaks the regulation loop.
     #[test]
     fn bridge_alert_escalation_sink_does_not_panic_on_write_failure() {
@@ -3197,6 +3225,7 @@ pub(crate) mod tests {
         // instead we just verify the happy path doesn't panic on a normal
         // call (the error path is covered by the queue's own tests).
         let sink = BridgeAlertEscalationSink::new(queue);
-        sink.persist_alert("test", 0.5, "{}");
+        sink.try_persist_alert("test", 0.5, "{}")
+            .expect("happy-path persist reports its outcome");
     }
 }

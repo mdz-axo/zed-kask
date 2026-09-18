@@ -594,22 +594,6 @@ mod tests {
         );
     }
 
-    /// T08 control: the legacy best-effort `persist_alert` still writes
-    /// through the same core (its outcome is logged inside, not returned).
-    #[test]
-    fn persist_alert_still_writes_through_the_reporting_core() {
-        let queue = in_memory_queue();
-        let sink = BridgeAlertEscalationSink::new(queue.clone());
-        sink.persist_alert(
-            "Explicit escalation (storage, critical) — legacy",
-            1.0,
-            "{}",
-        );
-        let pending = queue.list_pending().expect("pending");
-        assert_eq!(pending.len(), 1, "the legacy path must still write the row");
-        assert_eq!(pending[0].confidence, 1.0);
-    }
-
     /// Capturing `RegulationSink` — records every persisted span's path and
     /// observation so the directive acknowledgment can be asserted.
     struct CapturingAckSink(std::sync::Mutex<Vec<(String, serde_json::Value)>>);
