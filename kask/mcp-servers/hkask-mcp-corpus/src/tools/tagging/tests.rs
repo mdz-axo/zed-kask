@@ -43,6 +43,7 @@ impl InferencePort for MockPort {
 }
 
 fn server(port: Arc<MockPort>) -> CorpusServer {
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = port;
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)

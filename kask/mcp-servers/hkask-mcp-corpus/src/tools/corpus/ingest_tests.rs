@@ -758,6 +758,7 @@ async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<
     use crate::tools::corpus::QaType;
     use crate::tools::semantic::GenerateQaBatchRequest;
     let directory = fixture()?;
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = Arc::new(CitationGeneration);
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     let server = CorpusServer::new(

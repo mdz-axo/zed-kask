@@ -347,12 +347,15 @@ mod tool_surface_tests {
         assert!(!tools.is_empty(), "corpus tool surface must be registered");
         for tool in &tools {
             let schema = serde_json::to_value(&tool.input_schema).expect("schema JSON");
-            let properties = schema["properties"].as_object().expect("properties object");
-            assert!(
-                !properties.contains_key("passphrase"),
-                "tool {} must not expose a model-settable passphrase property",
-                tool.name
-            );
+            // Tools with empty request structs may omit `properties` —
+            // absent is vacuously clean; present must not contain the field.
+            if let Some(properties) = schema["properties"].as_object() {
+                assert!(
+                    !properties.contains_key("passphrase"),
+                    "tool {} must not expose a model-settable passphrase property",
+                    tool.name
+                );
+            }
         }
     }
 

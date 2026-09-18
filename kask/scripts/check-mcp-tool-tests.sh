@@ -8,7 +8,6 @@
 # to helper-seam-only tests. Only tool-behavior contract tests (calling tools
 # via `Parameters<T>`) catch this class. See:
 #   docs/reference/mcp-servers/README.md  (Testing standard)
-#   docs/status/mcp-fleet-test-seam-audit-2026-07-17.md
 #
 # This gate is RATCHETED: servers not yet covered are listed in ALLOWLIST below.
 # As each server gains a tool-behavior test, remove it from ALLOWLIST. When

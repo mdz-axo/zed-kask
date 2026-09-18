@@ -20,6 +20,7 @@ impl InferencePort for NoInference {
 }
 
 fn server() -> CorpusServer {
+    crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = Arc::new(NoInference);
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
     CorpusServer::new(
