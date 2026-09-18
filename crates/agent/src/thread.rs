@@ -360,6 +360,12 @@ async fn ingest_turn_and_acknowledge_goal_scores(
         source
             .invoke(
                 "kata-kanban",
+                // zed-kask: D-seam — F6/P2. This is a background
+                // acknowledgment callback, not dispatched on behalf of any
+                // specific calling thread — `None` falls back to the
+                // pre-existing shared identity, honestly, rather than
+                // attributing it to whichever thread happened to be running.
+                None,
                 "kanban_goal_memory_acknowledge",
                 serde_json::json!({ "goal_id": goal_id }),
             )
@@ -7083,6 +7089,23 @@ impl ToolCallEventStream {
         }
     }
 
+    /// zed-kask: D-seam — F6/P2. The initiating actor for this tool call,
+    /// distinct per calling thread/subagent. Host-derived from the owning
+    /// thread's session id (`WebID::for_agent_name`, deterministic and
+    /// stable), never from model-supplied tool arguments — a model cannot
+    /// spoof this because nothing about the call's JSON input feeds it.
+    /// `None` when the stream is not tied to a live thread (tests,
+    /// `ToolCallEventStream::test()`); callers fall back to a documented
+    /// process-level identity in that case, matching the pre-existing
+    /// behavior for non-thread-tied dispatch.
+    pub fn calling_actor(&self, cx: &App) -> Option<hkask_types::WebID> {
+        let thread = self.thread.as_ref()?.upgrade()?;
+        let session_id = thread.read(cx).id().to_string();
+        Some(hkask_types::WebID::for_agent_name(&format!(
+            "native-thread:{session_id}"
+        )))
+    }
+
     /// Returns true if the user has cancelled this tool call.
     /// This is useful for checking cancellation state after an operation completes,
     /// to determine if the completion was due to user cancellation.
@@ -8476,6 +8499,7 @@ mod tests {
         fn invoke(
             &self,
             server_id: &str,
+            _caller: Option<hkask_types::WebID>,
             tool: &str,
             args: serde_json::Value,
         ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send>> {
@@ -8696,6 +8720,62 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    /// F6/P2: two distinct native threads produce distinct `calling_actor`
+    /// identities, and the same thread produces the same identity across
+    /// two separate tool calls (determinism, not per-call randomness). A
+    /// stream not tied to a live thread (e.g. `ToolCallEventStream::test()`)
+    /// falls back to `None`, matching the pre-existing shared identity path
+    /// — never a spoofable value, since nothing about a tool call's JSON
+    /// input feeds this derivation.
+    #[gpui::test]
+    async fn test_calling_actor_is_distinct_per_thread_and_deterministic(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread_a, _events_a) = setup_thread_for_test(cx).await;
+        let (thread_b, _events_b) = setup_thread_for_test(cx).await;
+
+        let stream_for = |thread: &Entity<Thread>| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp::ToolCallId::new("0:test-tool-use"),
+                0,
+                ThreadEventStream(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+            );
+            (stream, cancellation_tx)
+        };
+
+        let (stream_a, _tx_a) = stream_for(&thread_a);
+        let (stream_a_again, _tx_a2) = stream_for(&thread_a);
+        let (stream_b, _tx_b) = stream_for(&thread_b);
+        let (stream_none, _rx) = ToolCallEventStream::test();
+
+        cx.update(|cx| {
+            let actor_a = stream_a.calling_actor(cx);
+            let actor_a_again = stream_a_again.calling_actor(cx);
+            let actor_b = stream_b.calling_actor(cx);
+            let actor_none = stream_none.calling_actor(cx);
+
+            assert!(actor_a.is_some(), "a live thread must produce an identity");
+            assert_eq!(
+                actor_a, actor_a_again,
+                "the same thread must produce the same identity across calls"
+            );
+            assert_ne!(
+                actor_a, actor_b,
+                "two distinct threads must produce distinct identities"
+            );
+            assert_eq!(
+                actor_none, None,
+                "a stream with no owning thread must fall back to None, never a fabricated identity"
+            );
+        });
     }
 
     fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {

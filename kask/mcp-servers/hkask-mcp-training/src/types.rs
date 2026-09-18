@@ -137,12 +137,17 @@ pub(crate) struct TrainEvaluateRequest {
     pub test_dataset_path: String,
     /// Model identifier to run evaluation against (provider-prefixed).
     pub model: String,
-    /// Evaluation method: "exact_match" (default), "contains", or "semantic".
+    /// Evaluation method: "exact_match" (default), "contains", "semantic", or "benchmark".
     /// - exact_match: generated == expected after trimming
     /// - contains: expected substring is found in generated
     /// - semantic: uses a second inference call to judge correctness
+    /// - benchmark: exactly one available choice letter A–F, ignoring case/outer whitespace
     #[serde(default)]
     pub method: Option<String>,
+    /// Required for semantic evaluation; explicit provider-prefixed judge model.
+    /// The result remains LLM-judged, even when the judge differs from the candidate.
+    #[serde(default)]
+    pub judge_model: Option<String>,
     /// Maximum number of examples to evaluate (default: all).
     #[serde(default)]
     pub max_examples: Option<usize>,

@@ -22,8 +22,40 @@ Simplified from 21 → 15 → 8 across 2026-07-19 cleanups.
 | `training_submit` | Submit a training job for execution. Ingests, normalizes, and submits a dataset for LoRA fine-tuning via the configured host (axolotl or unsloth). When `feedback_path` is provided, enters retrain mode: merges original + feedback, deduplicates, increments version, pre-registers adapter metadata for A/B comparison |
 | `training_status` | Query the status of a training job by its ID. When a job completes, automatically registers the adapter in the persistent store if not already registered |
 | `training_cancel` | Cancel a running or queued training job |
-| `training_evaluate` | Evaluate a trained adapter against a test dataset. Runs inference for each test example and scores accuracy using exact match, substring containment, or semantic comparison |
+| `training_evaluate` | Evaluate a deployed model using exact match, containment, semantic judging with an explicit `judge_model`, or strict benchmark-letter scoring; reports all attempts, error classes, and known/unknown resource use |
 | `training_validate_config` | Run the lora-training skill's static math-contract gates (G-M1..G-M4, G-Q1, G-Q2, G-Q4, G-H1) on training params. Also profiles the dataset (G-D0) and validates dataset size (G-D1) if dataset_path is provided. Emits `reg.lora.audit` spans. This is the runtime enforcement point for the `.agents/skills/lora-training/` skill's `audit-config` phase |
+
+### Evaluation contract
+
+`model` selects the deployed candidate; `adapter_id` labels the report and does
+not deploy or select an adapter. `semantic` requires a non-empty `judge_model`;
+supplying it for another method is rejected. The semantic result is always
+`llm_judged`, not an independent ground-truth guarantee. Only trimmed `CORRECT`
+and `INCORRECT` verdicts are accepted; other output is an evaluator error.
+Unknown methods and `max_examples: 0` are rejected before inference.
+
+Accuracy is `correct / total_examples`, where every attempted example counts,
+including generation and evaluator errors. `incorrect`, `generation_errors`,
+and `evaluator_errors` partition the non-correct attempts. Per-example `correct`
+is null on errors, with explicit `status` and `error`. Blank input lines are
+ignored; malformed/invalid rows count in `skipped_invalid_examples`, while
+`valid_examples` and `excluded_by_limit` distinguish valid data from capped work.
+
+Benchmark rows require 2–6 non-empty string choices and an available answer
+letter A–F. Model output must be exactly one available letter after trimming
+and case normalization; prose is not searched for a favorable letter.
+
+Resource totals include candidate and judge calls. `total_tokens_used` and
+`total_cost_usd` are null if any call lacks the corresponding report, including
+failed calls with unknown consumption. `reported_tokens_used` and
+`reported_cost_usd` retain partial sums; `unreported_usage_calls`,
+`unreported_cost_calls`, and `inference_calls` describe coverage. A genuinely
+reported zero remains zero. These measurements do not enforce a spending cap.
+
+Implementation: `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs`
+(`EvaluationSummary`, `training_evaluate`, `eval_benchmark`); behavioral tests
+are the `evaluation_*` public-tool fixtures in
+`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs`.
 
 ### QA dataset assembly
 
@@ -57,17 +89,27 @@ continue to refresh recall clocks.
 
 ## Gate verification
 
-The math-contract gates are enforced twice. `training_validate_config`
-runs them on every config (runtime enforcement for the
-`.agents/skills/lora-training/` `audit-config` phase), and the gate
-functions in `src/lora_validation/param_gates.rs` carry `#[cfg(kani)]`
-proof harnesses (`gm3_refuse_iff_degenerate_scaling`,
-`gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`,
-`safe_region_has_no_refusals`) proving the G-M1..G-M4 iff-properties
-exhaustively over the symbolic config space. Run them with
-`cargo kani -p hkask-mcp-training` (requires the Kani toolchain;
-regular builds never compile the module, so there is no dependency
-churn).
+`training_validate_config` reports the static gates; `training_submit`
+rechecks refusal findings before submission. This runtime behavior is distinct
+from formal verification. The `#[cfg(kani)]` harnesses in
+`src/lora_validation/param_gates.rs` are `gm3_refuse_iff_degenerate_scaling`,
+`gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`, and
+`safe_region_has_no_refusals`. Their existence is not a successful proof run.
+
+The R2 pilot uses Kani **0.68.0**, CBMC **6.11.0**, and Kani's pinned
+`nightly-2026-08-21` toolchain. Ordinary Cargo builds do not type-check these
+cfg-excluded harnesses. Initial Kani compilation exposed missing `Arbitrary`
+support and a use-after-move in the harness; cfg-only fixes leave normal gate
+behavior unchanged. Verification results and resource limits are recorded in
+`/home/mdz-axolotl/Clones/zed-kask/kask/docs/plans/goedel-gap-closure-plan.md` §9.
+No successful proof or continuous proof-enforcement claim is implied here.
+
+After approved provisioning, run an individual harness with
+`cargo kani -p hkask-mcp-training --lib --harness gm3_refuse_iff_degenerate_scaling --default-unwind 12`
+under an explicit resource limit. Keep unwinding/safety checks enabled; timeout,
+unsupported analysis, or resource failure is unknown, not success. These
+obligations concern validation predicates, not training quality or useful
+self-rewriting. Do not add a crates.io `kani` runtime dependency.
 
 ## Providers
 

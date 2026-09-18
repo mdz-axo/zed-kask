@@ -650,6 +650,419 @@ mod smoke {
         )
     }
 
+    struct EvaluationInference {
+        replies: Mutex<std::collections::VecDeque<Result<InferenceResult, InferenceError>>>,
+        models: Mutex<Vec<String>>,
+    }
+
+    impl InferencePort for EvaluationInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Model(
+                    "evaluation requires an explicit model".into(),
+                ))
+            })
+        }
+
+        fn generate_with_model(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            model: Option<&str>,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            self.models
+                .lock()
+                .expect("fixture model lock")
+                .push(model.unwrap_or_default().into());
+            let reply = self
+                .replies
+                .lock()
+                .expect("fixture reply lock")
+                .pop_front()
+                .expect("unexpected inference call");
+            Box::pin(async move { reply })
+        }
+    }
+
+    fn evaluation_reply(text: &str) -> Result<InferenceResult, InferenceError> {
+        Ok(InferenceResult {
+            text: text.into(),
+            model: "fixture-model".into(),
+            usage: hkask_types::ports::InferenceUsage {
+                total_tokens: 10,
+                reported: true,
+                ..Default::default()
+            },
+            finish_reason: "stop".into(),
+            tool_calls: vec![],
+            reasoning: None,
+            cost_usd: Some(0.01),
+        })
+    }
+
+    async fn evaluate_fixture(
+        dataset: &str,
+        mut request: serde_json::Value,
+        replies: Vec<Result<InferenceResult, InferenceError>>,
+    ) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+        let dir = AssemblyFixtureDir::new(std::env::current_dir()?)?;
+        let path = dir.path().join("eval.jsonl");
+        std::fs::write(&path, dataset)?;
+        request["test_dataset_path"] = serde_json::json!(path.to_string_lossy());
+        request["adapter_id"] = serde_json::json!("fixture-adapter");
+        request["model"] = serde_json::json!("fixture/candidate");
+        let inference = Arc::new(EvaluationInference {
+            replies: Mutex::new(replies.into()),
+            models: Mutex::new(Vec::new()),
+        });
+        let mut server = make_server();
+        server.inference_port = inference.clone();
+        let response = server
+            .training_evaluate(Parameters(serde_json::from_value(request)?))
+            .await?;
+        assert!(
+            inference
+                .replies
+                .lock()
+                .expect("fixture reply lock")
+                .is_empty()
+        );
+        let models = inference.models.lock().expect("fixture model lock").clone();
+        Ok((
+            hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&response)?),
+            models,
+        ))
+    }
+
+    /// expect: "Evaluation includes ordinary wrong answers in both denominators" [P8]
+    /// post: one correct and nine wrong answers report ten attempts and accuracy 0.1
+    #[tokio::test]
+    async fn evaluation_counts_wrong_answers_in_both_methods() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark"] {
+            let row = if method == "benchmark" {
+                serde_json::json!({"question":"Pick A", "choices":["yes","no"], "answer":"A"})
+            } else {
+                serde_json::json!({"messages":[{"role":"user","content":"Pick A"},{"role":"assistant","content":"A"}]})
+            };
+            let dataset = format!("{row}\n").repeat(10);
+            let replies = (0..10)
+                .map(|i| evaluation_reply(if i == 0 { "A" } else { "B" }))
+                .collect();
+            let (result, _) =
+                evaluate_fixture(&dataset, serde_json::json!({"method":method}), replies).await?;
+            assert_eq!(result["total_examples"], 10, "{method}: {result}");
+            assert_eq!(result["correct"], 1);
+            assert_eq!(result["accuracy"], 0.1);
+        }
+        Ok(())
+    }
+
+    fn evaluation_chat_row() -> String {
+        format!(
+            "{}\n",
+            serde_json::json!({"messages":[
+                {"role":"user","content":"Pick A"},
+                {"role":"assistant","content":"A"}
+            ]})
+        )
+    }
+
+    /// expect: "Semantic evaluation separates wrong answers from failed or malformed judging" [P8]
+    /// post: only an exact CORRECT verdict counts; candidate and judge requests use explicit models
+    #[tokio::test]
+    async fn evaluation_semantic_verdicts_and_judge_are_explicit() -> anyhow::Result<()> {
+        let replies = vec![
+            evaluation_reply("A"),
+            evaluation_reply(" CORRECT "),
+            evaluation_reply("B"),
+            evaluation_reply("INCORRECT"),
+            evaluation_reply("B"),
+            evaluation_reply("probably CORRECT"),
+            evaluation_reply("B"),
+            Err(InferenceError::Timeout("judge unavailable".into())),
+            Err(InferenceError::Connection("candidate unavailable".into())),
+        ];
+        let (result, models) = evaluate_fixture(
+            &evaluation_chat_row().repeat(5),
+            serde_json::json!({"method":"semantic", "judge_model":"fixture/judge"}),
+            replies,
+        )
+        .await?;
+        assert_eq!(result["correct"], 1, "{result}");
+        assert_eq!(result["incorrect"], 1);
+        assert_eq!(result["generation_errors"], 1);
+        assert_eq!(result["evaluator_errors"], 2);
+        assert_eq!(result["errors"], 3);
+        assert_eq!(result["total_examples"], 5);
+        assert_eq!(result["accuracy"], 0.2);
+        assert_eq!(result["judge_model"], "fixture/judge");
+        assert_eq!(result["evidence_source"], "llm_judged");
+        assert_eq!(
+            models,
+            [
+                "fixture/candidate",
+                "fixture/judge",
+                "fixture/candidate",
+                "fixture/judge",
+                "fixture/candidate",
+                "fixture/judge",
+                "fixture/candidate",
+                "fixture/judge",
+                "fixture/candidate"
+            ]
+        );
+        assert!(result["per_example"][2]["correct"].is_null());
+        assert!(result["per_example"][2]["error"].is_string());
+        assert_eq!(result["per_example"][3]["status"], "evaluator_error");
+        assert_eq!(result["per_example"][4]["status"], "generation_error");
+        Ok(())
+    }
+
+    /// expect: "Invalid evaluation configuration is refused before any inference" [P4]
+    #[tokio::test]
+    async fn evaluation_rejects_unknown_method_missing_judge_and_zero_limit() -> anyhow::Result<()>
+    {
+        for request in [
+            serde_json::json!({"method":"semanitc"}),
+            serde_json::json!({"method":"semantic"}),
+            serde_json::json!({"method":"semantic","judge_model":" "}),
+            serde_json::json!({"method":"exact_match","judge_model":"fixture/judge"}),
+            serde_json::json!({"max_examples":0}),
+        ] {
+            let error = evaluate_fixture(&evaluation_chat_row(), request, vec![])
+                .await
+                .expect_err("invalid request must fail before inference");
+            assert!(
+                error
+                    .downcast_ref::<hkask_mcp_server::server::McpToolError>()
+                    .is_some(),
+                "{error}"
+            );
+        }
+        Ok(())
+    }
+
+    /// expect: "Evaluation accounts for judge work and distinguishes unknown usage from zero" [P8]
+    #[tokio::test]
+    async fn evaluation_usage_includes_judges_and_surfaces_missing_reports() -> anyhow::Result<()> {
+        let request = serde_json::json!({"method":"semantic", "judge_model":"fixture/judge"});
+        let (result, _) = evaluate_fixture(
+            &evaluation_chat_row(),
+            request.clone(),
+            vec![evaluation_reply("A"), evaluation_reply("CORRECT")],
+        )
+        .await?;
+        assert_eq!(result["total_tokens_used"], 20, "{result}");
+        assert_eq!(result["total_cost_usd"], 0.02);
+        assert_eq!(result["inference_calls"], 2);
+        assert_eq!(result["unreported_usage_calls"], 0);
+        for method in ["exact_match", "benchmark", "semantic"] {
+            let mut unknown = evaluation_reply("A")?;
+            unknown.usage.reported = false;
+            unknown.cost_usd = None;
+            let (dataset, args, replies) = match method {
+                "benchmark" => (
+                    "{\"question\":\"Pick A\",\"choices\":[\"yes\",\"no\"],\"answer\":\"A\"}\n"
+                        .into(),
+                    serde_json::json!({"method":method}),
+                    vec![Ok(unknown)],
+                ),
+                "semantic" => (
+                    evaluation_chat_row(),
+                    request.clone(),
+                    vec![Ok(unknown), evaluation_reply("CORRECT")],
+                ),
+                _ => (
+                    evaluation_chat_row(),
+                    serde_json::json!({"method":method}),
+                    vec![Ok(unknown)],
+                ),
+            };
+            let (result, _) = evaluate_fixture(&dataset, args, replies).await?;
+            assert!(result["total_tokens_used"].is_null(), "{method}: {result}");
+            assert!(result["total_cost_usd"].is_null());
+            assert_eq!(result["unreported_usage_calls"], 1);
+            assert_eq!(result["unreported_cost_calls"], 1);
+            assert_eq!(
+                result["reported_tokens_used"],
+                if method == "semantic" { 10 } else { 0 }
+            );
+        }
+        let (result, _) = evaluate_fixture(
+            &evaluation_chat_row(),
+            request,
+            vec![
+                evaluation_reply("A"),
+                Err(InferenceError::Timeout("after dispatch".into())),
+            ],
+        )
+        .await?;
+        assert!(result["total_tokens_used"].is_null());
+        assert_eq!(result["reported_tokens_used"], 10);
+        assert_eq!(result["inference_calls"], 2);
+        assert_eq!(result["unreported_usage_calls"], 1);
+        Ok(())
+    }
+
+    /// expect: "No correct answers still report all attempted examples, including generation failures" [P8]
+    #[tokio::test]
+    async fn evaluation_all_wrong_and_generation_errors_are_counted() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark"] {
+            let row = if method == "benchmark" {
+                "{\"question\":\"Pick A\",\"choices\":[\"yes\",\"no\"],\"answer\":\"A\"}\n".into()
+            } else {
+                evaluation_chat_row()
+            };
+            let (result, _) = evaluate_fixture(
+                &row.repeat(2),
+                serde_json::json!({"method":method}),
+                vec![
+                    evaluation_reply("B"),
+                    Err(InferenceError::Timeout("candidate".into())),
+                ],
+            )
+            .await?;
+            assert_eq!(result["total_examples"], 2);
+            assert_eq!(result["accuracy"], 0.0);
+            assert_eq!(result["incorrect"], 1, "{method}: {result}");
+            assert_eq!(result["generation_errors"], 1);
+            assert_eq!(result["evaluator_errors"], 0);
+            assert!(result["total_tokens_used"].is_null());
+        }
+        Ok(())
+    }
+
+    /// expect: "Invalid dataset rows are surfaced separately from capped and attempted examples" [P8]
+    #[tokio::test]
+    async fn evaluation_reports_skipped_input_and_limit() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark"] {
+            let valid = if method == "benchmark" {
+                "{\"question\":\"Pick A\",\"choices\":[\"yes\",\"no\"],\"answer\":\"A\"}\n".into()
+            } else {
+                evaluation_chat_row()
+            };
+            let invalid = if method == "benchmark" {
+                "{\"question\":\"Bad choices\",\"choices\":[17,\"no\"],\"answer\":\"A\"}\n"
+            } else {
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"Pick A\"},{\"role\":\"assistant\",\"content\":\"   \"}]}\n"
+            };
+            let dataset = format!("\nnot-json\n{{}}\n{invalid}{}", valid.repeat(3));
+            let (result, _) = evaluate_fixture(
+                &dataset,
+                serde_json::json!({"method":method, "max_examples":1}),
+                vec![evaluation_reply("A")],
+            )
+            .await?;
+            assert_eq!(result["total_examples"], 1);
+            assert_eq!(result["valid_examples"], 3, "{method}: {result}");
+            assert_eq!(result["skipped_invalid_examples"], 3);
+            assert_eq!(result["excluded_by_limit"], 2);
+        }
+        Ok(())
+    }
+
+    /// expect: "Benchmark scoring accepts only a single available choice letter, never prose" [P8]
+    #[tokio::test]
+    async fn evaluation_benchmark_does_not_extract_letters_from_prose() -> anyhow::Result<()> {
+        let row = "{\"question\":\"Pick B\",\"choices\":[\"no\",\"yes\"],\"answer\":\"B\"}\n";
+        let (result, _) = evaluate_fixture(
+            &row.repeat(4),
+            serde_json::json!({"method":"benchmark"}),
+            vec![
+                evaluation_reply(" B "),
+                evaluation_reply("b"),
+                evaluation_reply("Because A is correct"),
+                evaluation_reply("F"),
+            ],
+        )
+        .await?;
+        assert_eq!(result["correct"], 2, "{result}");
+        assert_eq!(result["incorrect"], 2);
+        assert!(result["per_example"][2]["predicted"].is_null());
+        assert!(result["per_example"][3]["predicted"].is_null());
+        Ok(())
+    }
+
+    /// expect: "Accuracy is the correct fraction for every bounded pass/fail combination" [P8]
+    #[tokio::test]
+    async fn evaluation_accuracy_obeys_count_invariants() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark"] {
+            let row = if method == "benchmark" {
+                "{\"question\":\"Pick A\",\"choices\":[\"yes\",\"no\"],\"answer\":\"A\"}\n".into()
+            } else {
+                evaluation_chat_row()
+            };
+            for total in 1..=4 {
+                for correct in 0..=total {
+                    let replies = (0..total)
+                        .map(|i| evaluation_reply(if i < correct { "A" } else { "B" }))
+                        .collect();
+                    let (result, _) = evaluate_fixture(
+                        &row.repeat(total),
+                        serde_json::json!({"method":method}),
+                        replies,
+                    )
+                    .await?;
+                    assert_eq!(result["total_examples"], total);
+                    assert_eq!(result["correct"], correct);
+                    assert_eq!(result["incorrect"], total - correct);
+                    assert_eq!(result["accuracy"], correct as f64 / total as f64);
+                    if method == "benchmark" {
+                        assert_eq!(result["per_category"]["unknown"]["total"], total);
+                        assert_eq!(
+                            result["per_category"]["unknown"]["accuracy"],
+                            result["accuracy"]
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// expect: "Unusable datasets cause no inference, while a reported zero remains a measurement" [P8]
+    #[tokio::test]
+    async fn evaluation_empty_datasets_and_reported_zero_are_distinct() -> anyhow::Result<()> {
+        for method in ["exact_match", "benchmark"] {
+            for dataset in ["", "\n{}\ninvalid-json\n"] {
+                let result =
+                    evaluate_fixture(dataset, serde_json::json!({"method":method}), vec![]).await;
+                assert!(result.is_err(), "{method} must reject an unusable dataset");
+            }
+        }
+        let mut reply = evaluation_reply("A")?;
+        reply.usage.total_tokens = 0;
+        reply.cost_usd = Some(0.0);
+        let (result, _) = evaluate_fixture(
+            &evaluation_chat_row(),
+            serde_json::json!({}),
+            vec![Ok(reply)],
+        )
+        .await?;
+        assert_eq!(result["total_tokens_used"], 0);
+        assert_eq!(result["total_cost_usd"], 0.0);
+        assert_eq!(result["unreported_usage_calls"], 0);
+        Ok(())
+    }
+
     /// expect: [P1] invalid model resolution fails before dataset reads or credential/provider access.
     #[tokio::test]
     async fn f3_submit_rejects_invalid_model_before_effects() {

@@ -5245,6 +5245,7 @@ impl KaskToolSource for MutableKaskToolSource {
     fn invoke(
         &self,
         _server_id: &str,
+        _caller: Option<hkask_types::WebID>,
         _tool: &str,
         _args: serde_json::Value,
     ) -> std::pin::Pin<

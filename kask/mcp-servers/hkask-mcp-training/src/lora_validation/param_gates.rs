@@ -531,13 +531,13 @@ mod proofs {
     #[kani::proof]
     fn gm1_clean_iff_noop_init() {
         let init: Option<LoraInit> = kani::any();
+        let is_clean = matches!(init, None | Some(LoraInit::Default) | Some(LoraInit::Eva));
         let lora = LoraParams {
             init_lora_weights: init,
             ..LoraParams::default()
         };
         let mut findings = Vec::new();
         validate_noop_at_init(&lora, &mut findings);
-        let is_clean = matches!(init, None | Some(LoraInit::Default) | Some(LoraInit::Eva));
         assert_eq!(
             findings.is_empty(),
             is_clean,

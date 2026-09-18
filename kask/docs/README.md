@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-18
-version: "2.3.0"
+version: "2.3.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -23,7 +23,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document | Status and purpose |
 | --- | --- |
 | [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Active, operator-authorized repair plan; no backward-compatibility requirements. §9 separates verified training/gallery/packaging slices from unfinished authority, cancellation, containment, attribution and recovery work. |
-| [`Gödel-machine gap closure plan`](plans/goedel-gap-closure-plan.md) | Active, operator-chartered (goal `5e12d79e`); closes Track B gaps (falsifiable outcome claims before self-changes, mandatory empirical acceptance gate, axiom layer in the constraint registry) and scoped Track A (cfg-gated Kani proof pilot on the training math gates) from the 2026-09-18 Gödel-machine research report. |
+| [`Gödel-machine gap closure plan`](plans/goedel-gap-closure-plan.md) | Active roadmap: finish existing process/Kani work, repair evaluation, demonstrate a real cycle, then enforce one bounded promotion lifecycle and test formal-checking value. Separates recorded work from runtime/CI enforcement and proof results; §8 provides a copy-ready agent continuation. Strict Gödel-machine proof search stays out of scope. |
 
 ## Architecture
 

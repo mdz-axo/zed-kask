@@ -73,6 +73,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  goal-traceability-advisory:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exercise advisory traceability fixtures
+        run: bash kask/scripts/check-goal-traceability-selftest.sh
+      - name: Report skill goal trailers (syntax only, never approval)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash kask/scripts/check-goal-traceability.sh --range "$BASE_SHA" "$HEAD_SHA"
+
   check:
     runs-on: ubuntu-latest
     steps:

@@ -238,6 +238,7 @@ pub(crate) struct LoraParams {
 }
 
 /// LoRA initialization strategy (mirrors PEFT `init_lora_weights`).
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 #[schemars(transform = strip_bare_additional_properties)]

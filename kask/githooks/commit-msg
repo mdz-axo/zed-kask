@@ -58,3 +58,8 @@ case "$subject" in
     "I'm sorry"*|"I am sorry"*|"I can't"*|"I cannot"*|"I couldn't"*)
         reject "the subject is a model refusal/apology (starts with 'I'm sorry'/'I cannot'/...)." ;;
 esac
+# Advisory goal traceability never changes the message-hygiene rejection policy.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -n "$ROOT" ] && [ -f "$ROOT/kask/scripts/check-goal-traceability.sh" ]; then
+    bash "$ROOT/kask/scripts/check-goal-traceability.sh" --message "$1"
+fi

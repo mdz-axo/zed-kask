@@ -60,9 +60,16 @@ pub trait KaskToolSource: Send + Sync {
     /// Dispatch a tool call to the governed runtime. `Ok(value)` is the
     /// parsed tool result; `Err(text)` is the operator-facing error text
     /// (kask errors carry the typed kind as a `[kind] message` prefix).
+    ///
+    /// `caller` (zed-kask: D-seam — F6/P2) is the host-derived initiating
+    /// actor — distinct per calling thread/subagent, never a model-supplied
+    /// value. It is a metering/attribution identity, not a capability: it
+    /// does not widen or narrow what the call may do (see P4.2). `None`
+    /// falls back to the pre-existing shared process-level identity.
     fn invoke(
         &self,
         server_id: &str,
+        caller: Option<hkask_types::WebID>,
         tool: &str,
         args: serde_json::Value,
     ) -> std::pin::Pin<
@@ -594,6 +601,10 @@ impl AnyAgentTool for KaskServerTool {
         let server_id = self.descriptor.server_id.clone();
         let tool_name = self.descriptor.name.clone();
         let source = self.source.clone();
+        // zed-kask: D-seam — F6/P2. Computed synchronously from the outer
+        // `App` while the calling thread is still reachable; the spawned
+        // future below outlives this call and cannot re-derive it.
+        let caller = event_stream.calling_actor(cx);
         cx.spawn(async move |_| {
             let input = input
                 .recv()
@@ -608,7 +619,7 @@ impl AnyAgentTool for KaskServerTool {
             // cancellation so `Thread::cancel` can complete even when the child
             // never replies. Cancellation here means "the request may or may not
             // have applied its effect" — never a claim of rollback or success.
-            let dispatch = source.invoke(&server_id, &tool_name, input);
+            let dispatch = source.invoke(&server_id, caller, &tool_name, input);
             let outcome = futures::select! {
                 result = dispatch.fuse() => result,
                 _ = event_stream.cancelled_by_user().fuse() => {
@@ -749,6 +760,21 @@ fn invalid_json_tool_output(error_message: String) -> AgentToolOutput {
 /// `context_server` crate.
 fn is_context_server_timeout(error_text: &str) -> bool {
     error_text.contains("Context server request timeout")
+}
+
+/// zed-kask: D-seam — F7/P2. `context_server::Client::request` (upstream)
+/// erases every failure into one `anyhow::Error`, so this string match is
+/// the only boundary available without editing upstream `client.rs`. The
+/// ONLY provable non-delivery case in that function's source is the
+/// `outbound_tx.try_send` failure, tagged with this exact context string —
+/// every other path (timeout, decode failure, server-reported error,
+/// "cancelled" bail after transport loss) means the request may already
+/// have reached the server, so none of them are safe to retry. This is
+/// deliberately a strict allowlist, not the previous "retry unless proven
+/// timeout" denylist that let unclassified errors (decode failures included)
+/// fall through to a retry.
+fn is_provably_not_delivered(error_text: &str) -> bool {
+    error_text.contains("failed to write to context server's stdin")
 }
 
 /// Extract the error text from a failed MCP tool run. The error message
@@ -1037,24 +1063,35 @@ impl ContextServerTool {
                 response = request.fuse() => match response {
                     Ok(r) => r,
                     Err(e) => {
-                        // zed-kask: D-seam — distinguish timeout from transport death.
-                        // The original code retried on *any* error, including timeouts.
-                        // But a timeout means the server is alive but slow (or its upstream
-                        // is slow) — restarting it wastes 30s and doesn't fix the slowness.
-                        // Only retry on actual transport errors (connection reset, process
-                        // death), where a restart can actually help.
-                        let is_timeout = is_context_server_timeout(&e.to_string());
-                        if is_timeout {
+                        // zed-kask: D-seam — F7/P2. Retry ONLY a request proven to have
+                        // never reached the server (`is_provably_not_delivered`) — a
+                        // restart-and-retry is safe there because nothing was sent.
+                        // Every other outcome (timeout, decode failure, a
+                        // "cancelled"-after-transport-loss bail, a server-reported
+                        // error) means the request may have been delivered and
+                        // possibly applied, so it is reported as unknown rather than
+                        // silently repeated. This replaces the previous "retry unless
+                        // proven timeout" default, which let unclassified errors —
+                        // including decode failures on an already-successful
+                        // server-side call — fall through to a duplicate dispatch.
+                        let error_text = e.to_string();
+                        if !is_provably_not_delivered(&error_text) {
+                            let outcome_note = if is_context_server_timeout(&error_text) {
+                                "timed out"
+                            } else {
+                                "failed with an unclassified error"
+                            };
                             log::warn!(
-                                "Context server '{}' tool '{}' timed out — not retrying (server is alive but slow)",
+                                "Context server '{}' tool '{}' {outcome_note} — not retrying; the \
+                                 request may have reached the server, so its effect is unknown: {e}",
                                 server_id.0, tool_name
                             );
                             return Err(e.into());
                         }
-                        // Transport error — server may have died mid-call. Trigger a
-                        // restart and retry once, mirroring McpRuntime::call_tool_inner.
+                        // Provably never sent — a restart-and-retry cannot duplicate
+                        // an effect that never happened.
                         log::warn!(
-                            "Context server '{}' tool '{}' failed: {} — attempting restart and retry",
+                            "Context server '{}' tool '{}' was never delivered: {} — attempting restart and retry",
                             server_id.0, tool_name, e
                         );
                         cx.update(|cx| {
@@ -1579,20 +1616,22 @@ mod tests {
     /// A controllable `KaskToolSource` for pinning the hook surface and
     /// the `KaskServerTool` dispatch. `invocations` records every dispatch
     /// so tests can assert the agent's tool call reached the source with
-    /// the right server id, tool name, and arguments.
+    /// the right server id, tool name, and arguments. `callers` records the
+    /// host-derived caller identity (zed-kask: D-seam — F6/P2) passed to
+    /// each `invoke`, in the same order, so tests can assert distinct
+    /// calling threads produce distinct attribution.
+    #[derive(Default)]
     struct FakeKaskToolSource {
         descriptors: Vec<KaskToolDescriptor>,
         invocations: std::sync::Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+        callers: std::sync::Arc<std::sync::Mutex<Vec<Option<hkask_types::WebID>>>>,
     }
 
     impl FakeKaskToolSource {
         /// A source exposing zero tools — wiring it is observationally inert
         /// for any registry constructed in parallel tests.
         fn empty() -> std::sync::Arc<dyn KaskToolSource> {
-            std::sync::Arc::new(Self {
-                descriptors: Vec::new(),
-                invocations: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            })
+            std::sync::Arc::new(Self::default())
         }
     }
 
@@ -1604,6 +1643,7 @@ mod tests {
         fn invoke(
             &self,
             server_id: &str,
+            caller: Option<hkask_types::WebID>,
             tool: &str,
             args: serde_json::Value,
         ) -> std::pin::Pin<
@@ -1614,6 +1654,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(record);
+            self.callers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(caller);
             let is_failing = tool == "failing_tool";
             // zed-kask: D-seam — F2/P1b test fixture. A tool name that never
             // resolves, so cancellation tests prove the race actually fires
@@ -1757,6 +1801,7 @@ mod tests {
         let source: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
             descriptors: vec![descriptor],
             invocations: invocations.clone(),
+            ..Default::default()
         });
         assert!(ContextServerRegistry::merge_kask_tool_descriptors(
             source,
@@ -1771,6 +1816,7 @@ mod tests {
         let empty: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
             descriptors: Vec::new(),
             invocations,
+            ..Default::default()
         });
         assert!(ContextServerRegistry::merge_kask_tool_descriptors(
             empty.clone(),
@@ -1894,6 +1940,7 @@ mod tests {
         let source = std::sync::Arc::new(FakeKaskToolSource {
             descriptors: descriptors.clone(),
             invocations: invocations.clone(),
+            ..Default::default()
         });
 
         // Descriptor passthrough: the surfaced tool keeps the descriptor's
@@ -1995,6 +2042,7 @@ mod tests {
         let source = std::sync::Arc::new(FakeKaskToolSource {
             descriptors: vec![descriptor.clone()],
             invocations: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            ..Default::default()
         });
         let tool = std::sync::Arc::new(KaskServerTool { source, descriptor });
         let (mut sender, input) = ToolInput::<serde_json::Value>::test();

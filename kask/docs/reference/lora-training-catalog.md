@@ -1,8 +1,8 @@
 ---
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
-last_updated: 2026-09-17
-version: "0.39.0"
+last_updated: 2026-09-18
+version: "0.39.1"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, trust]
@@ -24,7 +24,7 @@ Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/S
 | `training_submit` | Submit a training job | `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:23-113` |
 | `training_status` | Job status and G-R1 runtime metrics | `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:12-125` |
 | `training_cancel` | Cancel a job | `kask/mcp-servers/hkask-mcp-training/src/tools/cancel.rs:10-25` |
-| `training_evaluate` | Post-training evaluation | `kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs:9-54` |
+| `training_evaluate` | Post-training evaluation; semantic mode requires explicit `judge_model`; all attempts count, missing usage totals are null | `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs:76-108` |
 | `training_validate_config` | Static/runtime-enforceable audit subset | `kask/mcp-servers/hkask-mcp-training/src/tools/validate.rs:10-131` |
 | `training_bridge_rollouts` | Verdict-labeled rollout bridge | `kask/mcp-servers/hkask-mcp-training/src/tools/rollout_bridge.rs:43-103` |
 

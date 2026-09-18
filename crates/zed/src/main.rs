@@ -3429,6 +3429,7 @@ impl agent::KaskToolSource for ZedKaskToolSource {
     fn invoke(
         &self,
         server_id: &str,
+        caller: Option<hkask_types::WebID>,
         tool: &str,
         args: serde_json::Value,
     ) -> std::pin::Pin<
@@ -3438,9 +3439,13 @@ impl agent::KaskToolSource for ZedKaskToolSource {
         let server_id = server_id.to_string();
         let tool = tool.to_string();
         Box::pin(async move {
-            // A stable agent identity so the reliability domain aggregates
-            // agent-path calls (the runtime meters every invoke).
-            let agent_id = hkask_types::WebID::for_agent_name("zed-agent");
+            // zed-kask: D-seam — F6/P2. Attribute metering/regulation spans
+            // to the actual calling thread when the host supplied one;
+            // fall back to the pre-existing shared constant only when it
+            // did not (non-thread-tied dispatch — tests, or a future
+            // caller that has no `Thread` to derive from). This is a
+            // metering/attribution identity, not a capability grant.
+            let agent_id = caller.unwrap_or_else(|| hkask_types::WebID::for_agent_name("zed-agent"));
             hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
                 .await
                 .map_err(|error| error.to_string())
