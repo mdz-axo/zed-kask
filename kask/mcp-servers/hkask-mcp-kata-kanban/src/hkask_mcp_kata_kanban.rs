@@ -198,7 +198,6 @@ fn build_task_agent_card(
         produces: vec!["task_result".to_string()],
         dependencies: Default::default(),
         capabilities: LocalAgentCapabilities {
-            min_provider_class: "local".to_string(),
             system_prompt: Some(
                 "You are a task-execution agent spawned by the kata-kanban. \
                  Complete the assigned task using your declared skills. \

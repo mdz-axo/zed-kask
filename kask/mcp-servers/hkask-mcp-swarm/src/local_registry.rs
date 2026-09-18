@@ -200,8 +200,6 @@ pub struct LocalAgentCapabilities {
     #[serde(default)]
     pub model: String,
     #[serde(default)]
-    pub min_provider_class: String,
-    #[serde(default)]
     pub system_prompt: Option<String>,
     /// MCP tools this agent may call, as qualified `server/tool` names
     /// (e.g. `"research/web_search"`). `swarm_delegate_local` declares

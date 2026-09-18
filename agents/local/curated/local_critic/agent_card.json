@@ -1,7 +1,7 @@
 {
   "agent_id": "local_critic",
   "agent_type": "critic",
-  "description": "A local critic agent that reviews a short text against stated criteria and returns a verdict with one-line reasons. Runs on the host session's default model (no ABW calls, no ABW round-trips). Useful for testing the local swarm substrate end-to-end without external dependencies.",
+  "description": "A local critic agent that reviews a short text against stated criteria and returns a verdict with one-line reasons. Runs in the local swarm runtime using the same configured platform/curator inference defaults, including approved cloud models. Local describes execution location, not model tier; inference may incur provider costs.",
   "display_name": "",
   "accepts": [
     "text"
@@ -15,7 +15,6 @@
   },
   "capabilities": {
     "model": "",
-    "min_provider_class": "local",
     "system_prompt": "You are a local critic. Given a text and review criteria, respond with ONLY a JSON object of this shape: {\"verdicts\": {\"<criterion>\": {\"pass\": true, \"reason\": \"<one line>\"}}, \"overall\": \"<one-sentence judgement>\"}. Judge only what the criteria ask. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
     "skills": [],

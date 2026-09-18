@@ -1184,14 +1184,14 @@ impl SwarmServer {
     }
 
     /// Clone an ABW agent to the local registry. Fetches the agent card from
-    /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
+    /// ABW via `swarm_get_agent`, leaves model unset for host-default inheritance, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id` to
     /// the ABW agent id (marking it as synced). The ABW catalogue is open
     /// (no API key required) — same as `swarm_list_agents`. The clone is a
     /// read-from-ABW + write-to-local-filesystem operation with no ABW
     /// mutation, so `require_auth` is not needed.
     #[tool(
-        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, sets min_provider_class: local, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. The ABW catalogue is open — no API key required."
+        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, inherits the host platform model, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. Local means execution location, not a local-model requirement. The ABW catalogue is open — no API key required."
     )]
     pub(crate) async fn swarm_clone_to_local(
         &self,
@@ -1429,7 +1429,6 @@ impl SwarmServer {
                 dependencies: deps,
                 capabilities: LocalAgentCapabilities {
                     model,
-                    min_provider_class: "local".to_string(),
                     system_prompt,
                     mcp_tools,
                     skills,
@@ -1799,7 +1798,6 @@ impl SwarmServer {
                 dependencies: LocalAgentDependencies::default(),
                 capabilities: LocalAgentCapabilities {
                     model,
-                    min_provider_class: "local".to_string(),
                     system_prompt: Some(req.system_prompt),
                     mcp_tools: filter_mcp_tools(
                         req.mcp_tools,
@@ -3676,7 +3674,6 @@ mod tests {
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities {
                 model: "mock".to_string(),
-                min_provider_class: "".to_string(),
                 system_prompt: Some(system_prompt.to_string()),
                 mcp_tools: vec![],
                 skills: vec![],

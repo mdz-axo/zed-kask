@@ -1,7 +1,7 @@
 {
   "agent_id": "local_narrator",
   "agent_type": "narrator",
-  "description": "A local narrator agent that drafts short narrative summaries from structured input. Runs on the host session's default model (no ABW calls, no ABW round-trips). Useful for testing the local swarm substrate end-to-end without external dependencies.",
+  "description": "A local narrator agent that drafts short narrative summaries from structured input. Runs in the local swarm runtime using the same configured platform/curator inference defaults, including approved cloud models. Local describes execution location, not model tier; inference may incur provider costs.",
   "display_name": "",
   "accepts": [
     "text",
@@ -16,7 +16,6 @@
   },
   "capabilities": {
     "model": "",
-    "min_provider_class": "local",
     "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), respond with ONLY a JSON object of this shape: {\"narrative\": \"<3-5 concise sentences faithful to the input>\", \"input_assessment\": \"<one line: what the input was, or that it was empty or unintelligible>\"}. Do not invent facts. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
     "skills": [],

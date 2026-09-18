@@ -10,6 +10,16 @@ mds_categories: [composition, trust, lifecycle, curation]
 
 # Swarm MCP Server Reference
 
+### Model policy
+
+“Local swarm” names the execution substrate, not an LLM provider class. Agent
+cards inherit the same host inference defaults as the curator; Settings → Kask
+→ Models controls the platform default, including approved cloud models. No
+smaller/local model is selected to save cost or avoid requesting permission.
+Explicit per-agent overrides must be operator-selected; missing/unavailable
+approved routing is an error, not permission to downgrade. The unused
+`min_provider_class` metadata was removed from the Rust card type and seeds.
+
 ### Local evaluation boundary
 
 Local evaluation supports **contains, not_contains, regex** only. Shell execution
@@ -210,7 +220,7 @@ registry is read by `swarm_list_local_agents` and
 | `swarm_list_local_agents`       | List local agent cards from the registry. Each card carries a `cloud_id`: present = synced with an ABW agent, absent = local-only.                                                                                                                                                                                                          |
 | `swarm_create_local_agent`      | Write a new local agent card to the registry (`mcp/swarm/agents/curated/<id>/agent_card.json`) and reload the registry.                                                                                                                                                                                                                         |
 | `swarm_reconfigure_local_agent` | Update an existing local agent's `system_prompt` in place (the C6 reconfigure step in the cybernetic swarm plan); preserves all other card fields.                                                                                                                                                                                          |
-| `swarm_clone_to_local`          | Clone an ABW agent card into the local registry with `min_provider_class: local`; sets `cloud_id` to mark it as synced (the cloud→local bridge). Requires the ABW API key.                                                                                                                                                                  |
+| `swarm_clone_to_local`          | Clone an ABW agent card into the local registry with an unset model (host platform/curator default inheritance); sets `cloud_id` to mark it as synced (the cloud→local bridge). Requires the ABW API key.                                                                                                                                                                  |
 | `swarm_remove_local`            | Delete a local agent card (the local counterpart of firing). A synced card's ABW agent is NOT touched.                                                                                                                                                                                                                                      |
 | `swarm_generate_prompt_local`   | Generate a system prompt for a local agent from a description (local analog of `swarm_generate_prompt`). Uses the local `InferencePort`; optionally seeded with the agent's consolidated memory.                                                                                                                      |
 | `swarm_generate_ontology_local` | Generate a seed ontology (Mermaid ER) for a knowledge domain (local analog of `swarm_generate_ontology`). Uses the local `InferencePort`; optionally seeded with an agent's semantic-memory graph.                                                                                                                    |

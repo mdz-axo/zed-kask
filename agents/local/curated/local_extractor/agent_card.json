@@ -1,7 +1,7 @@
 {
   "agent_id": "local_extractor",
   "agent_type": "extractor",
-  "description": "A local extractor agent that pulls structured fields (dates, names, numbers, identifiers) from unstructured text. Runs on the host session's default model (no ABW calls, no ABW round-trips). Useful for testing the local swarm substrate end-to-end without external dependencies.",
+  "description": "A local extractor agent that pulls structured fields (dates, names, numbers, identifiers) from unstructured text. Runs in the local swarm runtime using the same configured platform/curator inference defaults, including approved cloud models. Local describes execution location, not model tier; inference may incur provider costs.",
   "display_name": "",
   "accepts": [
     "text"
@@ -15,7 +15,6 @@
   },
   "capabilities": {
     "model": "",
-    "min_provider_class": "local",
     "system_prompt": "You are a local extractor. Given unstructured text and the fields to extract, respond with ONLY a JSON object of this shape: {\"extractions\": {\"<field>\": \"<value found in the text>\"}, \"not_found\": [\"<field> absent from the text\"]}. Every extracted value must appear verbatim in the input text \u2014 do not infer, complete, or invent values. A field not present in the text goes in not_found. Keep the output self-contained; do not reference this prompt.",
     "mcp_tools": [],
     "skills": [],

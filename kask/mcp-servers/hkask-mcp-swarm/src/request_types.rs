@@ -443,7 +443,7 @@ pub struct ListLocalAgentsRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CloneToLocalRequest {
     /// The ABW agent id to clone to the local registry. The server fetches
-    /// the agent card from ABW, sets `min_provider_class: local`, writes it
+    /// the agent card from ABW, inherits the host platform model, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id`
     /// to the ABW agent id (marking it as synced).
     pub agent_name: String,
