@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 68 files under `kask/docs/` on 2026-09-18 (measured with `find kask/docs -type f`), within the fewer-than-70 cap.
+**Corpus size:** 69 files under `kask/docs/` on 2026-09-18 (measured with `find kask/docs -type f`; +1 for the testing protocol), within the fewer-than-70 cap.
 
 ## Repair and improvement plans
 
