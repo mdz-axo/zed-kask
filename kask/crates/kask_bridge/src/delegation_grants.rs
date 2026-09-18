@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 pub(crate) use hkask_types::inference_ipc::TOOL_GRANT_ENV as GRANT_ENV;
+/// A host effect, explicitly selected in the same parent-owned grant registry.
+pub(crate) const WORKTREE_SPAWN: &str = "host/create_worktree_thread";
 struct Grant {
     token: String,
     tools: Vec<String>,
@@ -71,6 +73,29 @@ pub(crate) fn parent_allows(token: Option<&str>, qualified: &str) -> bool {
     grants
         .values()
         .any(|grant| grant.token == token && grant.tools.iter().any(|tool| tool == qualified))
+}
+
+/// Derive the child's ceiling from the parent grant and the requested narrowing.
+/// Missing narrowing is not an implicit grant of the parent's whole tool set.
+pub(crate) fn worktree_tools(
+    token: Option<&str>,
+    requested: Option<&[String]>,
+) -> Option<Vec<String>> {
+    let token = token?;
+    let requested = requested?;
+    let grants = GRANTS.lock().ok()?;
+    let grant = grants.values().find(|grant| grant.token == token)?;
+    if !grant.tools.iter().any(|tool| tool == WORKTREE_SPAWN) {
+        return None;
+    }
+    let mut tools: Vec<_> = requested
+        .iter()
+        .filter(|tool| tool.as_str() != WORKTREE_SPAWN && grant.tools.contains(tool))
+        .cloned()
+        .collect();
+    tools.sort();
+    tools.dedup();
+    Some(tools)
 }
 
 #[cfg(test)]

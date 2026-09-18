@@ -26,9 +26,7 @@ pub(crate) use kanban::{
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool, resolve_db_passphrase};
-use hkask_mcp_swarm::{
-    LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
-};
+use hkask_mcp_swarm::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
@@ -51,19 +49,13 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 hkask_mcp_server::mcp_server!(
     pub struct KanbanServer {
         pub service: KanbanService,
-        /// Local swarm runtime — kanban_task_spawn delegates task execution to a
-        /// local agent (inference + guard + skill execution). Used as the
-        /// fallback when the worktree spawn port is unavailable.
-        pub local_runtime: Arc<LazyLocalSwarmRuntime>,
         /// Local agent registry — reusable expert agents (cards on disk). When a
         /// spawn's `delegated_skills` are covered by an existing card, it is
         /// reused; otherwise a task-specific agent is built in-memory.
         pub local_registry: Arc<LocalAgentRegistry>,
         /// Worktree spawn port — when available, `kanban_task_spawn` creates a
         /// worktree-backed agent thread (isolated git worktree) via the zed IPC
-        /// bridge instead of the in-memory `LazyLocalSwarmRuntime`. When
-        /// unavailable (no IPC socket, no active workspace), falls back to
-        /// in-memory spawn.
+        /// bridge. Missing authority or an uncertain reply never starts a fallback.
         pub worktree_spawn_port: Arc<dyn hkask_types::WorktreeSpawnPort>,
         /// Replay protection for the three tools a duplicate call would harm
         /// (`kanban_board_create`, `kanban_task_create`, `kanban_task_spawn`).
@@ -92,11 +84,11 @@ hkask_mcp_server::mcp_server!(
 ///   landed is exactly what is unknown. Re-running could duplicate it and
 ///   claiming success could invent a result.
 ///
-/// A failed call releases the claim so a retry starts clean rather than
-/// inheriting an "outcome unknown" verdict for work that demonstrably did not
-/// happen.
+/// A known pre-effect failure releases the claim. Spawn Unavailable errors
+/// retain it because the IPC request may already have created a child.
 ///
-/// CONTRACT ON `work`: it must return `Err` only when NO effect landed.
+/// CONTRACT ON `work`: except for uncertain spawn Unavailable errors, return
+/// `Err` only when NO effect landed.
 /// Post-effect failures (bookkeeping after the spawn, etc.) must be folded
 /// into a successful partial response instead — see `kanban_task_spawn`'s
 /// `result_note_error`. Releasing the claim on a post-effect error would let
@@ -175,8 +167,13 @@ where
                 Ok(value)
             }
             Err(error) => {
-                // Clean failure: nothing landed, so free the key for a retry.
-                store.release(tool, key);
+                // Spawn transport errors do not prove non-delivery. Retain the
+                // pending claim so a same-key retry cannot create a second child.
+                if tool != "kanban_task_spawn"
+                    || error.kind != hkask_types::McpErrorKind::Unavailable
+                {
+                    store.release(tool, key);
+                }
                 Err(error)
             }
         },
@@ -184,11 +181,9 @@ where
 }
 
 /// Build a task-specific local agent card for `kanban_task_spawn` when no
-/// reusable expert agent covers the requested skills. The agent runs in-memory
-/// (not persisted to the registry) with the delegated skills as its declared
-/// skill set — `AgentExecutor::run` executes each skill execution against the
-/// task before the LLM call. An empty `model` lets the inference port pick its
-/// default; an empty `mcp_tools` set means the agent runs skill + LLM only.
+/// reusable expert agent covers the requested skills. The card is not persisted;
+/// its declared MCP tools narrow the parent's worktree grant. An empty tool set
+/// grants no tools to the child; skill instructions do not expand that authority.
 fn build_task_agent_card(
     task_id: hkask_types::TaskId,
     title: &str,
@@ -1143,13 +1138,9 @@ impl KanbanServer {
     // ── Spawn — activate a subagent pod for task execution ─────────────────
 
     /// Spawn a subagent for task execution. Tries worktree-isolated spawn
-    /// first (via the `WorktreeSpawnPort` IPC bridge → editor creates a git
-    /// worktree + agent thread). On failure (no IPC socket, no active
-    /// workspace), falls back to in-memory `LazyLocalSwarmRuntime::delegate()`
-    /// (same process, same working tree). The delegation result is recorded
-    /// on the task as a structured `LocalDelegateResult` + verdict. See
-    /// `tasks/kanban-worktree-terminal-model.md` for the design (Option A:
-    /// implemented).
+    /// via the parent-authorized `WorktreeSpawnPort`. Children auto-run with the
+    /// parent grant intersected with the selected agent card's declared MCP tools.
+    /// A missing grant or uncertain outcome is surfaced without fallback execution.
     #[tool(description = "Spawn a subagent for task execution with delegated skills")]
     pub async fn kanban_task_spawn(
         &self,
@@ -1213,21 +1204,15 @@ impl KanbanServer {
                             build_task_agent_card(tid, &task.title, &skills_for_agent)
                         });
 
-                    // P1: Try worktree-isolated spawn first. When the zed IPC bridge
-                    // is available and a workspace with an AgentPanel is open, this
-                    // creates a worktree-backed agent thread (isolated git worktree).
-                    // On failure (no IPC socket, no workspace, spawn error), falls
-                    // back to the in-memory `LazyLocalSwarmRuntime` path below.
-                    if let Some(response) = self
-                        .spawn_via_worktree(tid, &task, &skills_for_agent)
-                        .await?
-                    {
-                        return serde_json::to_value(response)
-                            .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
-                    }
-
-                    // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
-                    let response = self.spawn_via_local_runtime(tid, &task, &agent).await?;
+                    // Fail closed: a refusal or lost reply never authorizes another executor.
+                    let response = self
+                        .spawn_via_worktree(
+                            tid,
+                            &task,
+                            &skills_for_agent,
+                            &agent.capabilities.mcp_tools,
+                        )
+                        .await?;
                     serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },
@@ -1269,7 +1254,8 @@ impl KanbanServer {
         tid: hkask_types::TaskId,
         task: &Task,
         skills_for_agent: &[String],
-    ) -> Result<Option<TaskSpawnResponse>, McpToolError> {
+        allowed_tools: &[String],
+    ) -> Result<TaskSpawnResponse, McpToolError> {
         let task_text = match task.description.as_deref() {
             Some(desc) if !desc.trim().is_empty() => format!("{}: {}", task.title, desc),
             _ => task.title.clone(),
@@ -1287,23 +1273,21 @@ impl KanbanServer {
         let spawn_title = format!("Kanban: {}", task.title);
         match self
             .worktree_spawn_port
-            .create_worktree_thread(&spawn_prompt, &spawn_title, None, None)
+            .create_worktree_thread(&spawn_prompt, &spawn_title, None, None, allowed_tools)
             .await
         {
             Ok(message) => {
                 let result_note = format!(
-                    "Spawned worktree agent for task '{}' ({}). \
-                     The agent runs in an isolated git worktree and will \
-                     report results via kanban_task_delegate_result.\n\
-                     {}",
+                    "Worktree thread queued for task '{}' ({}). \
+                     Native session establishment and auto-submit are asynchronous; execution is not yet confirmed.\n{}",
                     task.title, tid, message
                 );
                 // Post-spawn bookkeeping: the agent thread already exists, so
                 // a comment failure must NOT fail the call — an Err here would
                 // release the replay-protection claim and a same-key retry
                 // would spawn a SECOND agent. Fold the failure into the
-                // response instead (uniform with task_move/task_record_
-                // delegation, already warn-only after the effect).
+                // response instead. Session startup remains asynchronous, so
+                // queuing alone does not advance the task to InProgress.
                 let result_note_error =
                     match self.service.task_comment(tid, self.webid, &result_note) {
                         Ok(_) => None,
@@ -1318,155 +1302,24 @@ impl KanbanServer {
                             Some(error.to_string())
                         }
                     };
-                if let Err(error) = self
-                    .service
-                    .task_move(tid, TaskStatus::InProgress, self.webid)
-                {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        task_id = %tid,
-                        %error,
-                        "could not advance task to InProgress after worktree spawn"
-                    );
-                }
-                Ok(Some(TaskSpawnResponse {
+                Ok(TaskSpawnResponse {
                     task_id: tid.to_string(),
                     message: format!(
-                        "Spawned worktree agent for task '{}' ({}). \
-                         The agent runs in an isolated worktree.",
+                        "Queued worktree thread for task '{}' ({}). \
+                         Session establishment and auto-submit are pending; task status is unchanged.",
                         task.title, tid
                     ),
                     result_note_error,
                     ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
-                }))
+                })
             }
-            Err(e) => {
-                tracing::info!(
-                    target: "hkask.mcp.kata_kanban",
-                    task_id = %tid,
-                    error = %e,
-                    "worktree spawn unavailable — falling back to in-memory LazyLocalSwarmRuntime"
-                );
-                Ok(None)
+            Err(hkask_types::InferenceError::Auth(message)) => {
+                Err(McpToolError::permission_denied(message))
             }
+            Err(error) => Err(McpToolError::unavailable(format!(
+                "Worktree spawn did not return success: {error}. No fallback was started; reconcile before retrying because effects may have occurred."
+            ))),
         }
-    }
-
-    async fn spawn_via_local_runtime(
-        &self,
-        tid: hkask_types::TaskId,
-        task: &Task,
-        agent: &LocalAgentCard,
-    ) -> Result<TaskSpawnResponse, McpToolError> {
-        let task_text = match task.description.as_deref() {
-            Some(desc) if !desc.trim().is_empty() => format!("{}: {}", task.title, desc),
-            _ => task.title.clone(),
-        };
-        let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-            McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
-        })?;
-        // No budget — local agents run on the operator's own substrate
-        // (operator ruling 2026-09-04: the budget concept is deprecated).
-        let result = runtime.delegate(agent, &task_text).await.map_err(|e| {
-            hkask_mcp_server::server::McpToolError::unavailable(format!(
-                "local swarm delegation failed: {e}"
-            ))
-        })?;
-
-        // Rung 2 (Schema validation): validate the document BEFORE it
-        // persists. The schema is retrieved from the `PortRegistry` (the
-        // single source of truth for `task_result`), not hardcoded here —
-        // so swarm and kata-kanban validate against the same schema (the
-        // paper's "one artifact, two uses"). Unsupported keywords are NOT
-        // a pass. Logged at warn — schema violations are diagnostic, not
-        // blocking (the document is still the best available output).
-        if let Ok(cleaned) = serde_json::from_str::<serde_json::Value>(&result.response) {
-            let validation = self
-                .local_registry
-                .port_registry()
-                .validate_output(&["task_result".to_string()], &cleaned);
-            if !validation.violations.is_empty() {
-                tracing::warn!(
-                    target: "hkask.mcp.kata_kanban",
-                    task_id = %tid,
-                    agent_id = %result.agent_id,
-                    violations = ?validation.violations,
-                    "schema validation: {} violation(s)",
-                    validation.violations.len(),
-                );
-            }
-            if !validation.unsupported.is_empty() {
-                tracing::warn!(
-                    target: "hkask.mcp.kata_kanban",
-                    task_id = %tid,
-                    unsupported = ?validation.unsupported,
-                    "schema validation: unsupported keyword(s) — NOT a pass",
-                );
-            }
-        }
-
-        let verdict = result.task_success.clone();
-        if let Err(error) =
-            self.service
-                .task_record_delegation(tid, None, result.clone(), verdict, self.webid)
-        {
-            tracing::warn!(
-                target: "hkask.mcp.kata_kanban",
-                task_id = %tid,
-                %error,
-                "could not record structured delegation result — falling back to comment-only"
-            );
-        }
-        let result_note = format!(
-            "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
-             latency={latency_ms}ms\n\
-             Response:\n{response}",
-            agent_id = result.agent_id,
-            model = result.model,
-            tokens = result.tokens_used,
-            latency_ms = result.latency_ms,
-            response = result.response,
-        );
-        // Post-spawn bookkeeping: the delegation already executed, so a
-        // comment failure must NOT fail the call — an Err here would release
-        // the replay-protection claim and a same-key retry would run a
-        // SECOND delegation. Fold the failure into the response instead
-        // (uniform with task_record_delegation/task_move above/below,
-        // already warn-only after the effect).
-        let result_note_error = match self.service.task_comment(tid, self.webid, &result_note) {
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.kata_kanban",
-                    task_id = %tid,
-                    %error,
-                    "could not record the spawn result note — the delegation \
-                     itself succeeded; surfacing the partial outcome"
-                );
-                Some(error.to_string())
-            }
-        };
-        if let Err(error) = self
-            .service
-            .task_move(tid, TaskStatus::InProgress, self.webid)
-        {
-            tracing::warn!(
-                target: "hkask.mcp.kata_kanban",
-                task_id = %tid,
-                %error,
-                "could not advance task to InProgress after spawn — delegation result still recorded"
-            );
-        }
-
-        Ok(TaskSpawnResponse {
-            task_id: tid.to_string(),
-            message: format!(
-                "Spawned agent '{}' for task '{}' ({} tokens). Response recorded.",
-                result.agent_id, task.title, result.tokens_used
-            ),
-            result_note_error,
-            ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
-        })
     }
 
     /// Read the structured delegation result and deterministic verdict for a
@@ -1898,11 +1751,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string_lossy()
                         .to_string()
                     };
-                let agent_stats = Arc::new(hkask_mcp_swarm::agent_stats::AgentStatsStore::load(
-                    &local_agents_dir,
-                ));
-                let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats));
-
                 let local_registry = Arc::new(LocalAgentRegistry::new(local_agents_dir));
                 if let Err(error) = local_registry.load() {
                     tracing::warn!(
@@ -1960,7 +1808,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let idempotency = Arc::new(idempotency);
                 let goal_idempotency = Arc::clone(&idempotency);
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, idempotency, goal_idempotency))
+                Ok(KanbanServer::new(ctx.webid, service, local_registry, worktree_spawn_port, idempotency, goal_idempotency))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

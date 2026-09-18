@@ -7076,6 +7076,161 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     );
 }
 
+/// expect: [P1] native creation inherits authority; roots and other parents cannot be resumed.
+#[gpui::test]
+async fn delegation_native_creation_and_resume(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| LanguageModelRegistry::test(cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), [], cx).await;
+    let store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+    let root = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let other = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        let root_id = root.read(cx).session_id().clone();
+        let other_id = other.read(cx).session_id().clone();
+        let parent = agent.read(cx).sessions[&root_id].thread.clone();
+        parent.update(cx, |thread, cx| {
+            thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+            assert_ne!(
+                thread.delegation_for_child(cx),
+                DelegationAuthority::default()
+            );
+        });
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: parent.downgrade(),
+            acp_thread: root.downgrade(),
+        };
+        assert!(
+            environment
+                .resume_subagent_thread(root_id.clone(), cx)
+                .is_err()
+        );
+        assert!(
+            environment
+                .resume_subagent_thread(other_id.clone(), cx)
+                .is_err()
+        );
+        let child = environment
+            .create_subagent_thread("child".into(), cx)
+            .unwrap();
+        let child_thread = agent.read(cx).sessions[&child.id()].thread.clone();
+        assert_eq!(child_thread.read(cx).parent_thread_id(), Some(root_id));
+        let child_authority = child_thread.read(cx).delegation_for_child(cx);
+        assert_ne!(child_authority, DelegationAuthority::default());
+        let mut inherited = child_authority.clone();
+        inherited.intersect(&parent.read(cx).delegation_for_child(cx));
+        assert_eq!(child_authority, inherited);
+        parent.update(cx, |thread, cx| {
+            thread.restrict_delegation(DelegationAuthority::default(), cx);
+        });
+        assert!(environment.resume_subagent_thread(child.id(), cx).is_ok());
+        assert_eq!(
+            child_thread.read(cx).delegation_for_child(cx),
+            DelegationAuthority::default()
+        );
+        let other_parent = agent.read(cx).sessions[&other_id].thread.clone();
+        let other_environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: other_parent.downgrade(),
+            acp_thread: other.downgrade(),
+        };
+        assert!(
+            other_environment
+                .resume_subagent_thread(child.id(), cx)
+                .is_err()
+        );
+    });
+}
+
+/// expect: [P1] sibling host receives actual parent authority, not request-supplied grants.
+#[gpui::test]
+async fn delegation_sibling_host_uses_actual_parent(cx: &mut TestAppContext) {
+    struct Host(Rc<std::cell::RefCell<Option<DelegationAuthority>>>);
+    impl SiblingThreadHost for Host {
+        fn create_sibling_thread(
+            &self,
+            request: SiblingThreadRequest,
+            _: &mut AsyncApp,
+        ) -> Task<Result<SiblingThreadInfo>> {
+            *self.0.borrow_mut() = request.delegation_authority;
+            Task::ready(Ok(SiblingThreadInfo {
+                title: request.title,
+                agent_id: "zed".into(),
+                model: None,
+                warning: None,
+            }))
+        }
+        fn list_available_agents(&self, _: &mut App) -> Result<AvailableAgents> {
+            Ok(AvailableAgents { agents: Vec::new() })
+        }
+    }
+    init_test(cx);
+    cx.update(|cx| LanguageModelRegistry::test(cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), [], cx).await;
+    let store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+    let root = cx
+        .update(|cx| connection.new_session(project, PathList::new(&[Path::new("")]), cx))
+        .await
+        .unwrap();
+    let observed = Rc::new(std::cell::RefCell::new(None));
+    let environment = cx.update(|cx| {
+        agent.update(cx, |agent, _| {
+            agent.set_sibling_thread_host(Rc::new(Host(observed.clone())))
+        });
+        let id = root.read(cx).session_id().clone();
+        let thread = agent.read(cx).sessions[&id].thread.clone();
+        thread.update(cx, |thread, cx| {
+            thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+            thread.restrict_delegation(DelegationAuthority::default(), cx);
+        });
+        NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: thread.downgrade(),
+            acp_thread: root.downgrade(),
+        }
+    });
+    environment
+        .create_sibling_thread(
+            SiblingThreadRequest {
+                title: "child".into(),
+                prompt: "task".into(),
+                agent_id: None,
+                model: None,
+                use_new_worktree: false,
+                worktree_name: None,
+                base_ref: None,
+                delegation_authority: Some(DelegationAuthority::from_mcp_tools(&[
+                    "server/write".into()
+                ])),
+            },
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(*observed.borrow(), Some(DelegationAuthority::default()));
+}
+
 #[gpui::test]
 async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestAppContext) {
     init_test(cx);

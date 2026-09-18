@@ -40,8 +40,9 @@
 //! rather than silently re-run, because whether the work landed is exactly what
 //! is unknown. Tools whose work has post-effect steps (see
 //! `kanban_task_spawn`'s result note) must fold those failures into a partial
-//! SUCCESS response rather than returning `Err`: an error here releases the
-//! claim, and a same-key retry would duplicate the effect.
+//! SUCCESS response rather than returning `Err`. The tool wrapper retains
+//! pending claims on uncertain spawn transport errors; known pre-effect
+//! validation/authorization failures may release them for a corrected retry.
 //!
 //! Mirrors `hkask_mcp_swarm::consent`'s store shape deliberately: that code
 //! already proved the cross-process single-use pattern against SQLite.

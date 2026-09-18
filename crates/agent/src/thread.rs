@@ -1039,6 +1039,8 @@ pub struct SiblingThreadRequest {
     /// Git ref (branch, tag, or commit) to base the new worktree on.
     /// Only relevant when `use_new_worktree` is true.
     pub base_ref: Option<String>,
+    /// Host-derived hard ceiling; native environments overwrite caller input.
+    pub delegation_authority: Option<crate::DelegationAuthority>,
 }
 
 /// Information returned when a sibling thread is successfully created.
@@ -1497,6 +1499,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    delegation_authority: Option<crate::DelegationAuthority>,
     /// Whether `profile_id` was downgraded to `minimal` at thread start because
     /// the workspace is restricted. Used purely to surface a warning in the UI.
     profile_downgraded_for_restricted_workspace: bool,
@@ -1586,6 +1589,7 @@ impl Thread {
         thread.kask =
             crate::kask_thread_state::KaskThreadState::inherit_from(&parent_thread.read(cx).kask);
         thread.inherit_parent_settings(parent_thread, cx);
+        thread.delegation_authority = Some(parent_thread.read(cx).delegation_for_child(cx));
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
             thread.inherits_parent_model_settings = false;
             thread.apply_model_selection(&subagent_model, cx);
@@ -1666,6 +1670,7 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            delegation_authority: None,
             profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
@@ -2056,6 +2061,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            delegation_authority: db_thread.delegation_authority,
             profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
@@ -2165,6 +2171,7 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: (&self.model).into(),
             profile: Some(self.profile_id.clone()),
+            delegation_authority: self.delegation_authority.clone(),
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
             reasoning_effort: self.reasoning_effort.clone(),
@@ -4307,6 +4314,21 @@ impl Thread {
         input_for_tracking: serde_json::Value,
         retry_warning: Option<String>,
     ) -> Task<(usize, LanguageModelToolResult)> {
+        // Recheck the hard ceiling even for calls cached or streamed before narrowing.
+        if !self.delegation_allows(tool.as_ref()) {
+            return Task::ready((
+                owning_message_ix,
+                LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name,
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        "tool is outside this thread's delegation authority",
+                    ))],
+                    output: None,
+                },
+            ));
+        }
         // A workspace can become restricted after a thread has already started.
         // Tools that aren't allowed in restricted workspaces must never run in
         // that state, even though they were exposed to the model earlier.
@@ -5002,6 +5024,42 @@ impl Thread {
         Ok(request)
     }
 
+    /// Narrow the persisted ceiling independently of mutable profile settings.
+    pub fn restrict_delegation(
+        &mut self,
+        authority: crate::DelegationAuthority,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.delegation_authority {
+            Some(existing) => existing.intersect(&authority),
+            None => self.delegation_authority = Some(authority),
+        }
+        self.refresh_turn_tools(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn delegation_for_child(&self, cx: &App) -> crate::DelegationAuthority {
+        crate::DelegationAuthority::from_identities(
+            self.enabled_tools(cx)
+                .values()
+                .map(|tool| tool.delegation_identity()),
+        )
+    }
+
+    fn delegation_allows(&self, tool: &dyn AnyAgentTool) -> bool {
+        // The MCP child has a server grant, not this initiating thread's grant.
+        // Until invocation identity is carried end-to-end (P2), native agents
+        // delegate through create_thread/spawn_agent rather than this ambient route.
+        if matches!(tool.delegation_identity(), crate::DelegatedToolIdentity::Mcp { server, tool }
+            if server == "kata-kanban" && tool == "kanban_task_spawn")
+        {
+            return false;
+        }
+        self.delegation_authority
+            .as_ref()
+            .is_none_or(|authority| authority.allows(&tool.delegation_identity()))
+    }
+
     fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
         let Some(model) = self.model() else {
             return BTreeMap::new();
@@ -5023,6 +5081,7 @@ impl Thread {
         let mut tools = self
             .tools
             .iter()
+            .filter(|(_, tool)| self.delegation_allows(tool.as_ref()))
             .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
@@ -5069,7 +5128,9 @@ impl Thread {
             // invariants (evidence citation, 0.5 confidence floor) live in
             // the curator server.
             for (tool_name, tool) in server_tools {
-                if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
+                if self.delegation_allows(tool.as_ref())
+                    && profile.is_context_server_tool_enabled(&server_id.0, &tool_name)
+                {
                     let tool_name: SharedString =
                         provider_compatible_tool_name(tool_name.as_ref()).into();
                     if !seen_tools.insert(tool_name.clone()) {
@@ -6531,6 +6592,8 @@ impl From<anyhow::Error> for AgentToolOutput {
 
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
+    /// Trusted implementation identity, never the provider-facing alias.
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity;
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
@@ -6566,6 +6629,10 @@ where
 {
     fn name(&self) -> SharedString {
         T::NAME.into()
+    }
+
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Builtin(T::NAME.to_owned())
     }
 
     fn description(&self) -> SharedString {
@@ -10458,6 +10525,132 @@ mod tests {
                 MessageContent::Image(image),
             ]
         );
+    }
+
+    /// expect: [P1] a native child cannot regain excluded tools by changing profiles.
+    #[gpui::test]
+    async fn delegation_child_profile_cannot_widen(cx: &mut TestAppContext) {
+        let (parent, _) = setup_thread_for_test(cx).await;
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+                thread.restrict_delegation(crate::DelegationAuthority::default(), cx);
+            });
+            let child = cx.new(|cx| Thread::new_subagent(&parent, cx));
+            child.update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+                thread.set_profile(AgentProfileId::default(), cx);
+                assert!(thread.enabled_tools(cx).is_empty());
+                assert!(
+                    !thread.delegation_allows(
+                        thread
+                            .tools
+                            .get(ReplayImageTool::NAME)
+                            .expect("registered tool")
+                            .as_ref(),
+                    )
+                );
+            });
+        });
+    }
+
+    /// expect: [P1] the inherited ceiling survives database reload and broader profiles.
+    #[gpui::test]
+    async fn delegation_persistence_and_profile_switch(cx: &mut TestAppContext) {
+        let (parent, _) = setup_thread_for_test(cx).await;
+        let child = cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            let mut narrow = settings.profiles.values().next().unwrap().clone();
+            narrow.tools.clear();
+            narrow.tools.insert(ReplayImageTool::NAME.into(), true);
+            let mut broad = narrow.clone();
+            broad
+                .tools
+                .insert(ReplayFailsOnBadInputTool::NAME.into(), true);
+            settings
+                .profiles
+                .insert(AgentProfileId("delegation-narrow".into()), narrow);
+            settings
+                .profiles
+                .insert(AgentProfileId("delegation-broad".into()), broad);
+            AgentSettings::override_global(settings, cx);
+            parent.update(cx, |thread, cx| {
+                thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+                thread.add_tool(ReplayImageTool);
+                thread.add_tool(ReplayFailsOnBadInputTool);
+                thread.set_profile(AgentProfileId("delegation-narrow".into()), cx);
+                assert_eq!(thread.enabled_tools(cx).len(), 1);
+            });
+            cx.new(|cx| Thread::new_subagent(&parent, cx))
+        });
+        let saved = child.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let saved: DbThread = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let restored = cx.new(|cx| {
+            let parent = parent.read(cx);
+            Thread::from_db(
+                child.read(cx).id().clone(),
+                saved,
+                parent.project.clone(),
+                parent.project_context.clone(),
+                parent.context_server_registry.clone(),
+                parent.templates.clone(),
+                cx,
+            )
+        });
+        restored.update(cx, |thread, cx| {
+            thread.set_model(Arc::new(FakeLanguageModel::default()), cx);
+            thread.add_tool(ReplayImageTool);
+            thread.add_tool(ReplayFailsOnBadInputTool);
+            thread.set_profile(AgentProfileId("delegation-broad".into()), cx);
+            let tools = thread.enabled_tools(cx);
+            assert_eq!(tools.len(), 1);
+            assert!(tools.contains_key(ReplayImageTool::NAME));
+            // A later grant cannot restore a capability excluded at creation.
+            thread.restrict_delegation(
+                crate::DelegationAuthority::from_identities([
+                    crate::DelegatedToolIdentity::Builtin(ReplayImageTool::NAME.into()),
+                    crate::DelegatedToolIdentity::Builtin(ReplayFailsOnBadInputTool::NAME.into()),
+                ]),
+                cx,
+            );
+            assert_eq!(thread.enabled_tools(cx).len(), 1);
+        });
+    }
+
+    /// expect: [P1] cached calls denied by a narrowed ceiling never execute.
+    #[gpui::test]
+    async fn delegation_execution_gate(cx: &mut TestAppContext) {
+        let (thread, stream) = setup_thread_for_test(cx).await;
+        let result = thread
+            .update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+                let tool = thread.tools[ReplayImageTool::NAME].clone();
+                thread.restrict_delegation(
+                    crate::DelegationAuthority::from_mcp_tools(&[format!(
+                        "server/{}",
+                        ReplayImageTool::NAME
+                    )]),
+                    cx,
+                );
+                thread.run_tool(
+                    tool,
+                    ToolInput::ready(serde_json::Value::Null),
+                    "denied".into(),
+                    ReplayImageTool::NAME.into(),
+                    0,
+                    &stream,
+                    watch::channel(false).1,
+                    cx,
+                    serde_json::Value::Null,
+                    None,
+                )
+            })
+            .await
+            .1;
+        assert!(result.is_error);
+        assert!(result.content.iter().any(|content| matches!(content,
+            LanguageModelToolResultContent::Text(text) if text.contains("delegation authority")
+        )));
     }
 
     fn setup_parent_with_subagents(

@@ -878,6 +878,11 @@ impl ThreadView {
                         should_auto_submit = auto_submit;
                         editor.set_message(blocks, window, cx);
                     }
+                    AgentInitialContent::DelegatedSibling { blocks, .. } => {
+                        // ConversationView applies authority before constructing this view.
+                        should_auto_submit = true;
+                        editor.set_message(blocks, window, cx);
+                    }
                     AgentInitialContent::FromExternalSource(prompt) => {
                         show_external_source_prompt_warning = true;
                         // SECURITY: Be explicit about not auto submitting prompt from external source.

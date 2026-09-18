@@ -888,7 +888,7 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
 
 /// Resolve the worktree-spawn port from the zed IPC bridge. Returns an
 /// `UnavailableWorktreeSpawn` stub when the socket is absent or unreachable —
-/// the MCP server falls back to in-memory `LazyLocalSwarmRuntime::delegate()`.
+/// the caller surfaces the refusal without starting another executor.
 pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::WorktreeSpawnPort> {
     match connect_bridge("MCP worktree spawn").await {
         Some(client) => {
@@ -899,7 +899,7 @@ pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::Wo
 }
 
 /// Worktree-spawn stub for MCP servers without the IPC bridge. Returns an
-/// error so `kanban_task_spawn` falls back to `LazyLocalSwarmRuntime`.
+/// error so `kanban_task_spawn` fails visibly without fallback effects.
 pub(crate) struct UnavailableWorktreeSpawn;
 
 impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
@@ -909,6 +909,7 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
         _title: &'a str,
         _worktree_name: Option<&'a str>,
         _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<String, hkask_types::InferenceError>>

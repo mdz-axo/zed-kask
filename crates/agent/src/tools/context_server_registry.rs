@@ -536,6 +536,12 @@ struct KaskServerTool {
 }
 
 impl AnyAgentTool for KaskServerTool {
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Mcp {
+            server: self.descriptor.server_id.clone(),
+            tool: self.descriptor.name.clone(),
+        }
+    }
     fn name(&self) -> SharedString {
         self.descriptor.name.clone().into()
     }
@@ -754,6 +760,12 @@ impl ContextServerTool {
 }
 
 impl AnyAgentTool for ContextServerTool {
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Mcp {
+            server: self.server_id.0.to_string(),
+            tool: self.tool.name.clone(),
+        }
+    }
     fn name(&self) -> SharedString {
         self.tool.name.clone().into()
     }
@@ -1726,6 +1738,28 @@ mod tests {
             &mut registered,
             &mut kask_ids
         ));
+    }
+
+    /// expect: [P1] MCP identity retains the exact server and unsanitized tool name.
+    #[test]
+    fn delegation_managed_tool_identity_is_not_an_alias() {
+        let tool = KaskServerTool {
+            source: FakeKaskToolSource::empty(),
+            descriptor: KaskToolDescriptor {
+                server_id: "server-a".into(),
+                name: "read-file".into(),
+                description: String::new(),
+                input_schema: serde_json::Value::Null,
+            },
+        };
+        let authority = crate::DelegationAuthority::from_mcp_tools(&["server-a/read-file".into()]);
+        assert!(authority.allows(&tool.delegation_identity()));
+        for name in ["server-b/read-file", "server-a/read_file", "read-file"] {
+            assert!(
+                !crate::DelegationAuthority::from_mcp_tools(&[name.into()])
+                    .allows(&tool.delegation_identity())
+            );
+        }
     }
 
     #[test]

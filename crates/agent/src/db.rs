@@ -68,6 +68,8 @@ pub struct DbThread {
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
     #[serde(default)]
+    pub delegation_authority: Option<crate::DelegationAuthority>,
+    #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
     pub speed: Option<Speed>,
@@ -132,6 +134,8 @@ pub struct SharedThread {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
+    #[serde(default)]
+    pub delegation_authority: Option<crate::DelegationAuthority>,
     pub version: String,
 }
 
@@ -144,6 +148,7 @@ impl SharedThread {
             messages: thread.messages.clone(),
             updated_at: thread.updated_at,
             model: thread.model.clone(),
+            delegation_authority: thread.delegation_authority.clone(),
             version: Self::VERSION.to_string(),
         }
     }
@@ -166,6 +171,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            delegation_authority: self.delegation_authority,
         }
     }
 
@@ -351,6 +357,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            delegation_authority: None,
         })
     }
 }
@@ -784,6 +791,9 @@ mod tests {
             messages: vec![],
             updated_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             model: None,
+            delegation_authority: Some(crate::DelegationAuthority::from_mcp_tools(&[
+                "a/read".into()
+            ])),
             version: SharedThread::VERSION.to_string(),
         };
 
@@ -793,6 +803,10 @@ mod tests {
         assert_eq!(restored.title, original.title);
         assert_eq!(restored.version, original.version);
         assert_eq!(restored.updated_at, original.updated_at);
+        assert_eq!(restored.delegation_authority, original.delegation_authority);
+        let imported = restored.to_db_thread();
+        let exported = SharedThread::from_db_thread(&imported);
+        assert_eq!(exported.delegation_authority, original.delegation_authority);
     }
 
     fn session_id(value: &str) -> acp::SessionId {
@@ -817,6 +831,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            delegation_authority: None,
         }
     }
 

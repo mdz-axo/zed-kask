@@ -146,6 +146,8 @@ impl Default for KaskGeneralSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMcpSettings {
     /// Exact server/tool names each child server may invoke through IPC.
+    /// `host/create_worktree_thread` separately grants worktree creation;
+    /// the spawned child's MCP tools are narrowed against this same grant.
     pub delegated_tools: HashMap<String, Vec<String>>,
     /// Whether to load the default MCP server set (`BUILT_IN_MCP_SERVERS`).
     /// Set to `false` to disable all kask MCP servers.

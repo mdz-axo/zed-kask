@@ -3767,6 +3767,7 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
         title: String,
         worktree_name: Option<String>,
         base_ref: Option<String>,
+        allowed_tools: Vec<String>,
         cx: &mut gpui::AsyncApp,
     ) -> gpui::Task<Result<hkask_types::inference_ipc::WorktreeThreadInfo, String>> {
         use agent::SiblingThreadHost;
@@ -3780,6 +3781,9 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
             let request = agent::SiblingThreadRequest {
                 title: title.into(),
                 prompt,
+                delegation_authority: Some(agent::DelegationAuthority::from_mcp_tools(
+                    &allowed_tools,
+                )),
                 agent_id: None,
                 model: None,
                 use_new_worktree: true,
@@ -3792,7 +3796,7 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
                 .map_err(|e| e.to_string())?;
             Ok(hkask_types::inference_ipc::WorktreeThreadInfo {
                 message: format!(
-                    "Worktree thread created: {} ({})",
+                    "Worktree thread queued: {} ({}); native session establishment and auto-submit pending",
                     info.title, info.agent_id
                 ),
             })

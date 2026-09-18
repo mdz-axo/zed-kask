@@ -1844,6 +1844,7 @@ mod tests {
             request_token_usage: Default::default(),
             model: None,
             profile: None,
+            delegation_authority: None,
             subagent_context: None,
             speed: None,
             reasoning_effort: None,

@@ -618,6 +618,9 @@ pub struct ConversationView {
     thread_store: Option<Entity<ThreadStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
+    // Retained only until native authority is installed. Connection retries
+    // must not discard a delegated prompt or recreate it without its ceiling.
+    pending_delegation: Option<(Vec<acp::ContentBlock>, agent::DelegationAuthority)>,
     server_state: ServerState,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -933,6 +936,12 @@ impl ConversationView {
             thread_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
+            pending_delegation: match &initial_content {
+                Some(AgentInitialContent::DelegatedSibling { blocks, authority }) => {
+                    Some((blocks.clone(), authority.clone()))
+                }
+                _ => None,
+            },
             server_state: Self::initial_state(
                 agent.clone(),
                 connection_store,
@@ -1078,7 +1087,12 @@ impl ConversationView {
             work_dirs,
             title,
             self.project.clone(),
-            None,
+            self.pending_delegation.as_ref().map(|(blocks, authority)| {
+                AgentInitialContent::DelegatedSibling {
+                    blocks: blocks.clone(),
+                    authority: authority.clone(),
+                }
+            }),
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -1240,6 +1254,30 @@ impl ConversationView {
                     Ok(thread) => {
                         this.clear_resolved_request_elicitations_for_connection(&connection, cx);
                         let root_session_id = thread.read(cx).session_id().clone();
+
+                        if let Some(AgentInitialContent::DelegatedSibling { authority, .. }) =
+                            &initial_content
+                        {
+                            let native_thread = connection
+                                .clone()
+                                .downcast::<agent::NativeAgentConnection>()
+                                .and_then(|connection| connection.thread(&root_session_id, cx));
+                            let Some(native_thread) = native_thread else {
+                                this.handle_load_error(
+                                    LoadError::Other(
+                                        "Delegated siblings require a native thread to enforce tool authority."
+                                            .into(),
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            };
+                            native_thread.update(cx, |thread, cx| {
+                                thread.restrict_delegation(authority.clone(), cx);
+                            });
+                            this.pending_delegation = None;
+                        }
 
                         let conversation = cx.new(|cx| {
                             let mut conversation = Conversation::default();
@@ -3829,6 +3867,107 @@ pub(crate) mod tests {
                     if provider.as_ref() == "OpenRouter"
             ),
             "expected ThreadError::PaymentRequired with provider OpenRouter, got: {error:?}"
+        );
+    }
+
+    // expect: [P4] a delegated prompt cannot auto-submit through an external
+    // connection even if a caller bypasses sibling destination resolution.
+    // dcterms:identifier: ConversationView::initial_state
+    #[gpui::test]
+    async fn delegated_sibling_rejects_non_native_startup(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (view, cx) = setup_conversation_view_with_initial_content(
+            StubAgentServer::default_response(),
+            AgentInitialContent::DelegatedSibling {
+                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new("Run task"))],
+                authority: agent::DelegationAuthority::from_mcp_tools(&[]),
+            },
+            cx,
+        )
+        .await;
+        view.read_with(cx, |view, _cx| {
+            assert!(view.root_thread_view().is_none());
+            assert!(view.pending_delegation.is_some());
+            assert!(matches!(
+                &view.server_state,
+                ServerState::LoadError { error: LoadError::Other(message) }
+                    if message.contains("native thread")
+            ));
+        });
+        view.update_in(cx, |view, window, cx| view.reset(window, cx));
+        cx.run_until_parked();
+        view.read_with(cx, |view, _cx| {
+            assert!(
+                view.root_thread_view().is_none(),
+                "retry must not silently drop authority"
+            );
+            assert!(view.pending_delegation.is_some());
+            assert!(matches!(&view.server_state, ServerState::LoadError { .. }));
+        });
+    }
+
+    // expect: [P4] the first delegated auto-submit advertises no ambient native
+    // tools when the inherited MCP authority is empty, while normal threads do.
+    // dcterms:identifier: ConversationView::initial_state
+    #[gpui::test]
+    async fn delegated_sibling_authority_precedes_first_completion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let model = Arc::new(language_model::fake_provider::FakeLanguageModel::default());
+        let fs = FakeFs::new(cx.executor());
+        let server = cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            let provider = Arc::new(
+                language_model::fake_provider::FakeLanguageModelProvider::default()
+                    .with_models(vec![model.clone()]),
+            );
+            language_model::LanguageModelRegistry::test(cx);
+            language_model::LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+                registry.set_default_model(
+                    Some(language_model::ConfiguredModel {
+                        provider,
+                        model: model.clone(),
+                    }),
+                    cx,
+                );
+            });
+            NativeAgentServer::new(fs, cx.new(|cx| ThreadStore::new(cx)))
+        });
+        let blocks = vec![acp::ContentBlock::Text(acp::TextContent::new("Run task"))];
+        let (_restricted, cx) = setup_conversation_view_with_initial_content(
+            server.clone(),
+            AgentInitialContent::DelegatedSibling {
+                blocks: blocks.clone(),
+                authority: agent::DelegationAuthority::from_mcp_tools(&[]),
+            },
+            cx,
+        )
+        .await;
+        let first_requests = model.pending_completions();
+        let first = first_requests
+            .iter()
+            .find(|request| request.intent == Some(language_model::CompletionIntent::UserPrompt))
+            .expect("the sibling must actually auto-submit");
+        assert!(
+            first.tools.is_empty(),
+            "authority must precede the first request"
+        );
+
+        let (_ordinary, _cx) = setup_conversation_view_with_initial_content(
+            server,
+            AgentInitialContent::ContentBlock {
+                blocks,
+                auto_submit: true,
+            },
+            cx,
+        )
+        .await;
+        assert!(
+            model.pending_completions().iter().any(|request| {
+                request.intent == Some(language_model::CompletionIntent::UserPrompt)
+                    && !request.tools.is_empty()
+            }),
+            "ordinary user threads must retain their tools"
         );
     }
 

@@ -520,6 +520,11 @@ pub enum AgentInitialContent {
         blocks: Vec<acp::ContentBlock>,
         auto_submit: bool,
     },
+    /// Native sibling prompt whose authority must be applied before auto-submit.
+    DelegatedSibling {
+        blocks: Vec<acp::ContentBlock>,
+        authority: agent::DelegationAuthority,
+    },
     FromExternalSource(ExternalSourcePrompt),
 }
 

@@ -4815,6 +4815,20 @@ impl AgentPanelSiblingHost {
     pub fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
         Self { panel, window }
     }
+
+    fn resolve_agent(agent_id: Option<&str>, restricted: bool) -> Result<Option<Agent>> {
+        match agent_id {
+            // Do not inherit a selected external agent: it cannot enforce native authority.
+            None if restricted => Ok(Some(Agent::NativeAgent)),
+            None => Err(anyhow!("Sibling creation requires inherited authority")),
+            Some(_) if !restricted => Err(anyhow!("Sibling creation requires inherited authority")),
+            Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Ok(Some(Agent::NativeAgent)),
+            Some(id) if id == agent::CURATOR_AGENT_ID.as_ref() => Ok(Some(Agent::Curator)),
+            Some(_) => Err(anyhow!(
+                "Delegated siblings require a native Zed or Curator agent to enforce tool authority."
+            )),
+        }
+    }
 }
 
 impl agent::SiblingThreadHost for AgentPanelSiblingHost {
@@ -4826,42 +4840,17 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         let panel = self.panel.clone();
         let window = self.window;
         cx.spawn(async move |cx| {
-            let agent_choice = match request.agent_id.as_deref() {
-                None => None,
-                Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
-                Some(id) if id == agent::CURATOR_AGENT_ID.as_ref() => Some(Agent::Curator),
-                Some(id) => {
-                    // Reject unknown agent ids up front so the model gets a
-                    // structured error pointing at `list_agents_and_models`,
-                    // rather than a thread that silently fails to launch in
-                    // the user's sidebar.
-                    let known = panel
-                        .read_with(cx, |panel, cx| {
-                            let store = panel.project.read(cx).agent_server_store().clone();
-                            store
-                                .read(cx)
-                                .external_agents()
-                                .any(|known_id| known_id.0.as_ref() == id)
-                        })
-                        .unwrap_or(false);
-                    if !known {
-                        return Err(anyhow!(
-                            "Unknown agent id {id:?}. Call `list_agents_and_models` \
-                             to see the agents available for `create_thread`."
-                        ));
-                    }
-                    Some(Agent::Custom {
-                        id: project::AgentId(id.to_string().into()),
-                    })
-                }
-            };
-
-            let initial_content = AgentInitialContent::ContentBlock {
-                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    request.prompt.clone(),
-                ))],
-                auto_submit: true,
-            };
+            let agent_choice = Self::resolve_agent(
+                request.agent_id.as_deref(),
+                request.delegation_authority.is_some(),
+            )?;
+            let blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+                request.prompt.clone(),
+            ))];
+            let authority = request
+                .delegation_authority
+                .ok_or_else(|| anyhow!("Sibling creation requires inherited authority"))?;
+            let initial_content = AgentInitialContent::DelegatedSibling { blocks, authority };
 
             let title: SharedString = request.title.clone();
             let options = CreateThreadOptions {
@@ -11181,6 +11170,7 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
+            delegation_authority: None,
             subagent_context: None,
             speed: None,
             reasoning_effort: None,
@@ -14030,6 +14020,35 @@ mod tests {
                 "destination panel's content should be preserved"
             );
         });
+    }
+
+    // expect: [P4] delegated siblings never resolve to an external destination,
+    // including an omitted destination that would otherwise use the panel selection.
+    // dcterms:identifier: AgentPanelSiblingHost::resolve_agent
+    #[test]
+    fn restricted_sibling_destinations_are_native_only() {
+        assert_eq!(
+            AgentPanelSiblingHost::resolve_agent(None, true).expect("native default"),
+            Some(Agent::NativeAgent)
+        );
+        for agent in [Agent::NativeAgent, Agent::Curator] {
+            assert_eq!(
+                AgentPanelSiblingHost::resolve_agent(Some(agent.id().as_ref()), true)
+                    .expect("native destination"),
+                Some(agent)
+            );
+        }
+        let error = AgentPanelSiblingHost::resolve_agent(Some("external"), true)
+            .expect_err("external destinations cannot enforce delegated authority");
+        assert!(error.to_string().contains("native"));
+    }
+
+    // expect: [P4] omission of inherited authority cannot recreate the ambient route.
+    #[test]
+    fn sibling_missing_authority_is_denied() {
+        for id in [None, Some("external"), Some(agent::ZED_AGENT_ID.as_ref())] {
+            assert!(AgentPanelSiblingHost::resolve_agent(id, false).is_err());
+        }
     }
 
     #[gpui::test]

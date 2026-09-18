@@ -141,10 +141,9 @@ pub struct InferenceParams {
     pub tool_args: Option<serde_json::Value>,
     /// Qualified `server/tool` names the child may dispatch (the delegated
     /// agent's declared `mcp_tools` allowlist). The zed side refuses any
-    /// tool outside this list **before** minting the panel token — the
-    /// allowlist is enforced at the dispatch boundary, not only inside the
-    /// child process. Fail closed: a missing or empty allowlist is a
-    /// protocol violation, never an implicit grant-all.
+    /// tool outside this list and the independent parent grant. ToolInvoke
+    /// requires a nonempty list. CreateWorktreeThread also requires this field;
+    /// an empty list deliberately creates an inference-only child, never grant-all.
     #[serde(default)]
     pub tool_allowlist: Option<Vec<String>>,
     /// Opaque reference to a parent-owned grant; never a caller-defined permission set.

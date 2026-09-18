@@ -1,5 +1,6 @@
 mod curator_agent_server;
 mod db;
+mod delegation_authority;
 mod kask_compaction;
 mod kask_thread_state;
 mod legacy_thread;
@@ -10,6 +11,7 @@ mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
+pub use delegation_authority::{DelegatedToolIdentity, DelegationAuthority};
 mod thread;
 mod thread_store;
 pub mod tool_permissions;
@@ -3860,11 +3862,21 @@ impl NativeThreadEnvironment {
         session_id: acp::SessionId,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+        let parent = self
+            .thread
+            .upgrade()
+            .context("Parent thread no longer exists")?;
+        let parent_id = parent.read(cx).id().clone();
+        let authority = parent.read(cx).delegation_for_child(cx);
+        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, cx| {
             let session = agent
                 .sessions
                 .get(&session_id)
                 .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            anyhow::ensure!(
+                session.thread.read(cx).parent_thread_id().as_ref() == Some(&parent_id),
+                "Cannot resume a root thread or another parent's subagent"
+            );
             let acp_thread = session
                 .acp_thread
                 .upgrade()
@@ -3872,6 +3884,7 @@ impl NativeThreadEnvironment {
             anyhow::Ok((session.thread.clone(), acp_thread))
         })??;
 
+        subagent_thread.update(cx, |thread, cx| thread.restrict_delegation(authority, cx));
         let depth = subagent_thread.read(cx).depth();
 
         if let Some(parent_thread_entity) = self.thread.upgrade() {
@@ -4024,9 +4037,16 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
     fn create_sibling_thread(
         &self,
-        request: SiblingThreadRequest,
+        mut request: SiblingThreadRequest,
         cx: &mut AsyncApp,
     ) -> Task<Result<SiblingThreadInfo>> {
+        request.delegation_authority = match self
+            .thread
+            .read_with(cx, |thread, cx| thread.delegation_for_child(cx))
+        {
+            Ok(authority) => Some(authority),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let host = match self
             .agent
             .read_with(cx, |agent, _| agent.sibling_thread_host())

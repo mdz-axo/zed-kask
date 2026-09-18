@@ -588,9 +588,8 @@ fn task_swarm_fields_default_to_none() {
 #[test]
 fn spawn_task_writes_swarm_id_when_spec_carries_it() {
     // C2: `spawn_task` writes `SpawnSpec.swarm_id` to `Task.swarm_id` so the
-    // durable link is set before the worktree/fallback branch in
-    // `kanban_task_spawn`. Both execution paths then expose the link via
-    // `kanban_task_delegate_result` without each having to set it.
+    // durable link is set before worktree admission in `kanban_task_spawn`
+    // and exposed through `kanban_task_delegate_result`.
     let (svc, board, owner) = make_service_with_board();
     let task = svc
         .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
@@ -618,107 +617,6 @@ fn spawn_task_leaves_swarm_id_none_when_spec_omits_it() {
     assert!(
         reloaded.swarm_id.is_none(),
         "spawn_task with no swarm_id must leave Task.swarm_id as None"
-    );
-}
-
-#[test]
-fn task_record_delegation_writes_structured_fields() {
-    // Slice 2: task_record_delegation writes the LocalDelegateResult and
-    // TaskSuccessVerdict to the task's persisted fields.
-    let (svc, board, owner) = make_service_with_board();
-    let task = svc
-        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
-        .unwrap();
-
-    let delegate_result = hkask_mcp_swarm::LocalDelegateResult {
-        agent_id: "test-agent".to_string(),
-        response: "test response".to_string(),
-        model: "test-model".to_string(),
-        tokens_used: 100,
-        latency_ms: 200,
-        tool_calls: vec![],
-        task_success: None,
-        bind_matched: None,
-        rollout_id: None,
-        reasoning_steps: vec![],
-        input_contract_check: None,
-        output_contract_check: None,
-        grounding: None,
-        completeness: None,
-        reliance: None,
-        memory: None,
-    };
-    let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
-        pass: true,
-        score: Some(0.9),
-        detail: Some("all checks passed".to_string()),
-        provenance: hkask_mcp_swarm::VerdictSource::DeterministicEvaluator,
-    };
-
-    let updated = svc
-        .task_record_delegation(
-            task.id,
-            Some("swarm-1".to_string()),
-            delegate_result,
-            Some(verdict),
-            owner,
-        )
-        .unwrap();
-
-    assert_eq!(updated.swarm_id.as_deref(), Some("swarm-1"));
-    let dr = updated
-        .delegate_result
-        .expect("delegate_result should be set");
-    assert_eq!(dr.agent_id, "test-agent");
-    assert_eq!(dr.response, "test response");
-    assert_eq!(dr.tokens_used, 100);
-    let dv = updated
-        .deterministic_verdict
-        .expect("deterministic_verdict should be set");
-    assert!(dv.pass);
-    assert_eq!(dv.score, Some(0.9));
-    assert_eq!(
-        dv.provenance,
-        hkask_mcp_swarm::VerdictSource::DeterministicEvaluator
-    );
-
-    // Verify persistence: re-read the task from the store.
-    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
-    assert_eq!(reloaded.swarm_id.as_deref(), Some("swarm-1"));
-    assert!(reloaded.delegate_result.is_some());
-    assert!(reloaded.deterministic_verdict.is_some());
-}
-
-#[test]
-fn task_record_delegation_rejects_non_owner() {
-    // Slice 2: only the task owner can record a delegation result.
-    let (svc, board, owner) = make_service_with_board();
-    let task = svc
-        .task_create(board.id, TaskSpec::new("Owner task".into()), owner)
-        .unwrap();
-    let other = WebID::new();
-    let delegate_result = hkask_mcp_swarm::LocalDelegateResult {
-        agent_id: "test-agent".to_string(),
-        response: "test".to_string(),
-        model: "m".to_string(),
-        tokens_used: 0,
-        latency_ms: 0,
-        tool_calls: vec![],
-        task_success: None,
-        bind_matched: None,
-        input_contract_check: None,
-        output_contract_check: None,
-        rollout_id: None,
-        reasoning_steps: vec![],
-        grounding: None,
-        completeness: None,
-        reliance: None,
-        memory: None,
-    };
-    let result = svc.task_record_delegation(task.id, None, delegate_result, None, other);
-    assert!(
-        result.is_err(),
-        "non-owner should not be able to record delegation"
     );
 }
 

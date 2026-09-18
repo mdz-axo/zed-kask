@@ -47,13 +47,54 @@ use crate::inference_embedding::LanguageModelEmbeddingPort;
 /// dispatch task to the GPUI-side task via a channel (same pattern as
 /// `ListModels`). The GPUI-side task calls the `WorktreeSpawner` and returns
 /// the result via the oneshot reply channel.
-pub(crate) type WorktreeSpawnRequest = (
-    String,         // prompt
-    String,         // title
-    Option<String>, // worktree_name
-    Option<String>, // base_ref
-    oneshot::Sender<Result<WorktreeThreadInfo, String>>,
-);
+pub(crate) struct WorktreeSpawnRequest {
+    prompt: String,
+    title: String,
+    worktree_name: Option<String>,
+    base_ref: Option<String>,
+    grant: String,
+    allowed_tools: Vec<String>,
+    reply: oneshot::Sender<Result<WorktreeThreadInfo, InferenceErrorPayload>>,
+}
+
+const WORKTREE_QUEUE_CAPACITY: usize = 32;
+
+impl WorktreeSpawnRequest {
+    /// Recheck revocation and cancellation at the actual admission boundary.
+    async fn execute<F, Fut>(self, spawn: F)
+    where
+        F: FnOnce(String, String, Option<String>, Option<String>, Vec<String>) -> Fut,
+        Fut: std::future::Future<Output = Result<WorktreeThreadInfo, String>>,
+    {
+        if self.reply.is_closed() {
+            return;
+        }
+        let result = match crate::delegation_grants::worktree_tools(
+            Some(&self.grant),
+            Some(&self.allowed_tools),
+        ) {
+            Some(tools) => spawn(
+                self.prompt,
+                self.title,
+                self.worktree_name,
+                self.base_ref,
+                tools,
+            )
+            .await
+            .map_err(|message| InferenceErrorPayload {
+                code: "WorktreeSpawn".into(),
+                message,
+            }),
+            None => Err(InferenceErrorPayload {
+                code: "Auth".into(),
+                message: "Parent worktree grant was revoked before execution".into(),
+            }),
+        };
+        if self.reply.send(result).is_err() {
+            tracing::debug!(target: "reg.inference", "Worktree caller disconnected after admission; effects may have occurred");
+        }
+    }
+}
 
 /// A request to read a provider API key from zed's `CredentialsProvider`,
 /// sent from the tokio dispatch task to the GPUI-side task via a channel
@@ -83,16 +124,14 @@ pub trait WorktreeSpawner: Send + Sync {
         title: String,
         worktree_name: Option<String>,
         base_ref: Option<String>,
+        allowed_tools: Vec<String>,
         cx: &mut gpui::AsyncApp,
     ) -> gpui::Task<Result<WorktreeThreadInfo, String>>;
 }
 
 /// Process-global worktree spawner. Set by `main.rs` when a workspace with an
-/// `AgentPanel` opens; read by the GPUI-side IPC task when a
-/// `CreateWorktreeThread` request arrives. Mirrors the `set_tool_invoker` /
-/// `shared_tool_invoker` pattern in `hkask-tool-invoker` (Mutex-based,
-/// re-settable). When `None`, worktree spawn requests return an error and the
-/// MCP server falls back to the in-memory `LazyLocalSwarmRuntime` path.
+/// `AgentPanel` opens; read by the GPUI-side IPC task at admission. When absent,
+/// worktree spawn fails visibly; the caller must not start a fallback executor.
 static WORKTREE_SPAWNER: ProcessGlobal<Arc<dyn WorktreeSpawner>> = ProcessGlobal::new();
 
 /// Inject the global worktree spawner (composition root — `main.rs`). Called
@@ -420,21 +459,22 @@ impl InferenceIpcServer {
         // (the panel may not exist when the server starts, e.g. before the
         // user opens a project).
         let (worktree_spawn_tx, mut worktree_spawn_rx) =
-            tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
+            tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(WORKTREE_QUEUE_CAPACITY);
         // Detached: see the list_models task above.
         cx.spawn(async move |cx| {
-            while let Some((prompt, title, worktree_name, base_ref, reply)) =
-                worktree_spawn_rx.recv().await
-            {
-                let Some(spawner) = shared_worktree_spawner() else {
-                    let _ = reply.send(Err(
-                        "worktree spawner not configured (no active workspace)".to_string(),
-                    ));
-                    continue;
-                };
-                let task = spawner.spawn(prompt, title, worktree_name, base_ref, cx);
-                let result = task.await;
-                let _ = reply.send(result);
+            while let Some(request) = worktree_spawn_rx.recv().await {
+                request
+                    .execute(|prompt, title, name, base_ref, tools| {
+                        match shared_worktree_spawner() {
+                            Some(spawner) => {
+                                spawner.spawn(prompt, title, name, base_ref, tools, cx)
+                            }
+                            None => gpui::Task::ready(Err(
+                                "worktree spawner not configured (no active workspace)".into(),
+                            )),
+                        }
+                    })
+                    .await;
             }
         })
         .detach();
@@ -550,7 +590,7 @@ async fn handle_connection(
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
-    worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::Sender<WorktreeSpawnRequest>>>,
     provider_credential_tx: Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
 ) {
     if !peer_is_owner(&stream) {
@@ -681,7 +721,7 @@ async fn dispatch(
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
-    worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
+    worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::Sender<WorktreeSpawnRequest>>>,
     provider_credential_tx: &Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
@@ -869,6 +909,15 @@ async fn dispatch(
     // which needs `AsyncApp` (not `Send`). Same channel pattern as
     // `ListModels`.
     if matches!(request.method, InferenceMethod::CreateWorktreeThread) {
+        let Some(allowed_tools) = crate::delegation_grants::worktree_tools(
+            params.tool_grant.as_deref(),
+            params.tool_allowlist.as_deref(),
+        ) else {
+            return InferenceOutcome::Error { error: InferenceErrorPayload {
+                code: "Auth".into(),
+                message: "Worktree creation requires parent-granted host/create_worktree_thread authority and an explicit tool narrowing".into(),
+            }};
+        };
         let Some(ref tx) = worktree_spawn_tx else {
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
@@ -883,34 +932,26 @@ async fn dispatch(
         let title = params.worktree_title.as_deref().unwrap_or("Kanban Task");
         let name = params.worktree_name.clone();
         let base_ref = params.worktree_base_ref.clone();
-        let (tx_reply, rx_reply) = oneshot::channel::<Result<WorktreeThreadInfo, String>>();
-        if tx
-            .send((
-                prompt.to_string(),
-                title.to_string(),
-                name,
-                base_ref,
-                tx_reply,
-            ))
-            .is_err()
-        {
+        let (tx_reply, rx_reply) = oneshot::channel();
+        if let Err(error) = tx.try_send(WorktreeSpawnRequest {
+            prompt: prompt.to_string(),
+            title: title.to_string(),
+            worktree_name: name,
+            base_ref,
+            grant: params.tool_grant.clone().unwrap_or_default(),
+            allowed_tools,
+            reply: tx_reply,
+        }) {
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "GPUI-side worktree_spawn task dropped — channel closed \
-                         (task cancelled or app shutting down)"
-                        .to_string(),
+                    code: "WorktreeSpawn".to_string(),
+                    message: format!("Worktree request not admitted: {error}"),
                 },
             };
         }
         return match rx_reply.await {
             Ok(Ok(thread)) => InferenceOutcome::WorktreeThread { thread },
-            Ok(Err(msg)) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "WorktreeSpawn".to_string(),
-                    message: msg,
-                },
-            },
+            Ok(Err(error)) => InferenceOutcome::Error { error },
             Err(_) => InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
@@ -1972,10 +2013,18 @@ mod tests {
         let list_models_tx = make_list_models_tx();
         let provider_credential_tx = make_provider_credential_tx();
 
+        let server = format!("spawn-test-{}", uuid::Uuid::new_v4());
+        let grant = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
         let request = InferenceRequest {
             id: 1,
             method: InferenceMethod::CreateWorktreeThread,
             params: InferenceParams {
+                tool_grant: Some(grant),
+                tool_allowlist: Some(vec![]),
                 worktree_prompt: Some("do a thing".to_string()),
                 worktree_title: Some("Test Task".to_string()),
                 ..Default::default()
@@ -2004,6 +2053,7 @@ mod tests {
             }
             other => panic!("expected error outcome, got {other:?}"),
         }
+        crate::delegation_grants::revoke_delegation_grant(&server);
     }
 
     #[tokio::test]
@@ -2015,14 +2065,22 @@ mod tests {
         let list_models_tx = make_list_models_tx();
         let provider_credential_tx = make_provider_credential_tx();
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
+        let (tx, rx) = tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(WORKTREE_QUEUE_CAPACITY);
         drop(rx);
         let worktree_spawn_tx = Arc::new(tx);
 
+        let server = format!("spawn-test-{}", uuid::Uuid::new_v4());
+        let grant = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
         let request = InferenceRequest {
             id: 1,
             method: InferenceMethod::CreateWorktreeThread,
             params: InferenceParams {
+                tool_grant: Some(grant),
+                tool_allowlist: Some(vec![]),
                 worktree_prompt: Some("do a thing".to_string()),
                 worktree_title: Some("Test Task".to_string()),
                 ..Default::default()
@@ -2042,15 +2100,238 @@ mod tests {
 
         match outcome {
             InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "Connection");
+                assert_eq!(error.code, "WorktreeSpawn");
                 assert!(
-                    error.message.contains("worktree_spawn task dropped"),
+                    error.message.contains("not admitted"),
                     "expected worktree-spawn-task-dropped error, got: {}",
                     error.message
                 );
             }
             other => panic!("expected error outcome, got {other:?}"),
         }
+        crate::delegation_grants::revoke_delegation_grant(&server);
+    }
+
+    fn worktree_request(grant: Option<String>, tools: Option<Vec<String>>) -> InferenceRequest {
+        InferenceRequest {
+            id: 1,
+            method: InferenceMethod::CreateWorktreeThread,
+            params: InferenceParams {
+                tool_grant: grant,
+                tool_allowlist: tools,
+                worktree_prompt: Some("fixture".into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    async fn dispatch_worktree(
+        tx: &Arc<tokio::sync::mpsc::Sender<WorktreeSpawnRequest>>,
+        request: InferenceRequest,
+    ) -> InferenceOutcome {
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        dispatch(
+            &port,
+            None,
+            None,
+            &make_list_models_tx(),
+            Some(tx),
+            &make_provider_credential_tx(),
+            request,
+        )
+        .await
+    }
+
+    /// expect: [P1] missing, insufficient, revoked grants and absent narrowing enqueue no effects.
+    #[tokio::test]
+    async fn worktree_authority_denies_before_enqueue() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(WORKTREE_QUEUE_CAPACITY);
+        let tx = Arc::new(tx);
+        let server = format!("spawn-denied-{}", uuid::Uuid::new_v4());
+        let insufficient =
+            crate::delegation_grants::grant_for_server(&server, &["a/read".into()]).expect("grant");
+        let revoked = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
+        crate::delegation_grants::revoke_delegation_grant(&server);
+        let valid = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
+        for request in [
+            worktree_request(None, Some(vec![])),
+            worktree_request(Some(insufficient), Some(vec!["a/read".into()])),
+            worktree_request(Some(revoked), Some(vec![])),
+            worktree_request(Some(valid), None),
+        ] {
+            assert!(matches!(dispatch_worktree(&tx, request).await,
+                InferenceOutcome::Error { error } if error.code == "Auth"));
+            assert!(rx.try_recv().is_err());
+        }
+        crate::delegation_grants::revoke_delegation_grant(&server);
+    }
+
+    /// expect: [P1] the real queue consumer starts one valid spawn with only the intersection.
+    #[tokio::test]
+    async fn worktree_authority_is_intersected_and_revocable_at_dequeue() {
+        for revoke in [false, true] {
+            let server = format!("spawn-valid-{}", uuid::Uuid::new_v4());
+            let grant = crate::delegation_grants::grant_for_server(
+                &server,
+                &[
+                    crate::delegation_grants::WORKTREE_SPAWN.into(),
+                    "a/read".into(),
+                ],
+            )
+            .expect("grant");
+            let (tx, mut rx) =
+                tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(WORKTREE_QUEUE_CAPACITY);
+            let tx = Arc::new(tx);
+            let send = tokio::spawn(async move {
+                dispatch_worktree(
+                    &tx,
+                    worktree_request(Some(grant), Some(vec!["a/read".into(), "b/write".into()])),
+                )
+                .await
+            });
+            let request = rx.recv().await.expect("queued");
+            if revoke {
+                crate::delegation_grants::revoke_delegation_grant(&server);
+            }
+            let effects = std::sync::atomic::AtomicUsize::new(0);
+            request
+                .execute(|_, _, _, _, tools| {
+                    effects.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    assert_eq!(tools, vec!["a/read"]);
+                    std::future::ready(Ok(WorktreeThreadInfo {
+                        message: "spawned".into(),
+                    }))
+                })
+                .await;
+            let outcome = send.await.expect("dispatch joined");
+            assert_eq!(
+                effects.load(std::sync::atomic::Ordering::SeqCst),
+                usize::from(!revoke)
+            );
+            assert_eq!(
+                matches!(outcome, InferenceOutcome::WorktreeThread { .. }),
+                !revoke
+            );
+            crate::delegation_grants::revoke_delegation_grant(&server);
+        }
+    }
+
+    /// expect: [P1] caller B disconnecting while A occupies the consumer never starts B.
+    #[tokio::test]
+    async fn worktree_disconnected_queued_request_never_starts() {
+        let server_name = format!("spawn-cancel-{}", uuid::Uuid::new_v4());
+        let grant = crate::delegation_grants::grant_for_server(
+            &server_name,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(1);
+        let tx = Arc::new(tx);
+        let (release, wait) = oneshot::channel::<()>();
+        let a_tx = tx.clone();
+        let a_grant = grant.clone();
+        let a = tokio::spawn(async move {
+            dispatch_worktree(&a_tx, worktree_request(Some(a_grant), Some(vec![]))).await
+        });
+        let first = rx.recv().await.expect("A queued");
+        let (started, start) = oneshot::channel();
+        let consumer = tokio::spawn(async move {
+            first
+                .execute(|_, _, _, _, _| async move {
+                    started.send(()).expect("start receiver");
+                    wait.await.expect("release A");
+                    Ok(WorktreeThreadInfo {
+                        message: "A".into(),
+                    })
+                })
+                .await;
+            rx.recv()
+                .await
+                .expect("B queued")
+                .execute(|_, _, _, _, _| async {
+                    panic!("cancelled B must never start");
+                })
+                .await;
+        });
+        start.await.expect("A started");
+        let (mut client, socket) = tokio::net::UnixStream::pair().expect("socket pair");
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let handler = tokio::spawn(handle_connection(
+            socket,
+            port,
+            None,
+            None,
+            make_list_models_tx(),
+            Some(tx.clone()),
+            make_provider_credential_tx(),
+        ));
+        let bytes =
+            serde_json::to_vec(&worktree_request(Some(grant), Some(vec![]))).expect("request JSON");
+        client.write_all(&bytes).await.expect("request");
+        client.write_all(b"\n").await.expect("newline");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while tx.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("B reached bounded queue");
+        drop(client);
+        handler.await.expect("disconnect handled");
+        release.send(()).expect("release consumer");
+        consumer.await.expect("consumer joined");
+        assert!(matches!(
+            a.await.expect("A joined"),
+            InferenceOutcome::WorktreeThread { .. }
+        ));
+        crate::delegation_grants::revoke_delegation_grant(&server_name);
+    }
+
+    /// expect: [P1] a full queue rejects rather than allocating more pending work.
+    #[tokio::test]
+    async fn worktree_queue_rejects_over_capacity() {
+        let server = format!("spawn-full-{}", uuid::Uuid::new_v4());
+        let grant = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(1);
+        let tx = Arc::new(tx);
+        let first_tx = tx.clone();
+        let first_grant = grant.clone();
+        let first = tokio::spawn(async move {
+            dispatch_worktree(&first_tx, worktree_request(Some(first_grant), Some(vec![]))).await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while tx.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("queue filled");
+        assert!(
+            matches!(dispatch_worktree(&tx, worktree_request(Some(grant), Some(vec![]))).await,
+            InferenceOutcome::Error { error } if error.message.contains("not admitted"))
+        );
+        first.abort();
+        assert!(first.await.expect_err("cancelled").is_cancelled());
+        rx.recv()
+            .await
+            .expect("queued first")
+            .execute(|_, _, _, _, _| async {
+                panic!("cancelled request must not run");
+            })
+            .await;
+        crate::delegation_grants::revoke_delegation_grant(&server);
     }
 
     // ── Socket path / directory tests ──────────────────────────────────

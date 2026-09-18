@@ -23,8 +23,7 @@
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_swarm::agent_stats::AgentStatsStore;
-use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
+use hkask_mcp_swarm::LocalAgentRegistry;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};
@@ -33,9 +32,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Worktree-spawn stub for tests: returns an error so `kanban_task_spawn` falls
-/// back to `LazyLocalSwarmRuntime`. Mirrors `hkask_inference::UnavailableWorktreeSpawn`,
-/// which is `pub(crate)` and so not nameable from an external test crate.
+/// Worktree-spawn refusal fixture: no alternate executor may be started.
 struct UnavailableWorktreeSpawn;
 
 impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
@@ -45,6 +42,7 @@ impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
         _title: &'a str,
         _worktree_name: Option<&'a str>,
         _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
     ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
         Box::pin(async {
             Err(InferenceError::Connection(
@@ -73,7 +71,6 @@ fn make_server_with_shared_driver() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         idempotency,
@@ -159,14 +156,6 @@ async fn board_count(server: &KanbanServer) -> usize {
 /// protection, that retry produced a second task.
 /// A throwaway per-agent stats store for tests — these tests exercise
 /// idempotent creates, not delegation, so the store is never written.
-fn throwaway_stats() -> Arc<AgentStatsStore> {
-    let dir = std::env::temp_dir().join(format!(
-        "kanban-idem-stats-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    Arc::new(AgentStatsStore::load(&dir.to_string_lossy()))
-}
 
 #[tokio::test]
 async fn replayed_task_create_yields_one_task() {
@@ -386,7 +375,6 @@ async fn replay_is_absorbed_across_processes() {
     let process_b = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(
@@ -423,7 +411,6 @@ async fn non_durable_protection_is_labelled_in_the_response() {
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
@@ -460,7 +447,6 @@ async fn durable_protection_carries_no_degradation_label() {
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::clone(&idempotency),
@@ -516,7 +502,6 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
         KanbanServer::new(
             webid,
             KanbanService::new(store),
-            Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
             Arc::new(LocalAgentRegistry::new("/nonexistent")),
             Arc::new(UnavailableWorktreeSpawn),
             Arc::clone(&idempotency),
@@ -756,6 +741,25 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
         .await
         .expect_err("spawn fails without a wired inference port");
 
+    assert!(error.message.contains("No fallback was started"), "{error}");
+
+    let retry = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id: task["task_id"].as_str().expect("task id").into(),
+            idempotency_key: Some("spawn-gesture".into()),
+            delegation_level: "standard".into(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            swarm_id: None,
+        }))
+        .await
+        .expect_err("unknown spawn outcome must not repeat");
+    assert!(retry.message.contains("outcome is unknown"), "{retry}");
+    assert!(
+        error.message.contains("reconcile before retrying"),
+        "{error}"
+    );
+
     assert!(
         !error.message.contains("insufficient local credits"),
         "an unfunded ledger must NOT block a local spawn - the kanban board and local \
@@ -863,6 +867,7 @@ impl WorktreeSpawnPort for CountingWorktreeSpawn {
         _title: &'a str,
         _worktree_name: Option<&'a str>,
         _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
     ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
         self.spawns
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -890,7 +895,6 @@ fn make_spawn_server() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
         Arc::new(idempotency),
@@ -943,6 +947,12 @@ async fn post_spawn_comment_failure_keeps_replay_protection() {
     let first = spawn_task(&server, &task_id, Some("spawn-gesture"))
         .await
         .expect("the spawn itself succeeded — the comment failure is folded into the response");
+    assert!(
+        first["message"]
+            .as_str()
+            .expect("message")
+            .contains("pending")
+    );
     assert!(
         first.get("result_note_error").is_some(),
         "the partial outcome must be surfaced in the response: {first}"
@@ -1032,7 +1042,6 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     let restarted = KanbanServer::new(
         WebID::new(),
         KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(CountingWorktreeSpawn {
             spawns: std::sync::atomic::AtomicUsize::new(0),

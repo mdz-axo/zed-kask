@@ -666,9 +666,12 @@ impl InferenceIpcClient {
         title: &str,
         worktree_name: Option<&str>,
         base_ref: Option<&str>,
+        allowed_tools: &[String],
     ) -> Result<hkask_types::inference_ipc::WorktreeThreadInfo, InferenceError> {
         let method = InferenceMethod::CreateWorktreeThread;
         let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_allowlist: Some(allowed_tools.to_vec()),
             worktree_prompt: Some(prompt.to_string()),
             worktree_title: Some(title.to_string()),
             worktree_name: worktree_name.map(str::to_string),
@@ -881,12 +884,13 @@ impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
         title: &'a str,
         worktree_name: Option<&'a str>,
         base_ref: Option<&'a str>,
+        allowed_tools: &'a [String],
     ) -> std::pin::Pin<
         Box<dyn Future<Output = Result<String, hkask_types::InferenceError>> + Send + 'a>,
     > {
         Box::pin(async move {
             let info = self
-                .create_worktree_thread(prompt, title, worktree_name, base_ref)
+                .create_worktree_thread(prompt, title, worktree_name, base_ref, allowed_tools)
                 .await?;
             Ok(info.message)
         })

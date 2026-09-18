@@ -11,7 +11,7 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 
 /// Create a new agent thread that runs in parallel with this one.
 ///
-/// Only use this after the user explicitly asks for or approves another thread.
+/// The child auto-runs within the parent's inherited tool restrictions.
 /// The new thread appears in the agent sidebar just like a thread the user created
 /// themselves, and runs independently — you will NOT receive its output and you
 /// cannot interact with it afterwards. Use `spawn_agent` instead if you need the
@@ -21,9 +21,8 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 /// currently no way to look up or control a sibling thread by session ID.
 ///
 /// ### When to use
-/// - The user explicitly asks you to create or start another thread.
-/// - You may suggest a new thread for a separable task, but call this tool only
-///   after the user explicitly agrees.
+/// - Delegate a separable task within the user-authorized scope.
+/// - Existing tool approvals still apply; delegation grants no additional tools.
 ///
 /// ### Prompt design
 /// The new thread has no access to this conversation's history. Include in `prompt`
@@ -34,7 +33,8 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 /// - If you don't know what agents or models are available, call `list_agents_and_models`.
 /// - For bulk / lightweight work (e.g., spawning many parallel threads), prefer a
 ///   cheaper / faster model over the default.
-/// - Leave `agent` and `model` unset to use the user's current defaults.
+/// - Omit `agent` to use the native agent; external agents cannot enforce this ceiling.
+/// - Omit `model` to use the configured default.
 ///
 /// ### Worktree support
 /// Set `use_new_worktree` to true to spawn the sibling inside a brand-new
@@ -182,6 +182,7 @@ impl AgentTool for CreateThreadTool {
                 use_new_worktree: input.use_new_worktree,
                 worktree_name: input.worktree_name,
                 base_ref: input.base_ref,
+                delegation_authority: None,
             };
 
             let task = self.environment.create_sibling_thread(request, cx);

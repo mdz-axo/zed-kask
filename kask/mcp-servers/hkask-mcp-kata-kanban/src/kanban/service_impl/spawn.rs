@@ -10,9 +10,8 @@ impl KanbanService {
         let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
 
-        // Write the durable swarm link before anything else so both the
-        // worktree path and the in-memory fallback path expose it via
-        // `kanban_task_delegate_result` without each having to set it.
+        // Write the durable swarm link before worktree admission so the
+        // configuration remains visible through `kanban_task_delegate_result`.
         task.swarm_id = spawn_spec.swarm_id.clone();
 
         let spawn_note = format!(

@@ -13,8 +13,7 @@
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_swarm::agent_stats::AgentStatsStore;
-use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
+use hkask_mcp_swarm::LocalAgentRegistry;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
@@ -36,6 +35,7 @@ impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
         _title: &'a str,
         _worktree_name: Option<&'a str>,
         _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
     ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
         Box::pin(async {
             Err(InferenceError::Connection(
@@ -43,15 +43,6 @@ impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
             ))
         })
     }
-}
-
-fn throwaway_stats() -> Arc<AgentStatsStore> {
-    let dir = std::env::temp_dir().join(format!(
-        "kanban-rename-stats-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    Arc::new(AgentStatsStore::load(&dir.to_string_lossy()))
 }
 
 /// Build a server whose caller identity is `caller`, over a store that may
@@ -72,7 +63,6 @@ fn server_over_shared_driver(
     KanbanServer::new(
         caller,
         KanbanService::new(store),
-        Arc::new(LazyLocalSwarmRuntime::lazy(throwaway_stats())),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         idempotency,

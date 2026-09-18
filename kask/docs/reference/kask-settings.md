@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-16
-version: "0.38.0"
+last_updated: 2026-09-18
+version: "0.39.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -99,6 +99,18 @@ unload invalidate old tokens, and reload issues a new token. Disabled children
 cannot regain grants during environment-diff passes. These are per-server
 capabilities, not PID-bound credentials or OS isolation against arbitrary same-UID
 processes. Grant values and raw request parse failures are not logged.
+
+Worktree creation is a separate host effect selected explicitly in this map:
+`"kata-kanban": ["host/create_worktree_thread", "research/rss_search"]`.
+The child must also send its agent-card tool narrowing. The host intersects it
+with the grant, bounds the spawn queue to 32 requests, and rechecks revocation
+and disconnect before dequeue admission (`kask_bridge/src/inference_ipc_server.rs`,
+`WorktreeSpawnRequest::execute`). Empty narrowing grants no child tools.
+MCP grants never enable native builtins such as terminal. No fallback executor
+starts on refusal or a lost reply. A queued UI thread is reported as pending,
+not proof of execution. Grants remain server-scoped: native agents use their
+host-bound `create_thread`/`spawn_agent` path; native `kanban_task_spawn` is denied
+until per-invocation attribution/authority is implemented (repair plan P2).
 
 ## Data Services
 
