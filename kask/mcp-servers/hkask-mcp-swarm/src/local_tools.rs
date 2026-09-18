@@ -180,11 +180,11 @@ async fn attach_narrative_memory(
 /// pass-rate and standard-error math is unit-testable without inference.
 fn eval_task_report(
     task: &EvalAgentTask,
+    attempts: usize,
     passes: usize,
     errors: usize,
     latencies_ms: &[u64],
 ) -> serde_json::Value {
-    let attempts = passes + errors;
     let pass_rate = if attempts == 0 {
         // `repeats >= 1` is enforced by the caller, so attempts == 0 is
         // unreachable; guard anyway rather than divide by zero.
@@ -212,6 +212,7 @@ fn eval_task_report(
         "repeats": attempts,
         "passes": passes,
         "errors": errors,
+        "incorrect": attempts - passes - errors,
         "pass_rate": pass_rate,
         "pass_rate_std_error": std_error,
         "mean_latency_ms": mean_latency_ms,
@@ -3172,17 +3173,18 @@ impl SwarmServer {
                 // swallowed — the report must distinguish "recorded" from
                 // "record lost". An OPEN failure is warned with the path
                 // named (the failure-signal rule: "not configured" must be
-                // distinguishable from "configured but broken") and the run
-                // proceeds uncaptured — eval does not depend on the store.
-                let event_store = match self.event_store.get_or_init() {
-                    Ok(store) => Some(store),
+                // distinguishable from "configured but broken") and returned
+                // as capture_status/capture_error. Evaluation may continue, but
+                // callers must not treat uncaptured scores as durable evidence.
+                let (event_store, capture_error) = match self.event_store.get_or_init() {
+                    Ok(store) => (Some(store), None),
                     Err(error) => {
                         tracing::warn!(
                             target: "hkask.mcp.swarm",
                             error = %error,
                             "event store open failed — harness run proceeds uncaptured"
                         );
-                        None
+                        (None, Some(error.to_string()))
                     }
                 };
                 if let Some(store) = &event_store {
@@ -3253,7 +3255,7 @@ impl SwarmServer {
                         }
                     }
                     total_passes += passes;
-                    task_reports.push(eval_task_report(task, passes, errors, &latencies_ms));
+                    task_reports.push(eval_task_report(task, repeats as usize, passes, errors, &latencies_ms));
                 }
                 let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
                 // Both drop counters, surfaced: verdict-append failures from
@@ -3354,6 +3356,8 @@ impl SwarmServer {
                     "total_tokens": total_tokens,
                     "events_dropped": events_dropped,
                     "capture_drops": capture_drops,
+                    "capture_status": if event_store.is_some() { "available" } else { "unavailable" },
+                    "capture_error": capture_error,
                     "bodies_stripped": bodies_stripped,
                     "rollouts_compacted": rollouts_compacted,
                 }))
@@ -3439,7 +3443,7 @@ mod tests {
     #[test]
     fn eval_task_report_computes_pass_rate_and_std_error() {
         let t = task("summarize", "contains", "done");
-        let report = eval_task_report(&t, 2, 2, &[100, 200, 300, 500]);
+        let report = eval_task_report(&t, 4, 2, 2, &[100, 200, 300, 500]);
         assert_eq!(report["repeats"], 4);
         assert_eq!(report["passes"], 2);
         assert_eq!(report["errors"], 2);
@@ -3453,7 +3457,7 @@ mod tests {
     fn eval_task_report_counts_errors_as_failures() {
         // A crashed rollout is a failed rollout: 1 pass + 2 errors = 1/3.
         let t = task("t", "contains", "x");
-        let report = eval_task_report(&t, 1, 2, &[50]);
+        let report = eval_task_report(&t, 3, 1, 2, &[50]);
         assert_eq!(report["repeats"], 3);
         let rate = report["pass_rate"].as_f64().unwrap();
         assert!((rate - 1.0 / 3.0).abs() < 1e-12);
@@ -3514,7 +3518,7 @@ mod tests {
         // n = 1: the standard error of one observation is undefined, not 0 —
         // 0 would claim certainty the sample cannot support.
         let t = task("t", "contains", "x");
-        let report = eval_task_report(&t, 1, 0, &[42]);
+        let report = eval_task_report(&t, 1, 1, 0, &[42]);
         assert_eq!(report["pass_rate"], 1.0);
         assert!(report["pass_rate_std_error"].is_null());
     }
@@ -3524,7 +3528,7 @@ mod tests {
         // Unreachable via the tool (repeats >= 1 enforced), but the pure
         // function must not fabricate a 0.0 pass rate if ever reached.
         let t = task("t", "contains", "x");
-        let report = eval_task_report(&t, 0, 0, &[]);
+        let report = eval_task_report(&t, 0, 0, 0, &[]);
         assert!(report["pass_rate"].is_null());
         assert!(report["mean_latency_ms"].is_null());
     }

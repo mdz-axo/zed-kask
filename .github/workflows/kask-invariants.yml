@@ -128,11 +128,15 @@ jobs:
       - name: Install native build deps — mold linker (forced by
           .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
           (vendored FFmpeg static build)
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm
+        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm jq
       - name: Kask subtree — cargo test (hkask-* + kask_bridge)
         run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
       - name: MCP reconnect — isolated fixture processes (serial)
         run: cargo test --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
+      - name: Test evidence — real failure, correction, and rejection controls
+        run: |
+          cargo build --locked -p hkask-regulation --bin check_test_evidence
+          bash kask/scripts/evaluate-test-evidence-selftest.sh "$PWD/target/debug/check_test_evidence"
 
   zed-check:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

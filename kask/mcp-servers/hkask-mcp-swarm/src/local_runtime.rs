@@ -120,6 +120,14 @@ impl LazyEventStore {
 }
 
 impl LazyLocalSwarmRuntime {
+    #[cfg(test)]
+    pub(crate) fn with_runtime(runtime: LocalSwarmRuntime) -> Self {
+        Self {
+            agent_stats: runtime.stats.clone(),
+            inner: tokio::sync::OnceCell::new_with(Some(runtime)),
+        }
+    }
+
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
     pub fn lazy(agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>) -> Self {

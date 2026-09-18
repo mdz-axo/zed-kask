@@ -23,6 +23,8 @@
 //! - `FIXTURE_MARKER` — echoed back in the `ping` result, so a test can tell a
 //!   reconnected (freshly-spawned) process from the original one.
 //! - `FIXTURE_CALLS_FILE` — record each accepted call count (observable effect).
+//! - `FIXTURE_EFFECTS_FILE` — append accepted arguments as JSON lines before
+//!   replying or exiting; unlike the per-process counter, survives restarts.
 //! - `FIXTURE_WITHHOLD_FIRST_REPLY` — accept the first call without replying;
 //!   keep reading requests so later explicit calls can demonstrate no replay.
 //!
@@ -99,6 +101,16 @@ fn main() {
             }),
             "tools/call" => {
                 call_count += 1;
+                if let Ok(path) = std::env::var("FIXTURE_EFFECTS_FILE") {
+                    let mut effects = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .expect("open effect journal");
+                    writeln!(effects, "{}", message["params"]["arguments"])
+                        .expect("append effect before response");
+                    effects.sync_all().expect("persist effect before exit");
+                }
                 if let Ok(path) = std::env::var("FIXTURE_CALLS_FILE") {
                     std::fs::write(path, call_count.to_string()).expect("write call count");
                 }

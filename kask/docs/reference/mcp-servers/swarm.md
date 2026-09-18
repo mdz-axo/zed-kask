@@ -2,7 +2,7 @@
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-18
-version: "0.39.0"
+version: "0.39.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -19,6 +19,15 @@ ground truth or useful improvement. Empty responses are scored; empty specs
 and malformed regexes are errors. The rollout harness parses evaluators once
 before inference and reuses them across repeats. Plans/suites validate supplied
 specs before any delegation; direct delegation validates card evaluators first.
+
+Per-task rates use every requested repeat, including completed incorrect
+responses and delegation errors. `incorrect` is separate from `errors`.
+`capture_status: "unavailable"` plus `capture_error` reports event-store open
+failure; zero drop counters alone do not establish recorded evidence. Available
+capture still requires checking dropped-event counters and durable records.
+Pinned through the public tool by
+`harness_counts_wrong_answers_and_reports_capture_unavailable` in
+`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
 
 Implementation: `ResponseEvaluator` and `swarm_eval_agent_local` in
 `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`.

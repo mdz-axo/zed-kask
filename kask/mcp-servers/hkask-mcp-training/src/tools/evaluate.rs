@@ -13,10 +13,6 @@ struct EvaluationSummary {
     generation_errors: usize,
     evaluator_errors: usize,
     inference_evidence: Vec<serde_json::Value>,
-    reported_tokens: u64,
-    reported_cost: f64,
-    unreported_usage_calls: usize,
-    unreported_cost_calls: usize,
 }
 
 impl EvaluationSummary {
@@ -46,26 +42,23 @@ impl EvaluationSummary {
             "tokens": response.and_then(|r| r.usage.reported.then_some(r.usage.total_tokens)),
             "cost_usd": cost,
         }));
-        if let Ok(response) = result {
-            if response.usage.reported {
-                self.reported_tokens += u64::from(response.usage.total_tokens);
-            } else {
-                self.unreported_usage_calls += 1;
-            }
-            if let Some(cost) = cost {
-                self.reported_cost += cost;
-            } else {
-                self.unreported_cost_calls += 1;
-            }
-        } else {
-            // Failed calls may have consumed resources before their response was lost.
-            self.unreported_usage_calls += 1;
-            self.unreported_cost_calls += 1;
-        }
     }
 
     fn report(&self, total: usize, valid: usize, skipped: usize) -> serde_json::Value {
         let errors = self.generation_errors + self.evaluator_errors;
+        // The retained call records are the sole resource-accounting source.
+        let (mut reported_tokens, mut reported_cost) = (0u64, 0.0);
+        let (mut unreported_usage_calls, mut unreported_cost_calls) = (0usize, 0usize);
+        for evidence in &self.inference_evidence {
+            match evidence["tokens"].as_u64() {
+                Some(tokens) => reported_tokens += tokens,
+                None => unreported_usage_calls += 1,
+            }
+            match evidence["cost_usd"].as_f64() {
+                Some(cost) => reported_cost += cost,
+                None => unreported_cost_calls += 1,
+            }
+        }
         json!({
             "total_examples": total, "correct": self.correct,
             "valid_examples": valid, "skipped_invalid_examples": skipped,
@@ -76,12 +69,12 @@ impl EvaluationSummary {
             "inference_calls": self.inference_evidence.len(),
             "inference_evidence": self.inference_evidence,
             "model_identity_basis": "port_reported_not_attested",
-            "total_tokens_used": (self.unreported_usage_calls == 0).then_some(self.reported_tokens),
-            "reported_tokens_used": self.reported_tokens,
-            "unreported_usage_calls": self.unreported_usage_calls,
-            "total_cost_usd": (self.unreported_cost_calls == 0).then_some(self.reported_cost),
-            "reported_cost_usd": self.reported_cost,
-            "unreported_cost_calls": self.unreported_cost_calls,
+            "total_tokens_used": (unreported_usage_calls == 0).then_some(reported_tokens),
+            "reported_tokens_used": reported_tokens,
+            "unreported_usage_calls": unreported_usage_calls,
+            "total_cost_usd": (unreported_cost_calls == 0).then_some(reported_cost),
+            "reported_cost_usd": reported_cost,
+            "unreported_cost_calls": unreported_cost_calls,
         })
     }
 }

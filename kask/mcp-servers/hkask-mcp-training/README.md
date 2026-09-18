@@ -51,6 +51,8 @@ failed calls with unknown consumption. `reported_tokens_used` and
 `reported_cost_usd` retain partial sums; `unreported_usage_calls`,
 `unreported_cost_calls`, and `inference_calls` describe coverage. A genuinely
 reported zero remains zero. These measurements do not enforce a spending cap.
+Resource totals are derived from the retained per-call evidence at report time;
+there is no second mutable set of token/cost counters to drift from the records.
 
 `inference_evidence` records each candidate/judge call with its example index,
 requested model, port-returned model (null if missing), call status, reported

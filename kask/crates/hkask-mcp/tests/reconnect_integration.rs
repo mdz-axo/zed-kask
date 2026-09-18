@@ -149,6 +149,63 @@ fn off_runtime_deadline_and_drop_do_not_replay_effects() {
     owner.block_on(runtime.shutdown_all());
 }
 
+/// expect: "If a tool changes my data but loses its reply, report uncertainty without repeating the change." [P1]
+/// pre: a real child records an effect and exits before replying.
+/// post: each explicit request records one effect, including across child restarts.
+/// inv: transport recovery does not authorize replay of an uncertain operation. [P4]
+#[tokio::test(flavor = "multi_thread")]
+async fn lost_reply_does_not_replay_effect_across_restart() {
+    let mut fixture = Fixture::new("lost-reply-effect");
+    let effects = fixture._tmp.path().join("effects.jsonl");
+    fixture.env.insert(
+        "FIXTURE_EFFECTS_FILE".into(),
+        effects.to_string_lossy().into_owned(),
+    );
+    fixture
+        .env
+        .insert("FIXTURE_EXIT_AFTER_CALLS".into(), "1".into());
+    let agent = WebID::for_agent_name("lost-reply-contract-test");
+    let (runtime, _) = launch(&fixture).await;
+    let mut results = Vec::new();
+    for operation in ["first", "second"] {
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.invoke(
+                "fixture",
+                "ping",
+                serde_json::json!({"operation": operation}),
+                agent,
+            ),
+        )
+        .await;
+        results.push(result);
+    }
+    // Keep the same runtime through recovery: shutdown between requests would
+    // discard queued work and hide a replay-on-reconnect regression.
+    tokio::time::timeout(Duration::from_secs(5), runtime.shutdown_all())
+        .await
+        .expect("child teardown must complete");
+    for result in results {
+        assert!(
+            matches!(result, Ok(Err(ToolPortError::Interrupted(_)))),
+            "a recorded effect with no reply is unknown, not success or non-delivery: {result:?}"
+        );
+    }
+    let recorded: Vec<serde_json::Value> = std::fs::read_to_string(&effects)
+        .expect("effect evidence must exist independently of the response")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("effect journal entry"))
+        .collect();
+    assert_eq!(
+        recorded,
+        vec![
+            serde_json::json!({"operation": "first"}),
+            serde_json::json!({"operation": "second"}),
+        ],
+        "reconnecting must neither erase effect evidence nor replay an uncertain request"
+    );
+}
+
 /// A self-contained fixture launch context: a temp dir for the pid file, a
 /// unique marker, and the env map the runtime will hand to the child.
 struct Fixture {

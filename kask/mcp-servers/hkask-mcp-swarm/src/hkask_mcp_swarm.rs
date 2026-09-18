@@ -571,6 +571,142 @@ mod smoke_tests {
     }
     // ── Local-substrate contract tests (evaluator, credentials) ────────────
 
+    /// expect: "Local swarm is execution location, never an inferior-model provider tier" [P1]
+    #[test]
+    fn local_agent_cards_inherit_platform_models_without_provider_tier() -> Result<(), Box<dyn std::error::Error>> {
+        let defaults = serde_json::to_value(crate::local_registry::LocalAgentCapabilities::default())?;
+        assert_eq!(defaults["model"], "");
+        assert!(defaults.get("min_provider_class").is_none());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../agents/local/curated");
+        let mut count = 0;
+        for entry in std::fs::read_dir(root)? {
+            let path = entry?.path().join("agent_card.json");
+            if !path.is_file() { continue; }
+            let card: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            assert_eq!(card["capabilities"]["model"], "", "{}", path.display());
+            assert!(card["capabilities"].get("min_provider_class").is_none(), "{}", path.display());
+            count += 1;
+        }
+        assert!(count > 0, "seeded cards must actually be checked");
+        Ok(())
+    }
+
+    /// expect: "Harness reports count wrong answers and explicitly surface unavailable capture" [P8]
+    #[tokio::test]
+    async fn harness_counts_wrong_answers_and_reports_capture_unavailable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::local_runtime::LocalSwarmRuntime;
+        use crate::request_types::EvalAgentLocalRequest;
+        struct Replies(std::sync::Mutex<std::collections::VecDeque<&'static str>>);
+        impl hkask_types::InferencePort for Replies {
+            fn generate(
+                &self,
+                _: &str,
+                _: &hkask_types::LLMParameters,
+                _: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                let text = self
+                    .0
+                    .lock()
+                    .expect("replies")
+                    .pop_front()
+                    .expect("planned inference")
+                    .to_string();
+                Box::pin(async move {
+                    Ok(hkask_types::InferenceResult {
+                        text,
+                        model: "fixture".into(),
+                        usage: Default::default(),
+                        finish_reason: "stop".into(),
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+        }
+        struct NoTools;
+        impl hkask_types::ToolDispatchPort for NoTools {
+            fn invoke_tool<'a>(
+                &'a self,
+                _: &'a str,
+                _: &'a str,
+                _: Value,
+                _: &'a [String],
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<Value, hkask_types::InferenceError>>
+                        + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async {
+                    Err(hkask_types::InferenceError::Model(
+                        "no tools in fixture".into(),
+                    ))
+                })
+            }
+        }
+        let dir = tempfile::tempdir()?;
+        for replies in [
+            vec!["42", "wrong", "wrong"],
+            vec!["wrong", "wrong", "wrong"],
+        ] {
+            let expected_passes = replies.iter().filter(|r| **r == "42").count();
+            let mut server = make_server();
+            server.local_registry = Arc::new(LocalAgentRegistry::new(
+                dir.path().join("agents").to_string_lossy(),
+            ));
+            server
+                .local_registry
+                .write_card(&serde_json::from_value(serde_json::json!({
+                    "agent_id":"fixture", "agent_type":"test", "description":"test",
+                    "capabilities":{"system_prompt":"Return a response", "model":"fixture/model"}
+                }))?)?;
+            server.local_runtime = Arc::new(LazyLocalSwarmRuntime::with_runtime(
+                LocalSwarmRuntime::new_for_test(
+                    Arc::new(Replies(std::sync::Mutex::new(replies.into()))),
+                    Arc::new(NoTools),
+                ),
+            ));
+            // A file in the parent position fails before the DB connection timeout.
+            let blocked = dir.path().join("not-a-directory");
+            std::fs::write(&blocked, "blocked")?;
+            server.event_store = Arc::new(LazyEventStore::lazy(
+                blocked.join("events.db").to_string_lossy().into_owned(),
+            ));
+            let req: EvalAgentLocalRequest = serde_json::from_value(serde_json::json!({
+                "agent_name":"fixture", "repeats":3,
+                "tasks":[{"task":"answer", "evaluator":{"evaluator":"contains","spec":"42"}}]
+            }))?;
+            let report = unwrap_content(&server.swarm_eval_agent_local(Parameters(req)).await?);
+            assert_eq!(report["tasks"][0]["repeats"], 3, "{report}");
+            assert_eq!(report["tasks"][0]["errors"], 0);
+            assert_eq!(
+                report["tasks"][0]["pass_rate"],
+                expected_passes as f64 / 3.0
+            );
+            assert_eq!(report["tasks"][0]["pass_rate"], report["overall_pass_rate"]);
+            assert_eq!(report["capture_status"], "unavailable");
+            assert!(report["capture_error"].is_string());
+            assert_eq!(
+                report["events_dropped"], 0,
+                "unavailable is not a fabricated dropped count"
+            );
+        }
+        Ok(())
+    }
+
     /// expect: "Evaluator specifications never execute shell or inspect ambient files" [P4]
     #[tokio::test]
     async fn evaluator_admission_rejects_effectful_specs_before_agent_lookup()
