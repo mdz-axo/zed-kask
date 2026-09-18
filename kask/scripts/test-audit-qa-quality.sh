@@ -96,6 +96,29 @@ check 'valid reviewed staged-v7 QA requires adjudication provenance' 0 "$WORK/v7
 jq -c '.provenance.prompt_protocol="prepared-qa-staged-quality-v8" | del(.provenance.passage_adjudication_protocol) | .provenance.adjudication_protocol="prepared-qa-adjudication-v2"' "$WORK/v7.jsonl" > "$WORK/v8.jsonl"
 check 'valid reviewed staged-v8 QA requires adjudication provenance' 0 "$WORK/v8.jsonl" "$WORK/chunks.jsonl" \
     '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+# Grounding-candidate protocol (2026-09-18): generation emits unverified
+# candidates with no verification_model; grounding_status marks generated rows
+# pending external verification and skips not_applicable_skip.
+jq -c '.provenance.prompt_protocol="prepared-qa-grounding-candidate-v1" | .provenance.generator_model="generator/model" | .provenance.grounding_status="pending_external_verification"' \
+    "$WORK/base.jsonl" > "$WORK/candidate.jsonl"
+check 'grounding candidate QA without adjudication provenance is rejected' 2 "$WORK/candidate.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_generation_protocol")!=null)'
+jq -c '.provenance.adjudication_protocol="prepared-qa-adjudication-v2"' "$WORK/candidate.jsonl" > "$WORK/candidate-reviewed.jsonl"
+check 'valid reviewed grounding candidate QA requires adjudication provenance' 0 "$WORK/candidate-reviewed.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.qa_rows==1 and (.data_gaps|index("invalid_generation_protocol")==null)'
+jq -c '.provenance.grounding_status="not_applicable_skip"' "$WORK/candidate.jsonl" > "$WORK/candidate-wrong-status.jsonl"
+check 'grounding candidate QA cannot claim skip grounding status' 2 "$WORK/candidate-wrong-status.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_generation_protocol")!=null)'
+jq -c '.provenance.generator_model=""' "$WORK/candidate.jsonl" > "$WORK/candidate-no-generator.jsonl"
+check 'grounding candidate QA without generator identity is invalid' 2 "$WORK/candidate-no-generator.jsonl" "$WORK/chunks.jsonl" \
+    '(.data_gaps|index("invalid_generation_protocol")!=null)'
+jq -c '.provenance.prompt_protocol="prepared-qa-grounding-candidate-v1" | .provenance.generator_model="generator/model" | .provenance.grounding_status="not_applicable_skip" | .provenance.adjudication_protocol="prepared-qa-adjudication-v2"' \
+    "$WORK/skip.jsonl" > "$WORK/candidate-skip.jsonl"
+check 'valid grounding candidate skip carries not_applicable_skip provenance' 0 "$WORK/candidate-skip.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==1 and .rows[0].data_gaps==[]'
+jq -c '.provenance.grounding_status="pending_external_verification"' "$WORK/candidate-skip.jsonl" > "$WORK/candidate-skip-wrong.jsonl"
+check 'grounding candidate skip cannot claim pending generated grounding' 2 "$WORK/candidate-skip-wrong.jsonl" "$WORK/chunks.jsonl" \
+    '.structural_counts.skipped_rows==0 and .structural_counts.invalid_shape_rows==1'
 jq -c '.provenance.verification_model=.provenance.generator_model' "$WORK/v6.jsonl" > "$WORK/mixed.jsonl"
 check 'staged-v6 QA rejects identical generation and verification models' 2 "$WORK/mixed.jsonl" "$WORK/chunks.jsonl" \
     '(.data_gaps|index("invalid_generation_protocol")!=null)'

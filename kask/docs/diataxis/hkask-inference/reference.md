@@ -182,7 +182,6 @@ The client is cloneable and stores an `Arc<PathBuf>` socket path plus an `Arc<At
 | API | Environment variable | Evidence |
 |---|---|---|
 | `resolve_qa_generation_model` | explicit input, then `HKASK_QA_GENERATION_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
-| `resolve_qa_verification_model` | explicit input, then `HKASK_QA_VERIFICATION_MODEL`; no other model source | `kask/crates/hkask-inference/src/model_constants.rs` |
 | `classifier_model` | `HKASK_CLASSIFIER_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
 | `embedding_model` | `HKASK_EMBEDDING_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |
 | `ocr_model` | `HKASK_OCR_MODEL` | `kask/crates/hkask-inference/src/model_constants.rs` |

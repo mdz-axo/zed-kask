@@ -54,7 +54,7 @@ def generation_protocol_ok($r):
       and ($r.provenance.verification_model | nonblank)
       and $r.provenance.generator_model != $r.provenance.verification_model
       and (($r.provenance.adjudication_protocol // null) == null
-        or $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2")
+        or $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2"))
     # Historical staged protocols above required a distinct verifier model.
     # The grounding-candidate protocol has no verification_model at all:
     # generation defers acceptance to the external grounding manifest
@@ -64,8 +64,7 @@ def generation_protocol_ok($r):
       and ($r.provenance.grounding_status ==
           (if $r.status == "skipped" then "not_applicable_skip"
            else "pending_external_verification" end))
-      and (($r.provenance.adjudication_protocol // null) == null
-        or $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2")));
+      and $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2"));
 def identify($index; $ref):
   (if $ref.chunk_ref | nonblank then ($index[$ref.chunk_ref] // []) else [] end) as $matches
   | if ($ref.chunk_ref | nonblank | not) or ($ref.source | nonblank | not) then "missing_source_metadata"

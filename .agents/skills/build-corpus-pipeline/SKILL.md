@@ -478,8 +478,13 @@ rather than silently treating each source's `:0` chunk as representative. Run St
 on that pilot before expanding to full production; a pilot is evidence for a gate,
 never a reduced completion scope. Call
 `corpus_generate_qa_batch(prompts_jsonl, quality_adjudications_jsonl, output,
-concurrency, model, verification_model)`. Pass null adjudications for the ordinary
-model-reviewed path. Preflight validates the whole prepared file, optional complete
+concurrency, model)`. Pass null adjudications for the ordinary generator-owned
+path. Generation produces **unverified candidates only**: no second model
+reviews, corrects, or accepts anything during generation, and no verification
+model exists. Generated rows carry
+`prompt_protocol=prepared-qa-grounding-candidate-v1` and
+`grounding_status=pending_external_verification` (skips:
+`not_applicable_skip`). Preflight validates the whole prepared file, optional complete
 v2 manifest, and models before creating output. Record
 prompt-level tokens, provider responses, reported cost and cost completeness at
 every shard; null/incomplete cost is unknown and blocks paid expansion.
@@ -495,9 +500,9 @@ schema receives exactly one metered correction attempt; a second rejection fails
 the whole prompt without partial rows. There is one synchronous prepared-prompt
 transport; no provider-batch side path.
 
-With no adjudication manifest, the model and distinct reviewer return exactly one
+With no adjudication manifest, the generator returns exactly one
 disposition per requested level, in order. With a v2 manifest, reviewed passage skips
-write terminal rows before inference; reviewed admits bypass passage/disposition review
+write terminal rows before inference; reviewed admits bypass the passage-quality call
 and send the ordered level mandates to the generator. The server deterministically
 compares the plan to those mandates, sends the exact mismatch back once for generator
 correction, and fails the prompt on a second mismatch. A supported level is a grounded
@@ -600,12 +605,22 @@ verification evidence and correction findings, not duplicate corpus versions.
 
 ## Stage 9 — Ingest, assemble and seek training approval
 
-1. Dry-run `corpus_ingest_qa(generated_jsonl, output, db_path, passphrase,
-   dataset, owner, dry_run=true)`. It validates/deduplicates without opening the
-   DB or writing output. Admission is structural only: nonblank instruction,
-   output, QA type, source and chunk ref; complete structured evidence entries.
-   Concise answers survive. First valid case-insensitive exact instructions win;
-   no minimum length, semantic dedup, DB dedup or semantic quality test is implied.
+1. Dry-run `corpus_ingest_qa(generated_jsonl, grounding_verification_jsonl,
+   source_chunks_jsonl, output, db_path, passphrase,
+   dataset, owner, dry_run=true)`. Ingestion fails closed without the complete
+   identity-bound `prepared-qa-grounding-verification-v1` manifest and the
+   canonical source chunks — every candidate needs one accepted report row whose
+   `candidate_sha256` matches its raw line, whose judgments cite the candidate's
+   own evidence quotes as exact substrings of canonical chunk bytes, whose
+   fact score reconciles at ≥ 0.80, and whose verdict is a clean decoupled
+   acceptance (`verdict: accept`, no findings, `decoupling: spawn_agent`,
+   band medium/high). With the gate satisfied, admission also requires
+   nonblank instruction, output, QA type, source and chunk ref; complete
+   structured evidence entries. Concise answers survive. First valid
+   case-insensitive exact instructions win; no minimum length, semantic dedup,
+   DB dedup or semantic quality test is implied. Stage 8 remains the external
+   semantic oracle; the manifest's exact-citation matching does not certify
+   answer entailment.
 2. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
    inspect the exact `training:qa:{dataset}:` prefix in the named DB and explicitly
    purge it before replacement. Do not infer/broaden a purge or retain parallel

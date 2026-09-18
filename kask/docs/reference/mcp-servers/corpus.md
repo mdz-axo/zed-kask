@@ -42,7 +42,7 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified |
 | QA output (4) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
-| | `corpus_ingest_qa` | Structural admission/exact dedup with evidence retention and explicit storage status |
+| | `corpus_ingest_qa` | Grounding-gated admission: complete `prepared-qa-grounding-verification-v1` manifest plus canonical source chunks, then exact dedup with evidence retention and explicit storage status |
 | | `corpus_prepare_training_dataset` | Alpaca → ChatML plus dataset-size gate and advisory PEFT recommendations |
 | Compose (3) | `corpus_compose` | Retrieve exemplars, generate prose, optionally measure centroid distance |
 | | `corpus_rewrite` | Rewrite using a quality dimension and that dimension's centroid |
@@ -88,8 +88,8 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 
-| `corpus_generate_qa_batch` | `prompts_jsonl`, `output`, `concurrency`, optional QA `model` |
-| `corpus_ingest_qa` | `generated_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
+| `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
+| `corpus_ingest_qa` | `generated_jsonl`, `grounding_verification_jsonl`, `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
 | `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
@@ -193,13 +193,12 @@ from rendered model messages.
 pairs. One compact prepared request per chunk carries the selected level rotation.
 A complete `prepared-qa-adjudication-v2` manifest, when supplied, binds passage and
 ordered per-level mandates to every prompt identity. Reviewed passage skips write
-terminal rows before inference. Reviewed admits bypass passage and disposition review;
+terminal rows before inference. Reviewed admits bypass the passage-quality call;
 the generator receives the mandates, and its plan gets one exact-error correction
 before a second mismatch fails the prompt. Without a manifest, the generation model
-proposes a focused whole-passage decision: proposed skip short-circuits, while proposed
-clean receives an authoritative review from the distinct verification model and fails
-closed after one malformed-review correction. Writer and focused generated-QA review
-calls run when at least one level is mandated or planned for generation. Summary separates
+proposes a focused whole-passage decision: a proposed skip short-circuits, and a
+proposed clean decision continues directly to disposition planning. Planning and
+writer calls run when at least one level is mandated or planned for generation. Summary separates
 `prompts_written` from `pairs_requested` and reports
 primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
 do not force the prior 27,518/55,036 counts. The build skill specifies a single
@@ -227,8 +226,8 @@ generation names one closed relation. V1, unknown fields/values, duplicate ident
 wrong order/count/reason/relation, and incomplete coverage are rejected.
 
 Without a reviewed manifest, the generation model's passage gate returns `clean` or a
-prompt-wide skip. Proposed clean receives independent passage and disposition reviews
-before writing. Both paths use the same generator plan schema:
+prompt-wide skip. A proposed clean decision goes straight to planning; there is no
+second-model review. Both paths use the same generator plan schema:
 
 ```json
 ["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
@@ -244,20 +243,19 @@ receives only planned generated levels and fixed evidence, then returns:
 The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,
 conceptual generation without a relation, mandate mismatches, or any writer deviation
 from the plan. A reviewed-plan mismatch receives one generator correction containing
-the exact deterministic error; a second mismatch fails the prompt. A focused typed QA
-verifier checks subjects, conditions, categories, negation, modality, premises and
-answer completeness, but cannot re-litigate reviewed level support or relations.
-It then restores canonical `QaEvidence {chunk_ref, source, quote}`. The planner and
-writer are model-mediated; semantic answer entailment remains a separate Stage 8
-audit.
+the exact deterministic error; a second mismatch fails the prompt. The writer's output
+completes directly as an unverified candidate — no model reviews, corrects, or
+accepts anything during generation. The server then restores canonical
+`QaEvidence {chunk_ref, source, quote}`. The planner and writer are model-mediated;
+semantic answer entailment remains a separate Stage 8 audit.
 
-Accepted rows carry primary identity, prompt ID, QA type, candidate terms,
-canonical evidence, distinct generation/verification model provenance,
-`prepared-qa-passage-quality-v1` admission provenance,
-`prepared-qa-staged-quality-v8` generation provenance, and optional
-`prepared-qa-adjudication-v2` provenance. Batch tokens and cost include
-every returned quality/review/planning/writing response and are not repeated on pair
-rows. Failed prompts carry primary identity and `error`, never an ingestible response.
+Generated rows carry primary identity, prompt ID, QA type, candidate terms,
+canonical evidence, `generator_model` with
+`grounding_status=pending_external_verification` (skips:
+`not_applicable_skip`), `prepared-qa-grounding-candidate-v1` generation provenance,
+and optional `prepared-qa-adjudication-v2` provenance. Batch tokens and cost include
+every returned quality/planning/writing/correction response and are not repeated on pair
+rows. Failed prompts carry primary identity and `error`, never a candidate response.
 
 ### Batch ownership, retries and accounting
 
@@ -293,14 +291,25 @@ Wait for owners/workers to stop before inspection and an explicit overwrite reru
 
 ## Ingestion, audit and training
 
-Flat QA and generated envelopes use the same evidence schema. Ingest structurally
-requires nonblank instruction/output/QA type/source/chunk ref and complete evidence
-entries; it keeps concise answers and first valid case-insensitive exact
-instructions. It neither deduplicates against the DB nor verifies semantics.
+Flat QA and generated envelopes use the same evidence schema. Ingestion fails closed
+on partial input (malformed, generator-error, or structurally incomplete rows) and
+then requires a complete identity-bound external grounding manifest: every candidate
+needs one `prepared-qa-grounding-verification-v1` report row whose
+`candidate_sha256` matches the candidate raw line, whose identity fields match the
+candidate, whose instruction/output judgments cite the candidate's own evidence
+quotes as exact substrings of canonical `source_chunks_jsonl` chunk bytes, whose
+fact score reconciles under the canonical weights at ≥ 0.80, and whose verdict is a
+clean decoupled acceptance (`verdict: accept`, no findings,
+`decoupling: spawn_agent`, band medium/high). With the gate satisfied, ingest
+structurally requires nonblank instruction/output/QA type/source/chunk ref and
+complete evidence entries; it keeps concise answers and first valid case-insensitive
+exact instructions. It neither deduplicates against the DB nor verifies semantics —
+Stage 8 and operator acceptance remain external.
 `prompt_id`, `provenance`, citations and metadata survive into retained JSONL and
 QA h_mems; this tool creates no embeddings
-(`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53–112`;
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:181-354`).
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`;
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs`;
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs`).
 
 - `total_nonblank_rows = generator_errors + malformed + parsed`.
 - `parsed = filter_drops + duplicates + retained`; `filtered = duplicates + retained`;
@@ -316,7 +325,12 @@ is not whole-dataset replacement. Never broaden a purge or leave stale datasets.
 
 The read-only `kask/scripts/audit-qa-quality.sh` checks each citation's exact
 substring and unique source/chunk identity, reconciles physical rows and reports
-six-gram repetition, QA-label distribution and source coverage. Ordinary prose
+six-gram repetition, QA-label distribution and source coverage. It accepts historical
+staged protocols (v3–v8, whose distinct-verifier requirements apply only to those
+artifacts) and the current `prepared-qa-grounding-candidate-v1` protocol (nonblank
+`generator_model`, `grounding_status` matching the row kind, reviewed rows carrying
+`prepared-qa-adjudication-v2`); it never requires a verification model for
+candidates. Ordinary prose
 still needs claim extraction, entailment and narrative review; those unperformed
 checks propagate null, not success. Only the explicit structured-citation-only
 control has no narrative fields. Exit 0/1/2/64 means narrow checks complete / high

@@ -365,17 +365,11 @@ impl InferencePort for CitationGeneration {
             .join("\n");
         assert!(!rendered.contains("corpus:brooks:0"));
         assert!(!rendered.contains("brooks.txt"));
-        let rows = if rendered.contains("focused passage-quality gate") {
-            json!(["clean"])
-        } else if rendered.contains("Independently verify each proposed QA object") {
-            json!([
-                {"level":"factual","verdict":"accept","subject":true,"condition":true,"premise":true,"entailment":true,"completeness":true,"actual_difficulty":true,"findings":[]},
-                {"level":"conceptual","verdict":"accept","subject":true,"condition":true,"premise":true,"entailment":true,"completeness":true,"actual_difficulty":true,"findings":[]}
-            ])
-        } else if rendered.contains("disposition plan") {
+        let rows = if rendered.contains("disposition plan") {
             assert!(rendered.contains("evidence IDs"));
             assert!(rendered.contains("conceptual_support_absent"));
             assert!(rendered.contains("primary_passage"));
+            assert!(rendered.contains("reviewed_level_mandates"));
             json!([
                 "clean",
                 [
@@ -453,12 +447,29 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     };
     let prompts = directory.path().join("prompts.jsonl");
     std::fs::write(&prompts, serde_json::to_string(&prompt)?)?;
+    // Generation is reviewed-decisions-only: the manifest admits the passage
+    // and mandates both ordered levels, matching the stub plan's relations.
+    let adjudications = directory.path().join("adjudications.jsonl");
+    std::fs::write(
+        &adjudications,
+        serde_json::to_string(&json!({
+            "protocol": crate::services::qa_adjudication::QA_ADJUDICATION_PROTOCOL,
+            "prompt_id": prompt.prompt_id,
+            "chunk_ref": "corpus:brooks:0",
+            "source": "brooks.txt",
+            "passage": {"decision":"admit","reason":null},
+            "levels": [
+                {"level":"factual","decision":"generate","relation":null,"reason":null},
+                {"level":"conceptual","decision":"generate","relation":"causal_relationship","reason":null}
+            ],
+        }))?,
+    )?;
     let req = request(directory.path(), false);
     let generated = content(
         server
             .corpus_generate_qa_batch(Parameters(GenerateQaBatchRequest {
                 prompts_jsonl: prompts.to_string_lossy().into(),
-                quality_adjudications_jsonl: None,
+                quality_adjudications_jsonl: adjudications.to_string_lossy().into(),
                 output: req.generated_jsonl.clone(),
                 concurrency: 1,
                 model: Some("OpenRouter/offline-model".into()),

@@ -82,30 +82,17 @@ let model = hkask_inference::model_constants::resolve_qa_generation_model(reques
 
 An explicit model wins. With neither source, the resolver returns `InferenceError::NotConfigured`; malformed or unqualified names return `InferenceError::Model`. The resolver never uses the chat default or a training base model (`kask/crates/hkask-inference/src/model_constants.rs`).
 
-## Configure the independent QA verification model
+## Verify generated QA
 
-Set the dedicated verification binding independently of generation:
-
-```sh
-export HKASK_QA_VERIFICATION_MODEL='OpenRouter/vendor/qa-verifier'
-```
-
-Resolve it with:
-
-```rust
-let model = hkask_inference::model_constants::resolve_qa_verification_model(
-    requested_verification_model,
-)?;
-```
-
-With neither an explicit model nor `kask.models.qa_verification_model`, the
-resolver returns `InferenceError::NotConfigured`. It applies the same
-`Provider/model-id` validation as QA generation and never consults the QA
-generator, chat, classifier, or training model. Keeping the check independent
-supports Chain-of-Verification's separate verification step
-([arXiv:2309.11495](https://arxiv.org/abs/2309.11495)) and avoids relying on
-self-enhancement by the answer-producing model, a bias discussed in MT-Bench
-([arXiv:2306.05685](https://arxiv.org/abs/2306.05685)).
+There is no dedicated QA verification model: an LLM reviewing another
+LLM is circular self-authorization, and the rejected `HKASK_QA_VERIFICATION_MODEL`
+binding is deleted (`kask/crates/hkask-inference/src/model_constants.rs`).
+Generation emits unverified candidates only, and acceptance is decided by the
+corpus server's identity-bound external grounding gate at ingestion
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`) —
+evidence citations checked against canonical source chunk bytes — never by a
+second model call. Reviewed passage/level decisions are supplied to generation
+as a required `prepared-qa-adjudication-v2` manifest.
 
 ## Add a direct chat or embedding provider
 

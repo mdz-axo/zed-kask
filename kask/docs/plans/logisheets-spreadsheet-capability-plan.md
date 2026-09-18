@@ -1,9 +1,9 @@
 ---
 title: "LogiSheets Spreadsheet Capability — Refactor Architecture Plan"
 audience: [architects, developers, product]
-last_updated: 2026-09-14
+last_updated: 2026-09-18
 version: "0.1.0"
-status: "Proposed"
+status: "Chartered"
 domain: "Composition"
 mds_categories: [composition, domain, lifecycle, trust]
 ---
@@ -14,7 +14,7 @@ mds_categories: [composition, domain, lifecycle, trust]
 
 This document is the reviewable output of the `refactor-architecture` process for introducing a shared spreadsheet capability into hKask.
 
-It is a **plan, not an implementation record**. No implementation is authorized by this document. The plan becomes an implementation program only after explicit operator approval.
+It is a **plan, not an implementation record**. No implementation is authorized by this document alone. The plan became an implementation program on 2026-09-18, when the operator chartered goal `f6ae8631-2ed5-4f83-9beb-4ae20603d386` and the Phase 0 admission gate ran (record: §10).
 
 ### Functional target
 
@@ -332,6 +332,42 @@ Before production code depends on LogiSheets:
 - Record MIT attribution.
 
 Stop if generated-workbook round-tripping or required formula recalculation fails.
+
+**Admission record (2026-09-18): ADOPT.** Pinned release: `logisheets-rs =1.15.1`
+(MIT, published 2026-09-17 by ImJeremyHe; upstream `github.com/logisky/LogiSheets`;
+17 releases since 2026-07-07 — active but fast-moving, hence the exact pin).
+Evidence (scratch harness outside the workspace, Rust 1.97.1):
+
+- **Compile**: clean dev build 22.8s wall / 110s CPU on 16 cores; 127 unique crates;
+  the optional `rpc` feature stays off (default deps: `logisheets_base`,
+  `logisheets_controller`, `logisheets_workbook`).
+- **Platforms**: `x86_64-unknown-linux-gnu` and `x86_64-unknown-linux-musl` both
+  compile. `wasm32-unknown-unknown` does not (`getrandom` lacks a JS shim) —
+  out of scope, zed-kask is Linux-only (D7).
+- **Send/threading**: `Workbook` is `!Send + !Sync` (live compile failure through
+  `Workbook → Controller → Status → Navigator`; Rc/RefCell internals). Design
+  consequence: `WorkbookService` is a dedicated-thread actor — the `Workbook`
+  lives on one engine thread; Send commands go in and Send responses (`Value`,
+  `CellInfo`, bytes are all Send+Sync) come out. No `Arc`/`Mutex` sharing, no
+  cross-`await` holds.
+- **Round-trip and recalculation (the stop conditions): PASS.** A 17-cell fixture
+  with `SUM`, `IF`, `AVERAGE`, and percentage-delta formulas survives save →
+  reopen with values and formula text intact, and editing an input after reopen
+  recalculates dependents correctly. Malformed inputs (empty, non-zip, zip-magic
+  garbage, truncated real file) reject as typed `ZipError(InvalidArchive(..))`
+  errors, no panics.
+- **Determinism**: full byte-determinism — same-instance re-save, cross-instance
+  construction, and reopen-resave all produce byte-identical output (identical
+  SHA-256). Byte digests are safe revision identity.
+- **Revision primitives**: `get_version()` is a monotonic committed-write counter
+  (2 after seed → 4 after undo+redo observed); `undo()`/`redo()` revert and
+  restore whole transactions.
+- **Bulk-apply constraint**: `handle_action` cost is superlinear in transaction
+  size — 20,000 `CellInput` payloads in one transaction took 82.6s while 20
+  chunks of 1,000 took 17.2s (save 90ms, reopen 235ms). Design consequence:
+  AnalyticalTable → workbook conversion chunks at ~1,000 cells per transaction.
+- **MIT attribution**: license confirmed at the pinned release (crates.io and
+  docs.rs); the attribution text lands in `hkask-spreadsheet` with Phase 2.
 
 ### Phase 1 — Shared contracts
 

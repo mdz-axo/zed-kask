@@ -85,7 +85,6 @@ classDiagram
         +embedding_model: String
         +classifier_model: String
         +qa_generation_model: String
-        +qa_verification_model: String
         +ocr_model: String
         +rerank_model: String
     }

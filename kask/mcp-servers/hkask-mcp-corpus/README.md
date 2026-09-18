@@ -231,37 +231,29 @@ binds one passage decision and one ordered level mandate to every prepared promp
 `prompt_id`, `chunk_ref`, and `source`. V1, partial, duplicate, unknown, reordered, or
 identity-mismatched rows fail before output creation. A reviewed passage skip writes
 all mandated prompt-wide terminal rows without inference. A reviewed admit bypasses
-both passage-quality and disposition review: the generator receives the level mandates,
+the passage-quality call: the generator receives the level mandates,
 selects evidence for mandated generation, and its parsed plan is compared to the
 mandates deterministically. One mismatch receives one generator-owned correction with
 the exact error; a second mismatch fails the prompt.
 
 Without a manifest, the generation model proposes one focused whole-passage quality
-decision. A proposed skip short-circuits immediately. A proposed clean decision is
-independently reviewed by the distinct verification model; reviewed skip short-circuits,
-reviewed clean continues, and a malformed review receives one correction before failing
-closed. The disposition planner then returns one ordered plan per requested level, and
-a separate focused verification-model pass reviews that proposal. A generated level
-fixes one to three evidence IDs before any question or answer is written; conceptual
-generation also fixes one closed relation
+decision. A proposed skip short-circuits immediately. A proposed clean decision
+continues to the disposition planner, which returns one ordered plan per requested
+level; a malformed plan receives exactly one generator-owned schema correction before
+the prompt fails closed. A generated level fixes one to three evidence IDs before any
+question or answer is written; conceptual generation also fixes one closed relation
 kind (`mechanism`, `relationship`, `causal_relationship`, `distinction`, `purpose`,
 `framework`, or `transferable_principle`). An unsupported level records its canonical
 `<level>_support_absent` reason.
 
-The writer receives only the reviewed generated levels and their selected source
+The writer receives only the planned generated levels and their selected source
 spans. It cannot add, remove, reorder, relabel or skip levels, and it cannot
 select new evidence. It writes compact `{"level":"...","question":"...","answer":"..."}`
-objects. The distinct verification model returns verdict objects only: each generated
-level has `level`, `verdict` (`accept` or `correct`), boolean `subject`, `condition`,
-`premise`, `entailment`, `completeness`, and `actual_difficulty` checks, plus
-`findings`. Acceptance requires every check true and no findings; correction requires
-at least one false check and nonempty findings. Unknown fields are rejected, so the
-verifier cannot return replacement QA. A `correct` verdict sends the unchanged plan,
-evidence, draft, and typed findings back to the generator for one correction, followed
-by one independent re-verification. A second `correct` verdict fails the whole prompt.
-The server recombines only the finally accepted generator draft with planned skips,
-restores immutable `QaEvidence {chunk_ref, source, quote}` from `p0`, and validates
-the existing final row contract.
+objects; a malformed writer response receives exactly one metered schema correction
+before the prompt fails closed. No second model reviews, corrects, or accepts
+anything during generation: writer output completes directly as an unverified
+candidate. The server recombines the writer's completed levels with planned skips
+and restores immutable `QaEvidence {chunk_ref, source, quote}` from `p0`.
 
 Conceptual QA must explain its planned relation; direct recall of a name, list,
 title, number, stated explanation or sentence paraphrase is factual. Questions and
@@ -275,24 +267,46 @@ short, begins mid-sentence, contains notation or lacks conceptual support.
 `non_substantive_passage` and `contaminated_or_garbled` skip every requested level.
 For an admitted passage, factual must generate; each other level either generates
 (`conceptual` with one closed relation, all others with null relation) or skips with
-its exact `<level>_support_absent` reason. The QA verifier judges generated QA only:
-for reviewed mandates it cannot convert generation into a support skip. Any malformed
-passage review, plan, writer response, or verification verdict rejects the whole prompt
-after its applicable single correction. Semantic QA still requires the separate Stage 8
-audit; exact evidence restoration does not certify answer entailment. Generated rows
-use `prepared-qa-staged-quality-v8`; reviewed rows additionally record
+its exact `<level>_support_absent` reason. Any malformed quality decision, plan, or
+writer response rejects the whole prompt after its applicable single correction.
+Semantic QA still requires the separate Stage 8 audit; exact evidence restoration does
+not certify answer entailment. Generated rows use
+`prepared-qa-grounding-candidate-v1` with
+`grounding_status=pending_external_verification`; skips carry
+`grounding_status=not_applicable_skip`; reviewed rows additionally record
 `adjudication_protocol=prepared-qa-adjudication-v2`. Existing prepared JSONL remains
 `prepared-qa-local-evidence-v1` and does not need rebuilding.
 
-One accepted pair becomes one ingestible envelope:
+Generated rows are **candidates, never verified QA** — no model can promote its own
+output to verified. Acceptance happens only at ingestion through the identity-bound
+external grounding gate: `corpus_ingest_qa` fails closed unless every candidate has
+one row in a complete `prepared-qa-grounding-verification-v1` manifest whose
+`candidate_sha256` is the candidate raw line's SHA-256 and whose `prompt_id`,
+`chunk_ref`, `source`, and `qa_type` match the candidate exactly. Each row must judge
+exactly `instruction` and `output` once each with the exact candidate text,
+`entailment`, a 40+ character `why`, a closed provenance lattice
+(`tool_verified`/`platform_derived` at strength 2 — the ceiling for exact mechanical
+citation matches — or `model_inference` at strength 1), a valid ontology anchor
+(nonblank term/namespace/concept, tier ∈ domain, derived, upper, core), and a
+`source_reference` that equals one of the candidate's own evidence quotes, resolves
+to a canonical chunk in `source_chunks_jsonl`, and is an exact substring of that
+chunk's text. `fact_score_breakdown` must reconcile (`claims_checked` equals the
+judgment count, finite ratios in [0,1], weighted score within 1e-12 of
+0.30·sar + 0.25·cvr + 0.20·hfr + 0.25·nlr) with `fact_score ≥ 0.80`, and the row must
+be a clean decoupled acceptance: `verdict: accept`, no findings,
+`decoupling: spawn_agent`, confidence band medium or high. Nothing generated before
+this gate is ingestible; historical pilot artifacts (v2–v8) are immutable evidence
+only.
+
+One generated pair becomes one unverified candidate envelope:
 
 ```json
-{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","verification_model":"OpenRouter/example-verifier","adjudication_protocol":"prepared-qa-adjudication-v2","passage_quality_protocol":"prepared-qa-passage-quality-v1","disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-staged-quality-v8","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
+{"prompt_id":"qa-example","chunk_ref":"corpus:delay:0","source":"delay.txt","qa_type":"factual","response":{"instruction":"What is the delay?","output":"72 hours","type":"factual","concepts":["delay"],"evidence_quotes":[{"chunk_ref":"corpus:delay:0","source":"delay.txt","quote":"The delay is 72 hours."}]},"provenance":{"generator_model":"OpenRouter/example-model","grounding_status":"pending_external_verification","adjudication_protocol":null,"disposition_plan_protocol":"prepared-qa-disposition-plan-v1","prompt_protocol":"prepared-qa-grounding-candidate-v1","prepared_prompt_protocol":"prepared-qa-local-evidence-v1","prompt_id":"qa-example","source_chunk_ref":"corpus:delay:0"}}
 ```
 
 The model identifiers above are illustrative, not configured defaults. Batch usage
-and cost totals include every actual quality, review, planning, writing, correction,
-and re-verification provider response; they are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
+and cost totals include every actual quality, planning, writing, and correction
+provider response; they are not repeated on pair rows. Summaries separately reconcile `qa_levels_requested`,
 `qa_rows_written`, `qa_levels_skipped`, and `skip_reason_counts`, and report
 `reviewed_passage_admits`, `reviewed_passage_skips`, `reviewed_level_generates`, and
 `reviewed_level_skips` when a v2 manifest is present. A skip writes
@@ -302,31 +316,40 @@ protocol provenance, with no response. A failed prompt writes primary `prompt_id
 `finish_reason`, with no response; unavailable provider telemetry is null rather
 than fabricated. Skips and failed prompts are never training data.
 
-### Verification architecture references
+### Grounding-gate architecture references
 
-The QA pipeline uses a bounded generator–verifier recovery block, not an
-unbounded agent loop:
+The QA pipeline generates unverified candidates and defers acceptance to an
+identity-bound external grounding gate, not to a second model:
 
-- Madaan et al., *Self-Refine: Iterative Refinement with Self-Feedback*
-  ([arXiv:2303.17651](https://arxiv.org/abs/2303.17651); reference implementation:
-  [madaan/self-refine](https://github.com/madaan/self-refine)) supplies the explicit
-  draft → feedback → one refinement composition.
-- Dhuliawala et al., *Chain-of-Verification Reduces Hallucination in Large
-  Language Models* ([arXiv:2309.11495](https://arxiv.org/abs/2309.11495)) supplies
-  independently answered verification checks so draft context does not become its
-  own evidence.
-- Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*
-  ([arXiv:2306.05685](https://arxiv.org/abs/2306.05685)) documents position,
-  verbosity and self-enhancement biases; therefore verification requires a
-  separately configured model and records both model identities.
-- Avizienis, *The N-Version Approach to Fault-Tolerant Software* (IEEE TSE,
-  1985) and the recovery-block pattern ground design diversity, an acceptance
-  test, bounded alternate execution and fail-closed output.
+- W3C, *PROV-O: The PROV Ontology*
+  ([w3.org/TR/prov-o](https://www.w3.org/TR/prov-o/)) supplies the provenance
+  model: a candidate is an entity attributed to its generator, and acceptance
+  is a separate activity bound to entities the generator did not author.
+  The `candidate_sha256` identity binding is the derivation link that makes
+  a report row checkable against the exact bytes it claims to accept.
+- Thorne et al., *FEVER: a large-scale dataset for Fact Extraction and
+  VERification* ([arXiv:1803.05355](https://arxiv.org/abs/1803.05355))
+  grounds claim verification in retrieved textual evidence recorded by
+  annotators without knowledge of the sentence a claim was derived from —
+  the same separation the grounding manifest enforces: evidence quotes are
+  mechanically matched to canonical source bytes, never to generator output.
+- Es et al., *Ragas: Automated Evaluation of Retrieval Augmented Generation*
+  ([arXiv:2309.15217](https://arxiv.org/abs/2309.15217)) supplies the
+  faithfulness/context metric framing the fact_score breakdown follows
+  (weighted component ratios with nil-propagation for unperformed checks
+  and a release threshold of 0.80).
+- The project's Verification Commons Protocol v1.0 (2026-09-07), adapted from
+  Elinor Ostrom's institutional design for governing common-pool resources
+  (see `.agents/skills/grounding-verify/SKILL.md`), supplies bounded provenance,
+  decoupled monitoring (the `decoupling: spawn_agent` requirement — the
+  verifier must be a different process from the generator), graduated
+  sanctions, conflict precedence, and nested verification layers.
 
-The adaptation here is: generator draft → distinct-model typed verification → at
-most one feedback-guided correction → distinct-model re-verification. Stage 8
-remains an external oracle; an accepted model verdict is not promoted to factual
-truth.
+The adaptation here is: generator writes candidate → external grounding
+manifest cites canonical source bytes and binds to the candidate's SHA-256 →
+ingestion accepts only complete, exact-identity, decoupled acceptances. Stage 8
+remains an external semantic oracle; a grounding acceptance is not promoted to
+factual truth, and operator acceptance stays outside generation and ingestion.
 
 ## QA routing, scheduling and output ownership
 
@@ -342,11 +365,9 @@ Synchronous inference uses AIMD: starts at up to 2, adds one on success and halv
 on transient capacity failure, bounded by requested concurrency. Each retry gets
 its own slot. Only typed `Connection`, `Overloaded`, `Timeout` errors retry,
 with **at most 3 total attempts** and 2s/4s backoff. Auth/config/model failures and
-open circuits do not retry. A successful planning, writing, or verification response
-that fails its typed schema receives exactly one metered schema correction attempt.
-QA semantic correction is separately bounded to one generator refinement followed by
-one final verification; a second semantic rejection fails the whole prompt without
-partial rows
+open circuits do not retry. A successful planning or writing response that fails
+its typed schema receives exactly one metered schema correction attempt; a second
+schema failure fails the whole prompt without partial rows
 (`src/batch.rs`; `src/services/qa_batch.rs`).
 
 Before truncating output, the generator validates the entire input, resolves the
