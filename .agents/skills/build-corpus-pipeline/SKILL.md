@@ -478,14 +478,15 @@ rather than silently treating each source's `:0` chunk as representative. Run St
 on that pilot before expanding to full production; a pilot is evidence for a gate,
 never a reduced completion scope. Call
 `corpus_generate_qa_batch(prompts_jsonl, quality_adjudications_jsonl, output,
-concurrency, model)`. Pass null adjudications for the ordinary generator-owned
-path. Generation produces **unverified candidates only**: no second model
+concurrency, model)`. A complete identity-bound `prepared-qa-adjudication-v2`
+manifest is required — there is no unadjudicated generation path and no
+verification-model argument. Generation produces **unverified candidates only**: no second model
 reviews, corrects, or accepts anything during generation, and no verification
 model exists. Generated rows carry
 `prompt_protocol=prepared-qa-grounding-candidate-v1` and
 `grounding_status=pending_external_verification` (skips:
-`not_applicable_skip`). Preflight validates the whole prepared file, optional complete
-v2 manifest, and models before creating output. Record
+`not_applicable_skip`). Preflight validates the whole prepared file, the complete
+v2 manifest, and the model before creating output. Record
 prompt-level tokens, provider responses, reported cost and cost completeness at
 every shard; null/incomplete cost is unknown and blocks paid expansion.
 Input/output aliases (including symlink and hard-link aliases) are rejected.
@@ -500,10 +501,8 @@ schema receives exactly one metered correction attempt; a second rejection fails
 the whole prompt without partial rows. There is one synchronous prepared-prompt
 transport; no provider-batch side path.
 
-With no adjudication manifest, the generator returns exactly one
-disposition per requested level, in order. With a v2 manifest, reviewed passage skips
-write terminal rows before inference; reviewed admits bypass the passage-quality call
-and send the ordered level mandates to the generator. The server deterministically
+Reviewed passage skips write terminal rows before inference; reviewed admits send
+the ordered level mandates to the generator. The server deterministically
 compares the plan to those mandates, sends the exact mismatch back once for generator
 correction, and fails the prompt on a second mismatch. A supported level is a grounded
 QA tuple; an unsupported or contaminated level is an explicit quality skip:
@@ -524,13 +523,13 @@ appears usable. Use only the closed skip reasons `non_substantive_passage`,
 `contaminated_or_garbled`, or the requested level's `<level>_support_absent` reason.
 For an admitted reviewed passage, factual must generate; conceptual generation requires
 one closed relation, while conceptual or later-level skips use the exact support-absent
-reason. Reviewed mandates cannot be re-litigated by the QA verifier. Malformed,
+reason. Malformed,
 ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
 Generated envelopes retain primary identity, candidate terms, QA type, canonical
 evidence and protocol/model provenance. Skip envelopes retain primary identity,
 requested QA type, closed reason and provenance but no response, and are never
-training data. Usage and cost totals include every returned disposition-proposal, disposition-review,
-QA-writing and draft-review provider response and are not repeated per pair. Matching quotation bytes
+training data. Usage and cost totals include every returned disposition-plan,
+mandate-correction, QA-writing and writer-schema-correction provider response and are not repeated per pair. Matching quotation bytes
 still does not validate answer synthesis or cognitive difficulty.
 
 **Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against

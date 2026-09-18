@@ -9301,6 +9301,7 @@ name = "hkask-tool-invoker"
 version = "0.40.0"
 dependencies = [
  "gpui",
+ "hkask-types",
  "serde",
  "serde_json",
  "tracing",

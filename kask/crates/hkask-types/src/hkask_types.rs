@@ -4,6 +4,7 @@
 //!
 
 pub mod agent_paths;
+pub mod block_provenance;
 pub mod corpus;
 
 pub mod curator;
@@ -25,6 +26,7 @@ pub mod ytdlp;
 pub mod regulation;
 pub mod secret;
 pub mod server_env;
+pub mod spreadsheet;
 pub mod template;
 
 pub use server_env::ServerEnv;
@@ -51,6 +53,7 @@ pub use document::{Block, DocStructure, Page};
 pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};
 pub use event::{RegulationRecord, RegulationSink};
 
+pub use block_provenance::BlockProvenance;
 pub use id::{
     BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
     PhaseId, TaskId, TemplateID, WebID,

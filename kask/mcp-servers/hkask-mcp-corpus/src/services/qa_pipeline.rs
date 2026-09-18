@@ -10,9 +10,7 @@ use serde_json::{Value, json};
 
 use crate::batch::BatchOutcome;
 use crate::helpers::{map_corpus_io_error, read_jsonl};
-use crate::services::qa_adjudication::{
-    ReviewedLevelDecision, ReviewedPassageDecision, ReviewedQaAdjudication,
-};
+use crate::services::qa_adjudication::{ReviewedLevelDecision, ReviewedQaAdjudication};
 use crate::tools::corpus::{QaType, qa_type_instruction};
 
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
@@ -1142,6 +1140,7 @@ fn qa_skip_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::qa_adjudication::ReviewedPassageDecision;
 
     /// expect: QA generation is deterministic and never enables model thinking.
     #[test]

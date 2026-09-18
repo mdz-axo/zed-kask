@@ -21,7 +21,10 @@
 //!    widget can re-issue the *originating* MCP tool with modified args. Without
 //!    it, a widget can display an artifact but cannot iterate on it; the user
 //!    must re-ask the agent. Provenance is `#[serde(default)]` and additive on
-//!    each block body, so existing tolerant parsers are unaffected.
+//!    each block body, so existing tolerant parsers are unaffected. The
+//!    serializable type itself moved to `hkask_types::block_provenance`
+//!    (LogiSheets plan §5.2: MCP-side block construction could not depend on a
+//!    GPUI crate); this crate re-exports it so widget imports compile unchanged.
 //!
 //! ## Why a leaf crate
 //!
@@ -36,7 +39,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::Task;
-use serde::Deserialize;
 use serde_json::Value;
 
 /// Why a UI-initiated tool call failed, at the granularity a panel needs to
@@ -147,62 +149,11 @@ pub fn shared_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
     TOOL_INVOKER.lock().expect("TOOL_INVOKER poisoned").clone()
 }
 
-/// Provenance for a rendered widget block: which MCP tool produced this
-/// artifact, with which args, and under which regulation span.
-///
-/// A widget carries this so it can re-issue the originating tool with modified
-/// args — letting the user iterate on the displayed artifact (e.g. scrub a
-/// portfolio date range, override a scenario probability, move a kanban task)
-/// without re-explaining the request to the agent. The block body is the agent's
-/// output, so provenance is only as honest as the emitter; MCP servers bake it
-/// into their `display_hint` blocks (authoritative) rather than relying on the
-/// agent to copy it faithfully.
-///
-/// Every field is `#[serde(default)]` so adding provenance to a block body is
-/// non-breaking: bodies emitted before provenance lands parse with all fields
-/// empty, and the widget falls back to a read-only display.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct BlockProvenance {
-    /// The MCP tool name that produced this block (e.g. `"portfolio_returns"`).
-    #[serde(default)]
-    pub tool: Option<String>,
-    /// The MCP server name that hosts the tool (e.g. `"hkask-mcp-companies"`).
-    #[serde(default)]
-    pub server: Option<String>,
-    /// The args the tool was invoked with, as a JSON object. A widget re-issues
-    /// the tool by merging its modification into this object.
-    #[serde(default)]
-    pub args: Value,
-    /// The `reg.*` span id under which the producing tool call was traced, for
-    /// observability and re-ask detection.
-    #[serde(default)]
-    pub span_id: Option<String>,
-}
-
-impl BlockProvenance {
-    /// Whether this provenance is sufficient to re-issue the tool: it needs
-    /// both a tool name and a server name. Widgets use this to decide whether
-    /// to show an active affordance or a disabled "ask the agent" hint.
-    pub fn is_dispatchable(&self) -> bool {
-        self.tool.is_some() && self.server.is_some()
-    }
-
-    /// Whether provenance carries no dispatchable signal (no tool, no server,
-    /// null/absent args) — the shape a block body emitted before provenance
-    /// landed has. Widgets use this to decide between a provenance-driven
-    /// dispatch and the hardcoded fallback; any other non-dispatchable shape is
-    /// treated as a partial/incomplete provenance and disabled.
-    pub fn is_empty(&self) -> bool {
-        self.tool.is_none()
-            && self.server.is_none()
-            && (self.args.is_null()
-                || self
-                    .args
-                    .as_object()
-                    .map(serde_json::Map::is_empty)
-                    .unwrap_or(false))
-    }
-}
+/// The serializable provenance value type now lives in
+/// `hkask_types::block_provenance` (LogiSheets plan §5.2) so MCP-side block
+/// construction has one Zed-free, server-authoritative contract. Re-exported
+/// here so the widget crates' imports compile unchanged.
+pub use hkask_types::BlockProvenance;
 
 // ── reask correlator (T7b) ──────────────────────────────────────────────────
 //
@@ -307,47 +258,9 @@ pub fn correlate_reask(user_message: bool) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn provenance_defaults_empty_and_not_dispatchable() {
-        let p = BlockProvenance::default();
-        assert!(p.tool.is_none());
-        assert!(p.server.is_none());
-        assert!(p.args.is_null());
-        assert!(p.span_id.is_none());
-        assert!(!p.is_dispatchable());
-    }
-
-    #[test]
-    fn provenance_parses_partial_body() {
-        let p: BlockProvenance = serde_json::from_str(r#"{"tool":"portfolio_returns"}"#).unwrap();
-        assert_eq!(p.tool.as_deref(), Some("portfolio_returns"));
-        assert!(p.server.is_none());
-        assert!(!p.is_dispatchable());
-    }
-
-    #[test]
-    fn provenance_dispatchable_when_tool_and_server_present() {
-        let p: BlockProvenance = serde_json::from_str(
-            r#"{"tool":"scenario_quantify","server":"hkask-mcp-scenarios","args":{"event_id":"e1"}}"#,
-        )
-        .unwrap();
-        assert!(p.is_dispatchable());
-    }
-
-    #[test]
-    fn provenance_absent_field_parses_as_empty() {
-        // A block body emitted before provenance lands has no `provenance` key.
-        // The widget parses the body; provenance defaults empty. This pins that
-        // adding the field is non-breaking.
-        let body: serde_json::Value =
-            serde_json::from_str(r#"{"viz":"scenarios","pipeline":{}}"#).unwrap();
-        let p: BlockProvenance = body
-            .get("provenance")
-            .cloned()
-            .map(|v| serde_json::from_value(v).unwrap_or_default())
-            .unwrap_or_default();
-        assert!(!p.is_dispatchable());
-    }
+    // (The four BlockProvenance semantics tests moved with the type to
+    // `hkask_types::block_provenance` — they test the type's wire contract,
+    // not the invoker seam.)
 
     // ── reask correlator tests (T7b) ────────────────────────────────────────
     //

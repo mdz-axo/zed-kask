@@ -534,7 +534,6 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
 | `HKASK_QA_GENERATION_MODEL` | corpus | `models.qa_generation_model` (no default) |
-| `HKASK_QA_VERIFICATION_MODEL` | corpus | `models.qa_verification_model` (no default or fallback) |
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
 | `HKASK_MCP_SERVER_IDS` | swarm | `BUILT_IN_MCP_SERVERS_IDS` joined (unconditional) |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
