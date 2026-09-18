@@ -31,10 +31,6 @@ use workspace::{
 pub use media_viewer::MediaViewer;
 pub use panel_button::MediaPanelButton;
 
-/// The MCP server id this panel's Steer conversation is scoped to.
-/// Matches `kask_bridge::mcp_servers::BUILT_IN_MCP_SERVERS` (id: "media").
-const MEDIA_SERVER: &str = "media";
-
 actions!(
     media_panel,
     [
@@ -215,7 +211,6 @@ impl MediaPanel {
         hkask_steer::ensure_steer(
             &mut self.steer,
             hkask_steer::SteerContext {
-                server_scope: MEDIA_SERVER.into(),
                 system_prompt: steer_system_prompt(),
                 fs: self.fs.clone(),
                 project: self.project.clone(),

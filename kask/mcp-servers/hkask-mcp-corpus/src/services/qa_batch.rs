@@ -1,10 +1,7 @@
-//! Prepared QA generation with AIMD-gated synchronous inference.
+//! Prepared QA candidate generation with AIMD-gated synchronous inference.
 //!
-//! Composition: a bounded recovery block informed by Self-Refine
-//! (arXiv:2303.17651) and Chain-of-Verification (arXiv:2309.11495). Review
-//! stages use a distinct configured model to mitigate LLM-judge self-enhancement
-//! bias documented by Zheng et al. (arXiv:2306.05685). The recovery block's
-//! acceptance test remains the external Stage 8 audit, not an internal model verdict.
+//! Generation fixes passage, level, evidence, and draft shape. It does not verify
+//! its own claims: the external grounding manifest at ingestion owns acceptance.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -25,14 +22,11 @@ use crate::services::qa_adjudication::{
     read_complete_adjudications,
 };
 use crate::services::qa_pipeline::{
-    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaDispositionPlan, QaOutput,
-    QaResponseMetadata, QaVerificationVerdicts, enforce_reviewed_adjudication,
-    merge_disposition_plans, parse_disposition_plan_response, parse_passage_quality_response,
-    parse_planned_qa_verdicts, prompt_wide_skip_plan, qa_llm_parameters, read_prompts,
-    render_disposition_plan_messages, render_disposition_review_messages,
-    render_passage_quality_messages, render_passage_quality_review_messages,
-    render_planned_qa_correction_messages, render_planned_qa_messages,
-    render_planned_qa_review_messages,
+    PassageQuality, PreparedQaPrompt, QaCompletion, QaCompletionError, QaOutput,
+    QaResponseMetadata, enforce_reviewed_adjudication, merge_disposition_plans,
+    parse_disposition_plan_response, parse_passage_quality_response, prompt_wide_skip_plan,
+    qa_llm_parameters, read_prompts, render_disposition_plan_messages,
+    render_passage_quality_messages, render_planned_qa_messages,
 };
 
 use crate::tools::semantic::qa::map_qa_inference_error;
@@ -121,70 +115,6 @@ async fn infer_with_retry(
     .await
 }
 
-async fn verify_with_retry(
-    router: &Arc<dyn InferencePort>,
-    limiter: &AdaptiveLimiter,
-    selected_model: &str,
-    messages: &[ChatMessage],
-    prompt_id: &str,
-    phase: &str,
-) -> Result<InferenceResult, QaCompletionError> {
-    let mut parameters = qa_llm_parameters();
-    parameters.thinking_allowed = true;
-    infer_with_retry_using(
-        router,
-        limiter,
-        selected_model,
-        parameters,
-        messages,
-        prompt_id,
-        phase,
-    )
-    .await
-}
-
-async fn verify_qa_draft(
-    router: &Arc<dyn InferencePort>,
-    limiter: &AdaptiveLimiter,
-    selected_verification_model: &str,
-    messages: &[ChatMessage],
-    prompt_id: &str,
-    phase: &str,
-    plan: &QaDispositionPlan,
-    prior_responses: &mut Vec<QaResponseMetadata>,
-) -> Result<(InferenceResult, Result<QaVerificationVerdicts, String>), QaCompletionError> {
-    let mut response = verify_with_retry(
-        router,
-        limiter,
-        selected_verification_model,
-        messages,
-        prompt_id,
-        phase,
-    )
-    .await?;
-    let mut verdicts =
-        parse_planned_qa_verdicts(&crate::extract_json_from_response(&response.text), plan);
-    if let Err(error) = &verdicts {
-        prior_responses.push(response_metadata(&response));
-        let mut correction_messages = messages.to_vec();
-        correction_messages[0].content.push_str(&format!(
-            " Your verdict failed the strict typed schema: {error}. Return one corrected verdict array only; never output QA content."
-        ));
-        response = verify_with_retry(
-            router,
-            limiter,
-            selected_verification_model,
-            &correction_messages,
-            prompt_id,
-            &format!("{phase} schema correction"),
-        )
-        .await?;
-        verdicts =
-            parse_planned_qa_verdicts(&crate::extract_json_from_response(&response.text), plan);
-    }
-    Ok((response, verdicts))
-}
-
 struct QaOutputLease {
     path: PathBuf,
     opened: AtomicBool,
@@ -235,7 +165,6 @@ pub(crate) struct QaBatchRequest {
     pub output: String,
     pub concurrency: usize,
     pub model: Option<String>,
-    pub verification_model: Option<String>,
 }
 
 pub struct QaBatchService {
@@ -260,7 +189,6 @@ impl QaBatchService {
             output,
             concurrency,
             model,
-            verification_model,
         } = request;
         let prompts = read_prompts(&prompts_jsonl)?;
         let adjudications = quality_adjudications_jsonl
@@ -270,16 +198,7 @@ impl QaBatchService {
         let selected_model =
             hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
                 .map_err(map_qa_inference_error)?;
-        let selected_verification_model =
-            hkask_inference::model_constants::resolve_qa_verification_model(
-                verification_model.as_deref(),
-            )
-            .map_err(map_qa_inference_error)?;
-        if selected_model == selected_verification_model {
-            return Err(McpToolError::invalid_argument(
-                "QA generation and verification models must be different",
-            ));
-        }
+
         let output_path = crate::path_safety::distinct_output_path(&prompts_jsonl, &output)?;
         if let Some(path) = quality_adjudications_jsonl.as_deref() {
             crate::path_safety::distinct_output_path(path, &output)?;
@@ -292,7 +211,6 @@ impl QaBatchService {
         // No BufWriter: cancellation must not depend on an unchecked drop-time
         // flush to preserve completed rows. File errors surface at the write.
         let mut completions = QaOutput::new(file, prompts.len());
-        completions.set_verification_model(&selected_verification_model);
         if let Some(adjudications) = adjudications.as_ref() {
             completions.set_reviewed_adjudications(
                 QA_ADJUDICATION_PROTOCOL,
@@ -306,7 +224,6 @@ impl QaBatchService {
             prompts,
             adjudications,
             &selected_model,
-            &selected_verification_model,
             AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR),
             completions,
             lease,
@@ -320,7 +237,6 @@ impl QaBatchService {
         prompts: Vec<PreparedQaPrompt>,
         adjudications: Option<ReviewedQaAdjudications>,
         selected_model: &str,
-        selected_verification_model: &str,
         limiter: AdaptiveLimiter,
         mut completions: QaOutput<W>,
         lease: Arc<QaOutputLease>,
@@ -345,7 +261,6 @@ impl QaBatchService {
                 let router = Arc::clone(&self.inference_router);
                 let limiter = limiter.clone();
                 let selected_model = selected_model.to_owned();
-                let selected_verification_model = selected_verification_model.to_owned();
                 let task_lease = Arc::clone(&lease);
                 let quality_messages = render_passage_quality_messages(&prompt)?;
                 let planning_messages = render_disposition_plan_messages(

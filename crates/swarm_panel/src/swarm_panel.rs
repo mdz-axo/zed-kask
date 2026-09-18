@@ -891,7 +891,6 @@ impl SwarmPanel {
         hkask_steer::ensure_steer(
             &mut self.steer,
             hkask_steer::SteerContext {
-                server_scope: SWARM_SERVER.into(),
                 system_prompt: steer_system_prompt(self.selected_workspace.as_deref(), mode),
                 fs: self.fs.clone(),
                 project: self.project.clone(),

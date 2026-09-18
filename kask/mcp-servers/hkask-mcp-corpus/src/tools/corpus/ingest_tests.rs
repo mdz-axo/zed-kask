@@ -276,7 +276,9 @@ async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
     let mut req = request(directory.path(), false);
-    std::fs::write(&req.generated_jsonl, flat(0, ANSWERS[0]).to_string())?;
+    let row = flat(0, ANSWERS[0]).to_string();
+    std::fs::write(&req.generated_jsonl, &row)?;
+    write_grounding(directory.path(), &[row])?;
     req.output = directory.path().to_string_lossy().into_owned();
     assert!(server.corpus_ingest_qa(Parameters(req)).await.is_err());
     assert!(!directory.path().join("memory.db").exists());
@@ -298,10 +300,12 @@ async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
 async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
     let directory = fixture()?;
     let req = request(directory.path(), false);
-    std::fs::write(
-        &req.generated_jsonl,
-        format!("{}\n{}\n", flat(0, ANSWERS[0]), flat(1, ANSWERS[1])),
-    )?;
+    let rows = [
+        flat(0, ANSWERS[0]).to_string(),
+        flat(1, ANSWERS[1]).to_string(),
+    ];
+    std::fs::write(&req.generated_jsonl, rows.join("\n"))?;
+    write_grounding(directory.path(), &rows)?;
     let store = crate::helpers::open_memory_store(&req.db_path, PASSPHRASE)?;
     let database = hkask_storage::Database::open(&req.db_path, PASSPHRASE)?;
     database
@@ -464,6 +468,11 @@ async fn generation_ingest_audit_metadata_roundtrip() -> anyhow::Result<()> {
     )?;
     assert_eq!(generated["qa_rows_written"], 2);
     assert_eq!(generated["prompts_failed"], 0);
+    let generated_lines = std::fs::read_to_string(&req.generated_jsonl)?
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    write_grounding(directory.path(), &generated_lines)?;
     let summary = content(
         server
             .corpus_ingest_qa(Parameters(request(directory.path(), false)))

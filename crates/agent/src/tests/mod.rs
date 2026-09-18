@@ -5097,12 +5097,10 @@ async fn enable_all_context_servers_profile(fs: &Arc<FakeFs>, cx: &mut TestAppCo
     cx.run_until_parked();
 }
 
-/// Pin D2 (per-tab MCP server scoping, `with_mcp_server_scope`): a thread
-/// scoped to one MCP server excludes every other server's tools from the
-/// surface the model sees, while an unscoped (upstream default) thread
-/// surfaces both servers' tools.
+/// Steer and ordinary threads retain the full cross-domain MCP surface: tools
+/// from independently registered servers are presented together.
 #[gpui::test]
-async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppContext) {
+async fn test_context_server_tools_remain_cross_domain(cx: &mut TestAppContext) {
     let ThreadTest {
         model,
         thread,
@@ -5129,7 +5127,7 @@ async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppCon
         cx,
     );
 
-    // Unscoped (upstream default): both servers' tools surface.
+    // Both independently registered servers' tools surface together.
     thread.update(cx, |thread, cx| {
         thread
             .send(ClientUserMessageId::new(), ["list tools"], cx)
@@ -5148,33 +5146,6 @@ async fn test_mcp_server_scope_excludes_out_of_scope_servers(cx: &mut TestAppCon
     assert!(
         names.contains(&"out_of_scope_tool".to_string()),
         "unscoped thread must see the other server's tool: {names:?}"
-    );
-    fake_model.end_last_completion_stream();
-
-    // Scoped to `scoped_server`: the other server's tools are excluded.
-    thread.update(cx, |thread, _| {
-        thread
-            .kask
-            .set_mcp_server_scope(Some("scoped_server".into()));
-    });
-    thread.update(cx, |thread, cx| {
-        thread
-            .send(ClientUserMessageId::new(), ["list tools again"], cx)
-            .unwrap()
-    });
-    cx.run_until_parked();
-    let completion = fake_model
-        .pending_completions()
-        .pop()
-        .expect("completion after scoped send");
-    let names = tool_names_for_completion(&completion);
-    assert!(
-        names.contains(&"in_scope_tool".to_string()),
-        "the scoped server's own tool must remain visible: {names:?}"
-    );
-    assert!(
-        !names.contains(&"out_of_scope_tool".to_string()),
-        "an out-of-scope server's tool must be excluded from a scoped thread: {names:?}"
     );
     fake_model.end_last_completion_stream();
 }

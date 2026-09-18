@@ -1,8 +1,9 @@
 //! hkask-steer — the shared Steer-mode surface for kask panels.
 //!
-//! Steer mode embeds a curator `ConversationView` in a panel, scoped to the
-//! panel's MCP server (`with_mcp_server_scope` enforces, the system prompt
-//! declares). Both `kanban_panel` and `swarm_panel` hand-rolled this
+//! Steer mode embeds a curator `ConversationView` in a panel with the full
+//! cross-domain MCP surface. The panel prompt supplies workflow context but
+//! does not restrict which servers the conversation can use. Both
+//! `kanban_panel` and `swarm_panel` hand-rolled this
 //! lifecycle with divergent wiring; this crate is the single deep module
 //! that owns it:
 //!
@@ -44,9 +45,6 @@ pub use hkask_steer_core::{
 
 /// The per-panel inputs a Steer conversation is constructed from.
 pub struct SteerContext {
-    /// The MCP server id the conversation is scoped to (e.g. `"kanban"`,
-    /// `"swarm"`). Must match the server's `ContextServerId`.
-    pub server_scope: SharedString,
     /// The panel-owned system prompt (behavioral prose + tool
     /// advertisement). Verify it with `verify_tool_advertisement`.
     pub system_prompt: SharedString,
@@ -72,8 +70,7 @@ impl SteerContext {
     ) -> Entity<ConversationView> {
         let agent_server = Rc::new(
             CuratorAgentServer::new(self.fs, thread_store.clone())
-                .with_extra_static_context(self.system_prompt)
-                .with_mcp_server_scope(self.server_scope),
+                .with_extra_static_context(self.system_prompt),
         );
         let resume_session_id = self.resume_session_id.clone();
         // A resumed thread must reuse its stored ThreadId: ConversationView

@@ -8654,14 +8654,12 @@ mod internal_tests {
         })
     }
 
-    /// End-to-end pin for the kask panel's per-tab scoping: two
-    /// `CuratorAgentServer`s built with different per-tab scopes and
-    /// prompts must produce two connections whose sessions carry the
-    /// matching scope and static context — the runtime chain the original
-    /// bug broke (companies tab showing the curator-scoped header with all
-    /// MCP tools reachable).
+    /// Panel workflow prompts are appended to the Curator context without
+    /// narrowing the conversation's cross-domain MCP tool surface.
     #[gpui::test]
-    async fn test_curator_sessions_carry_per_tab_scope_and_prompt(cx: &mut TestAppContext) {
+    async fn test_curator_sessions_carry_panel_prompt_without_server_scope(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
@@ -8670,8 +8668,7 @@ mod internal_tests {
         for (server, expected_fragment) in [("companies", "companies"), ("curator", "curator")] {
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
             let server_struct = CuratorAgentServer::new(fs.clone(), thread_store)
-                .with_extra_static_context(format!("scoped to {server}").into())
-                .with_mcp_server_scope(server.into());
+                .with_extra_static_context(format!("workflow for {server}").into());
             let connection = cx
                 .update(|cx| {
                     server_struct.connect(
@@ -8705,13 +8702,7 @@ mod internal_tests {
 
             cx.update(|cx| {
                 thread.read_with(cx, |thread, _cx| {
-                    // The scope matches the tab's server.
-                    assert_eq!(
-                        thread.mcp_server_scope().map(|s| s.as_ref()),
-                        Some(server),
-                        "session scope must match the tab's server"
-                    );
-                    // The static context carries the per-tab prompt
+                    // The static context carries the per-panel workflow prompt
                     // (appended to the curator base context).
                     let static_context = thread
                         .agent_static_context()

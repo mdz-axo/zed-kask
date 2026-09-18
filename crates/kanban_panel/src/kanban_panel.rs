@@ -872,7 +872,6 @@ impl KanbanPanel {
         hkask_steer::ensure_steer(
             &mut self.steer,
             SteerContext {
-                server_scope: KANBAN_SERVER.into(),
                 system_prompt: steer_system_prompt(self.selected_board_id.as_deref()),
                 fs,
                 project,

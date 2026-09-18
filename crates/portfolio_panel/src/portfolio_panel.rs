@@ -25,9 +25,6 @@ use workspace::{
 pub use panel_button::PortfolioPanelButton;
 pub use portfolio_viewer::PortfolioViewer;
 
-/// The MCP server id this panel's Steer conversation is scoped to.
-const PORTFOLIO_SERVER: &str = "hkask-mcp-portfolio";
-
 actions!(
     portfolio_panel,
     [
@@ -148,7 +145,6 @@ impl PortfolioPanel {
         hkask_steer::ensure_steer(
             &mut self.steer,
             hkask_steer::SteerContext {
-                server_scope: PORTFOLIO_SERVER.into(),
                 system_prompt: steer_system_prompt(),
                 fs: self.fs.clone(),
                 project: self.project.clone(),
