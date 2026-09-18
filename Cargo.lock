@@ -9083,6 +9083,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-spreadsheet"
+version = "0.40.0"
+dependencies = [
+ "hkask-mcp-server",
+ "hkask-spreadsheet",
+ "hkask-types",
+ "regex",
+ "rmcp",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hkask-mcp-swarm"
 version = "0.40.0"
 dependencies = [

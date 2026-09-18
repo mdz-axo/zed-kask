@@ -507,6 +507,26 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_EMBEDDING_MODEL",
         ]),
     },
+    BuiltinMcpServer {
+        id: "spreadsheet",
+        binary: "hkask-mcp-spreadsheet",
+        description: "Spreadsheet — central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits (spreadsheet_apply) and interrupted-operation reconciliation (spreadsheet_operation_get) over immutable workbook revisions",
+        // The spreadsheet server is the central mutation owner (LogiSheets
+        // plan §4): no credentials, no provider feeds. It reads only
+        // HKASK_ARTIFACTS_DIR — the artifact root for immutable workbook
+        // revisions resolves via `hkask_spreadsheet::artifact_store::
+        // production_root` → `agent_paths::resolve_under_artifacts_dir`.
+        credentials: Some(&[]),
+        config_env: Some(&[
+            // Artifacts dir — needed so `production_root` resolves
+            // `spreadsheet-mcp/workbooks/` under the same visible root as
+            // the parent process. Without this, an operator
+            // `HKASK_ARTIFACTS_DIR` override is silently dropped by
+            // `filter_config_env_for_server` (the same trap the portfolio
+            // entry documents).
+            "HKASK_ARTIFACTS_DIR",
+        ]),
+    },
 ];
 
 /// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].
@@ -1074,6 +1094,35 @@ mod tests {
             ],
             "portfolio config_env allowlist drifted — add an entry only with \
              a read site in hkask-mcp-portfolio"
+        );
+    }
+
+    // The spreadsheet server is the central mutation owner (LogiSheets plan
+    // §4): no credentials, no provider feeds, no database. This pins the
+    // blast radius — a future edit that adds a provider key here would leak
+    // it to a process that has no read site for it.
+    #[test]
+    fn spreadsheet_allowlist_matches_actual_reads() {
+        let s = server_by_id("spreadsheet");
+        // Read sites: none — spreadsheet mutation is provider-agnostic.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            Vec::<&str>::new(),
+            "spreadsheet credentials allowlist drifted — the spreadsheet \
+             capability is provider-agnostic; add a credential only with a \
+             read site in hkask-mcp-spreadsheet"
+        );
+        // HKASK_ARTIFACTS_DIR is read in `run()` via
+        // `hkask_spreadsheet::artifact_store::production_root` →
+        // `agent_paths::resolve_under_artifacts_dir` in hkask-types.
+        // Allowlisted so operator overrides are not silently dropped by
+        // `filter_config_env_for_server`.
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec!["HKASK_ARTIFACTS_DIR"],
+            "spreadsheet config_env allowlist drifted — add an entry only \
+             with a read site in hkask-mcp-spreadsheet (transitively \
+             hkask-spreadsheet / hkask-types)"
         );
     }
 

@@ -28,6 +28,7 @@
 //!   model never authors dispatch authority (an incomplete provenance is
 //!   rejected at construction).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -73,7 +74,7 @@ pub const SPREADSHEET_VIZ: &str = "spreadsheet";
 ///
 /// Analytical outputs are data, never formulas: formulas enter through
 /// [`CellEdit::SetFormula`] in an [`EditTransaction`] against a WhatIf workbook.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum TableValue {
     Number(f64),
     Text(String),
@@ -85,7 +86,7 @@ pub enum TableValue {
 
 /// The declared type of a table column. A conversion hint for the engine and
 /// the widget; the wire stays `TableValue`-typed per cell.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ColumnKind {
     Number,
     Text,
@@ -97,7 +98,7 @@ pub enum ColumnKind {
 
 /// One typed column of an [`AnalyticalTable`]. `id` is the column identity:
 /// stable across revisions, used for edit-coordinate addressing by column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TableColumn {
     pub id: String,
     pub label: String,
@@ -108,7 +109,7 @@ pub struct TableColumn {
 
 /// Typed columns and rows produced by an analytical operation (plan §2).
 /// Rectangular by construction: every row has exactly one value per column.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AnalyticalTable {
     pub title: String,
     /// The sheet the publisher intends this table to occupy in a workbook.
@@ -222,7 +223,7 @@ impl AnalyticalTable {
 
 /// A cell position, document-independent-validatable: the sheet must be
 /// named and the coordinates must sit below the Excel sheet ceiling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CellCoordinate {
     pub sheet: String,
     pub row: usize,
@@ -258,7 +259,7 @@ impl CellCoordinate {
 
 /// A bounded rectangular window into a sheet — the transport form of the
 /// widget's initial viewport (plan §6: bounded, never whole-sheet dumps).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SpreadsheetViewport {
     pub sheet: String,
     pub start_row: usize,
@@ -333,7 +334,7 @@ impl SpreadsheetViewport {
 /// spreadsheet artifact root (plan §7). Never carries a filesystem path —
 /// the engine resolves the opaque ids; a multi-segment id is a path-escape
 /// attempt and is rejected here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SpreadsheetArtifactRef {
     pub artifact_id: String,
     pub revision_id: String,
@@ -393,7 +394,7 @@ impl SpreadsheetArtifactRef {
 
 /// The presentation mode an analytical caller explicitly chooses (plan §6).
 /// There is no hidden row-count threshold that silently changes modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SpreadsheetAccess {
     /// Existing JSON for agent reasoning. No block, no persistence.
     DataOnly,
@@ -439,7 +440,7 @@ impl ArtifactOrigin {
 // ── Edit transactions ───────────────────────────────────────────────────────
 
 /// One typed cell edit inside an [`EditTransaction`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum CellEdit {
     SetCell {
         coordinate: CellCoordinate,
@@ -488,7 +489,7 @@ impl CellEdit {
 /// is a [`SpreadsheetError::Conflict`], never a silent overwrite of a stale
 /// base), the typed edits, the idempotency key for interrupted-operation
 /// reconciliation, and the access mode the caller expects.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EditTransaction {
     pub base_artifact: SpreadsheetArtifactRef,
     pub idempotency_key: String,

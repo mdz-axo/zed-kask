@@ -48,6 +48,8 @@ pub use service::{
     PublishOptions, SpreadsheetPublication, ViewportContent, WorkbookDocument, WorkbookService,
 };
 
+pub use artifact_store::{ArtifactMeta, OperationRecord};
+
 /// Maximum payloads applied to the engine in one transaction. Chunked because
 /// `handle_action` cost is superlinear in transaction size (Phase 0 admission
 /// record: 20,000 payloads in one transaction took 82.6s; 20 chunks of 1,000

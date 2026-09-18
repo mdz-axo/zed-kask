@@ -289,9 +289,9 @@ pub(crate) fn read_grounding_chunks(
     Ok(chunks)
 }
 
-fn chunk_index<'a>(
-    chunks: &'a [hkask_types::corpus::TaggedChunk],
-) -> HashMap<&'a str, &'a hkask_types::corpus::TaggedChunk> {
+fn chunk_index(
+    chunks: &[hkask_types::corpus::TaggedChunk],
+) -> HashMap<&str, &hkask_types::corpus::TaggedChunk> {
     chunks
         .iter()
         .map(|chunk| (chunk.entity_ref.as_str(), chunk))

@@ -415,7 +415,7 @@ async fn ingest_requires_grounding_manifest_before_any_write() -> anyhow::Result
     let server = server();
     let row = flat(0, ANSWERS[0]).to_string();
     std::fs::write(directory.path().join("generated.jsonl"), &row)?;
-    let chunks = chunk_rows_from_candidates(&[row.clone()])?;
+    let chunks = chunk_rows_from_candidates(std::slice::from_ref(&row))?;
     std::fs::write(
         directory.path().join("chunks.jsonl"),
         chunks

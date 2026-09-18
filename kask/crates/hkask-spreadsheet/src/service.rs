@@ -68,6 +68,11 @@ enum Command {
         transaction: hkask_types::spreadsheet::EditTransaction,
         respond: oneshot::Sender<Result<SpreadsheetPublication, SpreadsheetError>>,
     },
+    OperationGet {
+        artifact_id: String,
+        idempotency_key: String,
+        respond: oneshot::Sender<Result<Option<OperationRecord>, SpreadsheetError>>,
+    },
     Viewport {
         key: DocumentKey,
         window: SpreadsheetViewport,
@@ -195,6 +200,24 @@ impl WorkbookService {
         })?;
         receiver.await.map_err(|_| actor_down())?
     }
+
+    /// Look up a completed operation by its idempotency key (§7
+    /// reconciliation for interrupted mutations). `Ok(None)` means the
+    /// outcome is UNKNOWN — the operation may or may not have been applied;
+    /// callers must not blindly retry (the widget does not auto-replay).
+    pub async fn operation_get(
+        &self,
+        artifact_id: String,
+        idempotency_key: String,
+    ) -> Result<Option<OperationRecord>, SpreadsheetError> {
+        let (respond, receiver) = oneshot::channel();
+        self.send(Command::OperationGet {
+            artifact_id,
+            idempotency_key,
+            respond,
+        })?;
+        receiver.await.map_err(|_| actor_down())?
+    }
 }
 
 // The `Arc<Self>` reborrow note: `open` uses the `&Arc<Self>` receiver so
@@ -315,6 +338,14 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                 respond,
             } => {
                 let result = handle_apply(&mut state, transaction);
+                deliver(respond, result);
+            }
+            Command::OperationGet {
+                artifact_id,
+                idempotency_key,
+                respond,
+            } => {
+                let result = state.store.find_operation(&artifact_id, &idempotency_key);
                 deliver(respond, result);
             }
             Command::Viewport {

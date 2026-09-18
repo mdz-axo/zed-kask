@@ -1,0 +1,34 @@
+[package]
+name = "hkask-mcp-spreadsheet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Spreadsheet MCP server — the central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits (spreadsheet_apply) and interrupted-operation reconciliation (spreadsheet_operation_get) over immutable workbook revisions"
+
+[lib]
+name = "hkask_mcp_spreadsheet"
+path = "src/hkask_mcp_spreadsheet.rs"
+
+[[bin]]
+name = "hkask-mcp-spreadsheet"
+path = "src/main.rs"
+
+[dependencies]
+hkask-mcp-server.workspace = true
+hkask-spreadsheet.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

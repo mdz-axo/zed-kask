@@ -57,8 +57,8 @@ def generation_protocol_ok($r):
         or $r.provenance.adjudication_protocol == "prepared-qa-adjudication-v2"))
     # Historical staged protocols above required a distinct verifier model.
     # The grounding-candidate protocol has no verification_model at all:
-    # generation defers acceptance to the external grounding manifest
-    # (prepared-qa-grounding-verification-v1) at ingestion.
+    # generation defers acceptance to the re-executed grounding gate
+    # (corpus-qa-grounding-v1) at ingestion.
     or ($r.provenance.prompt_protocol == "prepared-qa-grounding-candidate-v1"
       and ($r.provenance.generator_model | nonblank)
       and ($r.provenance.grounding_status ==
