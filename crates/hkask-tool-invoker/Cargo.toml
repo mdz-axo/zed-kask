@@ -10,7 +10,6 @@ path = "src/hkask_tool_invoker.rs"
 
 [dependencies]
 gpui.workspace = true
-hkask-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

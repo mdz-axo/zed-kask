@@ -9235,6 +9235,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-conversation-injector",
  "hkask-tool-invoker",
+ "hkask-types",
  "serde",
  "serde_json",
  "tracing",
@@ -9387,7 +9388,6 @@ name = "hkask-tool-invoker"
 version = "0.40.0"
 dependencies = [
  "gpui",
- "hkask-types",
  "serde",
  "serde_json",
  "tracing",

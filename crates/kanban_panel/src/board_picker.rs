@@ -103,10 +103,11 @@ impl BoardPickerDelegate {
                 .map(|(ix, board)| StringMatchCandidate::new(ix, board.name.as_ref()))
                 .collect(),
         );
+        let matches = (0..boards.len()).collect();
         Self {
             boards,
             string_candidates,
-            matches: (0..boards.len()).collect(),
+            matches,
             selected_index: 0,
             query: String::new(),
             on_select,

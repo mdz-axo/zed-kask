@@ -2,7 +2,7 @@
 
 use base64::Engine as _;
 use gpui::SharedString;
-use hkask_tool_invoker::BlockProvenance;
+use hkask_types::BlockProvenance;
 use serde::Deserialize;
 use std::{
     collections::HashSet,

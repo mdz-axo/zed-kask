@@ -1,0 +1,22 @@
+{
+  "source": "cline-account",
+  "version": "org-01KC3716Q6WG52HMQV8EQGX96K",
+  "remoteConfig": {
+    "version": "v1",
+    "providerSettings": {},
+    "telemetryEnabled": true,
+    "mcpMarketplaceEnabled": true,
+    "yoloModeAllowed": true
+  },
+  "metadata": {
+    "paths": {
+      "pluginName": "enterprise",
+      "pluginPath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise",
+      "workflowsPath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise/workflows",
+      "skillsPath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise/skills",
+      "bundleCachePath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise/cache/bundle.json",
+      "manifestPath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise/managed.json",
+      "rulesFilePath": "/home/mdz-axolotl/Clones/zed-kask/.cline/enterprise/rules.md"
+    }
+  }
+}

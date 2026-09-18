@@ -780,6 +780,7 @@ impl KanbanPanel {
             "delete board",
             RefreshTarget::Boards,
             Some(Self::clear_board_selection),
+            false,
             cx,
         );
     }

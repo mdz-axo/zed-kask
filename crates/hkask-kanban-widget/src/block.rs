@@ -10,7 +10,7 @@
 //! and never fails on media-shaped or graph-shaped JSON (which have no `viz`
 //! field or a different `viz` value).
 
-use hkask_tool_invoker::BlockProvenance;
+use hkask_types::BlockProvenance;
 use serde::Deserialize;
 
 /// The discriminator-tagged body of a ```` ```kanban ```` block.

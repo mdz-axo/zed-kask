@@ -190,7 +190,7 @@ impl SpreadsheetWidget {
             Ok(block) => block.active_sheet.clone(),
             Err(_) => String::new(),
         };
-        let mut widget = Self {
+        let widget = Self {
             focus_handle: cx.focus_handle(),
             block: block.clone(),
             service_error: None,

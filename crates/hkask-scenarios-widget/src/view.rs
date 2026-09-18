@@ -10,7 +10,8 @@ use gpui::{
     Window, div,
 };
 use gpui_util::ResultExt as _;
-use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_tool_invoker::shared_tool_invoker;
+use hkask_types::BlockProvenance;
 use theme::ActiveTheme;
 use ui::{Color, Label, LabelCommon, LabelSize, prelude::*};
 

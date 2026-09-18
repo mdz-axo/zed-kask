@@ -22,9 +22,9 @@
 //!    it, a widget can display an artifact but cannot iterate on it; the user
 //!    must re-ask the agent. Provenance is `#[serde(default)]` and additive on
 //!    each block body, so existing tolerant parsers are unaffected. The
-//!    serializable type itself moved to `hkask_types::block_provenance`
+//!    serializable type itself lives in `hkask_types::block_provenance`
 //!    (LogiSheets plan §5.2: MCP-side block construction could not depend on a
-//!    GPUI crate); this crate re-exports it so widget imports compile unchanged.
+//!    GPUI crate); consumers import it from `hkask_types` directly.
 //!
 //! ## Why a leaf crate
 //!
@@ -149,13 +149,7 @@ pub fn shared_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
     TOOL_INVOKER.lock().expect("TOOL_INVOKER poisoned").clone()
 }
 
-/// The serializable provenance value type now lives in
-/// `hkask_types::block_provenance` (LogiSheets plan §5.2) so MCP-side block
-/// construction has one Zed-free, server-authoritative contract. Re-exported
-/// here so the widget crates' imports compile unchanged.
-pub use hkask_types::BlockProvenance;
-
-// ── reask correlator (T7b) ──────────────────────────────────────────────────
+// ── reask correlator (T7b) ───────────────────────────────────────────────────
 //
 // A coarse measurement proxy for "the user re-asked after a widget rendered".
 // Provenance-carrying widgets (scenarios, portfolio, kanban) call `record_render`

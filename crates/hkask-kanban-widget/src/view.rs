@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{FocusHandle, Focusable, Hsla};
-use hkask_tool_invoker::BlockProvenance;
+use hkask_types::BlockProvenance;
 use hkask_types::TaskStatus;
 use hkask_types::kanban_wire;
 use theme::ActiveTheme;

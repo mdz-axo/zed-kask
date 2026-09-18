@@ -23,13 +23,17 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 const PORTFOLIO_SERVER_ID: &str = "hkask-mcp-portfolio";
 
 hkask_mcp_server::mcp_server!(
     pub struct PortfolioServer {
         pub store: PortfolioStore,
+        /// The spreadsheet engine actor for what-if workbook publication — a
+        /// per-instance dependency like the store, not a process global, so
+        /// tests run against temp-dir artifact roots instead of the
+        /// production tree.
+        pub spreadsheet: Arc<WorkbookService>,
     }
 );
 
@@ -70,24 +74,6 @@ pub enum WhatIfPresentation {
     #[default]
     DataOnly,
     WorkbookWhatIf,
-}
-
-/// The editor-process engine actor for what-if workbook publication, started
-/// lazily on first use at the production spreadsheet artifact root. Start
-/// failures are cached and surface as typed tool errors.
-static WORKBOOK_SERVICE: OnceLock<Result<Arc<WorkbookService>, String>> = OnceLock::new();
-
-fn shared_workbook_service() -> Result<Arc<WorkbookService>, McpToolError> {
-    WORKBOOK_SERVICE
-        .get_or_init(|| {
-            WorkbookService::start_with_root(hkask_spreadsheet::artifact_store::production_root())
-                .map_err(|error| format!("engine actor failed to start: {error}"))
-        })
-        .as_ref()
-        .map(Arc::clone)
-        .map_err(|error| {
-            McpToolError::internal(format!("spreadsheet publication unavailable: {error}"))
-        })
 }
 
 /// Build the what-if staging workbook table: the hypothetical transaction
@@ -771,7 +757,6 @@ impl PortfolioServer {
             // staging workbook as an immutable revision and append its
             // ```spreadsheet hint to the portfolio report hint.
             let extra_hints = if presentation == WhatIfPresentation::WorkbookWhatIf {
-                let service = shared_workbook_service()?;
                 let origin = ArtifactOrigin::new(
                     PORTFOLIO_SERVER_ID.to_string(),
                     "portfolio_what_if".to_string(),
@@ -785,7 +770,8 @@ impl PortfolioServer {
                     &actual,
                     &hypothetical,
                 );
-                let publication = service
+                let publication = self
+                    .spreadsheet
                     .publish(
                         origin,
                         table,
@@ -1090,13 +1076,25 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
              imports will surface the failure"
         );
     }
+    // The spreadsheet engine actor for what-if workbook publication, rooted
+    // at the production spreadsheet artifact tree. A per-instance dependency
+    // (like the store below), moved into the server through the factory —
+    // not a process global, so tests inject their own temp-dir root.
+    let spreadsheet =
+        WorkbookService::start_with_root(hkask_spreadsheet::artifact_store::production_root())
+            .map_err(|error| {
+                hkask_mcp_server::McpError::Infrastructure(hkask_types::InfrastructureError::Io(
+                    error.to_string(),
+                ))
+            })?;
     hkask_mcp_server::run_server(
         "hkask-mcp-portfolio",
         env!("CARGO_PKG_VERSION"),
-        |ctx: hkask_mcp_server::ServerContext| {
+        move |ctx: hkask_mcp_server::ServerContext| {
             Ok(PortfolioServer::new(
                 ctx.webid,
                 PortfolioStore::new(ctx.webid)?,
+                spreadsheet,
             ))
         },
         vec![],

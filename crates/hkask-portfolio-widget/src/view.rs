@@ -24,7 +24,8 @@ use gpui::{
     prelude::*,
 };
 use gpui_util::ResultExt as _;
-use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_tool_invoker::shared_tool_invoker;
+use hkask_types::BlockProvenance;
 use ui::prelude::*;
 
 use hkask_bridge_ontology::sumo;

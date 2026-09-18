@@ -14,12 +14,13 @@ use hkask_mcp_portfolio::server::{
     LedgerApplyRequest, LedgerReadRequest, PortfolioAttributionRequest,
     PortfolioContributionRequest, PortfolioCreateRequest, PortfolioHistoricalWhatIfRequest,
     PortfolioNameRequest, PortfolioReturnsRequest, PortfolioServer, PortfolioSnapshotRequest,
-    PriceSeedEntry, PriceSeedRequest,
+    PortfolioWhatIfRequest, PriceSeedEntry, PriceSeedRequest, WhatIfPresentation,
 };
 use hkask_mcp_portfolio::{
     AssetType, ClassificationObservation, PortfolioStore, Transaction, TxType,
 };
 use hkask_types::WebID;
+use hkask_types::spreadsheet::{CellEdit, EditTransaction, TableValue};
 use rmcp::handler::server::wrapper::Parameters;
 
 /// Extract the MCP tool-result envelope: `{"content": <value>}`.
@@ -40,7 +41,10 @@ fn make_server() -> (PortfolioServer, std::path::PathBuf) {
     let _ = std::fs::remove_dir_all(&dir);
     let owner = WebID::new();
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let server = PortfolioServer::new(WebID::new(), store);
+    let spreadsheet =
+        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
+            .expect("spreadsheet engine actor");
+    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
     (server, dir)
 }
 
@@ -668,4 +672,201 @@ async fn attribution_tool_reconciles_active_return_against_an_explicit_benchmark
     );
 
     std::fs::remove_dir_all(&dir).expect("remove test directory");
+}
+
+/// Phase 5 proving slice (plan §10 Phase 5, acceptance items 8-10; §11):
+/// `portfolio_what_if` with `WorkbookWhatIf` presentation publishes the
+/// hypothetical transaction set and report deltas as an immutable workbook
+/// revision. The authoritative portfolio ledger never changes; staged
+/// workbook edits never write through; the base revision stays
+/// digest-intact after an applied edit mints a new revision.
+#[tokio::test]
+async fn what_if_workbook_is_immutable_and_never_touches_the_ledger() {
+    let (server, dir) = make_server();
+    server
+        .portfolio_create(Parameters(PortfolioCreateRequest {
+            name: "proving".into(),
+            asset_type: AssetType::Stock,
+        }))
+        .await
+        .expect("create portfolio");
+    for tx in [
+        transaction(
+            "2025-01-01",
+            TxType::Deposit,
+            None,
+            None,
+            None,
+            Some(1_000.0),
+        ),
+        transaction(
+            "2025-01-01",
+            TxType::Buy,
+            Some("A"),
+            Some(50.0),
+            Some(10.0),
+            None,
+        ),
+    ] {
+        server
+            .ledger_apply(Parameters(LedgerApplyRequest {
+                portfolio: "proving".into(),
+                transaction: tx,
+            }))
+            .await
+            .expect("apply transaction");
+    }
+    server
+        .portfolio_seed_price(Parameters(PriceSeedRequest {
+            portfolio: "proving".into(),
+            symbol: None,
+            date: None,
+            close: None,
+            source: None,
+            prices: Some(vec![PriceSeedEntry {
+                symbol: "A".into(),
+                date: "2025-12-31".into(),
+                close: 12.0,
+                source: Some("fixture".into()),
+            }]),
+        }))
+        .await
+        .expect("seed prices");
+
+    let ledger_before = server
+        .ledger_read(Parameters(LedgerReadRequest {
+            portfolio: "proving".into(),
+            symbol: None,
+            tx_type: None,
+            asset_type: None,
+            from_date: None,
+            to_date: None,
+        }))
+        .await
+        .expect("read ledger before");
+    let ledger_before = unwrap_content(&ledger_before);
+
+    let output = server
+        .portfolio_what_if(Parameters(PortfolioWhatIfRequest {
+            portfolio: "proving".into(),
+            date: "2025-12-31".into(),
+            hypothetical_transactions: vec![transaction(
+                "2025-12-31",
+                TxType::Buy,
+                Some("B"),
+                Some(20.0),
+                Some(10.0),
+                None,
+            )],
+            observations: Vec::new(),
+            presentation: WhatIfPresentation::WorkbookWhatIf,
+        }))
+        .await
+        .expect("what-if with workbook presentation");
+    let content = unwrap_content(&output);
+    let hint = content["display_hint"].as_str().expect("display hint");
+    assert!(hint.starts_with("```portfolio\n"));
+    assert!(hint.contains("```spreadsheet\n"));
+
+    // The ledger is byte-identical after publication.
+    let ledger_after = server
+        .ledger_read(Parameters(LedgerReadRequest {
+            portfolio: "proving".into(),
+            symbol: None,
+            tx_type: None,
+            asset_type: None,
+            from_date: None,
+            to_date: None,
+        }))
+        .await
+        .expect("read ledger after");
+    assert_eq!(unwrap_content(&ledger_after), ledger_before);
+
+    // The workbook block parses as the strict wire contract.
+    let body = hint
+        .split("```spreadsheet\n")
+        .nth(1)
+        .and_then(|rest| rest.strip_suffix("\n```"))
+        .expect("spreadsheet hint block");
+    let block: hkask_types::spreadsheet::SpreadsheetBlock =
+        serde_json::from_str(body).expect("block parses");
+    block.validate().expect("block validates");
+    assert_eq!(block.active_sheet, "What-if");
+    assert!(block.mutation.is_dispatchable());
+    assert!(block.artifact.validate().is_ok());
+
+    // Staged edits never write through: open, stage, and a fresh open still
+    // shows the published values.
+    let document = server
+        .spreadsheet
+        .open(&block.artifact)
+        .await
+        .expect("open published workbook");
+    document
+        .stage(vec![CellEdit::SetCell {
+            coordinate: hkask_types::spreadsheet::CellCoordinate::new("What-if".into(), 1, 1)
+                .expect("coordinate"),
+            value: TableValue::Number(9999.0),
+        }])
+        .await
+        .expect("stage edit");
+    let fresh = server
+        .spreadsheet
+        .open(&block.artifact)
+        .await
+        .expect("fresh open");
+    let viewport = fresh
+        .viewport(
+            hkask_types::spreadsheet::SpreadsheetViewport::new("What-if".into(), 0, 0, 3, 4)
+                .expect("viewport"),
+        )
+        .await
+        .expect("viewport");
+    assert_ne!(viewport.cells[1][1], TableValue::Number(9999.0));
+
+    // An applied edit mints a new immutable revision; the base reopens
+    // digest-intact (§11: a workbook edit cannot change the ledger
+    // database — the base revision AND the ledger are both unchanged).
+    let transaction = EditTransaction::new(
+        block.artifact.clone(),
+        "proving-slice-1".into(),
+        hkask_types::spreadsheet::SpreadsheetAccess::WorkbookWhatIf,
+        vec![CellEdit::SetCell {
+            coordinate: hkask_types::spreadsheet::CellCoordinate::new("What-if".into(), 1, 1)
+                .expect("coordinate"),
+            value: TableValue::Number(4242.0),
+        }],
+    )
+    .expect("transaction is valid");
+    let publication = server
+        .spreadsheet
+        .apply(transaction)
+        .await
+        .expect("apply mints a new revision");
+    match publication {
+        hkask_spreadsheet::SpreadsheetPublication::Workbook { artifact, .. } => {
+            assert_ne!(artifact.revision_id, block.artifact.revision_id);
+        }
+        other => panic!("expected a workbook publication, got {other:?}"),
+    }
+    server
+        .spreadsheet
+        .open(&block.artifact)
+        .await
+        .expect("base revision reopens digest-intact");
+
+    let ledger_final = server
+        .ledger_read(Parameters(LedgerReadRequest {
+            portfolio: "proving".into(),
+            symbol: None,
+            tx_type: None,
+            asset_type: None,
+            from_date: None,
+            to_date: None,
+        }))
+        .await
+        .expect("read ledger final");
+    assert_eq!(unwrap_content(&ledger_final), ledger_before);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

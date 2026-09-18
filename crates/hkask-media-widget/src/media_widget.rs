@@ -22,7 +22,8 @@ use gpui::{
 };
 use gpui_util::ResultExt as _;
 use hkask_bridge_ontology::omc::explain_tool_for;
-use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_tool_invoker::shared_tool_invoker;
+use hkask_types::BlockProvenance;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt as _, RedirectPolicy, Request};
 use smallvec::SmallVec;
 use theme::ActiveTheme;

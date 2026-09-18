@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use hkask_tool_invoker::BlockProvenance;
+use hkask_types::BlockProvenance;
 use serde::Deserialize;
 
 // Re-export the verified FIBO constants from the shared

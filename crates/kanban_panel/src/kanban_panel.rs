@@ -34,13 +34,14 @@ use gpui_util::ResultExt;
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
 use hkask_kanban_widget::view::KanbanWidget;
 use hkask_steer::{SteerContext, SteerSurface};
-use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_tool_invoker::shared_tool_invoker;
+use hkask_types::BlockProvenance;
 use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;
 use ui::{
-    CommonAnimationExt, IconName, IconSize, PopoverMenuHandle, ToggleButtonGroup,
+    Button, CommonAnimationExt, IconName, IconSize, PopoverMenuHandle, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, prelude::*,
 };
 use workspace::{
@@ -400,7 +401,7 @@ pub(crate) struct BoardInfo {
 /// One column definition from the server. Mirrors the subset of the
 /// server's `ColumnInfo` the panel reads (status + WIP limit); the wire's
 /// id/name fields are ignored — the widget groups tasks by status.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct ColumnDef {
     #[serde(default)]
     status: String,
@@ -495,10 +496,10 @@ fn panel_titles(board_name: Option<&str>) -> (SharedString, SharedString) {
 /// external edits reach the panel's surfaces instead of freezing at
 /// selection time. `None` when nothing is selected or the selected board
 /// is not in the list (the stale-selection path clears the selection).
-pub(crate) fn selected_identity_from_boards(
-    selected: Option<&str>,
-    boards: &[BoardInfo],
-) -> Option<(&str, &[ColumnDef])> {
+pub(crate) fn selected_identity_from_boards<'a>(
+    selected: Option<&'a str>,
+    boards: &'a [BoardInfo],
+) -> Option<(&'a str, &'a [ColumnDef])> {
     let selected = selected?;
     let row = boards.iter().find(|b| b.board_id == selected)?;
     Some((row.name.as_str(), &row.columns[..]))
@@ -773,7 +774,7 @@ impl KanbanPanel {
                         // the response; the board-list refresh opens it once
                         // its row lands (see `pending_board_to_select`).
                         if capture_created_board {
-                            let created = parse_tool_response(&output).ok().and_then(|content| {
+                            let created = parse_tool_response(&output).and_then(|content| {
                                 content
                                     .get("board_id")
                                     .and_then(|value| value.as_str())
@@ -982,7 +983,10 @@ impl KanbanPanel {
         hkask_steer::ensure_steer(
             &mut self.steer,
             SteerContext {
-                system_prompt: steer_system_prompt(self.selected_board_id.as_deref()),
+                system_prompt: steer_system_prompt(
+                    self.board_name.as_deref(),
+                    self.selected_board_id.as_deref(),
+                ),
                 fs,
                 project,
                 workspace,
@@ -1074,7 +1078,7 @@ impl KanbanPanel {
             return;
         };
         let rows = self.picker_rows();
-        picker.update(cx, |delegate, cx| delegate.set_boards(rows, cx));
+        picker.update(cx, |picker, cx| picker.delegate.set_boards(rows, cx));
     }
 
     /// Build the picker's rows from the fetched board list. Duplicate names
@@ -1183,35 +1187,17 @@ impl KanbanPanel {
         let picker_deployed = self.board_picker_handle.is_deployed();
         let board_control = PickerPopoverMenu::new(
             picker,
-            div()
-                .id("kanban-board-switcher")
-                .cursor_pointer()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(border_color)
-                .max_w(rems(20.))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .overflow_hidden()
-                        .child(
-                            Label::new(switcher_label)
-                                .size(LabelSize::Small)
-                                .color(Color::Accent)
-                                .truncate(),
-                        )
-                        .child(
-                            Icon::new(if picker_deployed {
-                                IconName::ChevronUp
-                            } else {
-                                IconName::ChevronDown
-                            })
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                        ),
+            Button::new("kanban-board-switcher", switcher_label)
+                .label_size(LabelSize::Small)
+                .color(Color::Accent)
+                .end_icon(
+                    Icon::new(if picker_deployed {
+                        IconName::ChevronUp
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
                 ),
             Box::new(Tooltip::text("Open a board by name")),
             gpui::Anchor::BottomLeft,

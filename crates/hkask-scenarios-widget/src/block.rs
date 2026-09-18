@@ -6,7 +6,7 @@
 //! partial bodies and never fails on other-shaped JSON (which has no `viz`
 //! field matching `"scenarios"`).
 
-use hkask_tool_invoker::BlockProvenance;
+use hkask_types::BlockProvenance;
 use serde::Deserialize;
 
 // ── FIBO / methodology anchors ────────────────────────────────────────────

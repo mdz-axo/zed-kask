@@ -33,7 +33,10 @@ async fn portfolio_list_returns_empty_array_on_fresh_store() {
     let _ = std::fs::remove_dir_all(&dir);
     let owner = WebID::new();
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let server = PortfolioServer::new(WebID::new(), store);
+    let spreadsheet =
+        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
+            .expect("spreadsheet engine actor");
+    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
 
     let output = server.portfolio_list().await.expect("tool ok");
     let content = unwrap_content(&output);
@@ -60,7 +63,10 @@ async fn ledger_import_csv_then_read_round_trips() {
     let _ = std::fs::remove_dir_all(&dir);
     let owner = WebID::new();
     let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let server = PortfolioServer::new(WebID::new(), store);
+    let spreadsheet =
+        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
+            .expect("spreadsheet engine actor");
+    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
 
     // Create a portfolio to import into.
     server
