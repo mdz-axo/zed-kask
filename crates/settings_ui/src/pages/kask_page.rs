@@ -633,7 +633,10 @@ pub(crate) fn kask_page() -> SettingsPage {
             description: Some(
                 "Change the SQLCipher passphrase for every kask memory database \
                  (curator, swarm memory, kata-kanban, research, training). \
-                 Re-encrypts each DB atomically — no data loss on failure.".into(),
+                 Scheduled here and applied at the next editor restart: every \
+                 confirmed database is re-encrypted atomically before anything \
+                 opens it, and a failure leaves all of them on the old \
+                 passphrase.".into(),
             ),
             search_aliases: &["security", "passphrase", "encryption", "rotate", "key"],
             in_json: false,
