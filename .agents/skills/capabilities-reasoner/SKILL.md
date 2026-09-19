@@ -153,6 +153,7 @@ capabilities:
 - Check whether capability prerequisites are satisfied before granting a new capability (CMMI maturity gate)
 - Assess whether capability verdicts are stable across metric choices (mirage check)
 - Detect Dunning-Kruger gaps: systems that cannot self-assess a capability they lack
+- Interrogate a corpus-grounded replica (a retrieval-grounded agent over a sealed corpus) about what its corpus actually contains, via the five Elicit-phase RAG probe templates — domain, process, state, model, synthesis (see Replica RAG Probe Discipline)
 
 ## When NOT to Use
 
@@ -170,6 +171,10 @@ Act:   Phase 4 — Reason     → Determine interventions (object-capability att
 Act:   Phase 5 — Report     → Per-capability verdicts: expand/restrict/block/authorize/maintain
 Check: Phase 6 — Converge   → Metric-stability check (mirage paper: verdicts must survive metric change)
 ```
+
+Phase 2 note: when the target system is a corpus-grounded replica, elicitation
+runs through the RAG probe templates under the Replica RAG Probe Discipline
+below — probes measure retrieval above a floor, never self-report.
 
 Feedback loop closure: convergence emits `metric_stability_verdict` and
 `next_registry_focus` (consumed by next iteration's Register); Report emits
@@ -218,8 +223,62 @@ given query, because they can disagree:
 | `capability-reason.j2` | Determine interventions under the object-capability attenuation rule: authority may only narrow — never widen — without re-authorization. For each evaluation result: FLOOR VIOLATION → expand or redesign (the system is deprived). CEILING VIOLATION → apply the Akselrod three-part warrant test (other interventions insufficient + harm high + targeted intervention exists) before restricting. MATURITY VIOLATION → block until prerequisites met. WIDENING → requires explicit re-authorization with a recorded warrant; cannot happen silently. Emits capability tokens (AIP model: append-only, signed, scope narrows on delegation). |
 | `capability-report.j2` | Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/ authorize/maintain), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). |
 | `capability-ontology.yaml` | Reference: three limit types (floor, ceiling, maturity gate) drawn from the capability approach (Nussbaum, object-capability security, CMMI), and five capability definitions drawn from ML capability evaluation (task-performance, latent-variable, hierarchical-structural, emergence-threshold, elicitation). The limit types are the substrate (WHY capability reasoning has limits); the definitions are the surface (HOW capability is measured). Each definition can disagree with the others — the reasoner must declare which it is using per query. |
+| `capability-rag-domain.j2` | Elicit-phase RAG probe, domain class: scope what a corpus-grounded replica's corpus actually contains about a subject — a two-pass probe that first designs domain-scoping corpus_query strings, then floor-gates and shape-checks the retrieval into an elicitation record; the replica always returns nearest neighbors and never reports its own gaps, so only probe results are evidence. Two passes of the same template; the executing skill runs corpus_query between them. |
+| `capability-rag-process.j2` | Elicit-phase RAG probe, process class: measure how a corpus-grounded replica answers "how is X done" — a two-pass probe that first designs process-shaped corpus_query strings (routines, steps, cycles, coaching), then floor-gates the retrieval and shape-checks for procedural structure in the retrieved passages. Pass-1 queries use routine, steps, sequence, and coaching vocabulary; pass-2 shape-checks for procedural structure. |
+| `capability-rag-state.j2` | Elicit-phase RAG probe, state class: measure what states and conditions a corpus-grounded replica's corpus holds — a two-pass probe whose queries must be shaped in corpus-native state vocabulary first (doctrinal vocabulary can be absent), re-probing the 0.55-0.60 ambiguous band before any verdict, and recording doctrinal absence as a vocabulary finding rather than a failure. |
+| `capability-rag-model.j2` | Elicit-phase RAG probe, model/framework class: measure which named frameworks, anchor thinkers, and checklists a corpus-grounded replica's corpus holds — a two-pass probe that first designs framework-shaped corpus_query strings, then floor-gates the retrieval and shape-checks that a framework's structure (anchors, components, checklists) actually retrieved. Pass-1 queries use framework, anchor, and checklist vocabulary; pass-2 shape-checks that a named framework's structure actually retrieved. |
+| `capability-rag-synthesis.j2` | Elicit-phase RAG probe, synthesis class: retrieve a corpus-grounded replica's own cross-source connections — a two-pass probe whose queries use relation phrasing ("how does A map to B"), because author-pair phrasing drifts to the authors' books and misses the connective essays; pass-2 shape-checks that a connective claim retrieved, not two independent passages. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `capabilities-reasoner/capability-register`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `capabilities-reasoner/capability-register`) with a context object with the required variables.
+
+## Replica RAG Probe Discipline
+
+The five `capability-rag-*.j2` templates are Elicit-phase probes for
+corpus-grounded replicas — retrieval-grounded agents over sealed corpora.
+They are the measured way to answer "what does this replica actually know":
+the replica always returns nearest neighbors and never reports its own gaps
+(the Dunning rule applied to a retrieval index), so only external probes
+measure it.
+
+Two-pass procedure per probe (the template renders twice; retrieval is a
+direct MCP tool call, never LLM judgment — the determinism frontier):
+
+1. Pass 1 — render the probe template with `retrieval_results` as an empty
+   array; the inference step emits 2-4 corpus_query strings shaped for the
+   probe class.
+2. Execute — call `corpus_query` directly for each query (db_path from
+   target_system, the given top_k), collecting {entity_ref, source, score,
+   passage} per result.
+3. Pass 2 — render the same template again with the aggregated
+   retrieval_results; the inference step applies the floor gate and the
+   class shape-check and emits the elicitation record.
+
+Floor gate (pilot-measured on the john-brooks sealed v9 reference index,
+Qwen3-Embedding-0.6B): class-passing probes retrieve at 0.63-0.89 (state
+probes hit the 0.57-0.58 ambiguous band before corpus-vocabulary shaping);
+the negative floor is 0.50-0.52 of off-target passages. Verdicts: top score
+>= 0.60 above_floor; 0.55-0.60 floor_band (re-probe in corpus-native
+vocabulary before any verdict); < 0.55 below_floor (record NOT FOUND
+explicitly — never present nearest-neighbor passages as an answer). The
+bands are metric-dependent (the mirage discipline): re-derive under a second
+metric before treating a floor verdict as stable.
+
+Negative control, per campaign: a probe for a hypothesized-absent subdomain
+must run before any absence claim (pilot finding: a predicted-absent probe
+measured present-adjacent at 0.67 — BERT benchmark content inside the
+Knowledge Graphs book; probes beat priors).
+
+Every record carries entity_ref citations; grounding-verify consumes them
+directly. Map a record onto an elicited_capabilities entry for
+capability-evaluate as: elicited_level = floor_verdict, metric_used =
+"retrieval score vs floor", evidence = retrieved_evidence, confidence =
+record confidence, elicitation_gap = record elicitation_gap.
+
+Composition contract: other skills render the probe templates directly for
+single probes (grill-me depth ladders, metacognition coverage measurement),
+or compose this skill when a registry-grounded verdict is needed. Plain
+content lookup that needs no elicitation record is a plain corpus_query,
+not these templates — the When NOT to Use contract stays intact.
 
 ## Constraints
 
@@ -227,7 +286,10 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.
-- **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 direct MCP tool call (curator_memory_recall at step 0 for persistence-grounded learning), 2 `lisp_eval` calls (for structural manifest analysis and convergence check), 5 `render_template` calls (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on failure, report on all direct MCP tool and `lisp_eval` calls. It is above floor on all five composition principles.
+- **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 direct MCP tool call (curator_memory_recall at step 0 for persistence-grounded learning), 2 `lisp_eval` calls (for structural manifest analysis and convergence check), 5 `render_template` calls (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on failure, report on all direct MCP tool and `lisp_eval` calls. When the replica RAG probe path is used, it adds two `render_template`
+calls per probe (pass 1 and pass 2) plus direct `corpus_query` calls,
+reported on failure like all direct MCP calls. It is above floor on all
+five composition principles.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## References

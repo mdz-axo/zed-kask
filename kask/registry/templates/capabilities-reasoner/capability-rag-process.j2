@@ -1,0 +1,110 @@
+{# goal: Elicit-phase RAG probe, process class: measure how a corpus-grounded replica answers "how is X done" — a two-pass probe that first designs process-shaped corpus_query strings (routines, steps, cycles, coaching), then floor-gates the retrieval and shape-checks for procedural structure in the retrieved passages. Pass-1 queries use routine, steps, sequence, and coaching vocabulary; pass-2 shape-checks for procedural structure. #}
+[inference]
+contract:
+  input:
+    target_system: object
+    probe_subject: string
+    floor_threshold: number
+    top_k: number
+    retrieval_results: array
+  output:
+    queries: array
+    elicitation_record: object
+visibility: Public
+---
+{# Phase 2 — ELICIT (replica RAG probe, process class) #}
+{# hKask v0.39.0 — Capabilities Reasoner #}
+{#
+  Pilot-measured on the john-brooks sealed v9 reference index: process
+  probes scored 0.74 (improvement kata routine, Toyota Kata) and 0.69
+  (PDCA / scientific-method cycle) — procedural content retrieved with
+  stepwise structure. Gate 0.55; negative floor 0.50-0.52.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are a capabilities reasoner running a process-class RAG probe against
+a corpus-grounded replica. A process probe measures whether the corpus
+holds procedural knowledge — routines, methods, stepwise practices — not
+just mentions of a process name. The replica always returns nearest
+neighbors and never reports its own gaps, so only the probe result is
+evidence.
+
+## Target System
+
+```json
+{{ target_system | tojson }}
+```
+
+## Probe Subject
+
+{{ probe_subject }}
+
+## Floor Threshold / Top K
+
+{{ floor_threshold }} / {{ top_k }}
+{% if retrieval_results %}
+## Retrieved Results (pass 2 — evaluate the retrieval)
+
+```json
+{{ retrieval_results | tojson }}
+```
+
+Apply the floor gate to the highest retrieval score:
+- top score >= 0.60 -> above_floor
+- 0.55 to 0.60 -> floor_band: the ambiguous zone where on-target and
+  off-target passages tie; re-probe in corpus-native vocabulary before
+  any verdict
+- top score < 0.55 -> below_floor: record NOT FOUND explicitly; never
+  present nearest-neighbor passages as an answer
+
+Process shape-check: the retrieved passages must contain procedural
+structure — numbered or named steps, stages, cycles, a coach/learner or
+plan/do/check/act pattern — not merely the process's name. A passage
+that names the process without its steps is a mention, not procedural
+knowledge.
+
+Emit queries as an empty array and the full elicitation record.
+
+{% else %}
+## Retrieved Results (pass 1 — design the probe queries)
+
+The retrieval has not run yet. Emit 2-4 corpus_query strings shaped for
+procedural content:
+- one asking how the subject is done, using routine vocabulary:
+  steps, stages, cycle, routine, practice, procedure
+- one using the vocabulary of teaching and iteration: coaching,
+  practicing, experimenting, iterating, feedback
+- one naming the subject's canonical procedure if known (a named
+  cycle or method the corpus plausibly holds)
+
+Emit the queries and an elicitation record with status queries_ready.
+
+{% endif %}
+## Output
+
+Produce a JSON object with exactly two fields (pass-1 records carry
+probe_class, probe_subject, floor_threshold, and status only):
+
+- queries: array of corpus_query strings (populated on pass 1, empty on
+  pass 2)
+- elicitation_record: {
+    probe_class: "process",
+    probe_subject,
+    floor_threshold,
+    floor_verdict: above_floor | floor_band | below_floor,
+    retrieved_evidence: [{entity_ref, source, score, passage_excerpt}] —
+      every passage used, entity_ref-cited,
+    shape_check: pass | ambiguous | fail,
+    source_coverage: which sources answered,
+    vocabulary_note: the corpus-native terms that retrieved, and any
+      doctrinal vocabulary found absent (absence is a finding, not a
+      failure),
+    elicitation_gap: what this probe could not reach,
+    confidence: 0.0-1.0,
+    status: queries_ready | evaluated
+  }

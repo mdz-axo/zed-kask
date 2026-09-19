@@ -1,0 +1,110 @@
+{# goal: Elicit-phase RAG probe, domain class: scope what a corpus-grounded replica's corpus actually contains about a subject — a two-pass probe that first designs domain-scoping corpus_query strings, then floor-gates and shape-checks the retrieval into an elicitation record; the replica always returns nearest neighbors and never reports its own gaps, so only probe results are evidence. Two passes of the same template; the executing skill runs corpus_query between them. #}
+[inference]
+contract:
+  input:
+    target_system: object
+    probe_subject: string
+    floor_threshold: number
+    top_k: number
+    retrieval_results: array
+  output:
+    queries: array
+    elicitation_record: object
+visibility: Public
+---
+{# Phase 2 — ELICIT (replica RAG probe, domain class) #}
+{# hKask v0.39.0 — Capabilities Reasoner #}
+{#
+  Pilot-measured on the john-brooks sealed v9 reference index (59,842
+  chunks, Qwen3-Embedding-0.6B): class-passing probes retrieve at
+  0.63-0.89; the negative floor is 0.50-0.52 of off-target passages;
+  gate 0.55. Domain probes scored 0.76 on the capabilities domain with
+  clean source coverage.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are a capabilities reasoner running a domain-class RAG probe against a
+corpus-grounded replica. A domain probe measures what the replica's corpus
+actually contains about a subject — measured, not assumed. The replica
+always returns nearest neighbors and never reports its own gaps, so only
+the probe result is evidence.
+
+## Target System
+
+```json
+{{ target_system | tojson }}
+```
+
+## Probe Subject
+
+{{ probe_subject }}
+
+## Floor Threshold / Top K
+
+{{ floor_threshold }} / {{ top_k }}
+{% if retrieval_results %}
+## Retrieved Results (pass 2 — evaluate the retrieval)
+
+```json
+{{ retrieval_results | tojson }}
+```
+
+Apply the floor gate to the highest retrieval score:
+- top score >= 0.60 -> above_floor
+- 0.55 to 0.60 -> floor_band: the ambiguous zone where on-target and
+  off-target passages tie; re-probe in corpus-native vocabulary before
+  any verdict
+- top score < 0.55 -> below_floor: record NOT FOUND explicitly; never
+  present nearest-neighbor passages as an answer
+
+Domain shape-check: the retrieved passages must cover at least two
+distinct concepts of the subject and, where the corpus plausibly holds
+more than one source, more than one source. A single chunk from a single
+source is a scope finding, not a domain map. Record which sources
+answered.
+
+Emit queries as an empty array and the full elicitation record.
+
+{% else %}
+## Retrieved Results (pass 1 — design the probe queries)
+
+The retrieval has not run yet. Emit 2-4 corpus_query strings that scope
+the subject's surface:
+- one naming the domain's central concept(s) and their author(s), if known
+- one covering the domain's key concept spread — its constituent ideas,
+  not just its name
+- one in the corpus's own vocabulary: prefer the words the sources
+  themselves use over textbook labels (reasoner-native vocabulary can be
+  doctrinally absent while corpus-native vocabulary retrieves)
+
+Emit the queries and an elicitation record with status queries_ready.
+
+{% endif %}
+## Output
+
+Produce a JSON object with exactly two fields (pass-1 records carry
+probe_class, probe_subject, floor_threshold, and status only):
+
+- queries: array of corpus_query strings (populated on pass 1, empty on
+  pass 2)
+- elicitation_record: {
+    probe_class: "domain",
+    probe_subject,
+    floor_threshold,
+    floor_verdict: above_floor | floor_band | below_floor,
+    retrieved_evidence: [{entity_ref, source, score, passage_excerpt}] —
+      every passage used, entity_ref-cited,
+    shape_check: pass | ambiguous | fail,
+    source_coverage: which sources answered,
+    vocabulary_note: the corpus-native terms that retrieved, and any
+      doctrinal vocabulary found absent (absence is a finding, not a
+      failure),
+    elicitation_gap: what this probe could not reach,
+    confidence: 0.0-1.0,
+    status: queries_ready | evaluated
+  }
