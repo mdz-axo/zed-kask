@@ -1927,6 +1927,7 @@ impl Thread {
                 cancellation_rx,
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
+                Some(native_thread_calling_actor(self.id())),
             );
             if let Err(error) = tool.replay(input, output, tool_event_stream, cx) {
                 // Replay deserialization can fail when the persisted model output
@@ -4369,6 +4370,7 @@ impl Thread {
             cancellation_rx,
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
+            Some(native_thread_calling_actor(self.id())),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -6918,6 +6920,20 @@ pub struct ToolCallEventStream {
     /// sandbox grant is recorded so it survives reopening. `None` in tests and
     /// for streams not tied to a live thread.
     thread: Option<WeakEntity<Thread>>,
+    /// zed-kask: D68 — the initiating actor for this tool call, captured at
+    /// construction from `Thread::id()`. It cannot be read on demand through
+    /// the `thread` handle: `Thread::run_tool` (the production constructor)
+    /// executes inside `handle_completion_event`'s `update`, where a
+    /// `WeakEntity` read of the leased Thread double-lease-panics (BH-001).
+    calling_actor: Option<hkask_types::WebID>,
+}
+
+/// zed-kask: D68 — the `WebID` identity of a native thread's session: the
+/// value `ToolCallEventStream` captures as its `calling_actor` at
+/// construction. Derived from the session id only, never from tool
+/// arguments, so a model cannot spoof it.
+fn native_thread_calling_actor(session_id: &acp::SessionId) -> hkask_types::WebID {
+    hkask_types::WebID::for_agent_name(&format!("native-thread:{session_id}"))
 }
 
 impl ToolCallEventStream {
@@ -6994,6 +7010,7 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             None,
+            None,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -7015,6 +7032,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            None,
             None,
         );
 
@@ -7040,6 +7058,7 @@ impl ToolCallEventStream {
         cancellation_rx: watch::Receiver<bool>,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
         thread: Option<WeakEntity<Thread>>,
+        calling_actor: Option<hkask_types::WebID>,
     ) -> Self {
         Self {
             tool_use_id,
@@ -7050,6 +7069,7 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             thread,
+            calling_actor,
         }
     }
 
@@ -7089,21 +7109,19 @@ impl ToolCallEventStream {
         }
     }
 
-    /// zed-kask: D-seam — F6/P2. The initiating actor for this tool call,
-    /// distinct per calling thread/subagent. Host-derived from the owning
-    /// thread's session id (`WebID::for_agent_name`, deterministic and
-    /// stable), never from model-supplied tool arguments — a model cannot
-    /// spoof this because nothing about the call's JSON input feeds it.
-    /// `None` when the stream is not tied to a live thread (tests,
-    /// `ToolCallEventStream::test()`); callers fall back to a documented
-    /// process-level identity in that case, matching the pre-existing
-    /// behavior for non-thread-tied dispatch.
-    pub fn calling_actor(&self, cx: &App) -> Option<hkask_types::WebID> {
-        let thread = self.thread.as_ref()?.upgrade()?;
-        let session_id = thread.read(cx).id().to_string();
-        Some(hkask_types::WebID::for_agent_name(&format!(
-            "native-thread:{session_id}"
-        )))
+    /// zed-kask: D-seam — F6/P2 (fix recorded as D68). The initiating actor
+    /// for this tool call, distinct per calling thread/subagent.
+    /// Host-derived from the owning thread's session id
+    /// (`WebID::for_agent_name`, deterministic and stable), never from
+    /// model-supplied tool arguments — a model cannot spoof this because
+    /// nothing about the call's JSON input feeds it. Captured at construction
+    /// (see the field doc): reading the Thread on demand panics inside the
+    /// tool-dispatch update. `None` when the stream is not tied to a live
+    /// thread (tests, `ToolCallEventStream::test()`); callers fall back to a
+    /// documented process-level identity in that case, matching the
+    /// pre-existing behavior for non-thread-tied dispatch.
+    pub fn calling_actor(&self) -> Option<hkask_types::WebID> {
+        self.calling_actor
     }
 
     /// Returns true if the user has cancelled this tool call.
@@ -8734,8 +8752,12 @@ mod tests {
         let (thread_a, _events_a) = setup_thread_for_test(cx).await;
         let (thread_b, _events_b) = setup_thread_for_test(cx).await;
 
-        let stream_for = |thread: &Entity<Thread>| {
+        // The calling actor is captured at construction, outside any update —
+        // `cx` is passed into the closure explicitly so it does not capture
+        // the `TestAppContext` later borrowed mutably by `cx.update`.
+        let stream_for = |thread: &Entity<Thread>, cx: &App| {
             let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
             let stream = ToolCallEventStream::new(
                 LanguageModelToolUseId::from("test-tool-use"),
                 acp::ToolCallId::new("0:test-tool-use"),
@@ -8745,33 +8767,78 @@ mod tests {
                 cancellation_rx,
                 Rc::new(RefCell::new(ThreadSandboxGrants::default())),
                 Some(thread.downgrade()),
+                Some(actor),
             );
             (stream, cancellation_tx)
         };
 
-        let (stream_a, _tx_a) = stream_for(&thread_a);
-        let (stream_a_again, _tx_a2) = stream_for(&thread_a);
-        let (stream_b, _tx_b) = stream_for(&thread_b);
+        let (stream_a, _tx_a) = cx.update(|cx| stream_for(&thread_a, cx));
+        let (stream_a_again, _tx_a2) = cx.update(|cx| stream_for(&thread_a, cx));
+        let (stream_b, _tx_b) = cx.update(|cx| stream_for(&thread_b, cx));
         let (stream_none, _rx) = ToolCallEventStream::test();
 
-        cx.update(|cx| {
-            let actor_a = stream_a.calling_actor(cx);
-            let actor_a_again = stream_a_again.calling_actor(cx);
-            let actor_b = stream_b.calling_actor(cx);
-            let actor_none = stream_none.calling_actor(cx);
+        let actor_a = stream_a.calling_actor();
+        let actor_a_again = stream_a_again.calling_actor();
+        let actor_b = stream_b.calling_actor();
+        let actor_none = stream_none.calling_actor();
 
-            assert!(actor_a.is_some(), "a live thread must produce an identity");
-            assert_eq!(
-                actor_a, actor_a_again,
-                "the same thread must produce the same identity across calls"
+        assert!(actor_a.is_some(), "a live thread must produce an identity");
+        assert_eq!(
+            actor_a, actor_a_again,
+            "the same thread must produce the same identity across calls"
+        );
+        assert_ne!(
+            actor_a, actor_b,
+            "two distinct threads must produce distinct identities"
+        );
+        assert_eq!(
+            actor_none, None,
+            "a stream with no owning thread must fall back to None, never a fabricated identity"
+        );
+    }
+
+    /// BH-001 regression pin (D68): `calling_actor` must be callable from
+    /// inside a `Thread` update. `Thread::run_tool` constructs the stream and
+    /// dispatches the tool inside `handle_completion_event`'s update, so the
+    /// old design — reading the owning `Thread` through its `WeakEntity`
+    /// handle on demand — double-leased the entity and panicked the editor on
+    /// prompt send ("cannot read agent::thread::Thread while it is already
+    /// being updated"). Under the old on-demand read this test panics; the
+    /// cached design must pass it. This pins the class, not the instance: any
+    /// future re-introduction of an entity read on this path fails here.
+    #[gpui::test]
+    async fn calling_actor_is_readable_from_inside_a_thread_update(cx: &mut TestAppContext) {
+        let (thread, _events) = setup_thread_for_test(cx).await;
+
+        // Build the stream outside any update, capturing the actor from the
+        // thread — exactly how `Thread::run_tool` does it.
+        let (stream, _cancellation_tx) = cx.update(|cx| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp::ToolCallId::new("0:test-tool-use"),
+                0,
+                ThreadEventStream(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+                Some(actor),
             );
-            assert_ne!(
-                actor_a, actor_b,
-                "two distinct threads must produce distinct identities"
-            );
+            (stream, cancellation_tx)
+        });
+
+        // The dispatch-context read: the Thread entity is leased by this
+        // update. The old `thread.read(cx)` inside `calling_actor` panicked
+        // here; the cached value must read without touching the entity.
+        thread.update(cx, |thread, _cx| {
+            let actor = stream.calling_actor();
+            assert!(actor.is_some(), "a live thread must produce an identity");
             assert_eq!(
-                actor_none, None,
-                "a stream with no owning thread must fall back to None, never a fabricated identity"
+                actor,
+                Some(native_thread_calling_actor(thread.id())),
+                "the captured actor must be the thread's session identity"
             );
         });
     }

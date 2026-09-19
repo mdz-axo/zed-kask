@@ -601,10 +601,13 @@ impl AnyAgentTool for KaskServerTool {
         let server_id = self.descriptor.server_id.clone();
         let tool_name = self.descriptor.name.clone();
         let source = self.source.clone();
-        // zed-kask: D-seam — F6/P2. Computed synchronously from the outer
-        // `App` while the calling thread is still reachable; the spawned
-        // future below outlives this call and cannot re-derive it.
-        let caller = event_stream.calling_actor(cx);
+        // zed-kask: D-seam — F6/P2 (fix recorded as D68). Captured at stream
+        // construction from the owning thread's session id — reading it takes
+        // no entity lease (`run` executes inside `handle_completion_event`'s
+        // update, where the old on-demand `thread.read(cx)` double-leased the
+        // Thread and panicked the editor on prompt send, BH-001) — and the
+        // spawned future below outlives this call and cannot re-derive it.
+        let caller = event_stream.calling_actor();
         cx.spawn(async move |_| {
             let input = input
                 .recv()
