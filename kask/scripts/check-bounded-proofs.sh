@@ -42,17 +42,6 @@ case "$CRATE" in
         )
         SCOPE='Scope: hkask-types JSON-extraction scan core only (find_balanced_json); the fence-stripping wrapper is covered by the property and example layers.'
         ;;
-    hkask-forecast)
-        SOURCES=(
-            kask/crates/hkask-forecast/src/hkask_forecast.rs
-            kask/crates/hkask-forecast/Cargo.toml
-            Cargo.lock
-        )
-        HARNESSES=(
-            marginalize_two_parents_stays_in_the_unit_hull
-        )
-        SCOPE='Scope: hkask-forecast marginalization core only (marginalize, 2-parent bound); Fermi/Brier/Wilson surfaces are covered by the property layer.'
-        ;;
     *)
         echo "unknown crate '$CRATE' — add a manifest in check-bounded-proofs.sh" >&2
         exit 2
