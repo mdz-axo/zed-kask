@@ -244,6 +244,11 @@
       "id": "BH-OBS-3",
       "summary": "The corpus QA grounding/ingest seam is dynamically green: with HKASK_TEMPLATE_ROOT set, `cargo test -p hkask-mcp-corpus` runs 191 tests, 0 failures, including model_inference_answer_is_admitted_and_persisted_as_model_mediated, citation_not_byte_exact_fails_closed_despite_paraphrase_answer, and row_without_evidence_cannot_be_ingested.",
       "note": "The gate's new admission path is exercised; BH-007 is a record/policy finding, not a test failure. qa_adjudication.rs and tools/corpus/qa_parsing.rs were also read and are clean (expects only in tests)."
+    },
+    {
+      "id": "BH-OBS-4",
+      "summary": "OCR/backend charter (iteration 6) found no defects. services/convert.rs is explicitly fail-visible ('never a silent success', per-file warns at :700/:770/:776, typed errors at :641/:830/:886, ocr_pages_skipped reported at :925); ocr/{pipeline,llm_ocr,triage,response,quality,decimation,config,verification}.rs and backend/{docx,xlsx,pptx}.rs + backend.rs have no silent discards — a grep for `let _ =`/`.ok()`/`unwrap_or` on fallible ops found only benign defaults (backend.rs:177 digits_end=0; ocr/config.rs:139 tuneable default true). All OCR/backend tests are green in the 193-test corpus suite.",
+      "note": "Negative result for the last un-exercised corpus surface. Remaining un-probed: the smaller service modules (consolidation, assertions, cluster, prompt_builder, compose) and ocr/decimation.rs."
     }
   ],
   "taxonomy_summary": {
@@ -275,16 +280,16 @@
     { "signature": "seam-record policy sentence that contradicts the enforcement function; pin name present only in the seam doc", "beizer_category": "requirements", "derived_from": "BH-007", "notes": "for each recorded invariant, grep the enforcing function and each named pin" }
   ],
   "convergence": {
-    "iterations": 5,
+    "iterations": 6,
     "signal_stable": false,
-    "process_stabilization": "Iteration 1 (thinking path): baseline pattern search + call-graph; found BH-002/BH-003/BH-004/BH-005 and the live BH-001 panic. Iteration 2 (corpus): baseline static search + verification of the .rules traps; found BH-006 and closed BH-OBS-2. Iteration 3 (BH-001 follow-up): implemented and pinned the D67 self-locating double-lease panic; gpui lib suite green. Iteration 4 (corpus QA grounding/ingest charter, dynamic): ran the corpus suite (191/191 green), read the gate re-execution path, and found BH-007 (D9 seam-record/policy drift + deleted pin). Iteration 5 (corpus convert/chunk/embed/query charter): re-ran the suite, read path_safety.rs/helpers.rs/index.rs/tools/storage.rs, and found BH-008 (silent query-dimension mismatch). New-finding rate 5 -> 1 -> 0 -> 1 -> 1: signal NOT stable, so the expedition is explicitly not converged.",
+    "process_stabilization": "Iteration 1 (thinking path): baseline pattern search + call-graph; found BH-002/BH-003/BH-004/BH-005 and the live BH-001 panic. Iteration 2 (corpus): baseline static search + verification of the .rules traps; found BH-006 and closed BH-OBS-2. Iteration 3 (BH-001 follow-up): implemented and pinned the D67 self-locating double-lease panic; gpui lib suite green. Iteration 4 (corpus QA grounding/ingest charter, dynamic): ran the corpus suite (191/191 green), read the gate re-execution path, and found BH-007 (D9 seam-record/policy drift + deleted pin). Iteration 5 (corpus convert/chunk/embed/query charter): found BH-008 (silent query-dimension mismatch) and fixed it via tdd (193/193 green, clippy clean). Iteration 6 (OCR/backend charter): no new findings — convert.rs is fail-visible and ocr/backend are clean (BH-OBS-4). New-finding rate 5 -> 1 -> 0 -> 1 -> 1 -> 0.",
     "coverage_estimate": {
       "thinking_path": "high (small surface, call-graph complete)",
-      "corpus_crate": "medium-high (QA grounding/ingest seam + convert/chunk/embed/query path read and dynamically exercised, 191 tests green; path_safety/helpers/index/storage read; occlusion/backends remain static-only)",
+      "corpus_crate": "high (QA grounding/ingest + convert/chunk/embed/query + OCR/backend all read and dynamically exercised, 193 tests green; path_safety/helpers/index/storage/convert instrumented and clean)",
       "gpui_entity_borrow": "medium (lease/read/flush paths read end-to-end; the specific BH-001 site is unpinned)"
     },
     "converged": false,
-    "convergence_note": "Five iterations. Iterations 4 and 5 each produced a new finding, so the signal is explicitly NOT stable and the skill's convergence bar is not met. BH-007's record drift was reconciled this session; BH-001's site is still unpinned; BH-008 is untested.",
-    "next_charter_focus": "Reproduce BH-001 once with the D67 self-locating panic message to name the re-entrant read site, fix it, and pin the fixed path. BH-008: validate the query embedding dimension and surface the mismatch (or pin the current silent behavior as intended-if-so). Then charter the corpus OCR/backend path (services/convert.rs resume + quality gate, ocr/pipeline.rs, backend/{docx,xlsx,pptx}.rs) with dynamic probes."
+    "convergence_note": "Six iterations. Iterations 4 and 5 produced new findings, so the signal is not 3-stable; iteration 6 was clean (0 new). BH-001's site is still unpinned, which is the only bar to convergence on the thinking path. BH-007's record drift was reconciled this session and BH-008 was fixed.",
+    "next_charter_focus": "Reproduce BH-001 once with the D67 self-locating panic message to name the re-entrant read site, fix it, and pin the fixed path (the last open bar). Optionally sweep the smaller un-probed corpus service modules (consolidation, assertions, cluster, prompt_builder, compose) and ocr/decimation.rs. Decide BH-002/BH-003: delete the dead thinking-trace plumbing + stale comments, or re-wire a producer."
   }
 }
