@@ -56,6 +56,7 @@ impl AppContext for AsyncApp {
         app.insert_entity(reservation, build_entity)
     }
 
+    #[track_caller]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
@@ -73,6 +74,7 @@ impl AppContext for AsyncApp {
         panic!("Cannot as_mut with an async context. Try calling update() first")
     }
 
+    #[track_caller]
     fn read_entity<T, R>(&self, handle: &Entity<T>, callback: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
@@ -421,6 +423,7 @@ impl AppContext for AsyncWindowContext {
         }
     }
 
+    #[track_caller]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
@@ -436,6 +439,7 @@ impl AppContext for AsyncWindowContext {
         panic!("Cannot use as_mut() from an async context, call `update`")
     }
 
+    #[track_caller]
     fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,

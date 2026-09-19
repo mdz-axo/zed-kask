@@ -136,11 +136,13 @@ impl EntityMap {
         let mut accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.insert(pointer.entity_id);
 
-        let entity = Some(
-            self.entities
-                .remove(pointer.entity_id)
-                .unwrap_or_else(|| double_lease_panic::<T>("update")),
-        );
+        // `double_lease_panic` is called directly (never through a closure) so
+        // `#[track_caller]` can report the offending call site — closures break
+        // caller-location propagation.
+        let entity = Some(match self.entities.remove(pointer.entity_id) {
+            Some(entity) => entity,
+            None => double_lease_panic::<T>("update"),
+        });
         Lease {
             entity,
             id: pointer.entity_id,
@@ -153,15 +155,21 @@ impl EntityMap {
         self.entities.insert(lease.id, lease.entity.take().unwrap());
     }
 
+    #[track_caller]
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
         let mut accessed_entities = self.accessed_entities.borrow_mut();
         accessed_entities.insert(entity.entity_id);
 
-        self.entities
+        // Direct call, not a closure: see `lease`.
+        match self
+            .entities
             .get(entity.entity_id)
             .and_then(|entity| entity.downcast_ref())
-            .unwrap_or_else(|| double_lease_panic::<T>("read"))
+        {
+            Some(entity) => entity,
+            None => double_lease_panic::<T>("read"),
+        }
     }
 
     fn assert_valid_context(&self, entity: &AnyEntity) {
@@ -205,8 +213,14 @@ impl EntityMap {
 
 #[track_caller]
 fn double_lease_panic<T>(operation: &str) -> ! {
+    // `#[track_caller]` propagates the caller location through the whole
+    // read/update/lease chain (each entry point is `#[track_caller]`), so a
+    // release-build panic can name the offending call site even when no debug
+    // symbols are available. Without this the message always points at this
+    // file, which tells an operator nothing about which read re-entered.
+    let caller = std::panic::Location::caller();
     panic!(
-        "cannot {operation} {} while it is already being updated",
+        "cannot {operation} {} while it is already being updated (at {caller})",
         std::any::type_name::<T>()
     )
 }
@@ -461,18 +475,21 @@ impl<T: 'static> Entity<T> {
 
     /// Grab a reference to this entity from the context.
     #[inline]
+    #[track_caller]
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
     }
 
     /// Read the entity referenced by this handle with the given function.
     #[inline]
+    #[track_caller]
     pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
+    #[track_caller]
     pub fn update<R, C: AppContext>(
         &self,
         cx: &mut C,
@@ -499,6 +516,7 @@ impl<T: 'static> Entity<T> {
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the window has been closed.
     #[inline]
+    #[track_caller]
     pub fn update_in<R, C: VisualContext>(
         &self,
         cx: &mut C,
@@ -774,6 +792,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
+    #[track_caller]
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -789,6 +808,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
+    #[track_caller]
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
@@ -807,6 +827,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Reads the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
+    #[track_caller]
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,

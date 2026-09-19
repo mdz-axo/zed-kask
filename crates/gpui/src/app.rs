@@ -2812,6 +2812,7 @@ impl AppContext for App {
 
     /// Updates the entity referenced by the given handle. The function is passed a mutable reference to the
     /// entity along with a `Context` for the entity.
+    #[track_caller]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
@@ -2835,6 +2836,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
+    #[track_caller]
     fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
@@ -3135,6 +3137,61 @@ mod test {
         cx.to_async().refresh();
 
         assert_eq!(render_count.get(), render_count_before_refresh + 1);
+    }
+
+    /// The double-lease panic must name the offending call site, not the panic
+    /// helper: without `#[track_caller]` propagation a release-build backtrace
+    /// is all `<unknown>` and the message only points at `entity_map.rs`, which
+    /// tells an operator nothing. Pin both the direct (`Entity::read`) and the
+    /// `AppContext` (`read_with`) paths.
+    #[gpui::test]
+    fn double_lease_panic_names_the_offending_call_site(cx: &mut TestAppContext) {
+        struct Probe;
+        let entity = cx.new(|_| Probe);
+
+        let caught = cx.update(|cx| {
+            let handle = entity.clone();
+            entity.update(cx, |_, cx| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // Re-entrant read of the entity currently being updated.
+                    // `Context<T>` derefs to `App`, so this is `Entity::read`
+                    // -> `EntityMap::read`.
+                    let _ = handle.read(cx);
+                }))
+            })
+        });
+
+        let payload = caught.expect_err("a re-entrant read must panic");
+        let message = payload
+            .downcast_ref::<String>()
+            .expect("the double-lease panic carries a formatted message");
+        assert!(message.contains("cannot read"), "{message}");
+        assert!(
+            message.contains(file!()),
+            "the panic must name the offending call site ({}), got: {message}",
+            file!()
+        );
+
+        let caught = cx.update(|cx| {
+            let handle = entity.clone();
+            entity.update(cx, |_, cx| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // `read_with` routes through `AppContext::read_entity`.
+                    let _ = handle.read_with(cx, |_, _| ());
+                }))
+            })
+        });
+
+        let payload = caught.expect_err("a re-entrant read_with must panic");
+        let message = payload
+            .downcast_ref::<String>()
+            .expect("the double-lease panic carries a formatted message");
+        assert!(message.contains("cannot read"), "{message}");
+        assert!(
+            message.contains(file!()),
+            "the panic must name the offending call site ({}), got: {message}",
+            file!()
+        );
     }
 
     #[test]
