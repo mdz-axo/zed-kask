@@ -30,8 +30,10 @@ hkask-forecast.workspace = true
 hkask-mcp-prediction-markets.workspace = true
 
 [dev-dependencies]
-# tool_behavior.rs drives the real tool surface end-to-end through Parameters<T>.
+# tool_behavior.rs drives the real tool surface end-to-end through Parameters<T>;
+# property_tests.rs is the layer-2 property suite over the pure event-tree math.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

@@ -22,6 +22,9 @@ futures.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# property_tests.rs is the layer-2 revision-chain / crash-window suite over
+# the service and artifact store.
+proptest = { workspace = true }
 
 [lints]
 workspace = true

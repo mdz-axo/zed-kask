@@ -48,14 +48,18 @@ impl KalshiMarket {
     /// Yes-leg probability from the two-sided quote midpoint.
     /// The market object carries both sides (the bids-only shape is specific
     /// to the `/orderbook` endpoint — T0 §4 narrowed R13 accordingly).
+    /// Midpoints outside [0, 1] are not probabilities — venue drift serving
+    /// a bad or out-of-range quote surfaces as `None`, never as a
+    /// fabricated probability flowing into calibration snapshots or records.
     pub fn yes_midpoint(&self) -> Option<f64> {
-        match (
+        let midpoint = match (
             parse_fp(&self.yes_bid_dollars),
             parse_fp(&self.yes_ask_dollars),
         ) {
             (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
             (bid, ask) => bid.or(ask),
-        }
+        };
+        midpoint.filter(|p| (0.0..=1.0).contains(p))
     }
 
     /// Quoted spread on the yes leg.
@@ -74,16 +78,20 @@ impl KalshiMarket {
 
 /// Snapshot open markets into the calibration store — the honest
 /// probability-at-observation for the future Brier score (last trade,
-/// falling back to the quote midpoint for untraded markets). Returns the
-/// count of markets snapshotted for the first time; re-scanning keeps the
-/// EARLIEST snapshot per market.
+/// falling back to the quote midpoint for untraded markets). An absent,
+/// invalid, or out-of-range last price is not a probability — such
+/// markets are skipped, never snapshotted with a fabricated value.
+/// Returns the count of markets snapshotted for the first time; re-scanning
+/// keeps the EARLIEST snapshot per market.
 pub(crate) fn snapshot_open_markets(
     markets: &[KalshiMarket],
     store: &mut crate::calibration::CalibrationStore,
 ) -> u32 {
     let mut snapshotted = 0;
     for market in markets {
-        let probability = parse_fp(&market.last_price_dollars).or_else(|| market.yes_midpoint());
+        let probability = parse_fp(&market.last_price_dollars)
+            .filter(|p| (0.0..=1.0).contains(p))
+            .or_else(|| market.yes_midpoint());
         let Some(probability) = probability else {
             continue;
         };
@@ -278,6 +286,14 @@ pub async fn fetch_price_history(
         &query,
     )
     .await?;
+    Ok(candlesticks_to_points(&response))
+}
+
+/// Convert candlesticks to price points (pure, HTTP-free decision core):
+/// close-of-period quote midpoint, sorted by timestamp. Absent, invalid,
+/// or out-of-range closes are not prices — those candles drop out, never
+/// fabricated into the realized-variance window.
+pub(crate) fn candlesticks_to_points(response: &KalshiCandlesticksResponse) -> Vec<PricePoint> {
     let mut points = Vec::new();
     for series in &response.markets {
         for candle in &series.candlesticks {
@@ -287,7 +303,7 @@ pub async fn fetch_price_history(
                 (Some(b), Some(a)) => Some((b + a) / 2.0),
                 (b, a) => b.or(a),
             };
-            if let Some(price) = price {
+            if let Some(price) = price.filter(|p| (0.0..=1.0).contains(p)) {
                 points.push(PricePoint {
                     ts: candle.end_period_ts,
                     price,
@@ -296,7 +312,7 @@ pub async fn fetch_price_history(
         }
     }
     points.sort_by_key(|p| p.ts);
-    Ok(points)
+    points
 }
 
 /// Fetch open events.

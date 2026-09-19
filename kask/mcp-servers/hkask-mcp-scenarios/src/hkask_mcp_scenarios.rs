@@ -41,6 +41,8 @@ use hkask_bridge_ontology::dc_bibo;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
+#[cfg(test)]
+mod property_tests;
 pub(crate) mod superforecast;
 pub(crate) mod templates;
 pub mod types;

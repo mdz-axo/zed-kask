@@ -87,3 +87,13 @@ error-kind specificity, write containment, and no-write-through staging.
 `tool_names_match_live_router` pins the generated `TOOL_NAMES` set against
 the live router (see the fleet [README](README.md) for the count
 verification methods).
+
+The property layer lives in the core crate
+(`kask/crates/hkask-spreadsheet/src/property_tests.rs`, testing-protocol
+layer 2): generated edit chains preserve the full immutable revision
+history (every revision digest-matching and readable, base bytes never
+changing, replay returning the recorded revision), and the three crash
+windows of the apply ordering are pinned directly — an orphan revision
+(published, unrecorded) reconciles as unknown and re-applies fresh;
+a crash-leftover temp file is never readable as a revision; a same-id
+rewrite is rejected with the original bytes unchanged.

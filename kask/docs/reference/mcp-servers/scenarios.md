@@ -190,6 +190,21 @@ failure-injection fixture: the only publication failure that is
 privilege-independent — a directory at the destination — cannot coexist with
 a prior snapshot file at that path. It is design-reviewed, not test-pinned.
 
+## Testing
+
+`tests/tool_behavior.rs` drives the tool surface through the public
+`Parameters<T>` seam; the tool count is pinned against the live router by
+`tool_surface_is_exactly_19_registered_tools`. The property layer
+(`src/property_tests.rs`, testing-protocol layer 2) verifies the event-tree
+marginalization math against two independent oracles: brute-force
+marginalization of the enumerated global joint distribution (exact when
+parent-independence holds — the generator enforces disjoint-ancestry parent
+sets) and a test-local re-implementation of the documented noisy-OR rule for
+multi-group trees. The parent-independence approximation itself (marginals
+computed over parent *marginals*, per `types.rs` — exact only under
+disjoint ancestries) is pinned as intentional by
+`correlated_parents_keep_the_documented_independence_approximation`.
+
 ## Cross-links
 
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets_set`; CMP indices consumed by `scenario_from_cmp_indices`

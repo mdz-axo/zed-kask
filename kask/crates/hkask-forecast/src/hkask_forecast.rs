@@ -221,6 +221,39 @@ pub fn marginalize(parent_marginals: &[f64], conditionals: &[f64]) -> f64 {
     marginal
 }
 
+/// Proof layer (Gödel plan R2; testing-protocol layer 3). Harness bound:
+/// n = 2 parents (the 4-entry CPT — the most-used multi-parent shape).
+/// Every input within the bound is covered exhaustively; tables with more
+/// parents are unproven, not proven-safe. Budgets: unwind 12 (the
+/// assignments loop runs 2^2 = 4 iterations, the inner parent loop 2),
+/// 2 GiB, 120 s — per `kask/scripts/check-bounded-proofs.sh`.
+#[cfg(kani)]
+mod proofs {
+    use super::marginalize;
+
+    /// Conservation: for any two parent marginals and any 4-entry
+    /// conditional table with all entries finite in [0, 1], the
+    /// marginalized probability is finite and within [0, 1] — a weighted
+    /// sum of table entries under assignment weights that sum to 1
+    /// cannot leave the hull. This is the boundedness obligation every
+    /// consumer relies on: the result is stored as a probability.
+    #[kani::proof]
+    fn marginalize_two_parents_stays_in_the_unit_hull() {
+        let parents: [f64; 2] = kani::any();
+        let conditionals: [f64; 4] = kani::any();
+        kani::assume(parents[0] >= 0.0 && parents[0] <= 1.0);
+        kani::assume(parents[1] >= 0.0 && parents[1] <= 1.0);
+        kani::assume(conditionals[0] >= 0.0 && conditionals[0] <= 1.0);
+        kani::assume(conditionals[1] >= 0.0 && conditionals[1] <= 1.0);
+        kani::assume(conditionals[2] >= 0.0 && conditionals[2] <= 1.0);
+        kani::assume(conditionals[3] >= 0.0 && conditionals[3] <= 1.0);
+
+        let marginal = marginalize(&parents, &conditionals);
+        assert!(marginal.is_finite());
+        assert!(marginal >= 0.0 && marginal <= 1.0);
+    }
+}
+
 /// Walk a conditional probability tree in topological order and compute the
 /// marginal probability of the outcome node. Roots contribute their stored
 /// `marginal_probability`; each dependent marginalizes its `depends_on` entries

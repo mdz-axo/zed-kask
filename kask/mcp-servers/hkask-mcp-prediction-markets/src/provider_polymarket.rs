@@ -133,9 +133,15 @@ impl GammaMarket {
     }
 
     /// Yes-leg implied probability: `outcomePrices[0]` by Gamma convention
-    /// (first outcome is "Yes" for binary markets).
+    /// (first outcome is "Yes" for binary markets). Values outside [0, 1]
+    /// are not probabilities — venue drift serving a bad or out-of-range
+    /// price surfaces as `None`, never as a fabricated probability that
+    /// would flow into the calibration store or a CMP cohort mean.
     pub fn yes_probability(&self) -> Option<f64> {
-        self.prices().first().copied()
+        self.prices()
+            .first()
+            .copied()
+            .filter(|p| (0.0..=1.0).contains(p))
     }
 }
 
@@ -175,6 +181,9 @@ pub(crate) fn snapshot_open_markets(
 /// derived from the terminal price (>=0.99 yes / <=0.01 no — for a resolved
 /// market the terminal price IS the resolution declaration); the scored
 /// probability comes from the pre-resolution snapshot. A resolved market
+/// with no parseable in-range terminal price counts in `skipped_ambiguous`
+/// — an unparseable or out-of-range price is ambiguous data, never a
+/// silent drop and never a fabricated outcome. A resolved market
 /// with no snapshot is counted in `resolved_without_snapshot` and NEVER
 /// recorded — its terminal price is not an observation, and scoring it
 /// would be self-fulfilling (Brier ≈ 0 by construction).
@@ -190,6 +199,8 @@ pub(crate) fn resolved_observations_from_snapshots(
             continue;
         }
         let Some(price) = market.yes_probability() else {
+            // No parseable in-range terminal price: ambiguous, not a drop.
+            *skipped_ambiguous += 1;
             continue;
         };
         let outcome = if price >= 0.99 {

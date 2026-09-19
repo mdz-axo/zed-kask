@@ -198,6 +198,21 @@ Settings live in the `kask.prediction_markets` subsection
 At runtime the base-event registry is read from
 `HKASK_PREDICTION_MARKETS_BASE_EVENTS` (see `market_cmp_index` and `market_cmp_indices`).
 
+## Testing
+
+The calibration-scan decision cores are pure and HTTP-free, pinned by
+inline unit tests (`provider_kalshi.rs`, `provider_polymarket.rs`). The
+property layer (`src/property_tests.rs`, testing-protocol layer 2) mutates
+venue-response fixtures (field removal, null, type swap, garbage and
+out-of-range numerics) and asserts the fabrication gate: a drifted
+response never yields a derived probability outside `None` or [0, 1] —
+`yes_probability` / `yes_midpoint` / `candlesticks_to_points` gate out
+of range prices, and an unparseable or out-of-range terminal price on a
+resolved market counts as skipped-ambiguous, never a silent drop.
+The FRED missing-credential path is pinned at the tool seam
+(`fred_tool_without_key_is_permission_denied_naming_the_env_var`):
+`PermissionDenied` naming `HKASK_FRED_API_KEY`.
+
 ## Consumers
 
 - **`hkask-mcp-scenarios`** — `scenario_from_markets_set` converts `market_lookup` / `market_match` records

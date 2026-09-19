@@ -44,6 +44,9 @@ futures.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# property_tests.rs is the layer-2 mutation suite over the venue response
+# parsers and calibration-scan decision cores.
+proptest = { workspace = true }
 
 [lints]
 workspace = true

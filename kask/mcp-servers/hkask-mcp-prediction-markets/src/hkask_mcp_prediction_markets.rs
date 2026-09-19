@@ -33,6 +33,8 @@ pub mod economic_object;
 pub mod eqm;
 pub mod matcher;
 pub mod ontology;
+#[cfg(test)]
+mod property_tests;
 pub mod provider_kalshi;
 pub mod provider_polymarket;
 pub mod residual;
@@ -1699,6 +1701,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod smoke {
     use super::*;
+    use crate::economic_data::fred::FredGetSeriesInfoRequest;
+    use hkask_types::McpErrorKind;
     use hkask_types::WebID;
     use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
     use hkask_types::template::LLMParameters;
@@ -1823,6 +1827,34 @@ mod smoke {
                 .iter()
                 .any(|tool| tool == "prediction_markets_status"),
             "status must record its own invocation, got: {content}"
+        );
+    }
+
+    /// Pin: the FRED tools read their key from ctx credentials
+    /// (`HKASK_FRED_API_KEY`); with no key configured the tool surfaces
+    /// `PermissionDenied` naming the env var (`economic_data.rs` maps
+    /// `MissingApiKey`) — a missing credential is an authorization
+    /// failure, never a silent fallback and never an `unavailable`
+    /// transport error (.rules missing-credential pattern).
+    #[tokio::test]
+    async fn fred_tool_without_key_is_permission_denied_naming_the_env_var() {
+        let server = make_server(); // no FRED key by construction
+        let error = server
+            .fred_get_series_info(Parameters(FredGetSeriesInfoRequest {
+                series_id: "CPIAUCSL".to_string(),
+            }))
+            .await
+            .expect_err("missing credential must error");
+        assert_eq!(
+            error.kind,
+            McpErrorKind::PermissionDenied,
+            "missing FRED key must be permission-denied, got: {:?}",
+            error.kind
+        );
+        assert!(
+            error.message.contains("HKASK_FRED_API_KEY"),
+            "error must name HKASK_FRED_API_KEY, got: {}",
+            error.message
         );
     }
 
