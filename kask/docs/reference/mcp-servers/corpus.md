@@ -306,16 +306,18 @@ confidence fields exist in the bundle. The gate re-hashes the bundle, checks row
 bijection, requires `source_chunks_jsonl` chunks classified under
 `published-term-resolution-v1` with reconciling terms, recomputes the ontology
 resolutions, re-derives every claim, requires each artifact row to equal its
-re-execution, and admits only rows whose applicable factual claims are all
-strength 2 — `model_inference` answers fail closed; paraphrase and conceptual
-answers stay blocked until an independent semantic oracle is specified. Self-
+re-execution, and admits a row when every citation claim is strength 2 and at
+least one exists. A synthesized answer that is not byte-exact is admitted as
+`model_inference` and persisted as model-mediated — never relabelled verified.
+Self-
 reported strengths, spans, or resolutions cannot open the gate. With the gate
 satisfied, ingest structurally requires nonblank instruction/output/QA type/
 source/chunk ref and complete evidence entries; it keeps concise answers and first
 valid case-insensitive exact instructions. It neither deduplicates against the DB
 nor performs semantic review — Stage 8 and operator acceptance remain external.
 `prompt_id`, `provenance`, citations, metadata, the grounding identity object
-(protocol, manifest SHA-256, `row_key`), and candidate terms resolved through the
+(protocol, manifest SHA-256, `row_key`, and the re-executed `answer_provenance`),
+and candidate terms resolved through the
 shared published-ontology resolver survive into retained JSONL and QA h_mems;
 this tool creates no embeddings
 (`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`;

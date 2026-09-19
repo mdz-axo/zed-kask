@@ -298,10 +298,14 @@ access: it re-hashes the bundle, checks row bijection against the candidate
 file, requires sources classified under `published-term-resolution-v1` with
 reconciling terms, recomputes the ontology resolutions, re-derives every claim,
 and requires each artifact row to equal its re-execution — self-reported
-strengths, spans, or resolutions cannot open the gate. Admission requires **all
-applicable factual claims at strength 2** (`tool_verified`/`platform_derived`);
-`model_inference` answers fail closed — paraphrase and conceptual answers stay
-blocked until an independent semantic oracle is specified. Manifest identity
+strengths, spans, or resolutions cannot open the gate. Admission requires
+**every citation claim at strength 2** (`tool_verified`/`platform_derived`) and
+**at least one such citation**: the evidence a row rests on is byte-verified. A
+synthesized answer that is not byte-exact inside that evidence is a
+`model_inference` observation — the row is admitted on its citations and the
+answer is persisted as model-mediated, never relabelled verified. A
+model-mediated oracle judging entailment is *not* an admission path (see the
+architecture note below). Manifest identity, the re-executed answer provenance
 and the canonical ontology persist into the training JSONL and QA h_mems.
 Nothing generated before this gate is ingestible; historical pilot artifacts
 (v2–v8) are immutable evidence only.
@@ -350,17 +354,19 @@ re-executed mechanical gate — not to a second model:
   `model_inference` as observation) and the explicit-unperformed-check
   discipline. The decoupled-verifier variant (a spawned model judging
   entailment) was rejected 2026-09-18: model-mediated judgments are
-  observations, never authority, so admission is all-strength-2 by
-  re-execution with no compensatory score.
+  observations, never authority, so citations — never the answer — carry
+  admission, all at strength 2 by re-execution with no compensatory score.
 - Coarse `5w1h_core` resolutions are honest anchors from the published
   fallback ladder (`hkask-bridge-ontology/src/term_resolution.rs`), never
   failures, and never model-supplied namespaces or URIs.
 
 The adaptation here is: generator writes candidate → external grounding
 manifest cites canonical source bytes and binds to the candidate's SHA-256 →
-ingestion accepts only complete, exact-identity, decoupled acceptances. Stage 8
-remains an external semantic oracle; a grounding acceptance is not promoted to
-factual truth, and operator acceptance stays outside generation and ingestion.
+ingestion accepts only complete, exact-identity rows whose citations re-execute
+byte-verified. A synthesized answer is admitted on those citations and persisted
+as model-mediated; it is never promoted to factual truth, and operator
+acceptance stays outside generation and ingestion. Stage 8 remains the external
+semantic audit, advisory only.
 
 ## QA routing, scheduling and output ownership
 
@@ -428,8 +434,10 @@ Structural admission is unchanged: nonblank instruction, output, QA type, source
 and chunk ref, required structured evidence array, and complete evidence entries.
 On top of structure, every ingestion runs the `corpus-qa-grounding-v1` gate
 before dedup, output, and DB access (see the grounding contract above): the
-manifest is required, every check is re-executed server-side, and only
-all-strength-2 rows ingest. Concise answers are valid; retained text is not
+manifest is required, every check is re-executed server-side, and admission
+requires every citation claim at strength 2 plus at least one such citation.
+A synthesized answer that is not byte-exact is admitted as `model_inference` and
+persisted as model-mediated. Concise answers are valid; retained text is not
 trimmed or rewritten. Invalid concepts, blank supplied prompt IDs, non-object
 provenance or malformed evidence are malformed rows. First structurally valid
 case-insensitive exact instructions win in file order; there is no semantic
@@ -439,7 +447,9 @@ dedup or existing-DB dedup (`src/tools/corpus/qa_parsing.rs:53–112`;
 Training JSONL retains `instruction`, empty `input`, `output`, `qa_type`, `type`,
 `source`, `chunk_ref`, `evidence_quotes`, `prompt_id`, `provenance`, `difficulty`,
 `concepts`, and the `grounding` identity object (protocol, manifest SHA-256,
-`row_key`). h_mem values preserve these alongside question/answer, `bloom_level`
+`row_key`, and the re-executed `answer_provenance` — `tool_verified` when the
+answer is byte-exact in its own evidence, else `model_inference`). h_mem values
+preserve these alongside question/answer, `bloom_level`
 and dataset; DC/BIBO and PKO metadata plus the candidate terms resolved through
 the shared published-ontology resolver are in the ontology column. An absent
 supplied `type` uses `qa_type`. No embeddings are generated (`src/tools/corpus.rs`).
