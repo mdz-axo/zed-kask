@@ -1,0 +1,241 @@
+{
+  "skill": "bug-hunt",
+  "version": "0.31.0",
+  "expedition": {
+    "charters": [
+      {
+        "charter_statement": "Explore the Zed-native agent thinking-trace path (crates/agent + kask/crates/kask_bridge/src/inference_chat.rs) using code-path and contract analysis to discover threats to the live thinking-trace capability and to thread-update safety.",
+        "target_area": "thinking-trace production (kask_bridge::inference_chat) and consumption (agent ThreadEvent::AgentThinking / ToolCallThinking -> acp_thread -> agent_ui)",
+        "strategy": "Product Elements (claims) + Quality Criteria (capability/observability), justified against the crate model: the path is a thin, advertised capability whose producer was removed in the in-process pivot.",
+        "expected_category": "requirements, structural, integration",
+        "beizer_focus": ["structural", "requirements", "integration"],
+        "crate_model": {
+          "architecture": "kask_bridge LanguageModelInferencePort bridges hkask InferencePort -> zed LanguageModel over two mpsc channels (tx non-streaming, stream_tx streaming) polled by a GPUI receiver task; crates/agent Thread emits ThreadEvent stream consumed by NativeAgentConnection::handle_thread_events -> AcpThread -> agent_ui.",
+          "data_flow": "model stream -> collect_completion -> InferenceStreamChunk{text_delta,reasoning_delta} (streaming) OR StreamAccumulator -> InferenceResult (non-streaming); agent Thread: LanguageModelCompletionEvent::Thinking -> handle_thinking_event -> ThreadEvent::AgentThinking -> AcpThread::push_assistant_content_block(is_thought=true).",
+          "critical_paths": ["LanguageModelInferencePort::collect_completion", "stream_request", "Thread::send", "Thread::run_turn/_internal", "Thread::handle_completion_event", "Thread::handle_tool_use_event", "NativeAgentConnection::handle_thread_events", "AcpThread::push_assistant_content_block / append_tool_call_thinking"],
+          "dependency_surface": ["gpui", "language_model", "acp_thread", "agent_ui", "kask_bridge"],
+          "observed_characteristics": ["async", "gpui-entity-borrow-model", "channel-based Send boundary", "trait_objects", "no unsafe in the target slice"]
+        },
+        "probe_instructions": [
+          "grep for producers/consumers of AgentThinking and ToolCallThinking",
+          "grep for generate_stream* call sites",
+          "trace GPUI entity lease semantics behind 'cannot read ... while already being updated'",
+          "inspect LanguageModelInferencePort error paths for silent discards"
+        ],
+        "prior_feedback_consumed": null
+      },
+      {
+        "charter_statement": "Explore the corpus MCP server (hkask-mcp-corpus, 22.8k LOC; replica + docproc folded in) using static seam analysis to discover threats to pipeline reliability and to the published grounding/ingest contract.",
+        "target_area": "process/QA/ingest seams and concurrency/error-handling surfaces",
+        "strategy": "Project Environment + Product Elements, justified against the crate model: a large async pipeline with many mutexes, a published grounding gate, and explicit .rules traps.",
+        "expected_category": "coding, data, structural",
+        "beizer_focus": ["coding", "data", "configuration"],
+        "crate_model": {
+          "architecture": "rmcp MCP server; tools/ (26 tools) -> services/ (convert, qa_pipeline, qa_batch, qa_grounding, qa_adjudication, prompt_builder, consolidation, assertions) -> backend/ (docx, xlsx, pptx) + ocr/ + index.rs (warm passage cache) + helpers.rs (SQLCipher open).",
+          "data_flow": "discover -> convert/OCR -> chunk -> tag -> embed -> build_prompts -> generate_qa_batch -> ground_generated_qa -> ingest_qa -> prepare_training_dataset; compose/rewrite/centroid for style replicas.",
+          "critical_paths": ["corpus_convert", "corpus_chunk", "corpus_tag_chunks", "corpus_embed", "corpus_build_prompts", "corpus_generate_qa_batch", "corpus_ground_generated_qa", "corpus_ingest_qa", "PassageIndex::hydrate_if_empty", "AdaptiveLimiter"],
+          "dependency_surface": ["hkask-memory", "hkask-storage", "hkask-inference", "hkask-bridge-ontology", "rmcp"],
+          "observed_characteristics": ["async", "mutex-guarded shared state", "SQLCipher", "LLM-output parsing", "deterministic re-execution gates"]
+        },
+        "probe_instructions": [
+          "baseline static pattern search (unwrap/expect/panic/let _ =) in non-test src",
+          "verify the .rules corpus traps are closed (json_extract array, max_pairs default, index hydration, grounding gate)",
+          "inspect mutex poisoning behavior for panic cascades",
+          "check published grounding contract enforcement points"
+        ],
+        "prior_feedback_consumed": null
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "BH-001",
+      "summary": "Re-entrant read of agent::thread::Thread during a turn trips GPUI's double-lease panic ('cannot read agent::thread::Thread while it is already being updated'), killing the editor on prompt send.",
+      "location": { "file": "crates/gpui/src/app/entity_map.rs", "line_approx": 164, "also": "crates/agent/src/thread.rs:2806-2838 (Thread::send/send_existing)" },
+      "verdict": "BUG",
+      "confidence": 0.9,
+      "reproducibility": "reproduced",
+      "beizer_category": "integration",
+      "severity": "CRITICAL",
+      "is_ought": {
+        "is": "A read of the Thread entity happens while an update lease is active. EntityMap::lease removes the entity from the map; EntityMap::read then finds nothing and calls double_lease_panic::<Thread>(\"read\").",
+        "ought": "No code path invoked during a Thread update may read the Thread through an Entity/WeakEntity handle (directly or via a callback)."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (live operator log) + Inference (lease mechanism read from source)",
+      "evidence": "PANIC at crates/gpui/src/app/entity_map.rs:164:32: cannot read agent::thread::Thread while it is already being updated\n(immediately after: INFO [agent::thread] Thread::send called with model: glm-5.3:cloud)",
+      "mechanism_evidence": "fn read<T: 'static>(&self, entity: &Entity<T>) -> &T { ... self.entities.get(entity.entity_id).and_then(|e| e.downcast_ref()).unwrap_or_else(|| double_lease_panic::<T>(\"read\")) }",
+      "impact": "Editor process panics (main thread) on the first prompt of a session; all in-flight work is lost.",
+      "root_cause_status": "NOT PINNED — the release-build backtrace is all '<unknown>' (no symbols). The synchronous send path (flush_pending_message / cancel / enabled_tools / clear_summary) reads no Thread handle, so the re-entrant read is most likely in a deferred effect, a spawned turn task, a tool initial_title/run, or an agent_ui handler that reads the native Thread while it is leased.",
+      "mitigation": "2026-09-19 (DIVERGENCE D67, commit b5ffa5d668): the panic is now self-locating. `EntityMap::read`/`lease` call `double_lease_panic` directly (the prior `unwrap_or_else` closure broke `#[track_caller]` propagation) and `Entity::{read,read_with,update,update_in}` / `WeakEntity::{read_with,update,update_in}` / the `AppContext::{read_entity,update_entity}` trait + production impls (`App`, `Context<T>`, `AsyncApp`, `AsyncWindowContext`) carry `#[track_caller]`; `double_lease_panic` embeds `std::panic::Location::caller()` in the message. A release-build panic therefore names the offending file:line:col — a re-entrant read at `crates/gpui/src/app.rs:3159` now reports '(at crates/gpui/src/app.rs:3159:36)' instead of only `entity_map.rs:164`. Pinned by `double_lease_panic_names_the_offending_call_site` (crates/gpui/src/app.rs); gpui lib suite 332/332 green; `cargo check -p agent` green. The re-entrant read site itself still needs one reproduction with the new message.",
+      "suspects": [
+        "crates/agent/src/agent.rs:1016-1018 cx.observe(&thread_handle, save_thread) -> save_thread reads thread (agent.rs:1977)",
+        "crates/agent/src/agent.rs:1546/1571/3465/3877 reads of Thread from subscribe/observer paths",
+        "crates/agent/src/thread.rs:4377 tool.run(...) invoked inside the handle_completion_event update — a tool whose run body reads its stored WeakEntity<Thread> before its first await",
+        "crates/agent/src/thread.rs:5218-5221 unregister_running_subagent reads sibling Thread entities while the caller holds the parent's lease",
+        "agent_ui thread_view.rs:1806-1829 AcpThread::send -> NativeAgentConnection::prompt -> Thread::send nesting"
+      ],
+      "fix_suggestion": "Reproduce once with the D67 self-locating panic: the message now names the offending file:line:col directly, so the fix is to move that read out of the update — capture the value from the already-borrowed &Thread, or defer with cx.defer (the pattern already used in crates/swarm_panel/src/swarm_panel.rs:681-691). No symbolicated build is needed anymore.",
+      "pattern_signature": "double_lease_panic::<T>(\"read\") / '.read(cx)' or 'read_with(cx' on an entity handle reachable from inside that same entity's update closure; kask precedent fix comment: 're-entrant read triggers double_lease_panic'"
+    },
+    {
+      "id": "BH-002",
+      "summary": "The tool-call live thinking trace is dead surface: ThreadEvent::ToolCallThinking has no producer (thinking_sender has zero callers), so AcpThread::append_tool_call_thinking can never fire, while four comments still advertise skill execution as the producer.",
+      "location": { "file": "crates/agent/src/thread.rs", "line_approx": 7156, "also": ["crates/agent/src/thread.rs:7162", "crates/agent/src/thread.rs:1104-1108", "crates/acp_thread/src/acp_thread.rs:880-884", "crates/acp_thread/src/acp_thread.rs:3264-3267", "crates/agent/src/agent.rs:2594-2597"] },
+      "verdict": "BUG",
+      "confidence": 0.92,
+      "reproducibility": "reproduced",
+      "beizer_category": "requirements",
+      "severity": "HIGH",
+      "is_ought": {
+        "is": "grep over the whole repo shows thinking_sender defined once (thread.rs:7156) with no callers; the only send of ToolCallThinking is inside thinking_sender itself (thread.rs:7162); the only consumer is agent.rs:2594 -> AcpThread::append_tool_call_thinking.",
+        "ought": "Either the live tool-call thinking trace has a producer (skill execution), or the consumer plumbing and its comments must be removed — a documented capability with no producer is misinformation. Per .rules, stale comments are active misinformation."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (repo-wide grep, call-graph)",
+      "evidence": "thread.rs:7160  pub fn thinking_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {\nthread.rs:7162      .unbounded_send(Ok(ThreadEvent::ToolCallThinking {...\nacp_thread.rs:3265  /// Called from `ThreadEvent::ToolCallThinking` — skill execution emits\nthread.rs:1105      /// Real-time thinking trace from a tool's execution (e.g. skill execution",
+      "impact": "The UI never shows a live per-tool thinking trace; docs/comments claim it does. The producer (skill-cascade executor / call_inference_stream) was removed (DIVERGENCE D8) and its consumer plumbing was left behind.",
+      "fix_suggestion": "Needs investigation: decide whether the capability is still required. If not, delete thinking_sender + ThreadEvent::ToolCallThinking + append_tool_call_thinking + ToolCall.thoughts and correct all four comments in the same change. If yes, re-wire a producer.",
+      "pattern_signature": "'thinking_sender' with zero call sites; ThreadEvent variant constructed only inside its own accessor; comment 'skill execution emits' with no skill executor in the tree"
+    },
+    {
+      "id": "BH-003",
+      "summary": "LanguageModelInferencePort's streaming overrides have no production consumers; comments still claim the removed skill cascade calls them.",
+      "location": { "file": "kask/crates/kask_bridge/src/inference_chat.rs", "line_approx": 1051, "also": ["kask/crates/kask_bridge/src/inference_chat.rs:988-1063", "kask/crates/kask_bridge/src/inference_chat.rs:1023-1025"] },
+      "verdict": "POTENTIAL_BUG",
+      "confidence": 0.8,
+      "reproducibility": "reproduced",
+      "beizer_category": "structural",
+      "severity": "MEDIUM",
+      "is_ought": {
+        "is": "generate_stream / generate_stream_with_model / generate_stream_with_messages are defined (overriding trait defaults) but the only call sites in the repo are the port's own unit tests (inference_chat.rs:1877,1914). No production code calls them.",
+        "ought": "Doc comments that name a caller ('used by skill execution', 'The cascade calls generate_stream_with_messages') must match the tree, and dead overrides should be removed or justified."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (repo-wide grep)",
+      "evidence": "inference_chat.rs:1053  /// The cascade calls `generate_stream_with_messages` (not\ninference_chat.rs:990  /// thinking-trace path used by skill execution: `reasoning_delta` chunks",
+      "impact": "Maintenance hazard: the streaming path is untested against any real consumer, so its timeout/circuit/cancellation behavior can rot unnoticed; comments mislead readers into believing the live trace still flows.",
+      "fix_suggestion": "Needs investigation: confirm no out-of-tree consumer relies on the InferencePort streaming methods before removing; otherwise correct the comments to name the real consumer.",
+      "pattern_signature": "trait method overrides with zero non-test call sites + doc comment naming a deleted executor ('cascade')"
+    },
+    {
+      "id": "BH-004",
+      "summary": "StreamAccumulator silently converts an unparsable text tool-call input into JSON null, discarding the parse error.",
+      "location": { "file": "kask/crates/kask_bridge/src/inference_chat.rs", "line_approx": 313 },
+      "verdict": "POTENTIAL_BUG",
+      "confidence": 0.72,
+      "reproducibility": "reproducible",
+      "beizer_category": "data",
+      "severity": "MEDIUM",
+      "is_ought": {
+        "is": "LanguageModelToolUseInput::Text(text) => serde_json::from_str(text).unwrap_or(serde_json::Value::Null) — a malformed tool-call argument string becomes Null with no error surfaced.",
+        "ought": "Per .rules, a fallible operation must not silently discard its error; the caller should surface the parse failure (or preserve the raw text) so malformed arguments are distinguishable from an intentional empty object."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (source read)",
+      "evidence": "LanguageModelToolUseInput::Text(text) => {\n    serde_json::from_str(text).unwrap_or(serde_json::Value::Null)\n}",
+      "impact": "A downstream tool sees Null args instead of the raw malformed payload; the failure looks like an empty call, masking provider/stream corruption.",
+      "fix_suggestion": "Surface the parse error (e.g., structured tool_call with an error field) or preserve the raw text; do not collapse to Null.",
+      "pattern_signature": "serde_json::from_str(...).unwrap_or(serde_json::Value::Null)"
+    },
+    {
+      "id": "BH-005",
+      "summary": "build_request_with_images collapses a documented 'tool' ChatMessage role into Role::User; no production caller exercises it today.",
+      "location": { "file": "kask/crates/kask_bridge/src/inference_chat.rs", "line_approx": 828 },
+      "verdict": "POTENTIAL_BUG",
+      "confidence": 0.65,
+      "reproducibility": "reproducible",
+      "beizer_category": "interface",
+      "severity": "LOW",
+      "is_ought": {
+        "is": "let role = match m.role.as_str() { \"system\" => Role::System, \"assistant\" => Role::Assistant, _ => Role::User }; so a \"tool\" role message (documented at hkask-types/src/ports/inference_types.rs:17) is sent to zed as Role::User.",
+        "ought": "The role mapping must be explicit about every documented role; silently treating tool results as user turns changes conversation semantics. If zed's Role genuinely lacks Tool, the collapse must be documented at the mapping, not implied by `_`."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (source read) + Inference (Role enum has no Tool variant: crates/language_model_core/src/role.rs:6-10)",
+      "evidence": "let role = match m.role.as_str() {\n    \"system\" => Role::System,\n    \"assistant\" => Role::Assistant,\n    _ => Role::User,\n};",
+      "impact": "Latent: the doc comment above the function claims tool-role messages are handled ('supports 4 roles: system, user, assistant, tool'), which is not what the mapping does.",
+      "fix_suggestion": "Make the role mapping exhaustive and comment the deliberate tool->user collapse (or reject tool role explicitly). Needs investigation of whether zed can represent tool results.",
+      "pattern_signature": "match role { 'system' => System, 'assistant' => Assistant, _ => User }  // catch-all swallows an enumerated role"
+    },
+    {
+      "id": "BH-006",
+      "summary": "Corpus batch/OCR concurrency state panics on a poisoned std::sync::Mutex, turning one panic into a cascade that kills all subsequent batching/OCR work.",
+      "location": { "file": "kask/mcp-servers/hkask-mcp-corpus/src/batch.rs", "line_approx": 233, "also": ["kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:248", "kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:266", "kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:290", "kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:330", "kask/mcp-servers/hkask-mcp-corpus/src/ocr/llm_ocr.rs:174", "kask/mcp-servers/hkask-mcp-corpus/src/ocr/llm_ocr.rs:183"] },
+      "verdict": "POTENTIAL_BUG",
+      "confidence": 0.75,
+      "reproducibility": "reproducible",
+      "beizer_category": "coding",
+      "severity": "MEDIUM",
+      "is_ought": {
+        "is": "self.inner.state.lock().expect(\"adaptive limiter state mutex poisoned\") (and the OCR health-state equivalent) — a poisoned lock aborts the call.",
+        "ought": "Per .rules (no unwrap/panic in library code) and for consistency with the same codebase's deliberate poison recovery (kask_bridge/src/inference_chat.rs:522 .unwrap_or_else(|error| error.into_inner())), a poisoned lock should be recovered or surfaced as a typed error, not panic."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (source read)",
+      "evidence": "batch.rs:233  .expect(\"adaptive limiter state mutex poisoned\")\nllm_ocr.rs:174  let mut state = self.state.lock().expect(\"OCR health state mutex poisoned\");",
+      "impact": "Any panic while holding the lock (or a prior panic in the process) permanently poisons it; every later acquire panics, so the MCP server's batch concurrency and OCR health tracking are unrecoverable without a restart.",
+      "fix_suggestion": "Recover with unwrap_or_else(|e| e.into_inner()) where the guard is a simple counter, or convert to a typed McpToolError; at minimum log the poison once rather than panicking per call.",
+      "pattern_signature": ".lock().expect(\"<state> mutex poisoned\")"
+    }
+  ],
+  "rejected_findings": [
+    {
+      "reason": "missing_citation (root cause not established)",
+      "summary": "The specific re-entrant read site for BH-001 could not be pinned from a release-build backtrace; recorded as a suspect list inside BH-001 rather than as a standalone finding. The D67 diagnostic now makes the site self-reporting on the next reproduction."
+    }
+  ],
+  "observations": [
+    {
+      "id": "BH-OBS-1",
+      "summary": "AcpThread::append_tool_call_thinking silently no-ops when the tool-call id is unknown.",
+      "location": { "file": "crates/acp_thread/src/acp_thread.rs", "line_approx": 3274 },
+      "evidence": "if let Some((ix, call)) = self.tool_call_mut(tool_call_id) { call.append_thinking(text, cx); cx.emit(AcpThreadEvent::EntryUpdated(ix)); }",
+      "note": "No log/warn on the miss; combined with BH-002 the path is entirely dead, so this is low priority."
+    },
+    {
+      "id": "BH-OBS-2",
+      "summary": "The documented .rules corpus traps are closed, not open: json_extract handles arrays and balanced extraction (hkask-types/src/json_extract.rs:47-97); corpus_build_prompts max_pairs defaults to 0 = all chunks (tools/corpus.rs:692-694); PassageIndex hydrates fail-closed and surfaces missing text (index.rs:254-302).",
+      "note": "Recorded as a negative result so the next expedition does not re-probe closed traps."
+    }
+  ],
+  "taxonomy_summary": {
+    "by_category": { "integration": 1, "requirements": 1, "structural": 1, "data": 1, "interface": 1, "coding": 1 },
+    "by_severity": { "CRITICAL": 1, "HIGH": 1, "MEDIUM": 3, "LOW": 1 }
+  },
+  "summary": {
+    "findings_total": 6,
+    "confirmed_bugs": 2,
+    "potential_bugs": 4,
+    "observations": 2,
+    "rejected_findings": 1,
+    "critical_escalations": 1,
+    "mitigations_landed": 1
+  },
+  "lessons_learned": [
+    "The live thinking trace users see is the model's own reasoning (LanguageModelCompletionEvent::Thinking -> ThreadEvent::AgentThinking -> AcpThread thought block); the per-tool-call thinking trace is dead plumbing left over from the removed skill cascade. Future probes of 'thinking' should separate these two paths before looking for bugs.",
+    "The in-process pivot (DIVERGENCE D8) removed the skill-cascade executor but left both its consumers (ToolCallThinking pipeline) and its comments ('used by skill execution') in the tree. Grep the PRODUCER, not the consumer, when validating an advertised capability.",
+    "GPUI double-lease panics are a recurring class in this fork with a documented local fix pattern (crates/swarm_panel/src/swarm_panel.rs:681-691). Any new code that reads an entity handle from inside that entity's own update reintroduces it. Release builds carry no symbols, so the panic message itself must carry the call site: D67 added `#[track_caller]` propagation + `Location::caller()` to the read/update/lease chain.",
+    "The corpus crate's error handling is unusually disciplined: near-zero production unwraps outside LLM-output parsing, and the grounding/ingest gate re-executes rather than trusting artifacts. The remaining panic surface is mutex-poison expects in the concurrency helpers (batch.rs, ocr/llm_ocr.rs)."
+  ],
+  "pattern_signatures": [
+    { "signature": ".lock().expect(\"*mutex poisoned\")", "beizer_category": "coding", "derived_from": "BH-006", "notes": "grep over non-test src; contrast with .unwrap_or_else(|e| e.into_inner()) recovery" },
+    { "signature": "serde_json::from_str(...).unwrap_or(serde_json::Value::Null)", "beizer_category": "data", "derived_from": "BH-004", "notes": "search any LLM-output parse path for the Null collapse" },
+    { "signature": "ThreadEvent variant constructed only inside its own accessor (thinking_sender / ToolCallThinking)", "beizer_category": "requirements", "derived_from": "BH-002", "notes": "find variant constructors, then grep the constructor's name for callers" },
+    { "signature": "doc comment naming a deleted caller ('the cascade', 'skill execution emits')", "beizer_category": "structural", "derived_from": "BH-002/BH-003", "notes": "grep comments for 'cascade', 'skill execution', 'generate_stream' against live call sites" },
+    { "signature": "match role { \u2026, _ => Role::User } catch-all over an enumerated role", "beizer_category": "interface", "derived_from": "BH-005", "notes": "search role-mapping fns for catch-alls over documented enum values" }
+  ],
+  "convergence": {
+    "iterations": 3,
+    "signal_stable": true,
+    "process_stabilization": "Iteration 1 (thinking path): baseline pattern search + call-graph; found BH-002/BH-003/BH-004/BH-005 and the live BH-001 panic. Iteration 2 (corpus): baseline static search + verification of the .rules traps; found BH-006 and closed BH-OBS-2. Iteration 3 (BH-001 follow-up): implemented and pinned the D67 self-locating double-lease panic; gpui lib suite green. No finding retracted; new-finding rate 5 -> 1 -> 0.",
+    "coverage_estimate": {
+      "thinking_path": "high (small surface, call-graph complete)",
+      "corpus_crate": "low-medium (22.8k LOC covered by static analysis only; no dynamic probes, no live DB, no LLM calls; QA grounding/ingest semantics read but not exercised)",
+      "gpui_entity_borrow": "medium (lease/read/flush paths read end-to-end; the specific BH-001 site is unpinned)"
+    },
+    "converged": false,
+    "convergence_note": "Three iterations, no new findings in the last; declared converging but NOT converged (the skill's stability bar is met across 3, yet BH-001's site is unpinned and the corpus semantic surface is under-covered — both are named in next_charter_focus).",
+    "next_charter_focus": "Reproduce BH-001 once with the D67 self-locating panic message to name the re-entrant read site, fix it, and pin the fixed path; then charter the corpus QA grounding/ingest re-execution seam (services/qa_grounding.rs, qa_adjudication.rs, tools/corpus/qa_parsing.rs) with dynamic probes against a fixture DB."
+  }
+}

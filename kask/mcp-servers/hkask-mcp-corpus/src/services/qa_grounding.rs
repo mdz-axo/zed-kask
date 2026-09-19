@@ -12,11 +12,12 @@
 //! row bijection, requires sources classified under the current
 //! published-ontology protocol, recomputes ontology resolutions, re-derives
 //! every claim, requires each artifact row to equal its re-execution, and
-//! admits only rows whose applicable factual claims are all strength 2
-//! (`tool_verified`/`platform_derived`). A `model_inference` answer fails
-//! closed: paraphrase and conceptual answers stay blocked until an independent
-//! semantic oracle is specified. Authority is derived by re-execution, never
-//! read from the artifact.
+//! admits a row when every `cited_substring` claim is strength 2
+//! (`tool_verified`/`platform_derived`) and at least one such citation exists.
+//! A synthesized answer that is not byte-exact inside that evidence is admitted
+//! as a `model_inference` observation and persisted as model-mediated, never
+//! relabelled verified. Authority is derived by re-execution, never read from
+//! the artifact.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -198,6 +199,11 @@ pub struct GroundQaRequest {
 pub(crate) struct GroundingGateReport {
     pub manifest_sha256: String,
     pub rows: usize,
+    /// Re-executed answer provenance per `row_key`: `tool_verified` when the
+    /// answer is byte-exact inside its own evidence, otherwise
+    /// `model_inference`. Persisted with every stored row so a model-mediated
+    /// answer is never relabelled verified.
+    pub answer_provenance: HashMap<String, String>,
 }
 
 fn invalid(message: impl Into<String>) -> McpToolError {
@@ -408,8 +414,9 @@ pub(crate) fn ground_row(
     // Answer claim: strength 2 only when the answer is byte-exact inside one of
     // the row's own tool-verified evidence quotes (the closed library the row
     // itself asserts). A paraphrase is model-mediated — an observation, never
-    // authority — and stays model_inference until an independent semantic
-    // oracle is specified.
+    // authority — and is recorded as model_inference. The gate admits such a row
+    // on its byte-verified citations and reports this provenance so ingestion
+    // persists it as model-mediated.
     let exact = if qa.output.trim().is_empty() {
         None
     } else {
@@ -467,8 +474,8 @@ pub(crate) fn ground_row(
             finding: Some(QaFinding {
                 code: "answer_not_source_exact".into(),
                 detail: "The answer is not byte-exact within the row's source-grounded \
-                         evidence; paraphrase admission requires the independent semantic \
-                         oracle, which this protocol version does not specify"
+                         evidence; it is admitted on the row's byte-verified citations and \
+                         persisted as model-mediated, never as verified"
                     .into(),
             }),
         },
@@ -657,8 +664,9 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
                                    instruction claim records the unperformed check"
                 .to_string(),
             paraphrase_policy: "answers that are not byte-exact within the row's own \
-                                source-grounded evidence stay model_inference and fail \
-                                ingestion until an independent semantic oracle is specified"
+                                source-grounded evidence stay model_inference; the row is \
+                                admitted on its byte-verified citations and the answer is \
+                                persisted as model-mediated, never as verified"
                 .to_string(),
         },
     };
@@ -711,8 +719,10 @@ fn resolve_rows_path(manifest_path: &str, rows_name: &str) -> Result<PathBuf, Mc
         .join(rows_name))
 }
 
-/// The ingestion gate: re-execute every mechanical check and admit only rows
-/// whose applicable factual claims are all strength 2. Runs before dedup,
+/// The ingestion gate: re-execute every mechanical check and admit a row when
+/// every citation claim is strength 2 and at least one exists. A synthesized
+/// answer may be a `model_inference` observation; its re-executed provenance is
+/// reported so ingestion can persist it as model-mediated. Runs before dedup,
 /// output, and DB access. The artifact is a record — authority is derived by
 /// re-execution, never read.
 pub(crate) fn verify_grounding_gate(
@@ -779,6 +789,7 @@ pub(crate) fn verify_grounding_gate(
         )));
     }
 
+    let mut answer_provenance = HashMap::with_capacity(candidates.len());
     for (line, qa) in candidates {
         let recomputed = ground_row(*line, qa, &index)?;
         let artifact = by_row_key.remove(&recomputed.row_key).ok_or_else(|| {
@@ -794,20 +805,46 @@ pub(crate) fn verify_grounding_gate(
                 recomputed.row_key
             )));
         }
+        // Admission rests on the row's evidence: every cited_substring claim
+        // must be byte-verified (strength 2) and at least one must exist. The
+        // answer may be a synthesized model_inference observation; it is
+        // admitted on the citations and its provenance is reported for
+        // persistence as model-mediated.
+        let mut verified_citations = 0usize;
+        let mut answer = None;
         for claim in &recomputed.claims {
-            let applicable = claim.role == ROLE_ANSWER || claim.role == ROLE_CITED;
             let strength_two = matches!(
                 claim.provenance.as_str(),
                 TIER_TOOL_VERIFIED | TIER_PLATFORM_DERIVED
             ) && claim.strength == 2;
-            if applicable && !strength_two {
-                return Err(invalid(format!(
-                    "Candidate '{}' claim '{}' is not strength-2 grounded ({}); \
-                     only tool-verified or platform-derived claims can be ingested",
-                    recomputed.row_key, claim.claim_id, claim.provenance
-                )));
+            if claim.role == ROLE_CITED {
+                if !strength_two {
+                    return Err(invalid(format!(
+                        "Candidate '{}' citation claim '{}' is not strength-2 grounded \
+                         ({}); every evidence quote must be a byte-exact substring of \
+                         its identified canonical chunk",
+                        recomputed.row_key, claim.claim_id, claim.provenance
+                    )));
+                }
+                verified_citations += 1;
+            } else if claim.role == ROLE_ANSWER {
+                answer = Some(claim.provenance.clone());
             }
         }
+        if verified_citations == 0 {
+            return Err(invalid(format!(
+                "Candidate '{}' cites no strength-2 evidence; a row without a grounded \
+                 citation cannot be admitted",
+                recomputed.row_key
+            )));
+        }
+        let answer = answer.ok_or_else(|| {
+            McpToolError::internal(format!(
+                "Grounding re-execution produced no answer claim for '{}'",
+                recomputed.row_key
+            ))
+        })?;
+        answer_provenance.insert(recomputed.row_key.clone(), answer);
     }
     if !by_row_key.is_empty() {
         return Err(invalid(format!(
@@ -818,5 +855,6 @@ pub(crate) fn verify_grounding_gate(
     Ok(GroundingGateReport {
         manifest_sha256,
         rows: candidates.len(),
+        answer_provenance,
     })
 }

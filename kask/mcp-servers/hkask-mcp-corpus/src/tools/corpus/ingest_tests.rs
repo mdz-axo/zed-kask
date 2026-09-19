@@ -211,6 +211,35 @@ async fn write_candidates_and_ground(
     Ok(())
 }
 
+/// Ground candidates against caller-supplied canonical chunks — used to build
+/// rows whose citations cannot be byte-verified.
+async fn write_rows_and_ground_chunks(
+    server: &CorpusServer,
+    directory: &Path,
+    rows: &[String],
+    chunks: &[Value],
+) -> anyhow::Result<()> {
+    std::fs::write(directory.join("generated.jsonl"), rows.join("\n"))?;
+    std::fs::write(
+        directory.join("chunks.jsonl"),
+        chunks
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    content(
+        server
+            .corpus_ground_generated_qa(Parameters(GroundQaRequest {
+                generated_jsonl: directory.join("generated.jsonl").to_string_lossy().into(),
+                source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
+                output_dir: directory.join("grounding").to_string_lossy().into(),
+            }))
+            .await?,
+    )?;
+    Ok(())
+}
+
 /// expect: Clean concise candidates ingest only after complete re-executed
 /// source grounding, and the summary carries the gate's identity.
 #[tokio::test]
@@ -620,10 +649,12 @@ async fn grounding_gate_recomputes_ontology_resolutions() -> anyhow::Result<()> 
 }
 
 /// expect: A genuinely paraphrased answer is recorded honestly as
-/// model_inference by the grounding tool and fails ingestion closed — no
-/// compensatory score can lift it to verified.
+/// model_inference by the grounding tool; the row is admitted on its
+/// byte-verified citation and the answer is persisted as model-mediated — it is
+/// never relabelled verified.
 #[tokio::test]
-async fn model_inference_cannot_be_ingested_as_verified() -> anyhow::Result<()> {
+async fn model_inference_answer_is_admitted_and_persisted_as_model_mediated() -> anyhow::Result<()>
+{
     let directory = fixture()?;
     let server = server();
     let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
@@ -634,8 +665,8 @@ async fn model_inference_cannot_be_ingested_as_verified() -> anyhow::Result<()> 
         "concepts":["test concept"], "difficulty":2})
         .to_string();
     write_candidates_and_ground(&server, directory.path(), &[row]).await?;
-    // The honest bundle over a paraphrase is a valid record — the tool records
-    // the finding rather than rejecting the input.
+    // The honest bundle records the paraphrase as model_inference and the
+    // citation as byte-verified.
     let bundle_rows = read_bundle_rows(directory.path())?;
     assert_eq!(bundle_rows.len(), 1);
     assert!(
@@ -645,32 +676,46 @@ async fn model_inference_cannot_be_ingested_as_verified() -> anyhow::Result<()> 
             .iter()
             .any(|finding| finding == "answer_not_source_exact")
     );
-    let error = server
-        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
-        .await
-        .expect_err("paraphrase answers cannot be ingested as verified");
-    assert!(
-        error.to_string().contains("not strength-2 grounded"),
-        "{error}"
-    );
-    assert!(error.to_string().contains("model_inference"), "{error}");
+    let answer = bundle_rows[0]["claims"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["role"] == "answer")
+        .expect("answer claim");
+    assert_eq!(answer["provenance"], "model_inference");
+    assert_eq!(answer["strength"], 1);
+
+    // The row is admitted on its citation, and the answer provenance persists as
+    // model-mediated in the training JSONL.
+    let summary = content(
+        server
+            .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+            .await?,
+    )?;
+    reconciles(&summary);
+    assert_eq!(summary["stored"], 1);
+    let training = std::fs::read_to_string(directory.path().join("training.jsonl"))?;
+    let record: Value = serde_json::from_str(training.lines().next().expect("stored row"))?;
+    assert_eq!(record["grounding"]["answer_provenance"], "model_inference");
     Ok(())
 }
 
 /// expect: The gate runs before dedup, the dry-run return, output, and DB
-/// access — a gate failure leaves no side effects in either mode.
+/// access — a gate failure (here, a citation that cannot be byte-verified)
+/// leaves no side effects in either mode.
 #[tokio::test]
 async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
-        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
-        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
-        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
-        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
-        "concepts":["test concept"], "difficulty":2})
-        .to_string();
-    write_candidates_and_ground(&server, directory.path(), &[row]).await?;
+    let row = flat(0, "Thirty").to_string();
+    // The canonical chunk does not contain the cited quote, so the row's only
+    // citation cannot be byte-verified and the gate fails closed.
+    let chunks = [tagged_chunk_json(
+        "corpus:brooks:0",
+        "brooks.txt",
+        "An unrelated sentence.",
+    )];
+    write_rows_and_ground_chunks(&server, directory.path(), &[row], &chunks).await?;
     for dry_run in [true, false] {
         assert!(
             server
@@ -682,6 +727,66 @@ async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
     }
     assert!(!directory.path().join("training.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
+    Ok(())
+}
+
+/// expect: Every citation must be byte-verified; a row whose only evidence
+/// quote is absent from its canonical chunk fails closed regardless of its
+/// answer.
+#[tokio::test]
+async fn citation_not_byte_exact_fails_closed_despite_paraphrase_answer() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
+        "concepts":["test concept"], "difficulty":2})
+        .to_string();
+    let chunks = [tagged_chunk_json(
+        "corpus:brooks:0",
+        "brooks.txt",
+        "An unrelated sentence.",
+    )];
+    write_rows_and_ground_chunks(&server, directory.path(), &[row], &chunks).await?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("an unverifiable citation fails closed");
+    assert!(error.to_string().contains("citation claim"), "{error}");
+    assert!(!directory.path().join("training.jsonl").exists());
+    Ok(())
+}
+
+/// expect: Admission requires at least one byte-verified citation; a row that
+/// cites no evidence cannot be admitted however well formed its answer.
+#[tokio::test]
+async fn row_without_evidence_cannot_be_ingested() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let row = json!({"instruction":"Question 0?", "output":"Thirty",
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[], "concepts":["test concept"], "difficulty":2})
+        .to_string();
+    // A canonical chunk exists, but the candidate cites nothing from it.
+    let chunks = [tagged_chunk_json(
+        "corpus:brooks:0",
+        "brooks.txt",
+        "The measured count is thirty.",
+    )];
+    write_rows_and_ground_chunks(&server, directory.path(), &[row], &chunks).await?;
+    let error = server
+        .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+        .await
+        .expect_err("a row with no grounded citation fails closed");
+    assert!(
+        error.to_string().contains("cites no strength-2 evidence"),
+        "{error}"
+    );
+    assert!(!directory.path().join("training.jsonl").exists());
     Ok(())
 }
 
@@ -887,6 +992,7 @@ async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<
         // Grounding identity persists with every stored row.
         assert_eq!(flat["grounding"]["protocol"], "corpus-qa-grounding-v1");
         assert_eq!(flat["grounding"]["manifest_sha256"], manifest_sha256);
+        assert_eq!(flat["grounding"]["answer_provenance"], "tool_verified");
         let row_key = flat["grounding"]["row_key"].as_str().expect("row key");
         let prompt_id = envelope["prompt_id"].as_str().expect("prompt id");
         assert!(row_key.starts_with(&format!("{prompt_id}|")));
@@ -907,6 +1013,10 @@ async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<
             assert_eq!(record.value[key], flat[key], "memory {key}");
         }
         assert_eq!(record.value["grounding"]["row_key"], row_key);
+        assert_eq!(
+            record.value["grounding"]["answer_provenance"],
+            "tool_verified"
+        );
         // Canonical ontology persists through the shared published resolver.
         let ontology = record
             .ontology

@@ -169,7 +169,7 @@ impl CorpusServer {
     // ── Ingest QA ─────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Ingest generated QA candidates behind the corpus-qa-grounding-v1 gate. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows). Before dedup, output, or DB access, the gate re-hashes the bundle, checks row bijection, requires sources classified under the current published-ontology protocol, recomputes ontology resolutions, re-executes every mechanical check — evidence quotes byte-exact in uniquely identified canonical chunks, answers byte-exact within their own source-grounded evidence — requires each artifact row to equal its re-execution, and fails closed on any applicable claim that is not tool-verified or platform-derived: model_inference answers cannot be ingested as verified. Case-insensitive exact-instruction dedup keeps the first valid row. Preserves evidence, source metadata, grounding manifest identity, and canonical ontology in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run validates without storing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
+        description = "Ingest generated QA candidates behind the corpus-qa-grounding-v1 gate. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows). Before dedup, output, or DB access, the gate re-hashes the bundle, checks row bijection, requires sources classified under the current published-ontology protocol, recomputes ontology resolutions, re-executes every mechanical check — evidence quotes byte-exact in uniquely identified canonical chunks — requires each artifact row to equal its re-execution, requires every citation claim to be tool-verified or platform-derived and at least one to exist, and admits a synthesized answer that is not byte-exact as a model-mediated observation persisted with answer_provenance=model_inference; a model_inference answer is never relabelled verified. Case-insensitive exact-instruction dedup keeps the first valid row. Preserves evidence, source metadata, grounding manifest identity, and canonical ontology in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run validates without storing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
     )]
     pub async fn corpus_ingest_qa(
         &self,
@@ -307,6 +307,15 @@ impl CorpusServer {
                     &qa.qa_type,
                     *line,
                 );
+                let answer_provenance = gate
+                    .answer_provenance
+                    .get(&row_key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        McpToolError::internal(format!(
+                            "Gated candidate '{row_key}' has no re-executed answer provenance"
+                        ))
+                    })?;
                 let row = json!({
                     "instruction": qa.instruction, "input": "", "output": qa.output,
                     "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
@@ -318,6 +327,7 @@ impl CorpusServer {
                         "protocol": QA_GROUNDING_PROTOCOL,
                         "manifest_sha256": gate.manifest_sha256,
                         "row_key": row_key,
+                        "answer_provenance": answer_provenance,
                     },
                 });
                 train.push_str(
@@ -350,6 +360,15 @@ impl CorpusServer {
                     &qa.qa_type,
                     *line,
                 );
+                let answer_provenance = gate
+                    .answer_provenance
+                    .get(&row_key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        McpToolError::internal(format!(
+                            "Gated candidate '{row_key}' has no re-executed answer provenance"
+                        ))
+                    })?;
                 let v = serde_json::json!({
                     "question": qa.instruction,
                     "answer": qa.output,
@@ -368,6 +387,7 @@ impl CorpusServer {
                         "protocol": QA_GROUNDING_PROTOCOL,
                         "manifest_sha256": gate.manifest_sha256,
                         "row_key": row_key,
+                        "answer_provenance": answer_provenance,
                     },
                 });
                 // Dual-axis anchoring (P5.4) in the first-class `ontology`
