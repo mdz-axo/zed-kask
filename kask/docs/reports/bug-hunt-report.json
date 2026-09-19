@@ -41,9 +41,9 @@
           "baseline static pattern search (unwrap/expect/panic/let _ =) in non-test src",
           "verify the .rules corpus traps are closed (json_extract array, max_pairs default, index hydration, grounding gate)",
           "inspect mutex poisoning behavior for panic cascades",
-          "check published grounding contract enforcement points"
+          "check published grounding contract enforcement points and their seam record"
         ],
-        "prior_feedback_consumed": null
+        "prior_feedback_consumed": "BH-OBS-2 (from iteration 2) confirmed the .rules traps closed; iteration 4 therefore targeted the gate's policy record instead of the traps"
       }
     ]
   },
@@ -177,6 +177,47 @@
       "impact": "Any panic while holding the lock (or a prior panic in the process) permanently poisons it; every later acquire panics, so the MCP server's batch concurrency and OCR health tracking are unrecoverable without a restart.",
       "fix_suggestion": "Recover with unwrap_or_else(|e| e.into_inner()) where the guard is a simple counter, or convert to a typed McpToolError; at minimum log the poison once rather than panicking per call.",
       "pattern_signature": ".lock().expect(\"<state> mutex poisoned\")"
+    },
+    {
+      "id": "BH-007",
+      "summary": "The corpus QA grounding gate's admission policy was reversed (model_inference answers are now admitted and persisted) but the authoritative D9 seam record still documents the old policy ('model_inference answers fail closed') and cites a pin that no longer exists.",
+      "location": { "file": "DIVERGENCE.md", "line_approx": 241, "also": ["kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs:723-859", "kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/ingest_tests.rs:656", "kask/docs/reference/mcp-servers/corpus.md:46"] },
+      "verdict": "BUG",
+      "confidence": 0.85,
+      "reproducibility": "reproduced",
+      "beizer_category": "requirements",
+      "severity": "HIGH",
+      "is_ought": {
+        "is": "verify_grounding_gate requires every cited_substring claim to be strength 2 and at least one to exist, then records the answer's provenance (tool_verified | model_inference) and ADMITS the row either way (qa_grounding.rs:808-847). The ingest tool description (tools/corpus.rs:172) and corpus.md were updated to match; commit ed9be534cc did not touch DIVERGENCE.md.",
+        "ought": "The authoritative seam record and the enforcement line must agree. If the reversal is deliberate, D9 must be updated (policy sentence + the deleted pin name `model_inference_cannot_be_ingested_as_verified`) and the operator ruling / independent semantic oracle the old policy required must be named; otherwise the gate has regressed."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (source + seam record + git history) + Inference (policy intent read from the D9 text)",
+      "evidence": "DIVERGENCE.md D9: 'admits only rows whose applicable factual claims are all strength 2 — model_inference answers fail closed (V1 intentionally blocks paraphrase and conceptual answers until an independent semantic oracle is specified...)'; pins: '...model_inference_cannot_be_ingested_as_verified...'\nqa_grounding.rs:808-812: '// Admission rests on the row's evidence: every cited_substring claim must be byte-verified (strength 2) and at least one must exist. The answer may be a synthesized model_inference observation; it is admitted on the citations...'",
+      "impact": "The authoritative integration record contradicts its own enforcement line and cites a test that no longer exists (grep finds `model_inference_cannot_be_ingested_as_verified` only in DIVERGENCE.md). Downstream, model-synthesized answers now enter the training JSONL / QA h_mems (labelled answer_provenance=model_inference) without the independent semantic oracle the prior operator-approved policy required. At the next rebase or audit a deliberate change and drift are indistinguishable.",
+      "fix_suggestion": "Operator adjudication required: if ratified, update D9's policy sentence and pin list (name the new pin `model_inference_answer_is_admitted_and_persisted_as_model_mediated`, the operator ruling, and the oracle); if not ratified, restore fail-closed admission. Do not silently edit the record either way.",
+      "status": "RESOLVED 2026-09-19 (record reconciled at operator direction; uncommitted). DIVERGENCE.md D9 now states the admitted-model_inference policy, replaces the deleted pin `model_inference_cannot_be_ingested_as_verified` with `model_inference_answer_is_admitted_and_persisted_as_model_mediated` (+ `citation_not_byte_exact_fails_closed_despite_paraphrase_answer`), and names the residual honestly: no semantic oracle adjudicates answer-vs-citation entailment, so an admitted model_inference answer is an observation, not authority. corpus.md and the corpus README were already updated by 50628f8a01. Verified: grep finds 0 occurrences of the old fail-closed clause and 0 of the old pin, 1 of the new pin and the reversal note.",
+      "pattern_signature": "seam-record policy sentence contradicted by the enforcement function; pin list cites a deleted test name (grep the pin name: only the seam doc matches)"
+    },
+    {
+      "id": "BH-008",
+      "summary": "A query-embedding dimension mismatch against stored embeddings is silent: cosine_similarity returns 0.0 for mismatched lengths and neither retrieval nor corpus_query surfaces a dimension diagnostic, so a changed embedding model reads as 'no relevant passages'.",
+      "location": { "file": "kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs", "line_approx": 320, "also": ["kask/mcp-servers/hkask-mcp-corpus/src/index.rs:403-413", "kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:116-172", "kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:125-139"] },
+      "verdict": "POTENTIAL_BUG",
+      "confidence": 0.78,
+      "reproducibility": "reproducible",
+      "beizer_category": "data",
+      "severity": "MEDIUM",
+      "is_ought": {
+        "is": "cosine_similarity(a, b) returns 0.0 when a.len() != b.len(); retrieve() scores every stored embedding through it; corpus_query embeds the query at the currently configured dimension and reports total_indexed/missing_text but no dimension diagnostic, and hydrate_if_empty loads stored vectors without validating their length. The WRITE path does validate (index.rs validate_vectors enforces crate::embedding_dim()), so only the read/query side is unguarded.",
+        "ought": "Per .rules (degradation must be SURFACED, not silently equal to success), a query vector whose length differs from the stored embeddings must produce a typed error or an explicit diagnostic naming the mismatch, not a 0.0 score indistinguishable from an orthogonal/irrelevant passage."
+      },
+      "epistemic_mode": "Declarative",
+      "provenance": "Direct measurement (source read)",
+      "evidence": "helpers.rs:321  if a.is_empty() || b.is_empty() || a.len() != b.len() { return 0.0; }\nindex.rs:376  pub(crate) fn validate_vectors(vectors: &[Vec<f32>], expected: usize) ... vector.len() != crate::embedding_dim()",
+      "impact": "After an operator changes kask.models.embedding_model / HKASK_EMBEDDING_DIM to a model with a different vector size, corpus_query returns zero matches with total_indexed > 0 and no note — a dimension change is indistinguishable from genuinely irrelevant content. No test covers the mismatch (grep: HKASK_EMBEDDING_DIM appears only in embedding_dim() and a tool description).",
+      "fix_suggestion": "Validate the query vector's dimension before search (against the stored embeddings, or crate::embedding_dim()) and return a typed unavailable/invalid_argument naming both dimensions; optionally count stored vectors whose length != embedding_dim() during hydration and surface it like missing_text.",
+      "pattern_signature": "similarity/zip helper returning 0.0 on length mismatch + no dim check on the query path; contrast with validate_vectors on the write path"
     }
   ],
   "rejected_findings": [
@@ -197,38 +238,22 @@
       "id": "BH-OBS-2",
       "summary": "The documented .rules corpus traps are closed, not open: json_extract handles arrays and balanced extraction (hkask-types/src/json_extract.rs:47-97); corpus_build_prompts max_pairs defaults to 0 = all chunks (tools/corpus.rs:692-694); PassageIndex hydrates fail-closed and surfaces missing text (index.rs:254-302).",
       "note": "Recorded as a negative result so the next expedition does not re-probe closed traps."
-    "pattern_signature": ".lock().expect(\"<state> mutex poisoned\")"
     },
     {
-      "id": "BH-007",
-      "summary": "The corpus QA grounding gate's admission policy was reversed (model_inference answers are now admitted and persisted) but the authoritative D9 seam record still documents the old policy ('model_inference answers fail closed') and cites a pin that no longer exists.",
-      "location": { "file": "DIVERGENCE.md", "line_approx": 241, "also": ["kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs:723-859", "kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/ingest_tests.rs:656", "kask/docs/reference/mcp-servers/corpus.md:46"] },
-      "verdict": "BUG",
-      "confidence": 0.85,
-      "reproducibility": "reproduced",
-      "beizer_category": "requirements",
-      "severity": "HIGH",
-      "is_ought": {
-        "is": "verify_grounding_gate requires every cited_substring claim to be strength 2 and at least one to exist, then records the answer's provenance (tool_verified | model_inference) and ADMITS the row either way (qa_grounding.rs:808-847). The ingest tool description (tools/corpus.rs:172) and corpus.md were updated to match; commit ed9be534cc did not touch DIVERGENCE.md.",
-        "ought": "The authoritative seam record and the enforcement line must agree. If the reversal is deliberate, D9 must be updated (policy sentence + the deleted pin name `model_inference_cannot_be_ingested_as_verified`) and the operator ruling / independent semantic oracle the old policy required must be named; otherwise the gate has regressed."
-      },
-      "epistemic_mode": "Declarative",
-      "provenance": "Direct measurement (source + seam record + git history) + Inference (policy intent read from the D9 text)",
-      "evidence": "DIVERGENCE.md D9: 'admits only rows whose applicable factual claims are all strength 2 — model_inference answers fail closed (V1 intentionally blocks paraphrase and conceptual answers until an independent semantic oracle is specified...)'; pins: '...model_inference_cannot_be_ingested_as_verified...'\nqa_grounding.rs:808-812: '// Admission rests on the row's evidence: every cited_substring claim must be byte-verified (strength 2) and at least one must exist. The answer may be a synthesized model_inference observation; it is admitted on the citations...'",
-      "impact": "The authoritative integration record contradicts its own enforcement line and cites a test that no longer exists (grep finds `model_inference_cannot_be_ingested_as_verified` only in DIVERGENCE.md). Downstream, model-synthesized answers now enter the training JSONL / QA h_mems (labelled answer_provenance=model_inference) without the independent semantic oracle the prior operator-approved policy required. At the next rebase or audit, a deliberate change and drift are indistinguishable.",
-      "fix_suggestion": "Operator adjudication required: if ratified, update D9's policy sentence and pin list (name the new pin `model_inference_answer_is_admitted_and_persisted_as_model_mediated`, the operator ruling, and the oracle); if not ratified, restore fail-closed admission. Do not silently edit the record either way.",
-      "pattern_signature": "seam record's policy sentence contradicted by the enforcement function; pin list cites a deleted test name (grep the pin name: only the seam doc matches)"
+      "id": "BH-OBS-3",
+      "summary": "The corpus QA grounding/ingest seam is dynamically green: with HKASK_TEMPLATE_ROOT set, `cargo test -p hkask-mcp-corpus` runs 191 tests, 0 failures, including model_inference_answer_is_admitted_and_persisted_as_model_mediated, citation_not_byte_exact_fails_closed_despite_paraphrase_answer, and row_without_evidence_cannot_be_ingested.",
+      "note": "The gate's new admission path is exercised; BH-007 is a record/policy finding, not a test failure. qa_adjudication.rs and tools/corpus/qa_parsing.rs were also read and are clean (expects only in tests)."
     }
   ],
   "taxonomy_summary": {
-    "by_category": { "integration": 1, "requirements": 2, "structural": 1, "data": 1, "interface": 1, "coding": 1 },
-    "by_severity": { "CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 1 }
+    "by_category": { "integration": 1, "requirements": 2, "structural": 1, "data": 2, "interface": 1, "coding": 1 },
+    "by_severity": { "CRITICAL": 1, "HIGH": 2, "MEDIUM": 4, "LOW": 1 }
   },
   "summary": {
-    "findings_total": 7,
+    "findings_total": 8,
     "confirmed_bugs": 3,
-    "potential_bugs": 4,
-    "observations": 2,
+    "potential_bugs": 5,
+    "observations": 3,
     "rejected_findings": 1,
     "critical_escalations": 1,
     "mitigations_landed": 1
@@ -238,27 +263,27 @@
     "The in-process pivot (DIVERGENCE D8) removed the skill-cascade executor but left both its consumers (ToolCallThinking pipeline) and its comments ('used by skill execution') in the tree. Grep the PRODUCER, not the consumer, when validating an advertised capability.",
     "GPUI double-lease panics are a recurring class in this fork with a documented local fix pattern (crates/swarm_panel/src/swarm_panel.rs:681-691). Any new code that reads an entity handle from inside that entity's own update reintroduces it. Release builds carry no symbols, so the panic message itself must carry the call site: D67 added `#[track_caller]` propagation + `Location::caller()` to the read/update/lease chain.",
     "The corpus crate's error handling is unusually disciplined: near-zero production unwraps outside LLM-output parsing, and the grounding/ingest gate re-executes rather than trusting artifacts. The remaining panic surface is mutex-poison expects in the concurrency helpers (batch.rs, ocr/llm_ocr.rs).",
-    "A gate whose policy changes must have its seam record changed in the same commit: ed9be534cc reversed the corpus grounding gate (model_inference answers now admitted) and updated the crate docs and ingest tool description, but not DIVERGENCE.md D9 — which still says 'fail closed' and still lists the deleted pin `model_inference_cannot_be_ingested_as_verified`. When probing a gate, always diff the seam record's policy sentence and pin list against the enforcement function; the pin list is the fastest drift detector (grep each pin name)."
+    "A gate whose policy changes must have its seam record changed in the same commit: ed9be534cc reversed the corpus grounding gate (model_inference answers now admitted), updated the crate docs and the ingest tool description, but not DIVERGENCE.md D9 — which still says 'fail closed' and still lists the deleted pin `model_inference_cannot_be_ingested_as_verified`. When probing a gate, diff the seam record's policy sentence AND its pin list against the enforcement function; the pin list is the fastest drift detector (grep each pin name, and a name found only in the doc is a deleted-test)."
   ],
   "pattern_signatures": [
     { "signature": ".lock().expect(\"*mutex poisoned\")", "beizer_category": "coding", "derived_from": "BH-006", "notes": "grep over non-test src; contrast with .unwrap_or_else(|e| e.into_inner()) recovery" },
     { "signature": "serde_json::from_str(...).unwrap_or(serde_json::Value::Null)", "beizer_category": "data", "derived_from": "BH-004", "notes": "search any LLM-output parse path for the Null collapse" },
     { "signature": "ThreadEvent variant constructed only inside its own accessor (thinking_sender / ToolCallThinking)", "beizer_category": "requirements", "derived_from": "BH-002", "notes": "find variant constructors, then grep the constructor's name for callers" },
     { "signature": "doc comment naming a deleted caller ('the cascade', 'skill execution emits')", "beizer_category": "structural", "derived_from": "BH-002/BH-003", "notes": "grep comments for 'cascade', 'skill execution', 'generate_stream' against live call sites" },
-    { "signature": "match role { \u2026, _ => Role::User } catch-all over an enumerated role", "beizer_category": "interface", "derived_from": "BH-005", "notes": "search role-mapping fns for catch-alls over documented enum values" },
-    { "signature": "seam-record policy sentence that contradicts the enforcement function; pin name present only in the seam doc", "beizer_category": "requirements", "derived_from": "BH-007", "notes": "for each recorded invariant, grep the enforcing function and each named pin; a pin found only in the doc is deleted-test drift" }
+    { "signature": "match role { …, _ => Role::User } catch-all over an enumerated role", "beizer_category": "interface", "derived_from": "BH-005", "notes": "search role-mapping fns for catch-alls over documented enum values" },
+    { "signature": "seam-record policy sentence that contradicts the enforcement function; pin name present only in the seam doc", "beizer_category": "requirements", "derived_from": "BH-007", "notes": "for each recorded invariant, grep the enforcing function and each named pin" }
   ],
   "convergence": {
-    "iterations": 4,
+    "iterations": 5,
     "signal_stable": false,
-    "process_stabilization": "Iteration 1 (thinking path): baseline pattern search + call-graph; found BH-002/BH-003/BH-004/BH-005 and the live BH-001 panic. Iteration 2 (corpus): baseline static search + verification of the .rules traps; found BH-006 and closed BH-OBS-2. Iteration 3 (BH-001 follow-up): implemented and pinned the D67 self-locating double-lease panic; gpui lib suite green. Iteration 4 (corpus QA grounding/ingest charter, dynamic): ran the corpus suite (191/191 green), read the gate re-execution path, and found BH-007 (D9 seam-record/policy drift + deleted pin). New-finding rate 5 -> 1 -> 0 -> 1: signal NOT stable, so the expedition is explicitly not converged.",
+    "process_stabilization": "Iteration 1 (thinking path): baseline pattern search + call-graph; found BH-002/BH-003/BH-004/BH-005 and the live BH-001 panic. Iteration 2 (corpus): baseline static search + verification of the .rules traps; found BH-006 and closed BH-OBS-2. Iteration 3 (BH-001 follow-up): implemented and pinned the D67 self-locating double-lease panic; gpui lib suite green. Iteration 4 (corpus QA grounding/ingest charter, dynamic): ran the corpus suite (191/191 green), read the gate re-execution path, and found BH-007 (D9 seam-record/policy drift + deleted pin). Iteration 5 (corpus convert/chunk/embed/query charter): re-ran the suite, read path_safety.rs/helpers.rs/index.rs/tools/storage.rs, and found BH-008 (silent query-dimension mismatch). New-finding rate 5 -> 1 -> 0 -> 1 -> 1: signal NOT stable, so the expedition is explicitly not converged.",
     "coverage_estimate": {
       "thinking_path": "high (small surface, call-graph complete)",
-      "corpus_crate": "medium (QA grounding/ingest seam now dynamically exercised, 191 tests green; convert/chunk/embed/query/ocr still static-only)",
+      "corpus_crate": "medium-high (QA grounding/ingest seam + convert/chunk/embed/query path read and dynamically exercised, 191 tests green; path_safety/helpers/index/storage read; occlusion/backends remain static-only)",
       "gpui_entity_borrow": "medium (lease/read/flush paths read end-to-end; the specific BH-001 site is unpinned)"
     },
     "converged": false,
-    "convergence_note": "Four iterations. Iteration 4 produced a new HIGH finding, so the signal is explicitly NOT stable and the skill's convergence bar is not met. BH-001's site is still unpinned; BH-007 needs operator adjudication before it can be closed.",
-    "next_charter_focus": "Reproduce BH-001 once with the D67 self-locating panic message to name the re-entrant read site, fix it, and pin the fixed path. BH-007: operator adjudicates the D9 policy reversal, then the record is updated or the gate reverted. Then charter the corpus convert/chunk/embed/query path (services/convert.rs, helpers.rs, index.rs, tools/semantic.rs) with dynamic probes, since only the QA/ingest seam has been exercised."
+    "convergence_note": "Five iterations. Iterations 4 and 5 each produced a new finding, so the signal is explicitly NOT stable and the skill's convergence bar is not met. BH-007's record drift was reconciled this session; BH-001's site is still unpinned; BH-008 is untested.",
+    "next_charter_focus": "Reproduce BH-001 once with the D67 self-locating panic message to name the re-entrant read site, fix it, and pin the fixed path. BH-008: validate the query embedding dimension and surface the mismatch (or pin the current silent behavior as intended-if-so). Then charter the corpus OCR/backend path (services/convert.rs resume + quality gate, ocr/pipeline.rs, backend/{docx,xlsx,pptx}.rs) with dynamic probes."
   }
 }

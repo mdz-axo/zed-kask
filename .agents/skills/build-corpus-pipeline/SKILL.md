@@ -621,17 +621,18 @@ and correction findings, not duplicate corpus versions.
    dry_run=true)`. The gate runs before dedup, output, and DB access: it
    re-hashes the bundle, checks row bijection against the candidate file,
    recomputes the ontology resolutions, re-derives every claim, requires each
-   artifact row to equal its re-execution, and admits only rows whose
-   applicable factual claims are all strength 2. `model_inference` answers
-   fail closed — paraphrase and conceptual answers stay blocked until an
-   independent semantic oracle is specified by the operator; self-reported
-   strengths, spans, or resolutions cannot open the gate. With the gate
+   artifact row to equal its re-execution, and admits a row when every citation
+   claim is strength 2 and at least one exists. A synthesized answer that is not
+   byte-exact in its own evidence is admitted as `model_inference` and persisted
+   as model-mediated in the row's `grounding.answer_provenance`; it is never
+   relabelled verified, and no model-mediated oracle can open the gate —
+   self-reported strengths, spans, or resolutions cannot either. With the gate
    satisfied, admission also requires nonblank instruction, output, QA type,
    source and chunk ref; complete structured evidence entries. Concise
    answers survive. First valid case-insensitive exact instructions win; no
    minimum length, semantic dedup, DB dedup or semantic quality test is
-   implied. Stage 8 remains the external semantic oracle; byte-exactness does
-   not certify conceptual quality.
+   implied. Stage 8 remains the external semantic audit, advisory only;
+   byte-exactness of the citation does not certify answer entailment.
 3. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
    inspect the exact `training:qa:{dataset}:` prefix in the named DB and explicitly
    purge it before replacement. Do not infer/broaden a purge or retain parallel

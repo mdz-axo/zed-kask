@@ -43,7 +43,7 @@ operator data has been rebuilt, ingested or used for training.
 | QA output (5) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
 | | `corpus_ground_generated_qa` | Deterministic zero-inference `corpus-qa-grounding-v1` bundle: byte-span claim records over canonical chunks plus server-recomputed ontology resolutions; records facts only, authorizes nothing |
-| | `corpus_ingest_qa` | Re-executed grounding-gated admission: `corpus-qa-grounding-v1` manifest plus canonical source chunks, all-strength-2 claims required, then exact dedup with evidence retention and explicit storage status |
+| | `corpus_ingest_qa` | Re-executed grounding-gated admission: `corpus-qa-grounding-v1` manifest plus canonical source chunks, every citation claim strength-2 with at least one present required while a synthesized answer is admitted as model-mediated, then exact dedup with evidence retention and explicit storage status |
 | | `corpus_prepare_training_dataset` | Alpaca → ChatML plus dataset-size gate and advisory PEFT recommendations |
 | Compose (3) | `corpus_compose` | Retrieve exemplars, generate prose, optionally measure centroid distance |
 | | `corpus_rewrite` | Rewrite using a quality dimension and that dimension's centroid |
