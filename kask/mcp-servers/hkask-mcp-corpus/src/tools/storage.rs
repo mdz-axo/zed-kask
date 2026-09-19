@@ -148,8 +148,12 @@ impl CorpusServer {
                 ));
             }
 
-            let crate::index::Retrieval { matches, total_indexed, missing_text } =
-                self.index.retrieve(&query_embedding, k, min_score_val)?;
+            let crate::index::Retrieval {
+                matches,
+                total_indexed,
+                missing_text,
+                dimension_mismatch,
+            } = self.index.retrieve(&query_embedding, k, min_score_val)?;
             let results: Vec<_> = matches.iter().map(|matched| matched.project(include_text_flag)).collect();
 
             let mut result = json!({
@@ -164,6 +168,10 @@ impl CorpusServer {
             if missing_text > 0 {
                 result["missing_passage_text"] = json!(missing_text);
                 result["note"] = json!("Some persisted embeddings have no passage_text (legacy or non-passage rows); omitted from answer context. Re-embed original sources to restore grounding.");
+            }
+            if dimension_mismatch > 0 {
+                result["dimension_mismatch"] = json!(dimension_mismatch);
+                result["note"] = json!("Some stored embeddings have a different vector length than the query and were skipped; the configured embedding model (or HKASK_EMBEDDING_DIM) likely changed. Re-embed the corpus to restore retrieval.");
             }
             let context = matches.iter().filter_map(|matched| matched.passage.text.as_deref())
                 .filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join("\n\n");

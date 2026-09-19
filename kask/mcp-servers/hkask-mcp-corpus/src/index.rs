@@ -290,14 +290,42 @@ impl PassageIndex {
         min_score: f32,
     ) -> Result<Retrieval, McpToolError> {
         let state = self.lock()?;
+        let total_indexed = state.passages.len();
+        let dimension_mismatch = state
+            .passages
+            .values()
+            .filter(|passage| passage.embedding.len() != query.len())
+            .count();
+        if total_indexed > 0 && dimension_mismatch == total_indexed {
+            let stored = state
+                .passages
+                .values()
+                .next()
+                .map_or(0, |passage| passage.embedding.len());
+            return Err(McpToolError::unavailable(format!(
+                "Query embedding has dimension {} but all {total_indexed} stored embeddings have \
+                 dimension {stored}; no stored passage can match. The configured embedding model \
+                 or HKASK_EMBEDDING_DIM changed — re-embed the corpus or clear the index.",
+                query.len()
+            )));
+        }
         Ok(Retrieval {
-            total_indexed: state.passages.len(),
+            total_indexed,
             missing_text: state
                 .passages
                 .values()
                 .filter(|passage| passage.text.is_none())
                 .count(),
-            matches: search_passages(state.passages.values(), query, k, min_score),
+            dimension_mismatch,
+            matches: search_passages(
+                state
+                    .passages
+                    .values()
+                    .filter(|passage| passage.embedding.len() == query.len()),
+                query,
+                k,
+                min_score,
+            ),
         })
     }
 
@@ -389,14 +417,19 @@ pub(crate) fn validate_vectors(vectors: &[Vec<f32>], expected: usize) -> Result<
 }
 
 /// Only selected matches are cloned; large corpus vectors stay under the owner.
+#[derive(Debug)]
 pub(crate) struct RetrievedPassage {
     pub score: f32,
     pub passage: IndexedPassage,
 }
 
+#[derive(Debug)]
 pub(crate) struct Retrieval {
     pub total_indexed: usize,
     pub missing_text: usize,
+    /// Stored embeddings whose vector length differs from the query's — they
+    /// cannot be scored and are excluded from `matches`.
+    pub dimension_mismatch: usize,
     pub matches: Vec<RetrievedPassage>,
 }
 
@@ -419,4 +452,65 @@ pub(crate) fn search_passages<'a>(
             passage: passage.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_with(embeddings: &[&[f32]]) -> PassageIndex {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for (position, embedding) in embeddings.iter().enumerate() {
+                let entity_ref = format!("chunk:{position}");
+                state.passages.insert(
+                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
+                    IndexedPassage {
+                        text: Some("passage".into()),
+                        metadata: json!({"entity_ref": entity_ref}),
+                        embedding: embedding.to_vec(),
+                    },
+                );
+            }
+        }
+        index
+    }
+
+    /// BH-008: a query whose dimension matches no stored embedding must fail
+    /// visibly, never return score-0.0 matches that read as irrelevant content.
+    #[test]
+    fn query_dimension_mismatch_is_surfaced() {
+        let index = index_with(&[&[0.1, 0.2, 0.3], &[0.4, 0.5, 0.6]]);
+
+        let error = index
+            .retrieve(&[1.0, 0.0], 5, 0.0)
+            .expect_err("a dimension mismatch must be surfaced");
+        let message = error.to_string();
+        assert!(
+            message.contains("dimension 2"),
+            "must name the query dimension: {message}"
+        );
+        assert!(
+            message.contains("dimension 3"),
+            "must name the stored dimension: {message}"
+        );
+    }
+
+    /// A partial mismatch returns only the dimension-compatible matches and
+    /// reports how many stored embeddings were skipped.
+    #[test]
+    fn partial_dimension_mismatch_is_reported() {
+        let index = index_with(&[&[0.1, 0.2, 0.3], &[1.0, 0.0]]);
+
+        let retrieval = index
+            .retrieve(&[1.0, 0.0], 5, 0.0)
+            .expect("a matching-dimension passage exists");
+        assert_eq!(retrieval.dimension_mismatch, 1);
+        assert_eq!(
+            retrieval.matches.len(),
+            1,
+            "only the matching-dimension passage is scored"
+        );
+    }
 }

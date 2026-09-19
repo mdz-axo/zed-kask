@@ -217,6 +217,7 @@
       "evidence": "helpers.rs:321  if a.is_empty() || b.is_empty() || a.len() != b.len() { return 0.0; }\nindex.rs:376  pub(crate) fn validate_vectors(vectors: &[Vec<f32>], expected: usize) ... vector.len() != crate::embedding_dim()",
       "impact": "After an operator changes kask.models.embedding_model / HKASK_EMBEDDING_DIM to a model with a different vector size, corpus_query returns zero matches with total_indexed > 0 and no note — a dimension change is indistinguishable from genuinely irrelevant content. No test covers the mismatch (grep: HKASK_EMBEDDING_DIM appears only in embedding_dim() and a tool description).",
       "fix_suggestion": "Validate the query vector's dimension before search (against the stored embeddings, or crate::embedding_dim()) and return a typed unavailable/invalid_argument naming both dimensions; optionally count stored vectors whose length != embedding_dim() during hydration and surface it like missing_text.",
+      "status": "FIXED 2026-09-19 (uncommitted). PassageIndex::retrieve now counts stored embeddings whose vector length differs from the query and returns a typed `unavailable` error naming both dimensions when none can match; a partial mismatch is reported as `dimension_mismatch` in the query result (tools/storage.rs) and excluded from scoring. Pins: `query_dimension_mismatch_is_surfaced` (observed RED first: retrieve returned Ok with `dimension_mismatch: 2, matches: []`) and `partial_dimension_mismatch_is_reported`. Corpus suite 193/193 green; `./script/clippy -p hkask-mcp-corpus` clean (deny warnings), machete clean.",
       "pattern_signature": "similarity/zip helper returning 0.0 on length mismatch + no dim check on the query path; contrast with validate_vectors on the write path"
     }
   ],
@@ -256,7 +257,7 @@
     "observations": 3,
     "rejected_findings": 1,
     "critical_escalations": 1,
-    "mitigations_landed": 1
+    "mitigations_landed": 2
   },
   "lessons_learned": [
     "The live thinking trace users see is the model's own reasoning (LanguageModelCompletionEvent::Thinking -> ThreadEvent::AgentThinking -> AcpThread thought block); the per-tool-call thinking trace is dead plumbing left over from the removed skill cascade. Future probes of 'thinking' should separate these two paths before looking for bugs.",
