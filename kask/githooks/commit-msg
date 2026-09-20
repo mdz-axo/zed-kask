@@ -2,7 +2,7 @@
 # commit-msg guard — rejects chat-presentation artifacts passed as commit
 # messages.
 #
-# Two artifact classes, both observed on main:
+# Three artifact classes, all observed on main:
 #
 #   1. Markdown fences: the external commit flow passed chat-fenced text to
 #      `git commit` verbatim 97 times on main between 2026-07-23 and
@@ -13,6 +13,10 @@
 #      were provided — the diff content ... is missing"). A subject that
 #      begins with a chat meta-preamble or a model refusal is never
 #      intended message content.
+#   3. Mail-header subjects: the message assembler passed an email-style
+#      "Subject:" header through as the subject (b15bfb86f7 — 'Subject:
+#      "Re-verify docs and remove bug-hunt report"'). A real subject never
+#      begins with "Subject:".
 #
 # Wiring (once per clone — without this the hook is inert):
 #   git config core.hooksPath kask/githooks
@@ -57,6 +61,11 @@ esac
 case "$subject" in
     "I'm sorry"*|"I am sorry"*|"I can't"*|"I cannot"*|"I couldn't"*)
         reject "the subject is a model refusal/apology (starts with 'I'm sorry'/'I cannot'/...)." ;;
+esac
+# Mail-header artifacts — an email-style header leaked through as the subject
+# (b15bfb86f7 class).
+case "$subject" in
+    [Ss]ubject:*) reject "the subject is a mail-header artifact (starts with 'Subject:')." ;;
 esac
 # Advisory goal traceability never changes the message-hygiene rejection policy.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"

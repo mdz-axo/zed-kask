@@ -1902,15 +1902,15 @@ fn emit_cmp_provenance(
 // ── Pin tests ───────────────────────────────────────────────────────────────
 // The two pin tests referenced in the crate doc and `emit_cmp_provenance`'s
 // doc comment. They enforce the advertised invariants: the tool surface
-// count (21) and the 7-field CMP provenance shape emitted inside `tree`.
+// count (19) and the 7-field CMP provenance shape emitted inside `tree`.
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The scenarios server registers exactly 22 tools. Adding or removing a
+    /// The scenarios server registers exactly 19 tools. Adding or removing a
     /// tool is an intentional surface change — this pin catches accidental
-    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_42_registered_tools`.
+    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_81_registered_tools`.
     #[test]
     fn tool_surface_is_exactly_19_registered_tools() {
         let n = ScenariosServer::scenario_router().list_all().len();
