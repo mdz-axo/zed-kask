@@ -1,7 +1,7 @@
 ---
 title: "hkask-inference — How-to: Route and Configure Inference"
 audience: [developers, operators]
-last_updated: 2026-09-16
+last_updated: 2026-09-19
 version: "3.0.0"
 status: "Active"
 domain: "Inference"
@@ -99,7 +99,7 @@ as a required `prepared-qa-adjudication-v2` manifest.
 Bridge-routed model support belongs in zed's model registry. To add standalone direct fallback for another OpenAI-compatible provider:
 
 1. Add a `DirectEmbeddingProvider { id, api_url, env_var }` entry to `DIRECT_EMBEDDING_PROVIDERS` (`kask/crates/hkask-inference/src/hkask_inference.rs:409-437`).
-2. Keep the provider descriptor aligned with zed's registry integration; the table comment identifies `kask_bridge::inference_providers` as the mirrored source (`kask/crates/hkask-inference/src/hkask_inference.rs:417-420`).
+2. Keep the provider descriptor aligned with zed's registry integration; the table comment identifies the table as the embedding-capable SUBSET of `kask_bridge::inference_providers` — not a full mirror: RunPod (endpoint discovery) and KiloCode (chat-only, no embeddings endpoint) are deliberately absent (`kask/crates/hkask-inference/src/hkask_inference.rs:426-435`).
 3. If configuration fields are required by other crate features, add them to `InferenceConfig::default` and `InferenceConfig::from_env` together (`kask/crates/hkask-inference/src/config.rs:66-135`).
 4. Test an explicit provider-qualified model, a missing credential, and an unknown prefix. `DirectEmbeddingPort::try_new` accepts only a recognized prefix and required credentials (`kask/crates/hkask-inference/src/hkask_inference.rs:439-490`).
 

@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — How-to: Add a Store and Review Maintenance Inventory"
 audience: [developers]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 version: "2.3.0"
 status: "Active"
 domain: "Persistence"
@@ -30,7 +30,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
 verified_date: 2026-09-18
-verified_against: kask/crates/hkask-storage/src/core/store_macros.rs:43-106; kask/crates/hkask-storage/src/core/connection.rs:272-335; kask/crates/hkask-storage/src/database/driver.rs:15-97; kask/crates/hkask-storage/src/hmem.rs:295-352,477-502
+verified_against: kask/crates/hkask-storage/src/core/store_macros.rs:43-87; kask/crates/hkask-storage/src/core/connection.rs:272-335; kask/crates/hkask-storage/src/database/driver.rs:15-97; kask/crates/hkask-storage/src/hmem.rs:295-352,477-502
 status: VERIFIED
 -->
 
@@ -85,7 +85,7 @@ This is transaction/reopen evidence, not power-loss or multi-resource atomicity.
 ### 4. Test the behavior
 
 Use `SqliteDriver::in_memory_pool()` for store tests
-(`kask/crates/hkask-storage/src/database/sqlite.rs:86-106`). Verify CRUD behavior,
+(`kask/crates/hkask-storage/src/database/sqlite.rs:112`). Verify CRUD behavior,
 constraint failures, transaction rollback, and corrupted-row error propagation.
 The in-memory pool has one connection so tests preserve read-your-writes semantics
 (`kask/crates/hkask-storage/src/core/connection.rs:394-415`).
@@ -157,7 +157,7 @@ before using `rotate_paths()`
 (`kask/crates/hkask-storage/src/maintenance_inventory.rs:183-205`). Establish
 quiescence separately; the inventory receipt is not a maintenance lease.
 Single-database rotation itself is implemented by `rotate_passphrase`
-(`kask/crates/hkask-storage/src/rotation.rs:122-297`).
+(`kask/crates/hkask-storage/src/rotation.rs:115-302`).
 
 ## Gallery scan and analysis requests
 
@@ -171,10 +171,10 @@ positional guesses:
 
 These types are defined at `kask/crates/hkask-storage/src/gallery.rs:103-135` and
 consumed atomically by `GalleryStore::reconcile` at
-`kask/crates/hkask-storage/src/gallery.rs:626-725`. Persist an analysis response
+`kask/crates/hkask-storage/src/gallery.rs:754-851`. Persist an analysis response
 through `persist_analysis` or `persist_analysis_for_tag_types`; both refuse to
 apply an old request when image identity, hash, or presence no longer matches
-(`kask/crates/hkask-storage/src/gallery.rs:741-815`).
+(`kask/crates/hkask-storage/src/gallery.rs:868-940`).
 
 ## See also
 

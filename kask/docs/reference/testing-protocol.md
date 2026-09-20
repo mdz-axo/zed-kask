@@ -1,7 +1,7 @@
 ---
 title: "kask Testing Protocol: Expectation Contracts and Evidence"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 version: "1.3.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -100,10 +100,14 @@ oracle, or weaken generators/assumptions to hide counterexamples.
   no I/O. Harnesses live in `#[cfg(kani)] mod proofs` beside the code;
   `cfg(kani)` is already whitelisted in the workspace check-cfg list, and the
   crates.io `kani` crate is never added as a dependency
-  (Gödel plan R2 mandate). Pinned budgets per harness, matching
-  `kask/scripts/check-bounded-proofs.sh`: `--default-unwind 12`, 2 GiB
+  (Gödel plan R2 mandate). Pinned budgets per harness — `--default-unwind 12`, 2 GiB
   address-space limit, 120-second wall limit, all default safety and
-  unwinding checks on. Evidence: exit code, per-harness logs, source
+  unwinding checks on — as recorded by the bounded-proof runner that
+  executed the 2026-09-18 R2 cycle (`kask/scripts/check-bounded-proofs.sh`,
+  removed 2026-09-19 with the `hkask-forecast` harness set, commit `5b4799bcad`;
+  the budgets remain the recorded convention for in-tree harnesses, whose
+  current set is `kask/crates/hkask-types/src/json_extract.rs:231-269`).
+  Evidence: exit code, per-harness logs, source
   identity (sha256), manifest. Classify outcomes explicitly: a counterexample
   is a failure; resource exhaustion,
   unsupported analysis, or an incomplete run is `Unknown`, never a pass.

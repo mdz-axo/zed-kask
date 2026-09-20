@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-16
-version: "1.3.0"
+last_updated: 2026-09-19
+version: "1.4.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -14,7 +14,7 @@ This index lists 28 retained artifacts across 10 cross-cutting documentation
 sets. Eight tutorials were folded into their surviving how-to, reference, or
 explanation documents; `hkask-mcp-server/tutorial.md` is the one retained
 tutorial. The count is the current filesystem result under
-`kask/docs/diataxis/*/*.md` on 2026-09-15, excluding this index.
+`kask/docs/diataxis/*/*.md` on 2026-09-19, excluding this index.
 
 Artifacts are expected to carry repo-relative implementation evidence. This
 index does not claim that every citation in every retained artifact has been
@@ -47,7 +47,7 @@ verification dates.
 
 ## Out of scope for additional per-crate sets
 
-### MCP server crates — complete 11-server inventory
+### MCP server crates — complete 12-server inventory
 
 The 12 managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
@@ -56,31 +56,32 @@ than receiving another per-crate set:
 `hkask-mcp-companies`, `hkask-mcp-corpus`, `hkask-mcp-curator`,
 `hkask-mcp-kata-kanban`, `hkask-mcp-media`, `hkask-mcp-portfolio`,
 `hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
-`hkask-mcp-swarm`, and `hkask-mcp-training`.
+`hkask-mcp-spreadsheet`, `hkask-mcp-swarm`, and `hkask-mcp-training`.
 
-The authoritative managed registry contains the same 11 IDs at
-`kask/crates/kask_bridge/src/mcp_servers.rs:52-506`.
+The authoritative managed registry contains the same 12 IDs at
+`kask/crates/kask_bridge/src/mcp_servers.rs:55-547`.
 
-### hKask library and composition crates — complete 18-crate inventory
+### hKask library and composition crates — complete 19-crate inventory
 
 The composition-root inventory under `kask/crates/` is:
 
 `hkask-bridge-ontology`, `hkask-condenser`, `hkask-email`,
 `hkask-event-store`, `hkask-forecast`, `hkask-inference`, `hkask-keystore`,
 `hkask-lisp`, `hkask-mcp`, `hkask-mcp-server`, `hkask-memory`,
-`hkask-regulation`, `hkask-services-core`, `hkask-steer-core`, `hkask-storage`,
-`hkask-tool-port`, `hkask-types`, and `kask_bridge`.
+`hkask-regulation`, `hkask-services-core`, `hkask-spreadsheet`,
+`hkask-steer-core`, `hkask-storage`, `hkask-tool-port`, `hkask-types`, and
+`kask_bridge`.
 
 Eight have retained crate-named sets above; `hkask-bridge-ontology` is covered
 by [`ontology-bridge.md`](../reference/ontology-bridge.md). The remaining small
 support crates are covered by cross-cutting architecture/reference documents
 and crate-local implementation context rather than additional Diataxis sets.
-The workspace membership evidence is `Cargo.toml:273-290`.
+The workspace membership evidence is `Cargo.toml:273-291`.
 
 Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
 `crates/media_panel` are documented here only where a zed-kask capability or
-D-seam requires it. The authoritative divergence range is D1–D56, with retired
-numbers retained and never reused (`DIVERGENCE.md:125-186`).
+D-seam requires it. The authoritative divergence range is D1–D69, with retired
+numbers retained and never reused (`DIVERGENCE.md:225-308`).
 
 ## Governing specifications
 

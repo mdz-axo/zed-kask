@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Reference: The 87-Tool Surface and Components"
 audience: [developers, operators]
-last_updated: 2026-09-16
+last_updated: 2026-09-19
 version: "2.1.0"
 status: "Active"
 domain: "Swarm"
@@ -53,14 +53,14 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-020
 verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:157-179; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-790; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138; kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-232; kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:157-179; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-790; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138; kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229; kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172
 status: VERIFIED
 -->
 
 ## Cloud tools — 48
 
 All 48 are defined in
-`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:157-2937`:
+`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:157-2850`:
 
 | Group | Tools |
 | --- | --- |
@@ -92,7 +92,7 @@ statistics (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-747`).
 
 ### Knowledge tools — 4
 
-Defined in `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-232`:
+Defined in `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`:
 
 - `swarm_search_knowledge_local`
 - `swarm_recall_local`

@@ -1,7 +1,7 @@
 ---
 title: "Gödel-Machine Gap Closure — Bounded, Evidence-Backed Improvement"
 audience: [architects, operators, agents]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 version: "1.0.0"
 status: "Active"
 domain: "Self-improvement"
@@ -155,7 +155,7 @@ Packages separate empirical improvement from formally checked properties.[^sgm][
 
 **Owner:** formal-methods engineer. **Entry:** approved toolchain environment/version/budget and reproducible source snapshot. Independent of R1.
 
-**Files:** E2, `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/README.md`; specifications in `/home/mdz-axolotl/Clones/zed-kask/kask/docs/reference/lora-training-catalog.md`. Optional proposed launcher: `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-bounded-proofs.sh`.
+**Files:** E2, `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/README.md`; specifications in `/home/mdz-axolotl/Clones/zed-kask/kask/docs/reference/lora-training-catalog.md`. Optional proposed launcher: `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-bounded-proofs.sh` (removed 2026-09-19, commit `5b4799bcad`, with the `hkask-forecast` harness set — the recorded budgets remain the convention; see [`testing-protocol.md`](../reference/testing-protocol.md) §3).
 
 1. Provision only with explicit approval; pin/record verifier and Rust toolchain. Never add the crates.io `kani` placeholder.
 2. Check installed CLI help; execute separately: `gm3_refuse_iff_degenerate_scaling`, `gm4_findings_follow_rank_thresholds`, `gm1_clean_iff_noop_init`, `safe_region_has_no_refusals`. Initial timebox: 15 minutes each.
@@ -533,7 +533,7 @@ All four attempts terminated within their wall limits; no proof worker remains. 
 | `safe_region_has_no_refusals` | 0.271s, exit 0 | Existing safe region; all eight decision outputs checked; boundary/MAX alpha cover. |
 | `gm2_warns_iff_bias_breaks_merge` (additional) | 0.049s, exit 0 | Every bias variant; each covered, warning iff merge-breaking. |
 
-All five completed with Kani 0.68.0/CBMC 6.11.0, unwind 12, all default safety/unwinding checks, **same 2 GiB/120-second limits**. All `kani::cover!` obligations satisfied. Times exclude compilation and are not production speedups. The reproducible runner `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-bounded-proofs.sh` repeated all five successfully, exit 0, and verified source hashes unchanged during the run. It refuses a wrong verifier version, evidence-directory overwrite, absent success summary, failed run, or source change. No automatic tool installation or CI promotion gate is added.
+All five completed with Kani 0.68.0/CBMC 6.11.0, unwind 12, all default safety/unwinding checks, **same 2 GiB/120-second limits**. All `kani::cover!` obligations satisfied. Times exclude compilation and are not production speedups. The reproducible runner `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-bounded-proofs.sh` repeated all five successfully, exit 0, and verified source hashes unchanged during the run. It refuses a wrong verifier version, evidence-directory overwrite, absent success summary, failed run, or source change. No automatic tool installation or CI promotion gate is added. (The runner and the `hkask-forecast` harness set were removed 2026-09-19, commit `5b4799bcad`, after this record was written; the evidence directory and this execution record remain the durable archive.)
 
 **Artifacts:** `/home/mdz-axolotl/.local/state/zed-kask/verification/r2-core-2026-09-18/final-run/` holds exact commands, HEAD plus uncommitted source diff, source hashes, full logs, statuses/times, and `SHA256SUMS`. Earlier `reproducible-run/` is **invalid**: editing the script while it was running caused a shell parse error after the proofs; final-run is the rerun of the finalized script without concurrent edits. Standalone initial successful logs and before/after characterization are in the parent directory. Proof-core SHA-256 `f3f95708363a30261790e49222675c789da87495432b5e41239e24c8d905e9d6`; provider types `dcd23b0705070fcfb93d75bc9829881e1678531d00d2851b558f8b6682cbc320`. Results bind the working tree, not an invented future commit. Registry remains `gap` for committed evidence binding/continuous coverage and explicitly records local core success.
 

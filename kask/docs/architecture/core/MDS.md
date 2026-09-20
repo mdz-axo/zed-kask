@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
+last_updated: 2026-09-19
 version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -471,7 +471,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 > The pre-fork `AgentService` orchestration layer, `hkask-cli` `ReplState` wrapper, and `hkask-api` `ApiState` wrapper are not present. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
 
-**Boundary:** The Regulation ledger, bridge adapters, and managed `McpRuntime` are process-global in the editor process (`crates/zed/src/main.rs:772-896`). The 12 MCP servers are separate child processes over stdio (`kask/crates/hkask-mcp/src/runtime.rs:4-12,576-580`). They link hKask libraries but never Zed crates; Zed-facing access crosses `kask_bridge`. There is no daemon, HTTP server, Matrix transport, or REPL state wrapper.
+**Boundary:** The Regulation ledger, bridge adapters, and managed `McpRuntime` are process-global in the editor process (`crates/zed/src/main.rs:772-1295`; ledger at `:772-776`, governed runtime at `:901-903`, built-in launch list at `:1287-1295`). The 12 MCP servers are separate child processes over stdio (`kask/crates/hkask-mcp/src/runtime.rs:4-12,576-580`). They link hKask libraries but never Zed crates; Zed-facing access crosses `kask_bridge`. There is no daemon, HTTP server, Matrix transport, or REPL state wrapper.
 
 ### Crate-to-Domain Mappings
 
@@ -486,7 +486,8 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into MCP children (`config.rs:109-129,218-228`); media generation is child-local while chat/vision/embed/list/rerank may cross the IPC bridge (`hkask_inference.rs:190-383`). The `InferencePort` has no `generate_batch` method, and the IPC protocol has no media-generation route. |
 | `hkask-mcp-server` (framework) | Composition | Per-tool child-process observability at tracing target `reg.tool` through `ToolSpanGuard` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`). These stderr events are not Regulation-ledger records (`:128-131`). |
-| `hkask-forecast` | Domain | Forecast domain logic |
+| `hkask-forecast` | Domain | Forecast domain logic. The former bounded-proof (Kani) harness was removed 2026-09-19 (commit `5b4799bcad`); the only in-tree `cfg(kani)` harness set is now `hkask-types/src/json_extract.rs` |
+| `hkask-spreadsheet` | Domain | LogiSheets-backed spreadsheet deep module (plan `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` §5.1): typed-table conversion, formula evaluation and recalc, viewport extraction, immutable atomic revision publication, digest and idempotency validation. Consumed by the `hkask-mcp-spreadsheet` server and the spreadsheet widget (`kask/crates/hkask-spreadsheet/src/hkask_spreadsheet.rs:1-12`) |
 | `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, SEPIO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
@@ -529,8 +530,8 @@ graph TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
-verified_date: 2026-09-16
-verified_against: crates/zed/src/main.rs:772-896; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-506; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
+verified_date: 2026-09-19
+verified_against: crates/zed/src/main.rs:772-776,901-903,1287-1295; kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-580; kask/crates/kask_bridge/src/mcp_servers.rs:55-547; kask/crates/hkask-inference/src/hkask_inference.rs:190-383; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-247
 status: VERIFIED
 -->
 
@@ -558,8 +559,8 @@ other than the caller being checked; the rows below satisfy that.
 
 ### Bootstrap Sequence
 
-The composition root constructs one shared `RegulationLedger`, one governed `McpRuntime`, and the bridge adapters in the editor process (`crates/zed/src/main.rs:772-896`). Deferred provisioning does not wait for Zed account resolution: it uses the current username when available and otherwise proceeds with fallback identity `kask` (`crates/zed/src/main.rs:1552-1571`). MCP children independently resolve `HKASK_WEBID` and warn before falling back to anonymous (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). Sovereignty-key access uses `oo7`, not the `keyring` crate (`kask/crates/hkask-keystore/src/keychain.rs:36-38,133-161`).
+The composition root constructs one shared `RegulationLedger`, one governed `McpRuntime`, and the bridge adapters in the editor process (`crates/zed/src/main.rs:772-1295`). Deferred provisioning does not wait for Zed account resolution: it uses the current username when available and otherwise proceeds with fallback identity `kask` (`crates/zed/src/main.rs:1552-1571`). MCP children independently resolve `HKASK_WEBID` and warn before falling back to anonymous (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). Sovereignty-key access uses `oo7`, not the `keyring` crate (`kask/crates/hkask-keystore/src/keychain.rs:36-38,133-161`).
 
 ### Interface Equivalence
 
-The agent panel, four Steer panels, and the managed MCP children reach hKask through distinct adapters and transports. The former Kask panel and admin CLI do not exist; inline D18 widgets provide visualization, while panel conversations dispatch through the process-global managed runtime. Regulation is intentionally shared process-wide through the single ledger and loop graph wired in `crates/zed/src/main.rs:772-896,922-1012`.
+The agent panel, four Steer panels, and the managed MCP children reach hKask through distinct adapters and transports. The former Kask panel and admin CLI do not exist; inline D18 widgets provide visualization, while panel conversations dispatch through the process-global managed runtime. Regulation is intentionally shared process-wide through the single ledger and loop graph wired in `crates/zed/src/main.rs:772-1295`.

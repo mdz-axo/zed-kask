@@ -1,7 +1,7 @@
 ---
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
+last_updated: 2026-09-19
 version: "2.1.0"
 status: "Active"
 domain: "Foundation"
@@ -19,12 +19,13 @@ to prevent cross-domain identifier confusion.[^newtype]
 ## Module inventory
 
 The crate root is authoritative at
-`kask/crates/hkask-types/src/hkask_types.rs:6-44`.
+`kask/crates/hkask-types/src/hkask_types.rs:6-50`.
 
 ```mermaid
 classDiagram
     class hkask_types
     class agent_paths
+    class block_provenance
     class corpus
     class curator
     class document
@@ -38,9 +39,11 @@ classDiagram
     class kanban_wire
     class media_limits
     class ocr_health
+    class ytdlp
     class regulation
     class secret
     class server_env
+    class spreadsheet
     class template
     class ports
     class process_global
@@ -52,6 +55,7 @@ classDiagram
     class url_utils
     class visibility
     hkask_types o-- agent_paths
+    hkask_types o-- block_provenance
     hkask_types o-- corpus
     hkask_types o-- curator
     hkask_types o-- document
@@ -65,9 +69,11 @@ classDiagram
     hkask_types o-- kanban_wire
     hkask_types o-- media_limits
     hkask_types o-- ocr_health
+    hkask_types o-- ytdlp
     hkask_types o-- regulation
     hkask_types o-- secret
     hkask_types o-- server_env
+    hkask_types o-- spreadsheet
     hkask_types o-- template
     hkask_types o-- ports
     hkask_types o-- process_global
@@ -82,8 +88,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-004
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-types/src/hkask_types.rs:6-44
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-types/src/hkask_types.rs:6-50
 status: VERIFIED
 -->
 
@@ -102,7 +108,7 @@ items are re-exported; `sql_impls` is feature-gated
 | `error` | `DatabaseErrorKind`, `DbError`, `InfrastructureError`, `McpErrorKind`, `NotFound` | `kask/crates/hkask-types/src/error.rs:26-74,116-203,231-318` |
 | `hmem_ontology` | `HMemOntology` | `kask/crates/hkask-types/src/hmem_ontology.rs:35-75` |
 | `id` | sealed `Id<T>` aliases and `WebID` | `kask/crates/hkask-types/src/id/core.rs:8-188`; `kask/crates/hkask-types/src/id/webid.rs:9-107` |
-| `json_extract` | balanced JSON extraction from model output | `kask/crates/hkask-types/src/json_extract.rs:1-94` |
+| `json_extract` | balanced JSON extraction from model output; property tests and Kani proofs (2026-09-16) cover the extraction core | `kask/crates/hkask-types/src/json_extract.rs:47,231-269` |
 | `kanban_status` / `kanban_wire` | task lifecycle and server/tool wire constants | `kask/crates/hkask-types/src/kanban_status.rs:11-71`; `kask/crates/hkask-types/src/kanban_wire.rs:17-22` |
 | `template` | `LLMParameters` | `kask/crates/hkask-types/src/template.rs:14-85` |
 | `time` | RFC 3339 timestamp helpers | `kask/crates/hkask-types/src/time.rs:18-44` |
@@ -169,7 +175,7 @@ status: VERIFIED
 
 | Cluster | Types | Evidence |
 |---|---|---|
-| Inference values | `ChatMessage`, `InferenceError`, `InferenceUsage`, `ChatToolDefinition`, `ChatToolFunction`, `StructuredToolCall`, `InferenceResult`, `InferenceStreamChunk` | `kask/crates/hkask-types/src/ports/inference_types.rs:15-153` |
+| Inference values | `ChatMessage`, `InferenceError`, `InferenceUsage` (with the `reported` flag), `ChatToolDefinition`, `ChatToolFunction`, `StructuredToolCall`, `InferenceResult`, `InferenceStreamChunk` | `kask/crates/hkask-types/src/ports/inference_types.rs:15-164` |
 | Inference port | `EmbedFuture`, `MediaFuture`, `RerankFuture`, `MediaGenerateParams`, `ModelEntry`, `InferencePort` | `kask/crates/hkask-types/src/ports/inference_port.rs:11-98,161-380` |
 | Tool/worktree ports | `ToolDispatchPort`, `WorktreeSpawnPort` | `kask/crates/hkask-types/src/ports/inference_port.rs:100-159` |
 | Memory | `TurnRecord`, `GoalEvent`, `MemorySnippet`, `MemoryError`, `MemoryPort` | `kask/crates/hkask-types/src/ports/memory_port.rs:19-147` |

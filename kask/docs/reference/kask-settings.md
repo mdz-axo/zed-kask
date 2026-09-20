@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 version: "0.39.0"
 status: "Active"
 domain: "Composition"
@@ -428,7 +428,7 @@ applied by the next editor startup, before any database opens.
 ### Passphrase rotation
 
 Changing a SQLCipher passphrase requires re-encrypting the entire database —
-there is no in-place `PRAGMA rekey` that survives a crash. The rotation is handled by `hkask_storage::rotate_passphrase` (`kask/crates/hkask-storage/src/rotation.rs:108-204`), which:
+there is no in-place `PRAGMA rekey` that survives a crash. The rotation is handled by `hkask_storage::rotate_passphrase` (`kask/crates/hkask-storage/src/rotation.rs:115-302`), which:
 
 1. Opens the source DB with the old passphrase (verifies it).
 2. Creates `<db>.new` encrypted with the new passphrase.

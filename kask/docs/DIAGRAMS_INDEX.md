@@ -31,11 +31,11 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 
 | DIAGRAM_ID | Location | Verified date | Status |
 | --- | --- | --- | --- |
-| `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
+| `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-16 | VERIFIED |
-| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/how-to.md`](./diataxis/kask_bridge/how-to.md) | 2026-09-16 | VERIFIED |
-| `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-16 | VERIFIED |
-| `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-16 | VERIFIED |
+| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/how-to.md`](./diataxis/kask_bridge/how-to.md) | 2026-09-19 | VERIFIED |
+| `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
+| `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-006` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-BRIDGE-007` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CAP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
@@ -60,7 +60,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-DIA-SWARM-008` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-009` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-010` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
-| `DIAG-ERD-CREDENTIAL-RESOLUTION-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
+| `DIAG-ERD-CREDENTIAL-RESOLUTION-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ES-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-FUNCTIONAL-001` | [`architecture/functional-interaction-spec.md`](./architecture/functional-interaction-spec.md) | 2026-09-16 | VERIFIED |
 | `DIAG-IC-017` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-16 | VERIFIED |
@@ -74,7 +74,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-MCPSRV-020` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-030` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-031` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-MDS-001` | [`architecture/core/MDS.md`](./architecture/core/MDS.md) | 2026-09-16 | VERIFIED |
+| `DIAG-MDS-001` | [`architecture/core/MDS.md`](./architecture/core/MDS.md) | 2026-09-19 | VERIFIED |
 | `DIAG-MEDIA-PANEL-001` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MEDIA-PANEL-002` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MEM-ARCH` | [`architecture/memory-system-specification.md`](./architecture/memory-system-specification.md) | 2026-09-04 | VERIFIED |
@@ -109,9 +109,9 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-002` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-18 | VERIFIED |
-| `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-STOR-006` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STOR-006` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-19 | VERIFIED |
 | `DIAG-STOR-007` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-008` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SWARM-010` | [`diataxis/swarm_system/how-to.md`](./diataxis/swarm_system/how-to.md) | 2026-09-16 | VERIFIED |
@@ -120,7 +120,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-SWARM-031` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-002` | [`diataxis/hkask-types/how-to.md`](./diataxis/hkask-types/how-to.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-003` | [`diataxis/hkask-types/how-to.md`](./diataxis/hkask-types/how-to.md) | 2026-09-16 | VERIFIED |
-| `DIAG-TYPES-004` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
+| `DIAG-TYPES-004` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-TYPES-005` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-006` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-008` | [`diataxis/hkask-types/explanation.md`](./diataxis/hkask-types/explanation.md) | 2026-09-16 | VERIFIED |

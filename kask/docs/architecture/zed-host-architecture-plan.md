@@ -1,8 +1,8 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-09-16
-version: "0.42.0"
+last_updated: 2026-09-19
+version: "0.43.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records every deliberate seam from D1 through D56, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 12 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records every deliberate seam from D1 through D69, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 12 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
@@ -19,8 +19,8 @@ mds_categories: [composition, trust, lifecycle]
 - [§2 — The Essentialist Split](#2-the-essentialist-split-what-zed-kask-owns-vs-what-hkask-keeps)
   - [§2.1 — zed-kask owns (generic)](#21-zed-kask-owns-generic--inherited-from-upstream-not-modified-except-integration-seams)
   - [§2.2 — hKask keeps (unique: curator + sovereignty + tools)](#22-hkask-keeps-unique-curator--sovereignty--tools--compiled-into-zed-kask)
-  - [§2.3 — MCP load set (11 on disk)](#23-mcp-load-set-11-on-disk)
-- [§3 — The Minimal Divergence Map (D1–D56)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
+  - [§2.3 — MCP load set (12 on disk)](#23-mcp-load-set-12-on-disk)
+- [§3 — The Minimal Divergence Map (D1–D69)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
 - [§4 — (removed)](#4-removed)
 - [§5 — (removed)](#5-removed)
 - [§6 — Migration Status](#6-migration-status)
@@ -34,13 +34,13 @@ mds_categories: [composition, trust, lifecycle]
   - [§13.1 — Governing invariant (dependency direction)](#131-governing-invariant-dependency-direction)
   - [§13.2 — The complete port set](#132-the-complete-port-set-ports-and-adapters)
   - [§13.3 — Composition root (startup — DI pattern)](#133-composition-root-startup--di-pattern)
-  - [§13.4 — Consolidated divergence map (D1–D56)](#134-consolidated-divergence-map-d1d56)
+  - [§13.4 — Consolidated divergence map (D1–D69)](#134-consolidated-divergence-map-d1d69)
 - [§14 — Repository Consolidation](#14-repository-consolidation--full-merge-into-zed-kask)
 - [References](#references)
 
 ---
 
-> **Current state (2026-09-15):** `kask/crates/` contains 18 libraries (17 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 11 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. The authoritative Zed-side seam record is [`DIVERGENCE.md`](../../../DIVERGENCE.md) § “The divergence surface (D1–D56)”; retired numbers are not active seams.
+> **Current state (2026-09-19):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. The authoritative Zed-side seam record is [`DIVERGENCE.md`](../../../DIVERGENCE.md) § “The divergence surface (D1–D69)”; retired numbers are not active seams.
 
 ---
 
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-09-18):** **18 kask crates** under `kask/crates/` (17 `hkask-*` + `kask_bridge`) plus **12 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-conversation-injector`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). 12 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
+**Status (2026-09-19):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **12 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-conversation-injector`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). 12 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -95,9 +95,9 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-services-core`                                                                     | Shared foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`.                                                                                                                                                          |
 | 12 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
 
-### 2.3 MCP load set (11 on disk)
+### 2.3 MCP load set (12 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) and the **spreadsheet** server was added (2026-09-18) — **12 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-541` enumerates them (media entry at `mcp_servers.rs:479-519`); `builtin_mcp_server_ids()` (`mcp_servers.rs:543-547`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) and the **spreadsheet** server was added (2026-09-18) — **12 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-547` enumerates them (media entry at `mcp_servers.rs:485-526`); `builtin_mcp_server_ids()` (`mcp_servers.rs:549-553`) derives the ID list.[^anthropic-mcp]
 
 | On disk (12)                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------- |
@@ -109,11 +109,11 @@ The original 16 MCP servers were pruned to 10, then the **media** server was rec
 
 ## 3. The Minimal Divergence Map (exact zed-kask touch points)
 
-`DIVERGENCE.md:125-185` is the canonical map. D1–D56 is a numbering range,
-not a claim that all 56 numbers are active. Active seams are:
+`DIVERGENCE.md:225-308` is the canonical map. D1–D69 is a numbering range,
+not a claim that all 69 numbers are active. Active seams are:
 
 `D1–D3`, `D5–D9`, `D11–D16`, `D18`, `D20–D29`, `D31–D33`,
-`D35–D37`, `D39–D48`, `D51–D52`, and `D54–D56`. D34 has no row in the
+`D35–D37`, `D39–D48`, `D51–D52`, and `D54–D69`. D34 has no row in the
 current active table; the former bridge batch API is not a live seam.
 
 Retired numbers are never reused: D4 (guard layer), D10 (Kask panel), D17 and
@@ -136,7 +136,7 @@ Two shared-code mappings are especially easy to misstate:
 
 ## 4. (removed)
 
-> The implementation is current through the D1–D56 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
+> The implementation is current through the D1–D69 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
 
 ## 5. (removed)
 
@@ -144,7 +144,7 @@ Two shared-code mappings are especially easy to misstate:
 
 ## 6. Migration Status
 
-> The implementation is current through the D1–D56 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
+> The implementation is current through the D1–D69 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
 
 ---
 
@@ -295,7 +295,7 @@ There is no `KaskCore` singleton and no Kask panel. “Process-global Regulation
 means the editor has one shared ledger/loop graph for all managed dispatch paths;
 it does not mean MCP tools execute in-process.
 
-### 13.4 Consolidated divergence map (D1–D56)
+### 13.4 Consolidated divergence map (D1–D69)
 
 Use `DIVERGENCE.md:125-185` directly for merge recovery. Its active rows and
 retired-number paragraph are the complete classification; §3 records the current
@@ -328,7 +328,7 @@ zed-kask/
 ├── crates/            # upstream zed + isolated D-seam edits
 ├── extensions/        # upstream
 └── kask/              # ── OURS (additive; upstream never touches here) ──
-    ├── crates/        # 17 hkask-* libraries + kask_bridge (D8)
+    ├── crates/        # 18 hkask-* libraries + kask_bridge (D8)
     ├── mcp-servers/   # the 11 on-disk servers (curator may be unloaded via override)
     ├── registry/      # 67 prompt-template directories under registry/templates/
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts

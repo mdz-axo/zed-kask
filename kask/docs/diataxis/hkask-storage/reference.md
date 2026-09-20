@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — Reference"
 audience: [developers, architects]
-last_updated: 2026-09-18
+last_updated: 2026-09-19
 version: "2.3.0"
 status: "Active"
 domain: "Persistence"
@@ -14,7 +14,7 @@ mds_categories: [domain, trust]
 SQLCipher page encryption and sqlite-vec; in-memory and `SqliteDriver::file_pool`
 paths are unencrypted SQLite
 (`kask/crates/hkask-storage/src/core/connection.rs:337-466`;
-`kask/crates/hkask-storage/src/database/sqlite.rs:86-117`). `DbValue` supplies SQL
+`kask/crates/hkask-storage/src/database/sqlite.rs:112,139`). `DbValue` supplies SQL
 binding types; SQLCipher-backed connections supply encryption.[^sqlcipher]
 SQLite vector search is supplied by sqlite-vec.[^sqlite-vec]
 
@@ -28,7 +28,7 @@ The crate root declares and exports the current modules at
 | `core` | `Database`, `DatabaseError`, `LeasedSqliteConnection`, `SqliteConnectionManager`, `embedding_dim`, `open_database`, `open_or_repair`, `sanitize_path` | `kask/crates/hkask-storage/src/hkask_storage.rs:20-24` |
 | `database` | `DatabaseDriver`, `SqliteDriver`, `WAL_PRAGMA_BATCH`, `init_wal_pragmas`; typed SQL values. Transactions belong to a leased connection, not the driver | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database.rs:1-14` |
 | `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:12-18` |
-| `rotation` | `rotate_passphrase`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
+| `rotation` | `rotate_passphrase`, `verify_database_key`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
 | `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
 | `escalation` | `EscalationEntry`, `EscalationQueue`, `EscalationStatus`, `EscalationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:30,35` |
 | `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:31,36-37` |
@@ -91,7 +91,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
 verified_date: 2026-09-18
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:294-306; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
 status: VERIFIED
 -->
 
@@ -114,6 +114,7 @@ separate responsibilities.
 
 All entities below are public through the public `gallery` module. The crate root
 also directly re-exports `GalleryMode`, `GalleryRecord`, `ImageRecord`,
+`AssetCreationPublication`, `AssetObservation`, `PublishedAssetCreation`,
 `TagRecord`, `FaceRegistryRecord`, `GalleryStore`, and `GalleryStoreError`
 (`kask/crates/hkask-storage/src/hkask_storage.rs:40-43`).
 
@@ -148,18 +149,18 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-004
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-storage/src/gallery.rs:84-135,598-725,741-815,836-930
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-storage/src/gallery.rs:84-135,726-750,754-851,868-940
 status: VERIFIED
 -->
 
 `GalleryStore::reconcile` commits observations and safe absence transitions in one
-transaction (`kask/crates/hkask-storage/src/gallery.rs:626-725`). Errors in scan
+transaction (`kask/crates/hkask-storage/src/gallery.rs:754-851`). Errors in scan
 coverage suppress absence inference. `persist_analysis_for_tag_types` applies a
 response only while image ID, gallery ID, hash, and non-missing state still match
-(`kask/crates/hkask-storage/src/gallery.rs:760-815`). Active list/count/index
+(`kask/crates/hkask-storage/src/gallery.rs:887-940`). Active list/count/index
 surfaces exclude missing records, while stable-ID inspection can include them
-(`kask/crates/hkask-storage/src/gallery.rs:728-739,836-930`).
+(`kask/crates/hkask-storage/src/gallery.rs:967-1039`).
 
 ## Core schema
 
@@ -240,7 +241,7 @@ lifecycle tables outside the core schema
 `rotate_passphrase` re-encrypts one quiesced database through SQLCipher export,
 validates the exported database, and replaces the source while retaining recovery
 artifacts on failures that require operator action
-(`kask/crates/hkask-storage/src/rotation.rs:122-297`). The maintenance inventory
+(`kask/crates/hkask-storage/src/rotation.rs:115-302`). The maintenance inventory
 identifies and confirms scope; it does not itself quiesce databases or make a
 multi-database/keychain operation crash-atomic.
 

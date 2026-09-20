@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — Explanation: Boundaries, Maintenance, and Gallery Identity"
 audience: [architects, developers]
-last_updated: 2026-09-16
+last_updated: 2026-09-19
 version: "2.2.0"
 status: "Active"
 domain: "Persistence"
@@ -94,10 +94,10 @@ The gallery is an index over user-owned files, not a content-addressed copy. A
 `GalleryScan` carries physical `AssetObservation`s plus explicit coverage and
 errors; `GalleryStore::reconcile` applies all observations and safe missing
 transitions in one immediate transaction
-(`kask/crates/hkask-storage/src/gallery.rs:103-135,626-725`). Distinct paths with
+(`kask/crates/hkask-storage/src/gallery.rs:103-135,754-851`). Distinct paths with
 equal content remain distinct assets. A changed hash preserves the stable image ID
 and marks metadata stale; a missing asset retains its row and can later be restored
-(`kask/crates/hkask-storage/src/gallery.rs:598-624,668-709`).
+(`kask/crates/hkask-storage/src/gallery.rs:726-750,815-851`).
 
 ```mermaid
 stateDiagram-v2
@@ -117,17 +117,17 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-006
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-storage/src/gallery.rs:103-135,598-624,626-725,728-815
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-storage/src/gallery.rs:103-135,726-750,754-851,868-940
 status: VERIFIED
 -->
 
 `ReconcileResult::analysis_assets` names the exact added, changed, or restored
 records that need analysis; callers do not infer positional ranges
-(`kask/crates/hkask-storage/src/gallery.rs:125-135,668-678`). Analysis persistence
+(`kask/crates/hkask-storage/src/gallery.rs:125-135,754-851`). Analysis persistence
 checks image ID, gallery ID, hash, and non-missing state before replacing model
 metadata, so a response for an old request cannot annotate a newer file revision
-(`kask/crates/hkask-storage/src/gallery.rs:741-815`).
+(`kask/crates/hkask-storage/src/gallery.rs:868-940`).
 
 Workflow, generation, OMC creation-graph, album, face, and tag records hang from the
 same durable asset identity

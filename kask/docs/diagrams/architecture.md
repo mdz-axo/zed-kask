@@ -439,8 +439,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-09-16
-verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 11 servers incl. media)
+verified_date: 2026-09-19
+verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 12 servers incl. media and spreadsheet)
 status: VERIFIED
 -->
 
@@ -457,10 +457,10 @@ The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker). The model decides every tool call; skills do not
 dispatch MCP tools deterministically.
 
-The 11 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
+The 12 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
 `kask/crates/kask_bridge/src/mcp_servers.rs`: `portfolio`, `companies`,
 `corpus`, `curator`, `kata-kanban`, `research`, `scenarios`,
-`prediction-markets`, `swarm`, `training`, `media`.
+`prediction-markets`, `swarm`, `training`, `media`, `spreadsheet`.
 
 ## Credential Resolution Chain
 
@@ -530,9 +530,9 @@ erDiagram
         string url "kask://credentials/hkask_db_passphrase"
     }
     PROVISION_LAUNCH {
-        string fn "provision_db_passphrase (identity.rs:145)"
+        string fn "provision_db_passphrase (identity.rs:132)"
         string chain "env override → keychain entry → default 'allostery'"
-        string site "called at MCP launch (mcp_servers.rs:677) — no mirror step"
+        string site "called at MCP launch (mcp_servers.rs:886) — no mirror step"
     }
     NUDGE {
         string fn "nudge_mcp_servers(cx)"
@@ -548,8 +548,8 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:677 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:886 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
 status: VERIFIED
 -->
 
@@ -557,9 +557,9 @@ The 2-tier chain: `hkask_mcp_server::server::resolve_db_passphrase(&credentials)
 returns `McpToolError::permission_denied` naming the env var and keychain URL
 when both tiers are empty — a missing credential is an authorization failure,
 not a transient unavailability. `provision_db_passphrase`
-(`kask/crates/kask_bridge/src/identity.rs:145`) is idempotent (env override →
+(`kask/crates/kask_bridge/src/identity.rs:132`) is idempotent (env override →
 existing keychain entry → default `"allostery"`) and runs at governed MCP
-server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:677`); a failed
+server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:886`); a failed
 provision logs a `tracing::warn!` naming the env var and the server fails
 with `permission_denied` at tool time.
 
