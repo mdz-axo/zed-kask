@@ -6,7 +6,7 @@
 
 **Executor**: the `cmp-term-structure` skill runs the CMP (Constant-Maturity Prediction) stages inside this process — tenor ladder, economic context, index construction, event-tree composition, coherence testing, duration matching. This document is the surrounding process. Promoting the full process to a skill is an open operator decision.
 
-**Ontology**: `term_structure` (FIBO IND/Indicators TermStructure), `risk_premium` (Mehra & Prescott 1985), and `expectations_gap` (Rappaport & Mauboussin, *Expectations Investing*, 2001) resolve live at the derived rung via `onto_anchor` (commit `7aa15ac78e`; verified post-restart 2026-09-19). The operator-approved FIBO 2.0 fixture refresh will replace the stopgap entries.
+**Ontology**: `term_structure` (FIBO `fibo-ind-ind-ind:TermStructure`) and `interest rate` (FIBO `fibo-fnd-acc-cur:InterestRate`) resolve at the FIBO domain-supplement rung (fixture refresh 2026-09-20, commit `105b650e46`); `risk_premium` (Mehra & Prescott 1985) and `expectations_gap` (Rappaport & Mauboussin, *Expectations Investing*, 2001) resolve live at the derived rung via `onto_anchor` (commit `7aa15ac78e`). The former `term_structure` derived-rung stopgap is retired; its aliases ("cmp term structure", "probability term structure") now resolve to the core ground with the ruling note rather than a false FIBO pin.
 
 ## 1. Purpose and output
 
@@ -55,7 +55,7 @@ The eight working stages (1–8) carry a Stage-0 ontology precondition.
 
 ### Stage 0 — Anchor the terms
 
-Anchor every domain term the run names — family, wedge components, measures — with `onto_anchor` before computing. No private definitions: a term absent from the ladder is added at the derived rung with its authority (as `term_structure`, `risk_premium`, and `expectations_gap` were; commit `7aa15ac78e`), never used unanchored. A coarse (core-rung) anchor carries the ruling path; request the ruling.
+Anchor every domain term the run names — family, wedge components, measures — with `onto_anchor` before computing. No private definitions: a term absent from the ladder is added at the derived rung with its authority (as `risk_premium` and `expectations_gap` were; commit `7aa15ac78e`), never used unanchored; a derived entry is a stopgap, retired when the published vocabulary adopts the term (`term_structure` graduated to the FIBO domain-supplement rung, 2026-09-20, commit `105b650e46`). A coarse (core-rung) anchor carries the ruling path; request the ruling.
 
 ### Stage 1 — Select the family
 
@@ -159,12 +159,13 @@ Followups filed (prediction-markets server): surface the reason a series-scoped 
 
 ## 8. Roadmap
 
-- **Run 2 — rate-path family (recommended next).** Policy-path prediction markets vs (a) fed funds futures-implied odds and (c) SEP/FEDTARMD medians. First family to exercise the full CMP ladder and a real (a)-leg. Requires registering the rate-path series in `HKASK_PREDICTION_MARKETS_BASE_EVENTS` — an operator config decision.
+- **Run 2 — rate-path family (recommended next).** Policy-path prediction markets vs (a) fed funds futures-implied odds and (c) SEP/FEDTARMD medians. First family to exercise the full CMP ladder and a real (a)-leg. **Registered 2026-09-20**: `economics:KXFEDDECISION` in `prediction_markets.base_events` (user settings), live-verified — the registration gate passes and `market_cmp_indices` resolves family `policy_interest_rate` (55 contracts fetched). **Probe found two gaps.** (1) Strike extraction: the builder rejected all 55 decision-style contracts with surfaced reasons (`no extractable strike from 'Will the Federal Reserve Hike rates by 25bps…'`) — `extract_strike` parses level-space titles only ($X, X%, above/below/at); decision-delta contracts (H0/H25/H26/C25/C26) need a bp-change branch before the rate-path CMP ladder can run (decision pending operator). (2) Context staleness: the curated default context for the rates family is Q3-2024 vintage (reference 5.375) — a live operator-accepted context is mandatory (DFF 3.88 as of 2026-09-17 after a +25bp move; FEDTARMD/SEP path 4.1 → 3.9 → 3.6). Filed followup: `market_cmp_context_suggest` classifies through the text classifier and cannot read a bare series ticker (family 'unknown', generic default for KXFEDDECISION) while `market_cmp_indices` uses the catalog classifier — the proposal side should classify through the same catalog path.
 - **Run 3 — inflation family.** CPI-print markets vs T10YIE / 5y5y breakevens; the W1 (inflation risk premium) decomposition is the point of this run.
 - **Run 4 — currency family.** FX-level markets vs options-implied distributions.
-- **Equity leg — scoping decision pending.** Options-implied distribution source (external) vs companies-server `expectations_gap` / `calibrate_forecast` (native) for fundamentals-vs-price gaps.
+- **Equity leg — scoping decision pending operator call.** Options-implied distribution source (external) vs companies-server `expectations_gap` / `calibrate_forecast` (native) for fundamentals-vs-price gaps. Agent recommendation (2026-09-20): native-first — the companies-server path (`expectations_gap` / reverse-DCF / `calibrate_forecast`) as v1, exercising the native server with no external data dependency; external options-implied distributions as a later tier-(a) upgrade. Not decided until the operator confirms.
+- **Process structure (decided 2026-09-20, operator-endorsed via roadmap approval).** This document is the process spec — the single source of truth for the gap methodology; the `cmp-term-structure` skill is the CMP-stage executor within it, not a separate process; no new full-process skill. Runs execute per §4.
 - **Calibration.** Periodic `market_check_resolutions` scans; the §7 followups unblock verified per-market registration.
-- **Ontology.** FIBO 2.0 fixture refresh (operator-approved): add TermStructure and InterestRate finance terms, then delete the derived-rung stopgap.
+- **Ontology.** Landed 2026-09-20 (commit `105b650e46`): TermStructure (`fibo-ind-ind-ind`, IND/Indicators/Indicators.rdf L230) and InterestRate (`fibo-fnd-acc-cur`, FND/Accounting/CurrencyAmount.rdf L258) mechanically verified against the FIBO master tarball (codeload HEAD, default branch master) and added to the fixture; the term_structure derived-rung stopgap and its test are deleted; ladder pins added at the FIBO rung with the alias-loss degradation pinned honestly.
 
 ## 9. Recorded traps (methodology-binding)
 
