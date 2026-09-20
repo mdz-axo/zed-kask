@@ -10,7 +10,8 @@
 //!
 //! 1. Reads the per-family JSONL files (Kalshi and Gamma schemas differ).
 //! 2. Adapts each record to a `CatalogAdapter` (extracting strike,
-//!    direction, days-to-expiration, probability via `BaseEvent::extract_strike`).
+//!    direction, days-to-expiration, probability via `BaseEvent::extract_strike`
+//!    and categorical orientation via `extract_decision_strike`).
 //! 3. Classifies orientation and builds `OrientedConstituent`s.
 //! 4. Calls `construct_cmp_index_set` to solve the portfolios.
 //! 5. Wraps each `CmpIndex` with provenance (family, venue) — the publishable
@@ -381,41 +382,62 @@ fn build_oriented_constituents(
             }
         };
 
-        // Strike + direction from the record's title.
-        let (predicted_level, direction_up) = match base_event.extract_strike(&adapter.question) {
-            Some((strike, up)) => (strike, up),
-            None => {
+        // Strike + orientation. Policy-decision contracts ("hike rates by
+        // 25bps") carry their orientation categorically — the contract IS
+        // the event class — so they orient directly and skip the
+        // materiality band; open-ended decision tails (">25bps") have no
+        // point strike and are withheld with a surfaced reason, never
+        // approximated. Level contracts orient from their strike via the
+        // materiality level as before.
+        let orientation = match crate::base_event::extract_decision_strike(&adapter.question) {
+            crate::base_event::DecisionStrike::Point { orientation, .. } => orientation,
+            crate::base_event::DecisionStrike::OpenTail => {
                 rejections.push(format!(
-                    "{}: no extractable strike from '{}'",
-                    adapter.market_id, adapter.question
-                ));
-                continue;
-            }
-        };
-
-        // Orientation via materiality. Use the family's default materiality
-        // setting and the context's volatility. The level is computed for a
-        // representative 90d tenor here — the per-bucket level is recomputed
-        // inside `construct_cmp_index_set` for each bucket's target. This
-        // classification only determines which orientation bucket the
-        // contract belongs to; the materiality level's tenor-dependence is
-        // second-order for orientation (a contract either clears the floor
-        // or it doesn't, across the 1m–6m range).
-        let setting = base_event.default_materiality();
-        let level = cmp_portfolio::materiality_level(&setting, context.volatility, 90, config);
-        let orientation = match level {
-            Some(level) => cmp_portfolio::classify_orientation(
-                predicted_level,
-                context.reference,
-                level,
-                direction_up,
-            ),
-            None => {
-                rejections.push(format!(
-                    "{}: no materiality level (no volatility, no override)",
+                    "{}: open-ended decision tail (>25bps) has no point strike — withheld",
                     adapter.market_id
                 ));
                 continue;
+            }
+            crate::base_event::DecisionStrike::NotDecision => {
+                let (predicted_level, direction_up) =
+                    match base_event.extract_strike(&adapter.question) {
+                        Some((strike, up)) => (strike, up),
+                        None => {
+                            rejections.push(format!(
+                                "{}: no extractable strike from '{}'",
+                                adapter.market_id, adapter.question
+                            ));
+                            continue;
+                        }
+                    };
+                // Orientation via materiality. Use the family's default
+                // materiality setting and the context's volatility. The
+                // level is computed for a representative 90d tenor here
+                // — the per-bucket level is recomputed inside
+                // `construct_cmp_index_set` for each bucket's target.
+                // This classification only determines which orientation
+                // bucket the contract belongs to; the materiality
+                // level's tenor-dependence is second-order for
+                // orientation (a contract either clears the floor or it
+                // doesn't, across the 1m–6m range).
+                let setting = base_event.default_materiality();
+                let level =
+                    cmp_portfolio::materiality_level(&setting, context.volatility, 90, config);
+                match level {
+                    Some(level) => cmp_portfolio::classify_orientation(
+                        predicted_level,
+                        context.reference,
+                        level,
+                        direction_up,
+                    ),
+                    None => {
+                        rejections.push(format!(
+                            "{}: no materiality level (no volatility, no override)",
+                            adapter.market_id
+                        ));
+                        continue;
+                    }
+                }
             }
         };
 

@@ -12,7 +12,7 @@
 //! Continuous availability is verified live via `market_ladder` (the CP-CMP
 //! checkpoint), not assumed by the registry.
 
-use crate::cmp_portfolio::{MaterialitySetting, MaterialityType};
+use crate::cmp_portfolio::{MaterialitySetting, MaterialityType, Orientation};
 
 /// A systematic factor family CMP indices are built over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -469,4 +469,139 @@ fn parse_leading_number(s: &str) -> Option<f64> {
         }
     }
     Some(value)
+}
+
+/// The parse result for a policy-decision contract title.
+///
+/// Decision contracts ("Will the Federal Reserve hike rates by 25bps at
+/// their January 2028 meeting?") carry their orientation categorically —
+/// the contract IS the event class (hike/cut/hold), never inferred from a
+/// materiality band over a level space.
+#[derive(Debug)]
+pub enum DecisionStrike {
+    /// A point decision: the bp change in the rates family's percent units
+    /// (25bps → 0.25) and its categorical orientation. Hike-by-N (N > 0) →
+    /// Increase; cut-by-N (N > 0) → Decline; N = 0 (no change) → Stable.
+    Point {
+        delta_percent: f64,
+        orientation: Orientation,
+    },
+    /// An open-ended decision (">25bps" / "more than N bps") — no point
+    /// strike to index; the caller withholds with a surfaced reason.
+    OpenTail,
+    /// The title is not a policy-decision contract.
+    NotDecision,
+}
+
+/// Parse a policy-decision contract title into its categorical strike.
+///
+/// Matches the Kalshi decision phrasing ("hike rates by Xbps", "cut rates
+/// by Xbps") and its open-tail variants (">Xbps", "more than Xbps"). The
+/// bp change is normalized to the rates family's percent units (25bps →
+/// 0.25). Parsing is deliberately strict: no matching phrase, or a number
+/// not followed by a bp unit, is `NotDecision` — the caller then tries the
+/// level-space extractor, so a decision title is never misparsed as a
+/// level.
+pub fn extract_decision_strike(title: &str) -> DecisionStrike {
+    let lower = title.to_lowercase();
+    let (hike, pos, phrase_len) = if let Some(pos) = lower.find("hike rates by") {
+        (true, pos, "hike rates by".len())
+    } else if let Some(pos) = lower.find("cut rates by") {
+        (false, pos, "cut rates by".len())
+    } else {
+        return DecisionStrike::NotDecision;
+    };
+    let after = lower[pos + phrase_len..].trim_start();
+    if after.starts_with('>') || after.starts_with("more than") {
+        return DecisionStrike::OpenTail;
+    }
+    let Some(bps) = parse_leading_number(after) else {
+        return DecisionStrike::NotDecision;
+    };
+    // The number must be followed by a bp unit (bps / basis points) — a
+    // bare number is not a decision strike.
+    let rest =
+        after.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c.is_whitespace());
+    if !rest.starts_with("bps") && !rest.starts_with("basis points") {
+        return DecisionStrike::NotDecision;
+    }
+    let orientation = if bps == 0.0 {
+        Orientation::Stable
+    } else if hike {
+        Orientation::Increase
+    } else {
+        Orientation::Decline
+    };
+    let delta_percent = if hike { bps } else { -bps } / 100.0;
+    DecisionStrike::Point {
+        delta_percent,
+        orientation,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: [P5] Decision contracts orient categorically — hike is
+    /// Increase, cut is Decline, no-change is Stable — and open tails are
+    /// withheld rather than approximated to a point strike.
+    #[test]
+    fn decision_strikes_parse_categorically() {
+        let cases = [
+            (
+                "Will the Federal Reserve Hike rates by 25bps at their January 2028 meeting?",
+                Some((0.25, Orientation::Increase)),
+            ),
+            (
+                "Will the Federal Reserve Cut rates by 25bps at their October 2026 meeting?",
+                Some((-0.25, Orientation::Decline)),
+            ),
+            (
+                "Will the Federal Reserve Hike rates by 0bps at their January 2028 meeting?",
+                Some((0.0, Orientation::Stable)),
+            ),
+            (
+                "Will the Federal Reserve Cut rates by 0bps at their January 2028 meeting?",
+                Some((0.0, Orientation::Stable)),
+            ),
+            (
+                "Will the Federal Reserve Hike rates by >25bps at their January 2028 meeting?",
+                None,
+            ),
+            (
+                "Will the Federal Reserve Cut rates by more than 25bps at their January 2028 meeting?",
+                None,
+            ),
+        ];
+        for (title, expected) in cases {
+            match (extract_decision_strike(title), expected) {
+                (
+                    DecisionStrike::Point {
+                        delta_percent,
+                        orientation,
+                    },
+                    Some((want_delta, want_orientation)),
+                ) => {
+                    assert!(
+                        (delta_percent - want_delta).abs() < 1e-9,
+                        "{title}: delta {delta_percent} != {want_delta}"
+                    );
+                    assert_eq!(orientation, want_orientation, "{title}");
+                }
+                (DecisionStrike::OpenTail, None) => {}
+                (got, _) => panic!("{title}: unexpected parse {got:?}"),
+            }
+        }
+        // Level-space titles and bare directional titles are not decision
+        // contracts — they fall through to the level-space extractor.
+        assert!(matches!(
+            extract_decision_strike("Fed funds rate will be above 4.5%"),
+            DecisionStrike::NotDecision
+        ));
+        assert!(matches!(
+            extract_decision_strike("Will the Fed cut the policy rate?"),
+            DecisionStrike::NotDecision
+        ));
+    }
 }
