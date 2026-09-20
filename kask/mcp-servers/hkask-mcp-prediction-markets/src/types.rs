@@ -142,9 +142,13 @@ pub struct MarketRecord {
     pub category: String,
     pub series: String,
     pub deadline: String,
-    /// Fractional years from the record's `last_update` to `deadline`
-    /// (negative when the deadline is past). None when either timestamp is
-    /// unparsable — never a fabricated number.
+    /// Fractional years from the observation instant (assembly `now`) to the
+    /// deadline (negative when the deadline is past). Measured from NOW, not
+    /// the record's `last_update` — a stale quote timestamp is the quote's
+    /// vintage, not duration; folding it in turned a 38-day ladder rung into
+    /// ~200 days when Kalshi's `updated_time` lagged (run-2 §8 followup).
+    /// `last_update` still carries the vintage separately. None when the
+    /// deadline is unparsable — never a fabricated number.
     pub time_to_maturity: Option<f64>,
     pub probability: f64,
     pub probability_method: ProbabilityMethod,
@@ -158,6 +162,14 @@ pub struct MarketRecord {
     pub liquidity: Option<f64>,
     pub open_interest: Option<f64>,
     pub last_update: String,
+    /// Polymarket CLOB asset (token) IDs, aligned with the outcomes (first
+    /// = the Yes leg) — the subscription keys for
+    /// `market_subscribe_resolutions`. `None` on Kalshi (no CLOB tokens)
+    /// and on Gamma markets whose `clobTokenIds` are absent/unparsable —
+    /// never fabricated. §7 followup: lookup records expose them so the
+    /// websocket resolution path is reachable.
+    #[serde(default)]
+    pub clob_asset_ids: Option<Vec<String>>,
     pub volatility: Volatility,
     pub status: MarketStatus,
     pub resolved_outcome: Option<bool>,
@@ -378,9 +390,11 @@ struct RecordParts {
     category: String,
     series: String,
     deadline: String,
-    /// The parsed reference instant the maturity is measured from — the
-    /// record's own `last_update` when parseable, assembly `now` otherwise.
-    maturity_reference: chrono::DateTime<chrono::Utc>,
+    /// The observation instant the maturity is measured from — assembly
+    /// `now`. Maturity is duration, not quote vintage: a stale `updated_time`
+    /// previously anchored the measurement (run-2 §8 followup); the quote
+    /// timestamp stays in `last_update` for vintage inspection.
+    observation_now: chrono::DateTime<chrono::Utc>,
     probability: f64,
     probability_method: ProbabilityMethod,
     spread: Option<f64>,
@@ -389,6 +403,9 @@ struct RecordParts {
     liquidity: Option<f64>,
     open_interest: Option<f64>,
     last_update: String,
+    /// Polymarket CLOB asset (token) IDs — None on Kalshi. Surfaced in the
+    /// assembled record's `clob_asset_ids` (§7 followup).
+    clob_asset_ids: Option<Vec<String>>,
     status: MarketStatus,
     resolved_outcome: Option<bool>,
     lifecycle_stage: &'static str,
@@ -399,7 +416,7 @@ struct RecordParts {
 /// dual-axis ontology block. Both providers route through here so the
 /// annotation invariants live in exactly one place.
 fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
-    let time_to_maturity = years_between(&parts.deadline, &parts.maturity_reference);
+    let time_to_maturity = years_between(&parts.deadline, &parts.observation_now);
     if time_to_maturity.is_none() {
         // An unparsable deadline degrades duration semantics for this
         // record (no near-deadline vol flag, excluded from ladder tenors);
@@ -432,6 +449,7 @@ fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
         liquidity: parts.liquidity,
         open_interest: parts.open_interest,
         last_update: parts.last_update,
+        clob_asset_ids: parts.clob_asset_ids,
         volatility: Volatility {
             realized_variance: parts.realized_variance,
             structural_flag: flag,
@@ -471,9 +489,6 @@ impl MarketRecord {
         } else {
             MarketStatus::Closed
         };
-        let maturity_reference = chrono::DateTime::parse_from_rfc3339(&market.updated_time)
-            .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-            .unwrap_or(*now);
         Some(assemble(
             RecordParts {
                 realized_variance: None,
@@ -486,7 +501,7 @@ impl MarketRecord {
                 category: event.map(|e| e.category.clone()).unwrap_or_default(),
                 series: event.map(|e| e.series_ticker.clone()).unwrap_or_default(),
                 deadline: market.close_time.clone(),
-                maturity_reference,
+                observation_now: *now,
                 probability,
                 probability_method: ProbabilityMethod::Midpoint,
                 spread: market.spread(),
@@ -503,6 +518,7 @@ impl MarketRecord {
                 },
                 lifecycle_stage: lifecycle_stage(status, None),
                 resolution_source: "kalshi_exchange",
+                clob_asset_ids: None,
             },
             calibration,
         ))
@@ -545,9 +561,9 @@ impl MarketRecord {
         } else {
             None
         };
-        let maturity_reference = chrono::DateTime::parse_from_rfc3339(&market.updated_at)
-            .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-            .unwrap_or(*now);
+        // Gamma's CLOB token IDs — the subscribe path's key (§7 followup);
+        // absent/unparsable decodes empty and surfaces as None, never fabricated.
+        let clob_asset_ids = market.clob_token_ids();
         Some(assemble(
             RecordParts {
                 realized_variance: None,
@@ -563,7 +579,7 @@ impl MarketRecord {
                 category: event_tags.first().cloned().unwrap_or_default(),
                 series: event_slug.to_string(),
                 deadline: market.end_date.clone(),
-                maturity_reference,
+                observation_now: *now,
                 probability,
                 probability_method: ProbabilityMethod::LastTrade,
                 spread: market.spread,
@@ -576,8 +592,121 @@ impl MarketRecord {
                 resolved_outcome,
                 lifecycle_stage: lifecycle_stage(status, Some(&market.uma_resolution_status)),
                 resolution_source: "uma_oracle",
+                clob_asset_ids: (!clob_asset_ids.is_empty()).then_some(clob_asset_ids),
             },
             calibration,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider_kalshi::KalshiMarket;
+    use crate::provider_polymarket::GammaMarket;
+
+    fn utc(rfc3339: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(rfc3339)
+            .expect("test fixture timestamp")
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn maturity_is_measured_from_observation_not_quote_vintage() {
+        // Run-2 §8 followup: a stale Kalshi `updated_time` (2026-04-09)
+        // previously anchored time_to_maturity, turning a 38-day ladder
+        // rung into ~200 days. Maturity measures from the observation
+        // instant; the quote vintage stays in `last_update`.
+        let now = utc("2026-09-20T00:00:00Z");
+        let market = KalshiMarket {
+            ticker: "KXFEDDECISION-26OCT-H25".into(),
+            event_ticker: "KXFEDDECISION-26OCT".into(),
+            title: "Will the Federal Reserve Hike rates by 25bps".into(),
+            status: "active".into(),
+            yes_bid_dollars: "0.54".into(),
+            yes_ask_dollars: "0.55".into(),
+            close_time: "2026-10-28T16:00:00Z".into(),
+            updated_time: "2026-04-09T12:00:00Z".into(),
+            ..Default::default()
+        };
+        let record = MarketRecord::from_kalshi(&market, None, calibration_for(None, ""), &now)
+            .expect("record assembles");
+        let expected = years_between("2026-10-28T16:00:00Z", &now).expect("parses");
+        assert_eq!(record.time_to_maturity, Some(expected));
+        assert_eq!(
+            record.last_update, "2026-04-09T12:00:00Z",
+            "quote vintage carried separately, never folded into duration"
+        );
+        let days = expected * DAYS_PER_YEAR;
+        assert!(
+            (36.0..=42.0).contains(&days),
+            "Oct-28 rung is ≈38 days from Sep 20, got {days}"
+        );
+    }
+
+    #[test]
+    fn polymarket_record_exposes_clob_asset_ids() {
+        let now = utc("2026-09-20T00:00:00Z");
+        let market = GammaMarket {
+            id: "pm-1".into(),
+            question: "Will X happen?".into(),
+            outcome_prices: "[\"0.55\", \"0.45\"]".into(),
+            clob_token_ids: "[\"tok-yes\", \"tok-no\"]".into(),
+            end_date: "2026-12-31T00:00:00Z".into(),
+            ..Default::default()
+        };
+        let record = MarketRecord::from_polymarket(
+            &market,
+            "ev-1",
+            "slug-x",
+            100.0,
+            50.0,
+            &[],
+            calibration_for(None, ""),
+            &now,
+        )
+        .expect("record assembles");
+        assert_eq!(
+            record.clob_asset_ids,
+            Some(vec!["tok-yes".to_string(), "tok-no".to_string()]),
+            "CLOB asset IDs surfaced for the subscribe path (§7 followup)"
+        );
+    }
+
+    #[test]
+    fn cached_record_without_clob_field_deserializes_as_none() {
+        // Records cached before the field existed must load as None — the
+        // candidates cache must not break on the shape addition.
+        let now = utc("2026-09-20T00:00:00Z");
+        let market = GammaMarket {
+            id: "pm-2".into(),
+            question: "Will Y happen?".into(),
+            outcome_prices: "[\"0.60\", \"0.40\"]".into(),
+            clob_token_ids: "[\"tok-a\"]".into(),
+            end_date: "2026-12-31T00:00:00Z".into(),
+            ..Default::default()
+        };
+        let record = MarketRecord::from_polymarket(
+            &market,
+            "ev-2",
+            "slug-y",
+            100.0,
+            50.0,
+            &[],
+            calibration_for(None, ""),
+            &now,
+        )
+        .expect("record assembles");
+        let mut value = serde_json::to_value(&record).expect("serializes");
+        value
+            .as_object_mut()
+            .expect("record serializes as an object")
+            .remove("clob_asset_ids");
+        let reloaded: MarketRecord =
+            serde_json::from_value(value).expect("loads without the field");
+        assert!(
+            reloaded.clob_asset_ids.is_none(),
+            "absent field loads as None, never breaks the cache"
+        );
     }
 }

@@ -123,6 +123,15 @@ impl GammaMarket {
         serde_json::from_str(field).unwrap_or_default()
     }
 
+    /// CLOB asset (token) IDs, decoded and aligned with `outcomes` (first
+    /// = the Yes leg by Gamma convention). These are the subscription keys
+    /// for `market_subscribe_resolutions`; the §7 followup surfaces them in
+    /// lookup records so the websocket path is reachable without a manual
+    /// API call.
+    pub fn clob_token_ids(&self) -> Vec<String> {
+        Self::decode_string_array(&self.clob_token_ids)
+    }
+
     /// Outcome prices decoded and parsed; unparsable entries are dropped
     /// (index alignment with names is preserved for parseable prefixes).
     pub fn prices(&self) -> Vec<f64> {
@@ -148,33 +157,45 @@ impl GammaMarket {
 // ── Calibration scan decision cores (pure, HTTP-free) ─────────────────
 
 /// Snapshot open (unresolved) markets into the calibration store — the
-/// honest probability-at-observation for the future Brier score. Returns
-/// the count of markets snapshotted for the first time; re-scanning keeps
-/// the EARLIEST snapshot per market.
+/// honest probability-at-observation for the future Brier score. Re-scanning
+/// keeps the EARLIEST snapshot per market; the outcome accounts for every
+/// market seen (new, already pending, skipped with a named reason) — a
+/// rescan that records nothing reports why, never a silent zero.
 pub(crate) fn snapshot_open_markets(
     markets: &[GammaMarket],
     store: &mut crate::calibration::CalibrationStore,
-) -> u32 {
-    let mut snapshotted = 0;
+) -> crate::calibration::ScanSnapshotOutcome {
+    let mut outcome = crate::calibration::ScanSnapshotOutcome::default();
     for market in markets {
         if market.closed || market.uma_resolution_status == "resolved" {
+            outcome.skipped_not_open += 1;
             continue;
         }
         let Some(probability) = market.yes_probability() else {
+            outcome.skipped_no_price += 1;
             continue;
         };
-        let bucket = crate::types::canonical_bucket(&market.slug);
+        // Family-first bucket: base events accrue under the semantic family
+        // label readers query, not the per-market slug key.
+        let bucket =
+            crate::semantic_mapping::calibration_bucket_for_gamma(&market.question, &market.slug);
         if store.record_pending(
             &market.id,
             crate::calibration::PendingSnapshot {
-                bucket,
+                bucket: bucket.clone(),
                 probability,
             },
         ) {
-            snapshotted += 1;
+            outcome.new.push(crate::calibration::SnapshotIdentity {
+                market: market.id.clone(),
+                bucket,
+                probability,
+            });
+        } else {
+            outcome.already_snapshotted += 1;
         }
     }
-    snapshotted
+    outcome
 }
 
 /// Consume pre-resolution snapshots for resolved markets. The outcome is
@@ -370,8 +391,9 @@ mod calibration_scan_tests {
             false,
             false,
         )];
-        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
-        // Drift toward resolution keeps the earliest snapshot.
+        assert_eq!(snapshot_open_markets(&open, &mut store).new.len(), 1);
+        // Drift toward resolution keeps the earliest snapshot — and the
+        // rescan attributes the market instead of a silent zero.
         let drifted = vec![gamma(
             "pm-1",
             "will-x-happen",
@@ -379,7 +401,9 @@ mod calibration_scan_tests {
             false,
             false,
         )];
-        assert_eq!(snapshot_open_markets(&drifted, &mut store), 0);
+        let rescan = snapshot_open_markets(&drifted, &mut store);
+        assert!(rescan.new.is_empty());
+        assert_eq!(rescan.already_snapshotted, 1);
         let resolved = vec![gamma(
             "pm-1",
             "will-x-happen",
@@ -410,7 +434,7 @@ mod calibration_scan_tests {
             false,
             false,
         )];
-        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
+        assert_eq!(snapshot_open_markets(&open, &mut store).new.len(), 1);
         let ambiguous = vec![gamma(
             "pm-2",
             "will-y-happen",
@@ -429,5 +453,53 @@ mod calibration_scan_tests {
         assert!(observations.is_empty());
         assert_eq!(skipped_ambiguous, 1);
         assert_eq!(resolved_without_snapshot, 0);
+    }
+
+    #[test]
+    fn open_scan_accounts_closed_and_unpriced_markets() {
+        // Every market seen gets a disposition; a silent zero is unattributable.
+        let mut store = CalibrationStore::new();
+        let markets = vec![
+            gamma("pm-3", "will-z-happen", "[\"0.60\", \"0.40\"]", false, false),
+            gamma("pm-4", "already-closed", "[\"1\", \"0\"]", true, true),
+            gamma("pm-5", "no-price", "not-json", false, false),
+        ];
+        let outcome = snapshot_open_markets(&markets, &mut store);
+        assert_eq!(outcome.new.len(), 1);
+        assert_eq!(outcome.skipped_not_open, 1, "closed market accounted");
+        assert_eq!(outcome.skipped_no_price, 1, "unparseable price accounted");
+        assert_eq!(outcome.already_snapshotted, 0);
+    }
+
+    #[test]
+    fn fed_question_snapshots_under_the_family_bucket() {
+        // A rates question accrues under the family bucket readers query —
+        // not the per-market slug key.
+        let mut store = CalibrationStore::new();
+        let mut fed = gamma(
+            "pm-6",
+            "fed-decision",
+            "[\"0.55\", \"0.45\"]",
+            false,
+            false,
+        );
+        fed.question = "Will the Fed raise rates at the next FOMC meeting?".to_string();
+        let outcome = snapshot_open_markets(&[fed], &mut store);
+        assert_eq!(outcome.new.len(), 1);
+        assert_eq!(
+            outcome.new[0].bucket, "policy_interest_rate",
+            "family-first bucket, not the slug key"
+        );
+    }
+
+    #[test]
+    fn clob_token_ids_decode_from_the_json_string_field() {
+        let mut market = gamma("pm-7", "clob-test", "[]", false, false);
+        market.clob_token_ids = "[\"111", "222\"]".to_string();
+        assert_eq!(market.clob_token_ids(), vec!["111".to_string(), "222".to_string()]);
+        // Unparsable field decodes empty — never fabricated.
+        let mut broken = gamma("pm-8", "clob-broken", "[]", false, false);
+        broken.clob_token_ids = "not-json".to_string();
+        assert!(broken.clob_token_ids().is_empty());
     }
 }

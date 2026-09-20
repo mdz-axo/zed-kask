@@ -81,32 +81,47 @@ impl KalshiMarket {
 /// falling back to the quote midpoint for untraded markets). An absent,
 /// invalid, or out-of-range last price is not a probability — such
 /// markets are skipped, never snapshotted with a fabricated value.
-/// Returns the count of markets snapshotted for the first time; re-scanning
-/// keeps the EARLIEST snapshot per market.
+/// Re-scanning keeps the EARLIEST snapshot per market; the outcome
+/// accounts for every market seen (new, already pending, skipped with a
+/// named reason) — a rescan that records nothing reports why, never a
+/// silent zero.
 pub(crate) fn snapshot_open_markets(
     markets: &[KalshiMarket],
     store: &mut crate::calibration::CalibrationStore,
-) -> u32 {
-    let mut snapshotted = 0;
+) -> crate::calibration::ScanSnapshotOutcome {
+    let mut outcome = crate::calibration::ScanSnapshotOutcome::default();
     for market in markets {
         let probability = parse_fp(&market.last_price_dollars)
             .filter(|p| (0.0..=1.0).contains(p))
             .or_else(|| market.yes_midpoint());
         let Some(probability) = probability else {
+            outcome.skipped_no_price += 1;
             continue;
         };
-        let bucket = crate::types::canonical_bucket(&market.event_ticker);
+        // Family-first bucket: base events accrue under the semantic family
+        // label readers query ("policy_interest_rate"), not the per-event
+        // event-ticker key the category normalizer would leave unnormalized.
+        let bucket = crate::semantic_mapping::calibration_bucket_for_kalshi(
+            &market.event_ticker,
+            &market.title,
+        );
         if store.record_pending(
             &market.ticker,
             crate::calibration::PendingSnapshot {
-                bucket,
+                bucket: bucket.clone(),
                 probability,
             },
         ) {
-            snapshotted += 1;
+            outcome.new.push(crate::calibration::SnapshotIdentity {
+                market: market.ticker.clone(),
+                bucket,
+                probability,
+            });
+        } else {
+            outcome.already_snapshotted += 1;
         }
     }
-    snapshotted
+    outcome
 }
 
 /// Consume pre-resolution snapshots for settled markets. A settled market
@@ -362,10 +377,14 @@ mod calibration_scan_tests {
     fn snapshot_then_resolution_scores_the_pre_resolution_price() {
         let mut store = CalibrationStore::new();
         let open = vec![market("KX-a", "KXEVENT", "0.30", "")];
-        assert_eq!(snapshot_open_markets(&open, &mut store), 1);
-        // The price drifts toward resolution; the EARLIEST snapshot is kept.
+        assert_eq!(snapshot_open_markets(&open, &mut store).new.len(), 1);
+        // The price drifts toward resolution; the EARLIEST snapshot is kept —
+        // and the rescan attributes every market instead of a silent zero.
         let drifted = vec![market("KX-a", "KXEVENT", "0.95", "")];
-        assert_eq!(snapshot_open_markets(&drifted, &mut store), 0);
+        let rescan = snapshot_open_markets(&drifted, &mut store);
+        assert!(rescan.new.is_empty());
+        assert_eq!(rescan.already_snapshotted, 1);
+        assert_eq!(rescan.skipped_no_price, 0);
         let settled = vec![market("KX-a", "KXEVENT", "0.99", "yes")];
         let mut resolved_without_snapshot = 0;
         let observations = resolved_observations_from_snapshots(
@@ -385,12 +404,43 @@ mod calibration_scan_tests {
     }
 
     #[test]
+    fn snapshot_accounts_every_market_and_buckets_by_family() {
+        // A Fed decision contract must accrue under the family bucket the
+        // calibration readers query — not a per-event event-ticker bucket
+        // (the pre-fix key "kxfeddecision-26oct" never accumulated).
+        let mut store = CalibrationStore::new();
+        let mut fed = market("KXFEDDECISION-26OCT-H25", "KXFEDDECISION-26OCT", "0.55", "");
+        fed.title = "Will the Federal Reserve Hike rates by 25bps".to_string();
+        let mut unpriced = market("KX-z", "KXEVENT", "", "");
+        unpriced.yes_bid_dollars = String::new();
+        unpriced.yes_ask_dollars = String::new();
+        let outcome = snapshot_open_markets(&[fed, unpriced], &mut store);
+        assert_eq!(outcome.new.len(), 1);
+        assert_eq!(
+            outcome.skipped_no_price, 1,
+            "unpriced market accounted, never fabricated"
+        );
+        let identity = &outcome.new[0];
+        assert_eq!(
+            identity.bucket, "policy_interest_rate",
+            "family-first bucket, not the per-event event-ticker key"
+        );
+        assert_eq!(identity.market, "KXFEDDECISION-26OCT-H25");
+        let pending = store
+            .take_pending("KXFEDDECISION-26OCT-H25")
+            .expect("snapshotted");
+        assert_eq!(pending.bucket, "policy_interest_rate");
+    }
+
+    #[test]
     fn untraded_open_market_snapshots_the_quote_midpoint() {
         let mut store = CalibrationStore::new();
         let mut untraded = market("KX-b", "KXEVENT", "", "");
         untraded.yes_bid_dollars = "0.40".to_string();
         untraded.yes_ask_dollars = "0.50".to_string();
-        assert_eq!(snapshot_open_markets(&[untraded], &mut store), 1);
+        let outcome = snapshot_open_markets(&[untraded], &mut store);
+        assert_eq!(outcome.new.len(), 1);
+        assert_eq!(outcome.skipped_no_price, 0);
         let snapshot = store.take_pending("KX-b").expect("snapshotted");
         assert!((snapshot.probability - 0.45).abs() < 1e-9);
     }

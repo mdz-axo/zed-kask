@@ -352,7 +352,11 @@ proptest! {
             store.record_pending(
                 &market.id,
                 PendingSnapshot {
-                    bucket: canonical_bucket(&market.slug),
+                    // Same family-first derivation the scanner's writer uses.
+                    bucket: crate::semantic_mapping::calibration_bucket_for_gamma(
+                        &market.question,
+                        &market.slug,
+                    ),
                     probability: 0.4,
                 },
             );

@@ -482,6 +482,91 @@ fn parse_days_to_expiry(close_time: &str, now: &DateTime<Utc>) -> Option<f64> {
 
 // ── Public builder ─────────────────────────────────────────────────────────
 
+/// Parse raw catalog record JSON lines into adapters (the venue-specific
+/// shapes). Empty lines are skipped; a malformed line aborts the batch with
+/// its line number — the caller decides policy, the parser never guesses.
+fn parse_catalog_lines(
+    lines: &[String],
+    family: BaseEconomicObject,
+    venue: Venue,
+) -> Result<Vec<CatalogAdapter>, CmpError> {
+    let mut adapters: Vec<CatalogAdapter> = Vec::with_capacity(lines.len());
+    for (line_idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match venue {
+            Venue::Kalshi => {
+                let record: KalshiCatalogRecord =
+                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
+                        path: format!("<{}/{venue}>", family.label()),
+                        line: line_idx + 1,
+                        source: e,
+                    })?;
+                adapters.push(CatalogAdapter::from_kalshi(&record));
+            }
+            Venue::Polymarket => {
+                let record: GammaCatalogRecord =
+                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
+                        path: format!("<{}/{venue}>", family.label()),
+                        line: line_idx + 1,
+                        source: e,
+                    })?;
+                adapters.push(CatalogAdapter::from_gamma(&record));
+            }
+        }
+    }
+    Ok(adapters)
+}
+
+/// Build the oriented constituents from catalog lines WITHOUT solving
+/// portfolios — the shared classification core for the store-side tools
+/// (`market_cmp_index_store`'s per-orientation curves,
+/// `market_cmp_portfolio_store`'s solved portfolios). Decision contracts
+/// orient categorically; open tails and unclassifiable records are rejected
+/// with surfaced reasons, never approximated.
+///
+/// Returns `(oriented, market_ids, rejections, n_records_read)` —
+/// `market_ids[i]` is the provider identity of `oriented` records'
+/// `market_index: i` (the adapter order), for provenance in persisted
+/// portfolios.
+pub(crate) fn oriented_constituents_from_lines(
+    lines: &[String],
+    family: BaseEconomicObject,
+    venue: Venue,
+    context: &EconomicContext,
+    config: &CmpConfig,
+    now: &DateTime<Utc>,
+) -> Result<
+    (
+        Vec<cmp_portfolio::OrientedConstituent>,
+        Vec<String>,
+        Vec<String>,
+        usize,
+    ),
+    CmpError,
+> {
+    let Some(target_base_event) = base_event_for(family) else {
+        // A family without a BaseEvent materiality setting withholds all
+        // indices — surfaced as a rejection, never a fabricated context.
+        return Ok((
+            Vec::new(),
+            Vec::new(),
+            vec![format!(
+                "{family:?} has no BaseEvent materiality setting — all indices withheld"
+            )],
+            0,
+        ));
+    };
+    let adapters = parse_catalog_lines(lines, family, venue)?;
+    let n_records_read = adapters.len();
+    let market_ids: Vec<String> = adapters.iter().map(|a| a.market_id.clone()).collect();
+    let (oriented, rejections) =
+        build_oriented_constituents(&adapters, target_base_event, context, config, now);
+    Ok((oriented, market_ids, rejections, n_records_read))
+}
+
 /// Build CMP indices for one (family, venue) from a slice of raw catalog
 /// record JSON strings.
 ///
@@ -525,35 +610,7 @@ pub fn build_cmp_indices_from_lines(
         }
     };
 
-    // Parse the JSONL lines into catalog adapters.
-    let mut adapters: Vec<CatalogAdapter> = Vec::with_capacity(lines.len());
-    for (line_idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match venue {
-            Venue::Kalshi => {
-                let record: KalshiCatalogRecord =
-                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
-                        path: format!("<{}/{venue}>", family.label()),
-                        line: line_idx + 1,
-                        source: e,
-                    })?;
-                adapters.push(CatalogAdapter::from_kalshi(&record));
-            }
-            Venue::Polymarket => {
-                let record: GammaCatalogRecord =
-                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
-                        path: format!("<{}/{venue}>", family.label()),
-                        line: line_idx + 1,
-                        source: e,
-                    })?;
-                adapters.push(CatalogAdapter::from_gamma(&record));
-            }
-        }
-    }
-
+    let adapters = parse_catalog_lines(lines, family, venue)?;
     let n_records_read = adapters.len();
 
     // Build oriented constituents.

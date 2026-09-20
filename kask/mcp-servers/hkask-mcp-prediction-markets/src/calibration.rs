@@ -40,6 +40,38 @@ pub struct PendingSnapshot {
     pub probability: f64,
 }
 
+/// One new snapshot's identity — the §7 followup: scan responses carry
+/// the markets they snapshotted, so per-market accumulation is verifiable
+/// instead of a bare count.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SnapshotIdentity {
+    /// Provider-stable market key (Kalshi `ticker`, Polymarket Gamma `id`).
+    pub market: String,
+    /// The calibration bucket the snapshot accrued under.
+    pub bucket: String,
+    /// The probability-at-observation snapshot value.
+    pub probability: f64,
+}
+
+/// The open-market scan phase outcome — every market seen is accounted for
+/// by exactly one disposition (new snapshot, already snapshotted, or skipped
+/// with a named reason). A silent zero is unattributable, so the counts
+/// themselves must reconcile to the markets seen.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ScanSnapshotOutcome {
+    /// First-time snapshots (identities surfaced — the earliest snapshot
+    /// per market is kept; re-scans never overwrite).
+    pub new: Vec<SnapshotIdentity>,
+    /// Markets already carrying a pending snapshot (kept from an earlier
+    /// scan) — the honest reading of a rescan that records nothing.
+    pub already_snapshotted: u32,
+    /// Markets skipped: no parseable in-range probability (never fabricated).
+    pub skipped_no_price: u32,
+    /// Markets skipped: not actually open at scan time (closed/resolved in
+    /// the open phase — Gamma's open fetch can carry them).
+    pub skipped_not_open: u32,
+}
+
 /// Journal row for persistence (bucket + observation per line).
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct JournalRow {

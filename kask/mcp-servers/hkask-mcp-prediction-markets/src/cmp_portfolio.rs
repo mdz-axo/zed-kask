@@ -188,9 +188,12 @@ impl MaturityBucket {
 /// constituents.
 ///
 /// A bucket is available when at least `min_constituents_per_bucket`
-/// constituents fall within its eligibility window. Contracts can be re-used
-/// across multiple buckets — a 45-day contract is eligible for both the 1m
-/// and 2m buckets if both windows contain it.
+/// constituents fall within its eligibility window. The windows are
+/// contiguous (see [`maturity_window`]): interior boundaries are midpoints
+/// between adjacent bucket targets, so a contract never falls between
+/// buckets. Exact-boundary contracts are eligible for both adjacent
+/// buckets — reuse is by design (constant-maturity synthesis weights
+/// overlapping cohorts).
 ///
 /// Returns the available buckets in maturity order (shortest first). Empty
 /// buckets are withheld, not fabricated.
@@ -202,8 +205,7 @@ pub fn select_available_buckets(
     MaturityBucket::ALL
         .iter()
         .filter(|bucket| {
-            let target = bucket.target_days();
-            let (lo, hi) = maturity_window(target, config);
+            let (lo, hi) = maturity_window(**bucket, config);
             let count = constituents
                 .iter()
                 .filter(|c| c.days_to_expiration >= lo && c.days_to_expiration <= hi)
@@ -312,13 +314,39 @@ pub struct EligibilityRejection {
     pub reason: String,
 }
 
-/// The eligibility window around a target maturity.
-pub fn maturity_window(target_days: u32, config: &CmpConfig) -> (f64, f64) {
-    let target = f64::from(target_days);
+/// The eligibility window for a maturity bucket.
+///
+/// Windows are CONTIGUOUS: interior boundaries are the midpoints between
+/// adjacent bucket targets, so every day in the covered range belongs to at
+/// least one bucket and a contract never falls between windows (a
+/// decision-family meeting at 38d previously sat in the 37.5–45d gap,
+/// priced but unpublished — the run-2 §8 followup). Exact-boundary days
+/// belong to both adjacent buckets — reuse is by design. The outer edges
+/// keep the ± max(abs, rel) padding from the config: [22.5, 45] for 1m,
+/// [45, 75] for 2m, [75, 135] for 3m, [135, 225] for 6m under defaults.
+pub fn maturity_window(bucket: MaturityBucket, config: &CmpConfig) -> (f64, f64) {
+    let all = MaturityBucket::ALL;
+    // The enum is closed and ALL is exhaustive over it — the position lookup
+    // cannot miss.
+    let pos = all
+        .iter()
+        .position(|b| *b == bucket)
+        .expect("bucket is a MaturityBucket variant; ALL is exhaustive");
+    let target = f64::from(bucket.target_days());
     let half = config
         .maturity_window_abs_days
         .max(config.maturity_window_rel * target);
-    (target - half, target + half)
+    let lower = if pos == 0 {
+        target - half
+    } else {
+        (target + f64::from(all[pos - 1].target_days())) / 2.0
+    };
+    let upper = if pos + 1 == all.len() {
+        target + half
+    } else {
+        (target + f64::from(all[pos + 1].target_days())) / 2.0
+    };
+    (lower, upper)
 }
 
 // ── Portfolio weighting ─────────────────────────────────────────────────────
@@ -616,7 +644,7 @@ pub fn construct_cmp_index_set(
 
     for bucket in &available {
         let target = bucket.target_days();
-        let (lo, hi) = maturity_window(target, config);
+        let (lo, hi) = maturity_window(*bucket, config);
 
         // Filter constituents into this bucket's maturity window.
         let in_window: Vec<&OrientedConstituent> = oriented
@@ -659,5 +687,93 @@ pub fn construct_cmp_index_set(
         available_buckets: available,
         indices,
         withheld_buckets: withheld,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_min_one() -> CmpConfig {
+        CmpConfig {
+            min_constituents_per_bucket: 1,
+            ..Default::default()
+        }
+    }
+
+    fn constituent(days: f64) -> Constituent {
+        Constituent {
+            days_to_expiration: days,
+            probability: 0.5,
+            quality: 1.0,
+        }
+    }
+
+    #[test]
+    fn bucket_windows_are_contiguous_with_midpoint_boundaries() {
+        let config = CmpConfig::default();
+        assert_eq!(
+            maturity_window(MaturityBucket::OneMonth, &config),
+            (22.5, 45.0)
+        );
+        assert_eq!(
+            maturity_window(MaturityBucket::TwoMonth, &config),
+            (45.0, 75.0)
+        );
+        assert_eq!(
+            maturity_window(MaturityBucket::ThreeMonth, &config),
+            (75.0, 135.0)
+        );
+        assert_eq!(
+            maturity_window(MaturityBucket::SixMonth, &config),
+            (135.0, 225.0)
+        );
+    }
+
+    #[test]
+    fn gap_contract_is_eligible_in_its_nearest_bucket() {
+        // The run-2 §8 followup: a decision-family meeting at 38d fell in
+        // the 37.5–45d window gap — priced but unpublished. Midpoint
+        // boundaries make it 1m-eligible so the nearest meeting publishes.
+        let available = select_available_buckets(&[constituent(38.0)], &config_min_one());
+        assert_eq!(available, vec![MaturityBucket::OneMonth]);
+    }
+
+    #[test]
+    fn three_to_six_month_gap_contract_is_eligible() {
+        // 120d previously fell in the 112.5–135d gap between 3m and 6m.
+        let available = select_available_buckets(&[constituent(120.0)], &config_min_one());
+        assert_eq!(available, vec![MaturityBucket::ThreeMonth]);
+    }
+
+    #[test]
+    fn exact_boundary_contract_is_eligible_in_both_adjacent_buckets() {
+        let available = select_available_buckets(&[constituent(45.0)], &config_min_one());
+        assert_eq!(
+            available,
+            vec![MaturityBucket::OneMonth, MaturityBucket::TwoMonth],
+            "an exact-boundary day belongs to both adjacent windows — reuse by design"
+        );
+    }
+
+    #[test]
+    fn former_2m_3m_overlap_contract_now_belongs_to_one_bucket() {
+        // 70d was in both 2m [45,75] and 3m [67.5,112.5] under the old
+        // ±max(7,25%) windows — an accidental overlap, not a designed one.
+        // The midpoint partition assigns it to 2m only.
+        let available = select_available_buckets(&[constituent(70.0)], &config_min_one());
+        assert_eq!(available, vec![MaturityBucket::TwoMonth]);
+    }
+
+    #[test]
+    fn october_meeting_trio_forms_the_1m_bucket_at_default_min() {
+        // The Oct-28 shape from run 2: three decision contracts (hike/hold/
+        // cut) at 38d. With the gap closed they form the 1m bucket at the
+        // default min_constituents_per_bucket = 3.
+        let available = select_available_buckets(
+            &[constituent(38.0), constituent(38.0), constituent(38.0)],
+            &CmpConfig::default(),
+        );
+        assert_eq!(available, vec![MaturityBucket::OneMonth]);
     }
 }

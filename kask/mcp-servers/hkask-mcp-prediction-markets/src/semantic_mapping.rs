@@ -116,6 +116,36 @@ pub fn classify_base_object_from_catalog(
     }
 }
 
+/// The calibration bucket a Kalshi market's snapshot accrues under.
+/// Family-first: a base-event market (KXFED*, KXCPI*, KXWTI*, …) accrues
+/// under its semantic family label — the bucket `market_calibration`
+/// readers and the methodology's W2 leg query (e.g. "policy_interest_rate").
+/// Non-base markets fall back to the series prefix of the event ticker
+/// (lowercased) — a per-SERIES bucket, never a per-event one; a per-event key
+/// like "kxfeddecision-26oct" shards one family across its meetings and the
+/// bucket can never reach a demotion threshold.
+pub fn calibration_bucket_for_kalshi(event_ticker: &str, title: &str) -> String {
+    if let Some(family) = classify_base_object_from_catalog("kalshi", event_ticker, title) {
+        return family.label().to_string();
+    }
+    let series_prefix = event_ticker
+        .split('-')
+        .next()
+        .unwrap_or(event_ticker)
+        .to_lowercase();
+    crate::types::canonical_bucket(series_prefix)
+}
+
+/// The calibration bucket a Polymarket Gamma market's snapshot accrues
+/// under. Family-first through the gamma classification (question text);
+/// non-base markets keep the historical slug-keyed bucket.
+pub fn calibration_bucket_for_gamma(question: &str, slug: &str) -> String {
+    if let Some(family) = classify_base_object_from_catalog("gamma", "", question) {
+        return family.label().to_string();
+    }
+    crate::types::canonical_bucket(slug)
+}
+
 /// Map a Kalshi event to its dual-axis ontological identity.
 ///
 /// The mapping uses the Kalshi `series_ticker` as the primary signal (it's a

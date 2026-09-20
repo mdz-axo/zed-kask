@@ -101,16 +101,6 @@ impl PredictionMarketsServer {
 
 // ── MCP Tools ──────────────────────────────────────────────────────────────
 
-#[derive(serde::Deserialize)]
-struct AnnotatedMarketRecord {
-    days_to_expiration: f64,
-    probability: f64,
-    quality: f64,
-    orientation: cmp_portfolio::Orientation,
-    market_index: usize,
-    ticker: String,
-}
-
 #[tool_router(router = prediction_markets_router, vis = "pub")]
 impl PredictionMarketsServer {
     /// Return the current server state snapshot.
@@ -376,17 +366,22 @@ impl PredictionMarketsServer {
                         }
                         let event_tags: Vec<String> =
                             event.tags.iter().map(|t| t.label.clone()).collect();
-                        let bucket = types::canonical_bucket(
-                            event_tags.first().map(String::as_str).unwrap_or(""),
-                        );
-                        let reading = {
-                            let guard = self
-                                .calibration_store
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner());
-                            calibration::read_calibration(&guard, &bucket)
-                        };
                         for market in &event.markets {
+                            // Same family-first bucket derivation as the
+                            // snapshot writers — the calibration reading a
+                            // rung shows accrues under the bucket the scanner
+                            // writes, per market.
+                            let bucket = semantic_mapping::calibration_bucket_for_gamma(
+                                &market.question,
+                                &market.slug,
+                            );
+                            let reading = {
+                                let guard = self
+                                    .calibration_store
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                calibration::read_calibration(&guard, &bucket)
+                            };
                             let calibration_block = types::calibration_for(Some(&reading), &bucket);
                             if let Some(record) = types::MarketRecord::from_polymarket(
                                 market,
@@ -534,7 +529,7 @@ impl PredictionMarketsServer {
 
     /// Scan for resolved markets and record their outcomes.
     #[tool(
-        description = "Scan Polymarket and Kalshi for open and newly resolved markets, feeding the calibration store in two phases: (1) every open market's current price is snapshotted as the pre-resolution probability-at-observation (the earliest snapshot per market is kept), and (2) newly resolved markets consume their snapshot — the Brier loop scores the price the scanner first saw, never the post-resolution price. A market that resolves before its first scan is counted in resolved_without_snapshot and skipped, never fabricated. Ambiguous 50-50 resolutions are skipped. Idempotent — re-scanning is safe. This is the self-feeding sense arm of the calibration loop; run it periodically so snapshots accumulate before resolutions."
+        description = "Scan Polymarket and Kalshi for open and newly resolved markets, feeding the calibration store in two phases: (1) every open market's current price is snapshotted as the pre-resolution probability-at-observation (the earliest snapshot per market is kept), and (2) newly resolved markets consume their snapshot — the Brier loop scores the price the scanner first saw, never the post-resolution price. A market that resolves before its first scan is counted in resolved_without_snapshot and skipped, never fabricated. Ambiguous 50-50 resolutions are skipped. Idempotent — re-scanning is safe. Series semantics: the optional series filter scopes the KALSHI phases only (Kalshi series ticker, e.g. KXFEDDECISION); Polymarket Gamma has no series parameter and is scanned unscoped — the response's series_scope surfaces this. The response carries per-provider dispositions (markets seen, new-snapshot identities, already-snapshotted and skipped counts) and a zero_scan_reason whenever the scan recorded nothing new — a silent zero is a broken feedback loop. Run periodically so snapshots accumulate before resolutions."
     )]
     pub async fn market_check_resolutions(
         &self,
@@ -546,9 +541,30 @@ impl PredictionMarketsServer {
             let mut recorded = 0u32;
             let mut skipped_ambiguous = 0u32;
             let mut already_known = 0u32;
-            let mut snapshotted = 0u32;
             let mut resolved_without_snapshot = 0u32;
             let mut warnings: Vec<String> = Vec::new();
+
+            // §7 followup: the series filter applies to the Kalshi phases
+            // only — Gamma has no series parameter. The scope is surfaced in
+            // the response, never assumed identical across providers.
+            let series_scope = serde_json::json!({
+                "series": req.series,
+                "kalshi": if req.series.is_some() {
+                    "series-scoped (Kalshi series_ticker)"
+                } else {
+                    "unscoped — scans open/settled markets up to the limit"
+                },
+                "polymarket": "unscoped — Gamma has no series filter; recent markets are scanned regardless of the series parameter",
+            });
+
+            let mut kalshi_open = calibration::ScanSnapshotOutcome::default();
+            let mut kalshi_open_seen = 0u32;
+            let mut kalshi_settled_seen = 0u32;
+            let mut kalshi_resolved_with_snapshot = 0u32;
+            let mut poly_open = calibration::ScanSnapshotOutcome::default();
+            let mut poly_open_seen = 0u32;
+            let mut poly_settled_seen = 0u32;
+            let mut poly_resolved_with_snapshot = 0u32;
 
             // Phase 1 — snapshot open markets: the honest probability-at-
             // observation. Pre-fix behavior scored the post-resolution price
@@ -566,22 +582,24 @@ impl PredictionMarketsServer {
             .await
             {
                 Ok(markets) => {
+                    kalshi_open_seen = markets.len() as u32;
                     let mut store = self
                         .calibration_store
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    snapshotted += provider_kalshi::snapshot_open_markets(&markets, &mut store);
+                    kalshi_open = provider_kalshi::snapshot_open_markets(&markets, &mut store);
                 }
                 Err(e) => warnings.push(format!("kalshi open scan failed: {e}")),
             }
 
             match provider_polymarket::fetch_markets(&self.http, limit, false).await {
                 Ok(markets) => {
+                    poly_open_seen = markets.len() as u32;
                     let mut store = self
                         .calibration_store
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    snapshotted += provider_polymarket::snapshot_open_markets(&markets, &mut store);
+                    poly_open = provider_polymarket::snapshot_open_markets(&markets, &mut store);
                 }
                 Err(e) => warnings.push(format!("polymarket open scan failed: {e}")),
             }
@@ -596,6 +614,7 @@ impl PredictionMarketsServer {
             .await
             {
                 Ok(markets) => {
+                    kalshi_settled_seen = markets.len() as u32;
                     let observations = {
                         let mut store = self
                             .calibration_store
@@ -607,6 +626,7 @@ impl PredictionMarketsServer {
                             &mut resolved_without_snapshot,
                         )
                     };
+                    kalshi_resolved_with_snapshot = observations.len() as u32;
                     self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
                 }
                 Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
@@ -614,6 +634,7 @@ impl PredictionMarketsServer {
 
             match provider_polymarket::fetch_markets(&self.http, limit, true).await {
                 Ok(markets) => {
+                    poly_settled_seen = markets.len() as u32;
                     let observations = {
                         let mut store = self
                             .calibration_store
@@ -626,11 +647,14 @@ impl PredictionMarketsServer {
                             &mut resolved_without_snapshot,
                         )
                     };
+                    poly_resolved_with_snapshot = observations.len() as u32;
                     self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
                 }
                 Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
             }
 
+            let snapshotted = (kalshi_open.new.len() + poly_open.new.len()) as u32;
+            let mut journal_saved = false;
             if (recorded > 0 || snapshotted > 0)
                 && let Some(path) = &self.calibration_path
             {
@@ -638,10 +662,35 @@ impl PredictionMarketsServer {
                     .calibration_store
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = store.save(std::path::Path::new(path)) {
-                    warnings.push(format!("journal save failed: {e}"));
+                match store.save(std::path::Path::new(path)) {
+                    Ok(()) => journal_saved = true,
+                    Err(e) => warnings.push(format!("journal save failed: {e}")),
                 }
             }
+
+            // §7 followup: a scan that records nothing new must say why —
+            // the disposition counts attribute the zero, never leave it
+            // silent.
+            let zero_scan_reason = if recorded == 0
+                && snapshotted == 0
+                && warnings.is_empty()
+            {
+                Some(format!(
+                    "no new state: kalshi open {kalshi_open_seen} seen ({} new, {} already snapshotted, {} no price), \
+                     kalshi settled {kalshi_settled_seen} seen ({kalshi_resolved_with_snapshot} with snapshot, {resolved_without_snapshot} without); \
+                     polymarket open {poly_open_seen} seen ({} new, {} already snapshotted, {} not open, {} no price), \
+                     polymarket settled {poly_settled_seen} seen ({poly_resolved_with_snapshot} with snapshot, {skipped_ambiguous} ambiguous)",
+                    kalshi_open.new.len(),
+                    kalshi_open.already_snapshotted,
+                    kalshi_open.skipped_no_price,
+                    poly_open.new.len(),
+                    poly_open.already_snapshotted,
+                    poly_open.skipped_not_open,
+                    poly_open.skipped_no_price,
+                ))
+            } else {
+                None
+            };
 
             serde_json::to_value(serde_json::json!({
                 "recorded": recorded,
@@ -649,6 +698,28 @@ impl PredictionMarketsServer {
                 "snapshotted": snapshotted,
                 "resolved_without_snapshot": resolved_without_snapshot,
                 "skipped_ambiguous": skipped_ambiguous,
+                "series_scope": series_scope,
+                "kalshi": {
+                    "open_seen": kalshi_open_seen,
+                    "new_snapshots": kalshi_open.new.len(),
+                    "already_snapshotted": kalshi_open.already_snapshotted,
+                    "skipped_no_price": kalshi_open.skipped_no_price,
+                    "settled_seen": kalshi_settled_seen,
+                    "resolved_with_snapshot": kalshi_resolved_with_snapshot,
+                    "snapshot_markets": kalshi_open.new,
+                },
+                "polymarket": {
+                    "open_seen": poly_open_seen,
+                    "new_snapshots": poly_open.new.len(),
+                    "already_snapshotted": poly_open.already_snapshotted,
+                    "skipped_not_open": poly_open.skipped_not_open,
+                    "skipped_no_price": poly_open.skipped_no_price,
+                    "settled_seen": poly_settled_seen,
+                    "resolved_with_snapshot": poly_resolved_with_snapshot,
+                    "snapshot_markets": poly_open.new,
+                },
+                "zero_scan_reason": zero_scan_reason,
+                "journal_saved": journal_saved,
                 "warnings": warnings,
             }))
             .map_err(|e| {
@@ -813,14 +884,16 @@ impl PredictionMarketsServer {
         .await
     }
 
-    /// Store the CMP index curve for a registered base event as a
-    /// transaction-ledger portfolio. Each tenor point on the curve becomes a
-    /// constituent holding with weight = the synthesized probability. The
-    /// portfolio name is `cmp:{series}`. Materialized daily holdings are
-    /// computed on insert (and rebuildable from the ledger via
-    /// `portfolio_rebuild_views` on the portfolio server).
+    /// Store the CMP index curves for a registered base event as
+    /// transaction-ledger portfolios, one per orientation. §8 followup:
+    /// the store-side curve was orientation-blind — blending hike/hold/cut
+    /// marginals into one curve is meaningless for decision families; the
+    /// marginals are the real content. Each orientation's tenor points feed
+    /// its own constant-maturity curve (log-odds interpolation across the
+    /// standard tenor grid), persisted as `cmp:{series}:{orientation}`
+    /// with one constituent per grid tenor (weight = probability).
     #[tool(
-        description = "Store the CMP index curve for a registered base event as a transaction-ledger portfolio of tenor constituents, with materialized daily holdings. Returns the stored portfolio name and constituent count."
+        description = "Store the CMP index curves for a registered base event as transaction-ledger portfolios, one per orientation (increase/decline/stable): the decision-family marginals never blend into one curve. Contracts classify through the same catalog path as market_cmp_indices (decision contracts orient categorically; open tails are withheld with reasons). Each orientation persists as cmp:{series}:{orientation} with tenor constituents (weight = probability) and materialized daily holdings."
     )]
     pub async fn market_cmp_index_store(
         &self,
@@ -831,94 +904,150 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_cmp_index_store", async {
             self.record_call("market_cmp_index_store");
             self.require_registered_base_event(&series)?;
+            let (family, context) = self.resolve_family_and_context(&series, None, None, None, None)?;
             let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
             let now = chrono::Utc::now();
-            let points = Self::kalshi_tenor_points(&markets, now);
-            if points.is_empty() {
+            let lines = Self::kalshi_catalog_lines(&markets);
+            let config = cmp_portfolio::CmpConfig::default();
+            let (oriented, _market_ids, rejections, n_records_read) =
+                cmp_index_builder::oriented_constituents_from_lines(
+                    &lines,
+                    family,
+                    cmp_index_builder::Venue::Kalshi,
+                    &context,
+                    &config,
+                    &now,
+                )
+                .map_err(|e| {
+                    McpToolError::internal(format!("cmp classification failed: {e}"))
+                })?;
+            if oriented.is_empty() {
                 return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                    "no live markets with future deadlines for series '{}'",
-                    series
+                    "no eligible oriented contracts for series '{}' ({} records read; rejections: {})",
+                    series,
+                    n_records_read,
+                    rejections.iter().take(5).cloned().collect::<Vec<_>>().join("; ")
                 )));
             }
             let computed_at = date
                 .clone()
                 .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-            let index = cmp::compute_index(&series, &points, &now.to_rfc3339());
 
-            // Persist the index as a portfolio ledger. Each supported
-            // tenor point becomes a constituent buy transaction with
-            // weight = probability. Unsupported tenors (probability: None)
-            // are withheld — never fabricated.
-            let portfolio_name = format!("cmp:{series}");
-            let response_portfolio = portfolio_name.clone();
-            let response_series = series.clone();
-            let response_date = computed_at.clone();
-            let response_points: Vec<serde_json::Value> = index
-                .points
+            // One constant-maturity curve per orientation — the marginals.
+            let mut curves: Vec<(cmp_portfolio::Orientation, cmp::CmpIndex)> = Vec::new();
+            let mut withheld_orientations: Vec<&'static str> = Vec::new();
+            for orientation in [
+                cmp_portfolio::Orientation::Increase,
+                cmp_portfolio::Orientation::Decline,
+                cmp_portfolio::Orientation::Stable,
+            ] {
+                let points: Vec<cmp::TenorPoint> = oriented
+                    .iter()
+                    .filter(|oc| oc.orientation == orientation)
+                    .map(|oc| cmp::TenorPoint {
+                        days_to_resolution: oc.constituent.days_to_expiration,
+                        price: oc.constituent.probability,
+                    })
+                    .collect();
+                if points.is_empty() {
+                    withheld_orientations.push(match orientation {
+                        cmp_portfolio::Orientation::Increase => "increase",
+                        cmp_portfolio::Orientation::Decline => "decline",
+                        cmp_portfolio::Orientation::Stable => "stable",
+                    });
+                    continue;
+                }
+                let index = cmp::compute_index(
+                    &format!("{series}:{orientation}"),
+                    &points,
+                    &now.to_rfc3339(),
+                );
+                curves.push((orientation, index));
+            }
+            if curves.is_empty() {
+                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                    "no orientation curves could be built for series '{}'",
+                    series
+                )));
+            }
+
+            // Response carries the curve points (serialized before the
+            // blocking task takes ownership of the curves).
+            let response_curves: Vec<serde_json::Value> = curves
                 .iter()
-                .map(|p| {
+                .map(|(orientation, index)| {
                     serde_json::json!({
-                        "tenor_days": p.tenor_days,
-                        "probability": p.probability,
+                        "orientation": orientation.to_string(),
+                        "points": index.points,
                     })
                 })
                 .collect();
+
+            // Persist each orientation as its own portfolio.
             let store = self.portfolio_store.clone();
             let created_at = now.to_rfc3339();
+            let series_owned = series.clone();
+            let date_owned = computed_at.clone();
             let stored = tokio::task::spawn_blocking(move || {
                 use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
-                // Create the portfolio (idempotent) as a prediction-contract portfolio.
-                // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
-                // Any error here (invalid name, DB failure) must propagate.
-                store.create(&portfolio_name, AssetType::PredictionContract)?;
-                let mut applied = 0usize;
-                let mut withheld = 0usize;
-                for point in &index.points {
-                    let Some(prob) = point.probability else {
-                        withheld += 1;
-                        continue;
-                    };
-                    // The constituent symbol is the tenor (e.g. "cmp:KXFEDDECISION:30d").
-                    // The weight is the synthesized probability; the
-                    // quantity is 1.0 (one unit of the index at this tenor).
-                    let symbol = format!("cmp:{series}:{}d", point.tenor_days);
-                    let tx = Transaction {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        date: computed_at.clone(),
-                        tx_type: TxType::Buy,
-                        asset_type: AssetType::PredictionContract,
-                        symbol: Some(symbol),
-                        quantity: Some(1.0),
-                        price: Some(prob),
-                        commission: Some(0.0),
-                        amount: None,
-                        weight: Some(prob),
-                        currency: "USD".to_string(),
-                        notes: format!(
-                            "CMP index constituent: tenor={}d method={:?} cohorts={} bracket={}",
-                            point.tenor_days, point.method, point.cohorts, point.bracket_days
-                        ),
-                        created_at: created_at.clone(),
-                    };
-                    store.apply(&portfolio_name, &tx)?;
-                    applied += 1;
+                let mut portfolios_stored: Vec<(String, usize, usize)> = Vec::new();
+                for (orientation, index) in &curves {
+                    let portfolio_name = format!("cmp:{series_owned}:{orientation}");
+                    // `create` uses INSERT OR IGNORE — already-exists is Ok.
+                    store.create(&portfolio_name, AssetType::PredictionContract)?;
+                    let mut applied = 0usize;
+                    let mut withheld = 0usize;
+                    for point in &index.points {
+                        let Some(prob) = point.probability else {
+                            withheld += 1;
+                            continue;
+                        };
+                        let symbol =
+                            format!("cmp:{series_owned}:{orientation}:{}d", point.tenor_days);
+                        let tx = Transaction {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            date: date_owned.clone(),
+                            tx_type: TxType::Buy,
+                            asset_type: AssetType::PredictionContract,
+                            symbol: Some(symbol),
+                            quantity: Some(1.0),
+                            price: Some(prob),
+                            commission: Some(0.0),
+                            amount: None,
+                            weight: Some(prob),
+                            currency: "USD".to_string(),
+                            notes: format!(
+                                "CMP curve constituent: orientation={orientation} tenor={}d method={:?} cohorts={} bracket={}",
+                                point.tenor_days, point.method, point.cohorts, point.bracket_days
+                            ),
+                            created_at: created_at.clone(),
+                        };
+                        store.apply(&portfolio_name, &tx)?;
+                        applied += 1;
+                    }
+                    portfolios_stored.push((portfolio_name, applied, withheld));
                 }
-                // Materialize the holdings snapshot for the observation date.
-                let snapshot = store.snapshot(&portfolio_name, &computed_at)?;
-                Ok::<_, PortfolioError>((applied, withheld, snapshot))
+                Ok::<_, PortfolioError>(portfolios_stored)
             })
             .await
             .map_err(|e| map_join_error(e, "portfolio store task failed"))?;
-            let (applied, withheld, snapshot) = stored.map_err(map_portfolio_error)?;
+            let portfolios_stored = stored.map_err(map_portfolio_error)?;
             serde_json::to_value(serde_json::json!({
                 "status": "stored",
-                "portfolio": response_portfolio,
-                "series": response_series,
-                "observation_date": response_date,
-                "constituents_applied": applied,
-                "constituents_withheld": withheld,
-                "holdings": snapshot.holdings.len(),
-                "index_probability_curve": response_points,
+                "series": series,
+                "family": family.label(),
+                "observation_date": computed_at,
+                "orientation_curves": portfolios_stored.iter().map(|(name, applied, withheld)| {
+                    serde_json::json!({
+                        "portfolio": name,
+                        "constituents_applied": applied,
+                        "constituents_withheld": withheld,
+                    })
+                }).collect::<Vec<_>>(),
+                "withheld_orientations": withheld_orientations,
+                "n_records_read": n_records_read,
+                "rejection_sample": rejections.into_iter().take(5).collect::<Vec<_>>(),
+                "curves": response_curves,
             }))
             .map_err(|e| {
                 McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
@@ -927,136 +1056,95 @@ impl PredictionMarketsServer {
         .await
     }
 
-    fn resolve_economic_context(
+    /// The shared family + economic-context resolution for the CMP tools —
+    /// one classification source of truth (§8 followup): the same catalog
+    /// path `market_cmp_indices` uses, with the family's curated default
+    /// context and caller overrides. Refuses a series that does not resolve
+    /// to a base-event family — never fabricates a family or a context.
+    fn resolve_family_and_context(
         &self,
-        markets: &[provider_kalshi::KalshiMarket],
         series: &str,
         reference: Option<f64>,
         volatility: Option<f64>,
         predicted_level: Option<f64>,
         direction_up: Option<bool>,
-    ) -> base_event::EconomicContext {
-        let default_ctx = markets
-            .first()
-            .and_then(|m| base_event::classify_base_event_text(&m.title, &m.subtitle, &series, ""))
+    ) -> Result<
+        (
+            economic_object::BaseEconomicObject,
+            base_event::EconomicContext,
+        ),
+        McpToolError,
+    > {
+        let family =
+            semantic_mapping::classify_base_object_from_catalog("kalshi", series, "")
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "series '{}' does not resolve to a base-event family — cannot build CMP indices",
+                        series
+                    ))
+                })?;
+        // RealGdpGrowth has no BaseEvent materiality setting; the builder
+        // withholds all its buckets with an explicit reason — surfaced
+        // through the context's rationale, never fabricated.
+        let default_ctx = cmp_index_builder::base_event_for(family)
             .map(|be| be.default_economic_context())
             .unwrap_or_else(|| base_event::EconomicContext {
                 reference: 0.0,
                 volatility: None,
                 predicted_level: 0.0,
                 direction_up: false,
-                rationale: "no base-event match — generic stable default".into(),
+                rationale: "no BaseEvent materiality setting for this family — \
+                            all buckets will be withheld"
+                    .into(),
             });
-        let reference = reference.unwrap_or(default_ctx.reference);
-        let volatility = volatility.or(default_ctx.volatility);
-        let predicted_level = predicted_level.unwrap_or_else(|| {
-            if let Some(m) = markets.first()
-                && let Some(be) =
-                    base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-                && let Some((strike, _)) = be.extract_strike(&m.title)
-            {
-                strike
-            } else {
-                default_ctx.predicted_level
-            }
-        });
-        let direction_up = match direction_up {
-            Some(up) => up,
-            None => {
-                if let Some(m) = markets.first()
-                    && let Some(be) =
-                        base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-                    && let Some((_, up)) = be.extract_strike(&m.title)
-                {
-                    up
-                } else {
-                    default_ctx.direction_up
-                }
-            }
-        };
-        base_event::EconomicContext {
-            reference,
-            volatility,
-            predicted_level,
-            direction_up,
+        let context = base_event::EconomicContext {
+            reference: reference.unwrap_or(default_ctx.reference),
+            volatility: volatility.or(default_ctx.volatility),
+            predicted_level: predicted_level.unwrap_or(default_ctx.predicted_level),
+            direction_up: direction_up.unwrap_or(default_ctx.direction_up),
             rationale: default_ctx.rationale,
-        }
+        };
+        Ok((family, context))
     }
 
-    fn build_annotated_market_records(
-        markets: &[provider_kalshi::KalshiMarket],
-        ctx: &base_event::EconomicContext,
-        _observation_date: &str,
-        series: &str,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<serde_json::Value> {
-        let config = cmp_portfolio::CmpConfig::default();
-        let mut records: Vec<serde_json::Value> = Vec::new();
-        for (idx, market) in markets.iter().enumerate() {
-            let Some(probability) = market.yes_midpoint() else {
-                continue;
-            };
-            let Some(deadline) = chrono::DateTime::parse_from_rfc3339(&market.close_time).ok()
-            else {
-                continue;
-            };
-            let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64 / 86_400.0;
-            if days <= 0.0 {
-                continue;
-            }
-            let Some(base_event) =
-                base_event::classify_base_event_text(&market.title, &market.subtitle, &series, "")
-            else {
-                continue;
-            };
-            let setting = base_event.default_materiality();
-            let level = cmp_portfolio::materiality_level(&setting, ctx.volatility, 30, &config);
-            let orientation = match level {
-                Some(level) => cmp_portfolio::classify_orientation(
-                    ctx.predicted_level,
-                    ctx.reference,
-                    level,
-                    ctx.direction_up,
-                ),
-                None => cmp_portfolio::Orientation::Stable,
-            };
-            records.push(serde_json::json!({
-                "days_to_expiration": days,
-                "probability": probability,
-                "quality": 1.0,
-                "orientation": orientation,
-                "market_index": idx,
-                "ticker": market.ticker.clone(),
-            }));
-        }
-        records
+    /// Kalshi markets → catalog-record JSON lines (the builder's input
+    /// shape) — shared by the CMP tools so the classification layer sees
+    /// one record shape everywhere.
+    fn kalshi_catalog_lines(markets: &[provider_kalshi::KalshiMarket]) -> Vec<String> {
+        markets
+            .iter()
+            .filter_map(|m| {
+                let record = cmp_index_builder::KalshiCatalogRecord {
+                    source: "kalshi".into(),
+                    event_ticker: m.event_ticker.clone(),
+                    base_object: String::new(),
+                    market_ticker: m.ticker.clone(),
+                    title: m.title.clone(),
+                    status: m.status.clone(),
+                    close_time: m.close_time.clone(),
+                    expiration_time: m.expiration_time.clone(),
+                    yes_bid: m.yes_bid_dollars.clone(),
+                    yes_ask: m.yes_ask_dollars.clone(),
+                    volume_fp: m.volume_fp.clone(),
+                    liquidity_dollars: m.liquidity_dollars.clone(),
+                    result: m.result.clone(),
+                    rules_primary: m.rules_primary.clone(),
+                };
+                serde_json::to_string(&record).ok()
+            })
+            .collect()
     }
 
     async fn persist_cmp_portfolio(
         &self,
-        records: Vec<serde_json::Value>,
+        oriented: Vec<cmp_portfolio::OrientedConstituent>,
+        market_ids: Vec<String>,
         series: &str,
         observation_date: &str,
+        family: &str,
         ctx: &base_event::EconomicContext,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<serde_json::Value, McpToolError> {
-        let mut oriented: Vec<cmp_portfolio::OrientedConstituent> = Vec::new();
-        let mut market_ids: Vec<String> = Vec::new();
-        for record in records {
-            let r: AnnotatedMarketRecord = serde_json::from_value(record).map_err(|e| {
-                McpToolError::invalid_argument(format!("record deserialization failed: {e}"))
-            })?;
-            oriented.push(cmp_portfolio::OrientedConstituent {
-                constituent: cmp_portfolio::Constituent {
-                    days_to_expiration: r.days_to_expiration,
-                    probability: r.probability,
-                    quality: r.quality,
-                },
-                orientation: r.orientation,
-                market_index: r.market_index,
-            });
-            market_ids.push(r.ticker);
-        }
         if oriented.is_empty() {
             return Err(McpToolError::not_found(format!(
                 "no eligible markets for series '{}' with the supplied economic context",
@@ -1123,6 +1211,7 @@ impl PredictionMarketsServer {
         serde_json::to_value(serde_json::json!({
             "status": "stored",
             "series": series,
+            "family": family,
             "observation_date": observation_date,
             "economic_context": {
                 "reference": ctx.reference,
@@ -1166,28 +1255,54 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_cmp_portfolio_store", async {
             self.record_call("market_cmp_portfolio_store");
             self.require_registered_base_event(&series)?;
-            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
-            let now = chrono::Utc::now();
-            let observation_date = date
-                .clone()
-                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-            let ctx = self.resolve_economic_context(
-                &markets,
+            let (family, ctx) = self.resolve_family_and_context(
                 &series,
                 reference,
                 volatility,
                 predicted_level,
                 direction_up,
-            );
-            let records = Self::build_annotated_market_records(
-                &markets,
-                &ctx,
-                &observation_date,
+            )?;
+            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
+            let now = chrono::Utc::now();
+            let observation_date = date
+                .clone()
+                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+            // §8 followup: the solved portfolios orient through the same
+            // classification source of truth as market_cmp_indices — the
+            // decision-categorical branch — not the band fallback that
+            // mislabeled every decision contract as Stable.
+            let lines = Self::kalshi_catalog_lines(&markets);
+            let config = cmp_portfolio::CmpConfig::default();
+            let (oriented, market_ids, rejections, n_records_read) =
+                cmp_index_builder::oriented_constituents_from_lines(
+                    &lines,
+                    family,
+                    cmp_index_builder::Venue::Kalshi,
+                    &ctx,
+                    &config,
+                    &now,
+                )
+                .map_err(|e| {
+                    McpToolError::internal(format!("cmp classification failed: {e}"))
+                })?;
+            if oriented.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "no eligible oriented markets for series '{}' ({} records read; rejections: {})",
+                    series,
+                    n_records_read,
+                    rejections.iter().take(5).cloned().collect::<Vec<_>>().join("; ")
+                )));
+            }
+            self.persist_cmp_portfolio(
+                oriented,
+                market_ids,
                 &series,
+                &observation_date,
+                family.label(),
+                &ctx,
                 now,
-            );
-            self.persist_cmp_portfolio(records, &series, &observation_date, &ctx, now)
-                .await
+            )
+            .await
         })
         .await
     }
@@ -1211,37 +1326,16 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_cmp_indices", async {
             self.record_call("market_cmp_indices");
             self.require_registered_base_event(&series)?;
-            // Resolve the family from the series (Kalshi series-prefix
-            // classification). Refuse when unclassifiable — never fabricate
-            // a family or a materiality setting.
-            let family = semantic_mapping::classify_base_object_from_catalog("kalshi", &series, "")
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "series '{}' does not resolve to a base-event family — cannot build CMP indices",
-                        series
-                    ))
-                })?;
-            // Curated default context for the family, with caller overrides.
-            // RealGdpGrowth has no BaseEvent materiality setting; the builder
-            // withholds all its buckets with an explicit reason.
-            let default_ctx = cmp_index_builder::base_event_for(family)
-                .map(|be| be.default_economic_context())
-                .unwrap_or_else(|| base_event::EconomicContext {
-                    reference: 0.0,
-                    volatility: None,
-                    predicted_level: 0.0,
-                    direction_up: false,
-                    rationale: "no BaseEvent materiality setting for this family — \
-                                all buckets will be withheld"
-                        .into(),
-                });
-            let context = base_event::EconomicContext {
-                reference: reference.unwrap_or(default_ctx.reference),
-                volatility: volatility.or(default_ctx.volatility),
-                predicted_level: predicted_level.unwrap_or(default_ctx.predicted_level),
-                direction_up: direction_up.unwrap_or(default_ctx.direction_up),
-                rationale: default_ctx.rationale,
-            };
+            // One classification source of truth (§8 followup): the same
+            // catalog path + curated-family context resolution the store
+            // tools use.
+            let (family, context) = self.resolve_family_and_context(
+                &series,
+                reference,
+                volatility,
+                predicted_level,
+                direction_up,
+            )?;
 
             let venue_filter = venue.as_deref().unwrap_or("both");
             if !matches!(venue_filter, "kalshi" | "polymarket" | "both") {
@@ -1259,28 +1353,7 @@ impl PredictionMarketsServer {
             if matches!(venue_filter, "kalshi" | "both") {
                 match provider_kalshi::fetch_markets(&self.http, Some(&series), limit).await {
                     Ok(markets) => {
-                        let lines: Vec<String> = markets
-                            .iter()
-                            .filter_map(|m| {
-                                let record = cmp_index_builder::KalshiCatalogRecord {
-                                    source: "kalshi".into(),
-                                    event_ticker: m.event_ticker.clone(),
-                                    base_object: String::new(),
-                                    market_ticker: m.ticker.clone(),
-                                    title: m.title.clone(),
-                                    status: m.status.clone(),
-                                    close_time: m.close_time.clone(),
-                                    expiration_time: m.expiration_time.clone(),
-                                    yes_bid: m.yes_bid_dollars.clone(),
-                                    yes_ask: m.yes_ask_dollars.clone(),
-                                    volume_fp: m.volume_fp.clone(),
-                                    liquidity_dollars: m.liquidity_dollars.clone(),
-                                    result: m.result.clone(),
-                                    rules_primary: m.rules_primary.clone(),
-                                };
-                                serde_json::to_string(&record).ok()
-                            })
-                            .collect();
+                        let lines = Self::kalshi_catalog_lines(&markets);
                         match cmp_index_builder::build_cmp_indices_from_lines(
                             &lines,
                             family,
@@ -1417,32 +1490,67 @@ impl PredictionMarketsServer {
             async {
                 self.record_call("market_cmp_context_suggest");
                 self.require_registered_base_event(&series)?;
-                // Classify the family from the series ticker to pick the
-                // curated default, then try to fetch a live reference level
-                // (FRED for macro, CoinGecko for crypto). Falls back to the
-                // curated static default on any failure — the zed-kask pattern:
-                // always have a default, the live fetch is an enhancement.
-                let base_event = base_event::classify_base_event_text(&series, "", &series, "");
-                let (context, family) = match base_event {
-                    Some(be) => {
-                        let ctx = be.live_economic_context(&self.http, self.fred_api_key.as_deref()).await;
-                        (ctx, be.factor().to_string())
-                    }
-                    None => (base_event::EconomicContext {
-                        reference: 0.0,
-                        volatility: None,
-                        predicted_level: 0.0,
-                        direction_up: false,
-                        rationale: format!(
-                            "series '{series}' did not match a known base-event family \
-                             signature; returning a generic stable default. Override with \
-                             live data before storing an index."
+                // §8 followup: classify through the same catalog path
+                // market_cmp_indices uses — the series-prefix semantic
+                // mapping — with the text-signature classifier as the
+                // fallback for series the catalog does not cover. The
+                // proposal side and the build side must not disagree about
+                // the family.
+                let catalog_family =
+                    semantic_mapping::classify_base_object_from_catalog("kalshi", &series, "");
+                let (context, family, classification_source) = match catalog_family {
+                    Some(family_object) => match cmp_index_builder::base_event_for(family_object) {
+                        Some(be) => {
+                            let ctx = be
+                                .live_economic_context(&self.http, self.fred_api_key.as_deref())
+                                .await;
+                            (ctx, family_object.label().to_string(), "catalog")
+                        }
+                        None => (
+                            base_event::EconomicContext {
+                                reference: 0.0,
+                                volatility: None,
+                                predicted_level: 0.0,
+                                direction_up: false,
+                                rationale: format!(
+                                    "family '{}' has no BaseEvent materiality setting — \
+                                     all buckets will be withheld. Override with live \
+                                     data before storing an index.",
+                                    family_object.label()
+                                ),
+                            },
+                            family_object.label().to_string(),
+                            "catalog",
                         ),
-                    }, "unknown".to_string()),
+                    },
+                    None => match base_event::classify_base_event_text(&series, "", &series, "") {
+                        Some(be) => {
+                            let ctx = be
+                                .live_economic_context(&self.http, self.fred_api_key.as_deref())
+                                .await;
+                            (ctx, be.factor().to_string(), "text-signature")
+                        }
+                        None => (
+                            base_event::EconomicContext {
+                                reference: 0.0,
+                                volatility: None,
+                                predicted_level: 0.0,
+                                direction_up: false,
+                                rationale: format!(
+                                    "series '{series}' did not match a known base-event family \
+                                     signature; returning a generic stable default. Override with \
+                                     live data before storing an index."
+                                ),
+                            },
+                            "unknown".to_string(),
+                            "none",
+                        ),
+                    },
                 };
                 serde_json::to_value(serde_json::json!({
                     "series": series,
                     "family": family,
+                    "classification_source": classification_source,
                     "proposed_context": {
                         "reference": context.reference,
                         "volatility": context.volatility,
@@ -1488,13 +1596,17 @@ impl PredictionMarketsServer {
         let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
         for event in &gamma_events {
             let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
-            let bucket =
-                types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
-            let reading = {
-                let guard = store.lock().unwrap_or_else(|e| e.into_inner());
-                calibration::read_calibration(&guard, &bucket)
-            };
             for market in &event.markets {
+                // Same family-first bucket derivation as the snapshot
+                // writers — the calibration block a lookup record carries
+                // must read the bucket the scanner writes (§7 followup root
+                // cause). Per market: the writer derives per market.
+                let bucket =
+                    semantic_mapping::calibration_bucket_for_gamma(&market.question, &market.slug);
+                let reading = {
+                    let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+                    calibration::read_calibration(&guard, &bucket)
+                };
                 let calibration_block = types::calibration_for(Some(&reading), &bucket);
                 if let Some(record) = types::MarketRecord::from_polymarket(
                     market,
@@ -1517,7 +1629,14 @@ impl PredictionMarketsServer {
             let event = kalshi_events
                 .iter()
                 .find(|e| e.event_ticker == market.event_ticker);
-            let bucket = types::canonical_bucket(event.map(|e| e.category.as_str()).unwrap_or(""));
+            // Same family-first bucket derivation as the snapshot writers —
+            // the calibration block a lookup record carries must read the
+            // bucket the scanner writes, or the tier-demotion loop never
+            // closes (§7 followup root cause).
+            let bucket = semantic_mapping::calibration_bucket_for_kalshi(
+                &market.event_ticker,
+                &market.title,
+            );
             let reading = {
                 let guard = store.lock().unwrap_or_else(|e| e.into_inner());
                 calibration::read_calibration(&guard, &bucket)
