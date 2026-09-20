@@ -1,8 +1,8 @@
 ---
 title: "Prediction Markets MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.39.0"
+last_updated: 2026-09-20
+version: "0.40.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle]
@@ -73,6 +73,11 @@ so the scored probability is honest:
    subsequent `market_lookup` / `market_match` calls, which downstream
    consumers (`scenario_from_markets_set`) read as a gate on base-rate anchoring.
 
+Bucket keys are family-first (`BaseEconomicObject::label()`, e.g.
+`policy_interest_rate`) on both the snapshot writer and the lookup reader —
+accrual and tier demotion close on the same key; per-event ticker keys are
+never used.
+
 Consequence: scans must run often enough that open markets are snapshotted
 before they resolve — a high `resolved_without_snapshot` rate means the
 scan cadence is too slow (see the `calibration-stewardship` skill).
@@ -89,7 +94,7 @@ feed the loop.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_lookup` | Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated `MarketRecord`s — every probability paired with spread/volume/calibration/volatility/reliability tier and ontology mapping. Never a bare probability. | `query`, `category`, `limit` |
+| `market_lookup` | Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated `MarketRecord`s — every probability paired with spread/volume/calibration/volatility/reliability tier and ontology mapping; Polymarket records carry `clob_asset_ids` for `market_subscribe_resolutions`. Never a bare probability. | `query`, `category`, `limit` |
 | `market_match` | Resolve a scenario or forecasting question to candidate markets about the same underlying event; confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuses low-confidence matches rather than anchoring on a wrong-event market. | `question`, `limit` |
 | `market_ontology_map` | Return the dual-axis (PKO process + Dublin Core state) ontology mapping document annotating every `MarketRecord`, including market lifecycle stages and field-level mappings. Fetch before interpreting market records. | — |
 
@@ -99,16 +104,19 @@ feed the loop.
 |------|-------------|------------|
 | `market_calibration` | Calibration reading (Brier score, sample size, staleness) for a domain or series bucket, computed from resolved observations via `hkask-forecast`. No-data buckets return `stale: true`. | `bucket` |
 | `market_record_resolution` | Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store — the manual sense arm of the feedback loop. | `bucket`, `probability`, `outcome` |
-| `market_check_resolutions` | Two-phase scan: (1) snapshot open markets' current prices as pre-resolution probability-at-observation (earliest per market kept), (2) consume snapshots for newly resolved markets. Resolutions without a snapshot are counted (`resolved_without_snapshot`) and skipped — the post-resolution price is never scored. Idempotent. | `series`, `limit` |
+| `market_check_resolutions` | Two-phase scan: (1) snapshot open markets' current prices as pre-resolution probability-at-observation (earliest per market kept), (2) consume snapshots for newly resolved markets. Resolutions without a snapshot are counted (`resolved_without_snapshot`) and skipped — the post-resolution price is never scored. Idempotent. Response carries per-provider dispositions, new-snapshot identities (`snapshot_markets`: market key, calibration bucket, probability), a `series_scope` echo, and a `zero_scan_reason` whenever nothing new was recorded — never a silent zero. The optional `series` scopes the Kalshi phases only; the Polymarket leg is unscoped. | `series`, `limit` |
 | `market_subscribe_resolutions` | Subscribe to Polymarket's public market channel for resolution events on given CLOB asset IDs; events arrive as notifications and do NOT write calibration observations. | `asset_ids`, `bucket`, `max_resolutions` |
 
 ### Term structure and decomposition
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
+| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years measured from observation time (now) — never stale quote timestamps. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
 | `market_cmp_index` | Full CMP index for a registered base event: probability curve across the standard tenor grid (7d/30d/90d/180d/1y/2y), log-odds interpolated, with curve slope (log-odds/year) as the term-structure signal. Uncovered tenors return null. | `series` |
 | `market_cmp_indices` | Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) from live open markets per (family, venue) — the producer for `scenario_from_cmp_indices` (hkask-mcp-scenarios). Withheld buckets and rejection reasons are surfaced; never fabricated. | `series`, `venue`, `limit`, `reference`, `volatility`, `predicted_level`, `direction_up` |
+| `market_cmp_index_store` | Store per-orientation CMP index curves for a registered base event as transaction-ledger portfolios, one per orientation (`cmp:{series}:{orientation}`) — decision-family marginals never blend into one curve. Tenor constituents (weight = probability) with materialized daily holdings; withheld orientations and rejection reasons are surfaced. | `series`, `date` |
+| `market_cmp_portfolio_store` | Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) and persist each `(bucket, orientation)` index as a transaction-ledger portfolio `cmp:{series}:{bucket}:{orientation}` — the contract-portfolio CMP, distinct from the curve-based `market_cmp_index_store`. Economic-context fields optional; omitted fields use the curated family default. | `series`, `reference`, `volatility`, `predicted_level`, `direction_up`, `date` |
+| `market_cmp_context_suggest` | Propose a curated economic context (reference, volatility, predicted level, direction) for a base-event family, with reasoning. Classifies catalog-first — the same path `market_cmp_indices` uses — with a text-signature fallback and a `classification_source` field in the response; proposes live context. Read-only aid: the operator accepts, overrides, or rejects before storing. | `series` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |
 
 ### History

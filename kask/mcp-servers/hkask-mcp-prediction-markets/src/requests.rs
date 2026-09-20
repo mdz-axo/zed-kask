@@ -75,11 +75,12 @@ pub struct MarketCmpIndexRequest {
     pub series: String,
 }
 
-/// Request for market_cmp_index_store: compute the CMP index set for a
-/// registered base event from live markets and persist each (bucket,
-/// orientation) index as a transaction-ledger portfolio of contracts, with
-/// materialized daily holdings. The portfolio name is
-/// `cmp:{series}:{bucket}:{orientation}`.
+/// Request for market_cmp_index_store: compute the per-orientation CMP
+/// index curves for a registered base event from live markets and persist
+/// each orientation as a transaction-ledger portfolio of tenor constituents
+/// (weight = probability), with materialized daily holdings. One portfolio
+/// per orientation — decision-family marginals never blend into one curve.
+/// The portfolio name is `cmp:{series}:{orientation}`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCmpIndexStoreRequest {
     /// Base-event series ticker (must be registered).
@@ -208,11 +209,15 @@ pub struct MarketHistoryRequest {
 
 /// Request for market_check_resolutions: scan for newly resolved markets
 /// and feed their outcomes into the calibration store (the loop's
-/// self-feeding sense arm).
+/// self-feeding sense arm). The response carries per-provider dispositions
+/// (markets seen, new-snapshot identities, already-snapshotted and skipped
+/// counts), a `series_scope` echo, and a `zero_scan_reason` whenever the
+/// scan recorded nothing new — a silent zero is a broken feedback loop.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCheckResolutionsRequest {
-    /// Optional series/bucket scope (Kalshi series ticker; Polymarket scans
-    /// recent closed markets regardless).
+    /// Optional Kalshi series scope — the Kalshi phases scan only this
+    /// series (e.g. KXFEDDECISION). The Polymarket leg is unscoped (Gamma
+    /// has no series parameter); the response's series_scope surfaces this.
     pub series: Option<String>,
     /// Max markets to scan per platform (default 100).
     pub limit: Option<u32>,
