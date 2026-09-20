@@ -840,6 +840,7 @@ mod tests {
             "https://openrouter.ai/api/v1",
             "https://api.deepinfra.com/v1/openai",
             "https://api.runpod.io",
+            "https://api.kilo.ai/api/gateway",
         ] {
             assert!(
                 credential_url_feeds_mcp_servers(url),
@@ -866,6 +867,7 @@ mod tests {
             "kask://credentials/openrouter",
             "kask://credentials/deepinfra",
             "kask://credentials/runpod",
+            "kask://credentials/kilocode",
         ] {
             assert!(
                 !credential_url_feeds_mcp_servers(url),

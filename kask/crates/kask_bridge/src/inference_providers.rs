@@ -106,6 +106,22 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         credential_key: "deepinfra",
         dashboard_url: "https://deepinfra.com/",
     },
+    // Kilo Code (kilo.ai) is a cloud LLM gateway serving frontier models
+    // through an OpenAI-compatible chat-completions API. Registered as an
+    // `openai_compatible` provider in default.json; its key lives at the
+    // provider `api_url` keychain slot — the same slot zed's `ApiKeyState`
+    // reads — and `credential_urls_for_mcp` injects it into MCP server env
+    // (`KILOCODE_API_KEY`, gated per-server by the `credentials` allowlist).
+    // Chat-only: the gateway has no embeddings endpoint, so it has no
+    // `DIRECT_EMBEDDING_PROVIDERS` row in hkask-inference.
+    InferenceProviderDescriptor {
+        id: "KiloCode",
+        name: "KiloCode",
+        api_url: "https://api.kilo.ai/api/gateway",
+        env_var: "KILOCODE_API_KEY",
+        credential_key: "kilocode",
+        dashboard_url: "https://kilo.ai/",
+    },
 ];
 
 /// A typed descriptor for a data service credential — the single source of
@@ -141,7 +157,8 @@ pub fn provider_by_credential_key(
 }
 
 /// The canonical keychain URL for a credential, keyed by `credential_key`:
-/// inference-provider-backed credentials (openrouter, deepinfra, runpod) live
+/// inference-provider-backed credentials (openrouter, deepinfra, runpod,
+/// kilocode) live
 /// at the provider's `api_url` — the same slot zed's `ApiKeyState` reads —
 /// while pure data-service credentials live at
 /// `kask://credentials/<credential_key>`. One key, one location: both the
@@ -543,6 +560,7 @@ mod tests {
             ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
             ("DEEPINFRA_API_KEY", "https://api.deepinfra.com/v1/openai"),
             ("RUNPOD_API_KEY", "https://api.runpod.io"),
+            ("KILOCODE_API_KEY", "https://api.kilo.ai/api/gateway"),
         ];
         for (env_var, api_url) in expected {
             let matches: Vec<&(String, String)> =
@@ -566,6 +584,7 @@ mod tests {
             "kask://credentials/openrouter",
             "kask://credentials/deepinfra",
             "kask://credentials/runpod",
+            "kask://credentials/kilocode",
         ] {
             assert!(
                 !urls.iter().any(|(_, url)| url == legacy),

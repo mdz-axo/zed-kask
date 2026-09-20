@@ -486,8 +486,12 @@ mod tests {
     fn apply_reports_nothing_to_do_for_the_same_passphrase() {
         let directory = tempfile::tempdir().expect("temporary databases");
         let db = make_test_db(directory.path(), "same.db", "old-passphrase");
-        let summary =
-            apply_db_rotation("old-passphrase", "old-passphrase", &[db.clone()]).expect("no-op");
+        let summary = apply_db_rotation(
+            "old-passphrase",
+            "old-passphrase",
+            std::slice::from_ref(&db),
+        )
+        .expect("no-op");
         assert!(summary.same_passphrase);
         assert!(summary.rotated.is_empty());
         assert!(opens_with(&db, "old-passphrase"));

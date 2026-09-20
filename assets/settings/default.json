@@ -2628,6 +2628,11 @@
         "available_models": [],
         "auto_discover": true,
       },
+      "KiloCode": {
+        "api_url": "https://api.kilo.ai/api/gateway",
+        "available_models": [],
+        "auto_discover": true,
+      },
     },
     "opencode": {
       "api_url": "https://opencode.ai/zen",

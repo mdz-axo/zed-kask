@@ -426,10 +426,13 @@ struct DirectEmbeddingProvider {
     env_var: &'static str,
 }
 
-/// The provider table for the direct embedding fallback. Mirrors the
-/// `INFERENCE_PROVIDERS` table in `kask_bridge::inference_providers` —
+/// The provider table for the direct embedding fallback — the
+/// embedding-capable SUBSET of `kask_bridge`'s `INFERENCE_PROVIDERS`,
 /// duplicated because `hkask-inference` cannot depend on `kask_bridge`
-/// (that would invert the D8 seam). Keep in sync when adding providers.
+/// (that would invert the D8 seam). Not a full mirror: RunPod (endpoint
+/// discovery — no static OpenAI-compatible URL) and KiloCode (chat-only —
+/// the gateway has no embeddings endpoint) are deliberately absent.
+/// Add a row only for providers that serve `/v1/embeddings`.
 static DIRECT_EMBEDDING_PROVIDERS: &[DirectEmbeddingProvider] = &[
     DirectEmbeddingProvider {
         id: "DeepInfra",
