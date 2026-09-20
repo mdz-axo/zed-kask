@@ -65,11 +65,19 @@ pub fn open_curator_escalation_queue(
 /// regulation loop.
 pub struct BridgeAlertEscalationSink {
     queue: Arc<hkask_storage::EscalationQueue>,
+    /// Escalation ids already warned for an unmeasurable recovery trigger.
+    /// The reconcile pass re-visits every retained row on every regulation
+    /// tick; without this set one manual-review-only row would emit the
+    /// identical warn every tick forever.
+    warned_unmeasurable_triggers: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl BridgeAlertEscalationSink {
     pub fn new(queue: Arc<hkask_storage::EscalationQueue>) -> Self {
-        Self { queue }
+        Self {
+            queue,
+            warned_unmeasurable_triggers: std::sync::Mutex::new(Default::default()),
+        }
     }
 
     fn reconcile_conditions_at(
@@ -111,7 +119,21 @@ impl BridgeAlertEscalationSink {
                 }
             };
             if !trigger.is_recovery_trigger() {
-                tracing::warn!(target: "reg.alert", "Unmeasurable recovery trigger; condition retained");
+                // A trigger that never deviated can never be recovered-by:
+                // this row is manual-review-only and stays pending until
+                // the operator resolves it. Warn once per escalation — a
+                // retained durable row re-visits on every tick, and its
+                // steady state repeats identically (the D63 persistent-
+                // signal coalescing rule applied to log output).
+                let mut warned = self
+                    .warned_unmeasurable_triggers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if warned.insert(entry.id.to_string()) {
+                    tracing::warn!(target: "reg.alert", escalation_id = %entry.id, "Unmeasurable recovery trigger; condition retained");
+                } else {
+                    tracing::debug!(target: "reg.alert", escalation_id = %entry.id, "Unmeasurable recovery trigger; condition retained");
+                }
                 continue;
             }
             let current = observations
@@ -532,6 +554,53 @@ mod tests {
         };
         let queue = hkask_storage::EscalationQueue::from_driver(Arc::new(driver)).expect("queue");
         (Arc::new(queue), next_advice_update)
+    }
+
+    /// An unmeasurable recovery trigger makes a row manual-review-only: it
+    /// stays pending (never auto-resolved) and the warn naming it fires
+    /// once, not on every reconcile tick that re-visits it.
+    #[test]
+    fn unmeasurable_recovery_trigger_retains_row_and_warns_once() {
+        let queue = in_memory_queue();
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+        let now = chrono::Utc::now();
+        // The stale prior-pass observation shape: value == set-point, so it
+        // parses as a Signal but never deviates (the reopened-circuit class).
+        let trigger: hkask_regulation::Signal = serde_json::from_value(serde_json::json!({
+            "source": "inference", "metric": "circuit_breaker_state",
+            "value": 0.0, "set_point": 0.0, "timestamp": now,
+        }))
+        .expect("signal");
+        let id = queue
+            .add(
+                hkask_types::TemplateID::new(),
+                hkask_types::BotID::new(),
+                "circuit_breaker_open — regulatory escalation".into(),
+                1.0,
+                0,
+                serde_json::json!({ "recovery_signal": trigger }).to_string(),
+            )
+            .expect("add")
+            .to_string();
+
+        sink.reconcile_conditions_at(&[], now)
+            .expect("first reconcile");
+        sink.reconcile_conditions_at(&[], now)
+            .expect("second reconcile");
+
+        let warned = sink
+            .warned_unmeasurable_triggers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert_eq!(
+            warned.len(),
+            1,
+            "one warn per retained escalation, not one per reconcile tick"
+        );
+        assert!(warned.contains(&id));
+        drop(warned);
+        let entry = queue.get(&id).expect("get").expect("entry");
+        assert_eq!(entry.status, hkask_storage::EscalationStatus::Pending);
     }
 
     /// T08: `try_persist_alert` reports the durable-write truth against a

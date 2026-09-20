@@ -666,11 +666,21 @@ impl super::CyberneticsLoop {
         // a fallback. The RegulationArchive below remains as a
         // secondary fallback for restart durability when the live
         // channel is down.
+        // A recovery signal must be a measurable deviation: `recovered_by`
+        // and the advice review both key off `is_recovery_trigger`. The
+        // observations map holds the previous sense pass's snapshot, so an
+        // event-driven escalation routed mid-sense (a reopened circuit)
+        // would otherwise attach a stale, healthy reading — a trigger that
+        // can never be recovered-by, stranding the row as permanently
+        // unmeasurable in the reconcile pass. Drop non-trigger
+        // observations; such an escalation becomes manual-review-only
+        // (null recovery signal), like permanent inference failures.
         let observation = action
             .metric_name
             .as_deref()
             .and_then(SignalMetric::from_str_name)
-            .and_then(|metric| self.observations.lock().get(&metric).cloned());
+            .and_then(|metric| self.observations.lock().get(&metric).cloned())
+            .filter(|signal| signal.is_recovery_trigger());
         // Tool-reliability alerts also emit the per-domain breakdown span so
         // the algedonic log names the failing domain at alert time — the
         // escalation row carries the same breakdown in its error_context.
@@ -2633,6 +2643,95 @@ mod tests {
             Some(1),
             "the deduplicated policy disposition must remain visible in loop-quality telemetry"
         );
+    }
+
+    /// expect: "An escalation whose stored trigger can never be recovered-by is manual-review-only, not a permanently unmeasurable row"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the reopened-circuit escalation routes while the latest
+    ///      circuit_breaker_state observation is the previous pass's healthy
+    ///      snapshot (value == set-point)
+    /// post: the persisted escalation carries a null recovery signal — the
+    ///       reconcile pass neither warns per tick nor treats the row as
+    ///       recoverable-at-threshold
+    #[tokio::test]
+    async fn reopened_circuit_escalation_drops_unmeasurable_recovery_signal() {
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
+        // The stale prior-pass observation the mid-sense routing looks up:
+        // healthy (value == set-point), so unmeasurable as a trigger.
+        regulation_loop.observations.lock().insert(
+            SignalMetric::CircuitBreakerState,
+            Signal::new(
+                LoopId::Inference,
+                SignalMetric::CircuitBreakerState,
+                0.0,
+                0.0,
+            ),
+        );
+
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("circuit_breaker_open"),
+            SignalMetric::CircuitBreakerState.as_str().to_string(),
+        );
+        regulation_loop.route_action_as_alert(&action).await;
+
+        let contexts = escalation.contexts.lock().expect("contexts");
+        assert_eq!(contexts.len(), 1, "the escalation persists once");
+        let context: serde_json::Value =
+            serde_json::from_str(&contexts[0]).expect("error_context is JSON");
+        assert!(
+            context
+                .get("recovery_signal")
+                .is_some_and(serde_json::Value::is_null),
+            "an unmeasurable observation must not anchor recovery: {context}"
+        );
+    }
+
+    /// expect: "A measurable deviation observed for the alerted metric anchors recovery at the original threshold"
+    /// [P9] Motivating: Homeostatic Self-Regulation
+    /// pre: the latest circuit_breaker_state observation is a real deviation
+    ///      (circuit open: value above set-point)
+    /// post: the persisted escalation carries that trigger so the reconcile
+    ///       pass can auto-resolve it when the circuit closes
+    #[tokio::test]
+    async fn escalation_attaches_measurable_recovery_signal() {
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
+        regulation_loop.observations.lock().insert(
+            SignalMetric::CircuitBreakerState,
+            Signal::new(
+                LoopId::Inference,
+                SignalMetric::CircuitBreakerState,
+                1.0,
+                0.0,
+            ),
+        );
+
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("circuit_breaker_open"),
+            SignalMetric::CircuitBreakerState.as_str().to_string(),
+        );
+        regulation_loop.route_action_as_alert(&action).await;
+
+        let contexts = escalation.contexts.lock().expect("contexts");
+        assert_eq!(contexts.len(), 1, "the escalation persists once");
+        let context: serde_json::Value =
+            serde_json::from_str(&contexts[0]).expect("error_context is JSON");
+        let trigger = context
+            .get("recovery_signal")
+            .and_then(serde_json::Value::as_object)
+            .expect("measurable trigger is attached");
+        assert_eq!(trigger["metric"], "circuit_breaker_state");
+        assert_eq!(trigger["value"], 1.0);
+        assert_eq!(trigger["set_point"], 0.0);
     }
 
     /// expect: "Permanent inference failures escalate for operator correction without opening a transient circuit"
