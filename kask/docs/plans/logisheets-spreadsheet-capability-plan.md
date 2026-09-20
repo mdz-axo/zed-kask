@@ -1,9 +1,9 @@
 ---
 title: "LogiSheets Spreadsheet Capability — Refactor Architecture Plan"
 audience: [architects, developers, product]
-last_updated: 2026-09-18
-version: "0.1.0"
-status: "Chartered"
+last_updated: 2026-09-19
+version: "0.2.0"
+status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain, lifecycle, trust]
 ---
@@ -102,6 +102,14 @@ flowchart TD
     Core -->|new revision| Artifacts
     SpreadsheetMcp -->|updated block| Widget
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-SPREADSHEET-001
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-types/src/spreadsheet.rs:110 (AnalyticalTable and SpreadsheetBlock contracts); kask/crates/hkask-spreadsheet/src/service.rs:156 (WorkbookService::publish); kask/crates/hkask-spreadsheet/src/artifact_store.rs (immutable revision publication); crates/hkask-viz-core/src/hkask_viz_core.rs:159-169 (viz-core spreadsheet wiring); crates/hkask-spreadsheet-widget/src/view.rs:23,151 (the widget; shared_tool_invoker import — the governed commit path); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (Invoker); kask/mcp-servers/hkask-mcp-spreadsheet/src/server.rs (SpreadsheetMcp); kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:95-148 (the portfolio proving-slice producer)
+reference_sources: portfolio proving slice live; companies/scenarios/research producers phased per plan §1 (one-domain-at-a-time migration)
+status: VERIFIED
+-->
 
 ### Why a central spreadsheet MCP server
 

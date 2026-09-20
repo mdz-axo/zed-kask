@@ -2,7 +2,7 @@
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
 last_updated: 2026-09-19
-version: "0.39.2"
+version: "0.39.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -52,7 +52,7 @@ The metadata, diagram, citation, and writing excellence conventions below implem
 
 Every document directly under `docs/**` (excluding `archive/`) MUST
 begin with YAML frontmatter delimited by `---` containing the following
-six fields. The header format shown below uses the 5-category MDS taxonomy
+seven fields. The header format shown below uses the 5-category MDS taxonomy
 per [`../architecture/MDS.md`](../architecture/core/MDS.md) §2 (Five Categories):
 
 ```yaml

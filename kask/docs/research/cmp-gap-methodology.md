@@ -1,3 +1,13 @@
+---
+title: "Expectations-Gap Methodology: Prediction Markets vs Traditional Markets"
+audience: [researchers, analysts, agents]
+last_updated: 2026-09-19
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [composition, trust]
+---
+
 # Expectations-Gap Methodology: Prediction Markets vs Traditional Markets
 
 **Status**: v1.0, 2026-09-19. Process-level spec; run 1 (recession family) is the first worked instance (report: `~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json`, goal `824c7f78`, judged done 2026-09-19).
@@ -30,10 +40,10 @@ The process is venue-agnostic and family-generic: a new family (rate-path, infla
 | Family | Prediction-market side | Traditional analog (§3 order) | Status |
 |---|---|---|---|
 | Recession | "US recession by end of 2026?" — Polymarket 609655, series `us-recession-by-end-of-2026` | (a) none direct; (b) SAHM-band conditional onset frequency (SAHMREALTIME × USREC); (c) Chauvet–Piger (RECPROUSM156N), SEP | Run 1 done — monitoring signal |
-| Rate path | Fed-decision and target-range contracts | (a) fed funds futures-implied odds (CME FedWatch, web read); (c) SEP medians / FEDTARMD | Run 2 recommended — first full CMP-ladder family |
+| Rate path | Fed-decision and target-range contracts | (a) fed funds futures-implied odds (CME FedWatch, web read); (c) SEP medians / FEDTARMD | Run 2 done — monitoring signal; first full CMP-ladder family |
 | Inflation | CPI-print and level contracts | (a) T10YIE / 5y5y forward breakevens, inflation swaps; (c) SPF / SEP | Run 3 candidate — W1 is the point |
 | Currency | FX-level contracts ("EUR/USD above X by date") | (a) FX options risk reversals / implied distributions; (b) conditional frequency | Run 4 candidate |
-| Equity events | Single-name and index level contracts | (a) options-implied distribution (Breeden–Litzenberger); companies server `expectations_gap` / `calibrate_forecast` for fundamentals-vs-price | Scoping pending (operator) |
+| Equity events | Single-name and index level contracts | (a) options-implied distribution (Breeden–Litzenberger); companies server `expectations_gap` / `calibrate_forecast` for fundamentals-vs-price | Decided 2026-09-20 — native-first: companies server as v1; options-implied as later upgrade |
 
 External (a)-legs sourced off-platform are web reads; record provenance in the run report. The companies server covers the equity fundamentals leg natively.
 
@@ -112,6 +122,13 @@ flowchart TD
     F -- Calibrated --> H[candidate mispricing: escalate - operator decision]
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RES-CMP-001
+verified_date: 2026-09-19
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:668 (contract_price_coherence — the Stage-5 divergence gate); kask/crates/hkask-forecast/src/hkask_forecast.rs:844 (the coherence measure); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:196 (market_calibration — the Stage-6/W2 bucket read); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json (run 1 — divergent, W3 not dominant, W2 empty → monitoring signal); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run2-ratepath.json (run 2 — same route, decision-delta ladder)
+status: VERIFIED
+-->
+
 ### Stage 8 — Record and calibrate
 
 - Persist the run report via `report_save` (companies-mcp reports: `cmp-gap-runN-<family>.json`) carrying: contract identity (verbatim criteria), both legs with data provenance, reconciliation-gate output, wedge, decomposition, verdict, known degradations, followups.
@@ -122,8 +139,8 @@ flowchart TD
 
 | Server | Role in the process |
 |---|---|
-| prediction-markets | Stage 2: `market_lookup`, `market_match`, `market_ladder`; Stages 2–3: `market_cmp_context_suggest`, `market_cmp_indices`, `market_cmp_index`; Stage 3: `market_volatility` (DR-AS); Stage 5: `contract_price_coherence`; Stage 8: `market_check_resolutions`, `market_subscribe_resolutions`, `market_record_resolution`, `market_calibration` |
-| scenarios | `scenario_from_markets_set` / `scenario_from_cmp_indices` (event-tree composition), `scenario_quantify`, `scenario_propagate` (Bayesian propagation), `scenario_cross_validate` (estimate cross-validation), `scenario_calibration` (forecast calibration curve) |
+| prediction-markets | Stage 2: `market_lookup`, `market_match`, `market_ladder`; Stages 2–3: `market_cmp_context_suggest`, `market_cmp_indices`, `market_cmp_index`; Stage 3: `market_volatility` (DR-AS); Stage 8: `market_check_resolutions`, `market_subscribe_resolutions`, `market_record_resolution`, `market_calibration` |
+| scenarios | `scenario_from_markets_set` / `scenario_from_cmp_indices` (event-tree composition), `scenario_quantify`, `scenario_propagate` (Bayesian propagation), `scenario_cross_validate` (estimate cross-validation), `scenario_calibration` (forecast calibration curve), `contract_price_coherence` (Stage 5 cross-venue gate) |
 | companies | Equity legs: `expectations_gap`, `calibrate_forecast`; durable forecast records with Brier scoring: `forecast_persist` / `forecast_record`; `equity_duration` for horizon matching; `report_save` for durable run reports |
 | FRED / DBnomics / World Bank / web | Traditional-leg data via the observations path (`fred_get_series_info` currently returns empty metadata for several valid series IDs — degradation logged, warn-log fix pending); web reads for off-platform (a)-legs and published models |
 | lisp_eval / awk | Deterministic gate arithmetic and count checks. `lisp_eval` is fragile on large arrays (run 1: 2× max_steps at 500k on ~650-element arrays, 2× type errors; skill-use issue filed); awk for arrays over ~100 elements |
@@ -163,7 +180,7 @@ Followups filed (prediction-markets server): surface the reason a series-scoped 
 
 ## 8. Roadmap
 
-- **Run 2 — rate-path family (recommended next).** Policy-path prediction markets vs (a) fed funds futures-implied odds and (c) SEP/FEDTARMD medians. First family to exercise the full CMP ladder and a real (a)-leg. **Registered 2026-09-20**: `economics:KXFEDDECISION` in `prediction_markets.base_events` (user settings), live-verified — the registration gate passes and `market_cmp_indices` resolves family `policy_interest_rate` (55 contracts fetched). **Probe found two gaps.** (1) Strike extraction: the builder rejected all 55 decision-style contracts with surfaced reasons (`no extractable strike from 'Will the Federal Reserve Hike rates by 25bps…'`) — `extract_strike` parses level-space titles only ($X, X%, above/below/at); decision-delta contracts (H0/H25/H26/C25/C26) need a bp-change branch before the rate-path CMP ladder can run — landed (commit `728cdf85b7`); **run 2 executed 2026-09-20** (see §6 and report `cmp-gap-run2-ratepath`). New followups filed: the store-side curve is orientation-blind for decision families; `market_ladder` `time_to_maturity` is computed from market `updated_time` instead of now; the 1m/2m bucket-window gap leaves the nearest meeting (~38d) unpublished. (2) Context staleness: the curated default context for the rates family is Q3-2024 vintage (reference 5.375) — a live operator-accepted context is mandatory (DFF 3.88 as of 2026-09-17 after a +25bp move; FEDTARMD/SEP path 4.1 → 3.9 → 3.6). Filed followup: `market_cmp_context_suggest` classifies through the text classifier and cannot read a bare series ticker (family 'unknown', generic default for KXFEDDECISION) while `market_cmp_indices` uses the catalog classifier — the proposal side should classify through the same catalog path.
+- **Run 2 — rate-path family (executed 2026-09-20; monitoring signal).** Policy-path prediction markets vs (a) fed funds futures-implied odds and (c) SEP/FEDTARMD medians. First family to exercise the full CMP ladder and a real (a)-leg. **Registered 2026-09-20**: `economics:KXFEDDECISION` in `prediction_markets.base_events` (user settings), live-verified — the registration gate passes and `market_cmp_indices` resolves family `policy_interest_rate` (55 contracts fetched). **Probe found two gaps.** (1) Strike extraction: the builder rejected all 55 decision-style contracts with surfaced reasons (`no extractable strike from 'Will the Federal Reserve Hike rates by 25bps…'`) — `extract_strike` parses level-space titles only ($X, X%, above/below/at); decision-delta contracts (H0/H25/H26/C25/C26) need a bp-change branch before the rate-path CMP ladder can run — landed (commit `728cdf85b7`); **run 2 executed 2026-09-20** (see §6 and report `cmp-gap-run2-ratepath`). New followups filed: the store-side curve is orientation-blind for decision families; `market_ladder` `time_to_maturity` is computed from market `updated_time` instead of now; the 1m/2m bucket-window gap leaves the nearest meeting (~38d) unpublished. (2) Context staleness: the curated default context for the rates family is Q3-2024 vintage (reference 5.375) — a live operator-accepted context is mandatory (DFF 3.88 as of 2026-09-17 after a +25bp move; FEDTARMD/SEP path 4.1 → 3.9 → 3.6). Filed followup: `market_cmp_context_suggest` classifies through the text classifier and cannot read a bare series ticker (family 'unknown', generic default for KXFEDDECISION) while `market_cmp_indices` uses the catalog classifier — the proposal side should classify through the same catalog path.
 - **Run 3 — inflation family.** CPI-print markets vs T10YIE / 5y5y breakevens; the W1 (inflation risk premium) decomposition is the point of this run.
 - **Run 4 — currency family.** FX-level markets vs options-implied distributions.
 - **Equity leg — decided 2026-09-20 (operator: "please proceed").** Native-first: the companies-server path (`expectations_gap` / reverse-DCF / `calibrate_forecast`) as v1, exercising the native server with no external data dependency; external options-implied distributions as a later tier-(a) upgrade.

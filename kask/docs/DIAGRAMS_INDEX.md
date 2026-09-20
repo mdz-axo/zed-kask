@@ -2,7 +2,7 @@
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
 last_updated: 2026-09-19
-version: "2.2.0"
+version: "2.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -10,9 +10,9 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **103 active alignment records representing 103 unique IDs**: 34 records in the five consolidated diagram files and 69 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **105 active alignment records representing 105 unique IDs**: 34 records in the five consolidated diagram files and 71 inline records.
 
-The corpus contains 105 Mermaid blocks: 103 current-state blocks, each with one immediately adjacent alignment record; one explicitly conceptual future-state block in the operator-retained LogiSheets plan, exempt under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2 (the spreadsheet capability's implementation began 2026-09-18 — whether the plan block converts to a registered implementation diagram is an open operator decision); and one not-yet-registered block in `research/cmp-gap-methodology.md` (added by the operator on 2026-09-19, commit `ba61f23a5d`; registration is pending alongside the file's frontmatter).
+The corpus contains 105 Mermaid blocks, all current-state and each carrying one immediately adjacent alignment record. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter.
 
 ## Consolidated files
 
@@ -32,6 +32,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | DIAGRAM_ID | Location | Verified date | Status |
 | --- | --- | --- | --- |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
+| `DIAG-ARCH-SPREADSHEET-001` | [`plans/logisheets-spreadsheet-capability-plan.md`](./plans/logisheets-spreadsheet-capability-plan.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/how-to.md`](./diataxis/kask_bridge/how-to.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
@@ -94,6 +95,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-REG-007` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RES-CHUNK-001` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RES-CHUNK-002` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
+| `DIAG-RES-CMP-001` | [`research/cmp-gap-methodology.md`](./research/cmp-gap-methodology.md) | 2026-09-19 | VERIFIED |
 | `DIAG-RF-003` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-004` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-004A` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
@@ -135,7 +137,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 
-Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and eighteen at 2026-09-19. All 103 active records are `VERIFIED`.
+Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and twenty at 2026-09-19. All 105 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

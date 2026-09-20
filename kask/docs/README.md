@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-19
-version: "2.4.0"
+version: "2.4.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -65,14 +65,14 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 103 current `DIAGRAM_ALIGNMENT` records representing 103 unique IDs; 34 records are in the five consolidated files and 69 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 105 current `DIAGRAM_ALIGNMENT` records representing 105 unique IDs; 34 records are in the five consolidated files and 71 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
 | [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
 
-The operator-retained Proposed LogiSheets plan contains one explicitly conceptual future-state Mermaid block. Under [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3 and §4.2, it is not an implementation registry entry until implementation begins.
+The LogiSheets plan's future-state block converted to a registered implementation diagram (`DIAG-ARCH-SPREADSHEET-001`) when implementation began on 2026-09-18; `research/cmp-gap-methodology.md`'s Stage-7 routing block is registered (`DIAG-RES-CMP-001`) alongside the file's frontmatter (2026-09-19).
 
 ## Research
 
@@ -80,7 +80,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 | --- | --- |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
-| [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator; frontmatter and diagram registration pending. |
+| [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator. |
 
 ## Document lifecycle ledger
 
