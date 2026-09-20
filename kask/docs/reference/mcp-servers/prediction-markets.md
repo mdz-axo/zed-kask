@@ -125,6 +125,12 @@ feed the loop.
 |------|-------------|------------|
 | `market_history` | Fetch a market's price history with `realized_variance` populated (log-odds step variance) plus the volatility regime (smooth vs jump-like). Kalshi: candlesticks; Polymarket: CLOB prices-history. | `market`, `source`, `window_days` |
 
+### Microstructure
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `market_volatility` | DR-AS structural volatility forecast for a prediction-market contract (arXiv:2607.08199): conditional variance = p(1−p)/τ + K·ν(V)·s²/4, its deadline-resolution and adverse-selection decomposition, and a 95% prediction interval. All config fields optional with paper defaults — omitted `spread` contributes 0 to the adverse-selection channel, `k` defaults to 0.12 (conservative midpoint from the paper's pooled Kalshi panel), `activity_proxy` defaults to √V, `horizon_hours` to 1.0 (the paper's hourly grid). | `price`, `hours_to_resolution`, `spread`, `volume`, `horizon_hours`, `k`, `activity_proxy` |
+
 ### Economic data — FRED
 
 Five tools wrapping the FRED (Federal Reserve Economic Data) API, defined in
