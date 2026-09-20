@@ -679,18 +679,32 @@ pub fn construct_cmp_index_set(
             Orientation::Decline,
             Orientation::Stable,
         ] {
-            let orientation_constituents: Vec<Constituent> = in_window
+            // Pair each filtered constituent with its adapter-level index
+            // (the market_ids position). The solver indexes the
+            // per-orientation slice, so its returned market_index values are
+            // LOCAL slice positions — remapping them back to the adapter
+            // order is what makes the persisted portfolio's symbol
+            // provenance true (live-verified 2026-09-20: a local 0 was read
+            // as market_ids[0], labeling the Oct-28 H25 constituent as a
+            // January-2028 contract).
+            let orientation_constituents: Vec<(usize, Constituent)> = in_window
                 .iter()
                 .filter(|oc| oc.orientation == orientation)
-                .map(|oc| oc.constituent)
+                .map(|oc| (oc.market_index, oc.constituent))
                 .collect();
 
             if orientation_constituents.is_empty() {
                 continue; // no contracts for this orientation in this bucket
             }
 
+            let constituents: Vec<Constituent> =
+                orientation_constituents.iter().map(|(_, c)| *c).collect();
+
             // Solve the portfolio for this (bucket, orientation).
-            if let Some(portfolio) = solve_portfolio(&orientation_constituents, target, config) {
+            if let Some(mut portfolio) = solve_portfolio(&constituents, target, config) {
+                for wc in &mut portfolio.constituents {
+                    wc.market_index = orientation_constituents[wc.market_index].0;
+                }
                 indices.push(CmpIndex {
                     bucket: *bucket,
                     orientation,
@@ -846,5 +860,100 @@ mod tests {
         // window extent (15d).
         let portfolio = solve_portfolio(&[constituent(50.0)], 30, &CmpConfig::default());
         assert!(portfolio.is_none());
+    }
+
+    #[test]
+    fn published_constituents_carry_adapter_level_market_indices() {
+        // Live-verified 2026-09-20: the solver indexes the per-orientation
+        // slice, and its local indices were persisted as market_ids
+        // positions — the 1m:increase portfolio's Oct-28 H25 constituent
+        // (price 0.545, 38.5d) was labeled KXFEDDECISION-28JAN-H26
+        // (market_ids[0]). The adapter-level index must survive the
+        // per-orientation narrowing, through both the cohort path (1m) and
+        // the bracket path (3m).
+        let config = CmpConfig::default();
+        let oriented = [
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 38.5,
+                    probability: 0.545,
+                    quality: 1.0,
+                },
+                orientation: Orientation::Increase,
+                market_index: 51,
+            },
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 38.5,
+                    probability: 0.02,
+                    quality: 1.0,
+                },
+                orientation: Orientation::Increase,
+                market_index: 52,
+            },
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 38.5,
+                    probability: 0.01,
+                    quality: 1.0,
+                },
+                orientation: Orientation::Increase,
+                market_index: 53,
+            },
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 80.7,
+                    probability: 0.665,
+                    quality: 1.0,
+                },
+                orientation: Orientation::Increase,
+                market_index: 45,
+            },
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 80.7,
+                    probability: 0.60,
+                    quality: 0.5,
+                },
+                orientation: Orientation::Increase,
+                market_index: 46,
+            },
+            OrientedConstituent {
+                constituent: Constituent {
+                    days_to_expiration: 129.6,
+                    probability: 0.31,
+                    quality: 1.0,
+                },
+                orientation: Orientation::Increase,
+                market_index: 40,
+            },
+        ];
+        let set = construct_cmp_index_set(&oriented, &config);
+        let one_month: Vec<_> = set
+            .indices
+            .iter()
+            .filter(|i| i.bucket == MaturityBucket::OneMonth)
+            .collect();
+        assert_eq!(one_month.len(), 1);
+        let cohort_indices: Vec<usize> = one_month[0]
+            .portfolio
+            .constituents
+            .iter()
+            .map(|wc| wc.market_index)
+            .collect();
+        assert_eq!(cohort_indices, vec![51, 52, 53]);
+        let three_month: Vec<_> = set
+            .indices
+            .iter()
+            .filter(|i| i.bucket == MaturityBucket::ThreeMonth)
+            .collect();
+        assert_eq!(three_month.len(), 1);
+        let bracket_indices: Vec<usize> = three_month[0]
+            .portfolio
+            .constituents
+            .iter()
+            .map(|wc| wc.market_index)
+            .collect();
+        assert_eq!(bracket_indices, vec![45, 40]);
     }
 }
