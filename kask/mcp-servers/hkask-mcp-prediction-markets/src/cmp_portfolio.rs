@@ -101,10 +101,12 @@ pub struct CmpConfig {
     /// maturity error surfaced. If the nearest cohort is farther than this
     /// tolerance from the target, the index withholds.
     ///
-    /// The effective tolerance is `max(cohort_tolerance_days, window_half_width)`
-    /// — any contract in the eligibility window is publishable as a cohort.
-    /// This ensures the cohort fallback fires whenever there are eligible
-    /// contracts in the window, regardless of the bucket's target maturity.
+    /// The effective tolerance is `max(cohort_tolerance_days, window_extent)`,
+    /// where the window extent is the larger distance from the bucket target
+    /// to its window edges — any contract in the eligibility window is
+    /// publishable as a cohort. This ensures the cohort fallback fires
+    /// whenever there are eligible contracts in the window, regardless of
+    /// the bucket's target maturity.
     /// Set to 0 to disable the fallback (bracket-only publication, the
     /// pre-C0.5 behavior).
     pub cohort_tolerance_days: f64,
@@ -476,9 +478,10 @@ pub fn solve_portfolio(
 /// tells downstream consumers the index has wider uncertainty than a bracket-
 /// interpolated index.
 ///
-/// Returns `None` when the nearest cohort is farther than
-/// `cohort_tolerance_days` from the target, or when `cohort_tolerance_days` is
-/// 0 (fallback disabled). Never fabricates a probability.
+/// Returns `None` when the nearest cohort is farther than the effective
+/// tolerance (`max(cohort_tolerance_days, window extent from the target)`)
+/// from the target, or when `cohort_tolerance_days` is 0 (fallback
+/// disabled). Never fabricates a probability.
 fn solve_portfolio_cohort(
     constituents: &[Constituent],
     target_days: u32,
@@ -488,12 +491,28 @@ fn solve_portfolio_cohort(
         return None; // fallback disabled, or no constituents
     }
     let target = f64::from(target_days);
-    // The effective cohort tolerance is max(cohort_tolerance_days, window_half_width)
-    // — any contract in the eligibility window is publishable as a cohort.
-    let window_half = config
-        .maturity_window_abs_days
-        .max(config.maturity_window_rel * target);
-    let effective_tolerance = config.cohort_tolerance_days.max(window_half);
+    // The effective cohort tolerance is max(cohort_tolerance_days, window
+    // extent) — any contract in the eligibility window is publishable as a
+    // cohort. The contiguous windows (§8 fix) are asymmetric around the
+    // target (1m is [22.5, 45] around 30, so the far edge is 15d out); the
+    // former symmetric ±max(abs, rel) padding predates the contiguous-window
+    // fix and under-covered the far half — an in-window cohort at 38.5d (the
+    // Oct-28 meeting) was withheld at 7.5d tolerance: priced, counted for
+    // bucket availability, silently unpublished. Non-grid targets (none
+    // today) keep the symmetric fallback.
+    let window_extent = MaturityBucket::ALL
+        .iter()
+        .find(|b| b.target_days() == target_days)
+        .map(|b| {
+            let (lo, hi) = maturity_window(*b, config);
+            (target - lo).max(hi - target)
+        })
+        .unwrap_or_else(|| {
+            config
+                .maturity_window_abs_days
+                .max(config.maturity_window_rel * target)
+        });
+    let effective_tolerance = config.cohort_tolerance_days.max(window_extent);
     // Group constituents into cohorts by maturity (within 1 day of each other).
     // A cohort is a set of contracts at the same maturity — their mean
     // probability is the cohort value, their combined quality is the tie-break.
@@ -775,5 +794,57 @@ mod tests {
             &CmpConfig::default(),
         );
         assert_eq!(available, vec![MaturityBucket::OneMonth]);
+    }
+
+    #[test]
+    fn in_window_cohort_publishes_beyond_the_symmetric_padding() {
+        // Live-verified on 2026-09-20 (run-2 followup verification): the
+        // Oct-28 trio at 38.5d formed the 1m bucket (availability) but the
+        // cohort solver's symmetric ±max(abs, rel) tolerance (7.5d)
+        // withheld every 1m index — the bucket published nothing, silently.
+        // The tolerance is the window's extent from the target (15d to the
+        // 45d edge), so any in-window cohort publishes as BucketedSparse with
+        // its maturity error surfaced.
+        let config = CmpConfig::default();
+        let trio = [
+            OrientedConstituent {
+                constituent: constituent(38.5),
+                orientation: Orientation::Increase,
+                market_index: 0,
+            },
+            OrientedConstituent {
+                constituent: constituent(38.5),
+                orientation: Orientation::Stable,
+                market_index: 1,
+            },
+            OrientedConstituent {
+                constituent: constituent(38.5),
+                orientation: Orientation::Decline,
+                market_index: 2,
+            },
+        ];
+        let set = construct_cmp_index_set(&trio, &config);
+        assert!(set.available_buckets.contains(&MaturityBucket::OneMonth));
+        let one_month: Vec<_> = set
+            .indices
+            .iter()
+            .filter(|i| i.bucket == MaturityBucket::OneMonth)
+            .collect();
+        assert_eq!(one_month.len(), 3, "one published index per orientation");
+        for index in &one_month {
+            assert!(matches!(index.portfolio.method, CmpMethod::BucketedSparse));
+            assert_eq!(index.portfolio.weighted_maturity_days, 38.5);
+            assert!((index.portfolio.maturity_error_days - 8.5).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn cohort_beyond_window_extent_still_withholds() {
+        // 50d is outside the 1m window [22.5, 45]; construct_cmp_index_set
+        // never routes it there (in-window filter first), but solve_portfolio
+        // itself must not publish a cohort whose error (20d) exceeds the
+        // window extent (15d).
+        let portfolio = solve_portfolio(&[constituent(50.0)], 30, &CmpConfig::default());
+        assert!(portfolio.is_none());
     }
 }
