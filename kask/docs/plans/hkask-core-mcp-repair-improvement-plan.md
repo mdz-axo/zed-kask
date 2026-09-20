@@ -1,8 +1,8 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-18
-version: "0.2.1"
+last_updated: 2026-09-19
+version: "0.2.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -250,7 +250,8 @@ SQLite forwarding methods and two bridge test-driver forwards. Existing
 test `atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen`
 checks deferred COMMIT failure, rollback, subsequent reuse and file reopen with
 two pooled connections. Storage/bridge tests and scoped clippy passed; detailed
-evidence is in the Gödel gap-closure plan's R6 storage entry. R3/H1 and broader
+evidence is in the R6 storage entry of the removed Gödel gap-closure plan (git
+history; the deletion itself is committed in `74df6916b7`). R3/H1 and broader
 P3 recovery are not closed by this deletion. The following evidence is the
 **historical pre-deletion finding**, not a claim these APIs still exist.
 
@@ -509,12 +510,12 @@ At save time all packages were **not started**. The following execution record s
 | --- | --- | --- |
 | P0 revalidation | Baseline established | All finding dispositions below; source-only for unrepaired items |
 | P1a host task authority | Implemented tool-ceiling/admission slice; integration verification below | Operator chose auto-run with inherited restrictions. Native ceilings persist; IPC requires explicit host grant; queued disconnect/revocation deny. General per-invocation MCP identity remains P2; native kanban spawning is denied rather than borrowing a server grant |
-| P1b interruption | Partial; two of three cancellation gaps closed, behaviorally tested | F2: `KaskServerTool::run` and `ContextServerTool::run_inner`'s reconnect-wait loops now select on `event_stream.cancelled_by_user()`, closing the specific case where `Thread::cancel()` could block indefinitely on a managed MCP call that never replies. A new `McpRuntime::dispatch` execution deadline (`DEFAULT_CALL_TIMEOUT`, `HKASK_MCP_CALL_TIMEOUT_SECS`) reports `DispatchError::Interrupted`, never a proven failure, on timeout — config-plumbing pinned, but the actual timeout-firing-against-a-stuck-peer behavior is NOT executed here; it needs either the fixture-gated reconnect suite (permission-gated) or an in-process duplex-transport test (follow-up, not built this session). `ContextServerTool`'s existing request-level cancellation (already present pre-session at the two `cancelled_by_user()` sites guarding the tool call itself) was reviewed, not modified. |
+| P1b interruption | Partial; two of three cancellation gaps closed, behaviorally tested — the third (deadline firing against a stuck peer) was subsequently closed and pinned by the independent Gödel stream | F2: `KaskServerTool::run` and `ContextServerTool::run_inner`'s reconnect-wait loops now select on `event_stream.cancelled_by_user()`, closing the specific case where `Thread::cancel()` could block indefinitely on a managed MCP call that never replies. A new `McpRuntime::dispatch` execution deadline (`DEFAULT_CALL_TIMEOUT`, `HKASK_MCP_CALL_TIMEOUT_SECS`) reports `DispatchError::Interrupted`, never a proven failure, on timeout — config-plumbing pinned, but the actual timeout-firing-against-a-stuck-peer behavior is NOT executed here; it needs either the fixture-gated reconnect suite (permission-gated) or an in-process duplex-transport test (follow-up, not built this session). `ContextServerTool`'s existing request-level cancellation (already present pre-session at the two `cancelled_by_user()` sites guarding the tool call itself) was reviewed, not modified. Update 2026-09-19: the independent Gödel stream repaired the off-runtime dispatch panic (a `tokio_util::context::TokioContext` adapter in `McpRuntime::dispatch`) and executed the full feature-gated reconnect suite — 16 passed, including `off_runtime_deadline_and_drop_do_not_replay_effects` (`kask/crates/hkask-mcp/tests/reconnect_integration.rs`); the deadline/no-replay behavior is now pinned at the process boundary. |
 | P1c training input | Repaired; focused verification passed | F3; changes observed in externally created commits `e21e3e5d2d` and `8a1bd7877b`; six fresh regression tests passed |
 | P1d filesystem/gallery policy | Partial; F4 narrowed, not closed | F5 repaired and lifecycle suite passed (prior session). F4: `corpus_cache_work` (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs`) validated only `cache_dir`, then joined and wrote through an unvalidated leaf — an existing symlink at the exact `{slug}.txt` leaf redirected the write outside the cache dir with no rejection. Fixed by re-running `contain_for_write` on the full joined leaf path, closing the "existing symlink leaf" case (verified: RED on the original code, GREEN on the fix, both times against a target genuinely outside all three allowed roots). The live TOCTOU race — a symlink planted in the gap between this check and the later `std::fs::write` — remains open; closing it needs a symlink-resistant atomic open (`O_NOFOLLOW`) shared across corpus/gallery call sites, which is a larger, cross-platform primitive deliberately not built under this session's time/lock pressure. Another actor's concurrent, unrelated edits to `hkask-mcp-corpus`'s OCR modules (`ocr/llm_ocr.rs`, `services/convert.rs`, `tools/document_tests.rs`) were observed causing 9 failing tests in that crate's full `--lib` run during this review; those failures are outside this session's F2/F4/P1a scope and were not touched. |
 | P2 invocation/outcome contract | Open; not repaired | F6, F7, R4 upheld; no replacement invocation contract yet |
 | P3 persistence/recovery | Partial; R2 facade removed (uncommitted) | R2: unused connectionless transaction API deleted, connection-owned commit-failure/reopen test passes. R3/H1 recovery remains open; R1 decision-gated. |
-| P4 packaging/CI/docs | Partial | F8 inventory/install checks repaired; reconnect suite wired but NOT executed. O1 partially repaired concurrently; remaining drift below |
+| P4 packaging/CI/docs | Partial — F8 repaired, fixture suite now executed; O1 closed | F8 inventory/install checks repaired (commit `429812b116`); the reconnect fixture suite was subsequently executed by the independent Gödel stream (16 passed; see P1b update). O1 docs drift closed 2026-09-19 by the kask/docs realignment |
 | P5 optional simplification/formalization | Deferred | O2; only after behavior is pinned |
 
 For each completed package record: current-source finding disposition; exact changed files; old paths deleted; test command and counts; failures/limitations; functional outcome; and commit hash if committed, otherwise explicitly “uncommitted.” Do not commit automatically or include another actor's staged work.
@@ -544,7 +545,7 @@ Source citations below are relative to `/home/mdz-axolotl/Clones/zed-kask/`; the
 | R3 | Upheld design risk: `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,193–229` separates revision publication and direct receipt writes. No fault injection or power-loss guarantee established. |
 | R4 | Upheld: `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:428–460` still accepts caller confirmation assertions, not host approval receipts. |
 | H1 | Source-supported, dynamic test still outstanding: cached return at `kask/crates/hkask-spreadsheet/src/service.rs:502–525` precedes digest comparison; public `open` returns the supplied reference. Fresh apply independently verifies its base. |
-| O1 | Partially repaired by other actors: AGENTS/server-reference counts and missing reference improved. Remaining stale claims include launcher wording in `AGENTS.md:41` and `kask/docs/README.md:13`, plus 18/11 counts in `kask/docs/architecture/zed-host-architecture-plan.md:43`. The advertised `docs/ci/verify-docs.sh` is absent at both root and `kask/` locations. |
+| O1 | Closed 2026-09-19: the kask/docs realignment re-verified counts, citations, and links across the corpus (12 servers, 19 crates, D1–D69), and the `AGENTS.md` server inventory is current (12 servers, registry-authoritative pointer, no per-tool-contracts-doc reference). No stale-count claims remain in the named locations. |
 | O2 | Deferred guidance, not a defect: preserve the spreadsheet actor and typed delivery outcomes; no fleet-wide service extraction undertaken. |
 
 ### P1c / F3 — caller data is no longer shell source

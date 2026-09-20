@@ -10,20 +10,20 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **102 active alignment records representing 102 unique IDs**: 33 records in the five consolidated diagram files and 69 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **103 active alignment records representing 103 unique IDs**: 34 records in the five consolidated diagram files and 69 inline records.
 
-The corpus contains 104 Mermaid blocks: 102 current-state blocks, each with one immediately adjacent alignment record; one explicitly conceptual future-state block in the operator-retained LogiSheets plan, exempt under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2 (the spreadsheet capability's implementation began 2026-09-18 — whether the plan block converts to a registered implementation diagram is an open operator decision); and one not-yet-registered block in `research/cmp-gap-methodology.md` (added by the operator on 2026-09-19, commit `ba61f23a5d`; registration is pending alongside the file's frontmatter).
+The corpus contains 105 Mermaid blocks: 103 current-state blocks, each with one immediately adjacent alignment record; one explicitly conceptual future-state block in the operator-retained LogiSheets plan, exempt under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2 (the spreadsheet capability's implementation began 2026-09-18 — whether the plan block converts to a registered implementation diagram is an open operator decision); and one not-yet-registered block in `research/cmp-gap-methodology.md` (added by the operator on 2026-09-19, commit `ba61f23a5d`; registration is pending alongside the file's frontmatter).
 
 ## Consolidated files
 
 | File | Alignment records |
 | --- | ---: |
 | [`diagrams/architecture.md`](./diagrams/architecture.md) | 13 |
-| [`diagrams/kanban.md`](./diagrams/kanban.md) | 2 |
+| [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 4 |
 | [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
 | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 8 |
-| **Total** | **33** |
+| **Total** | **34** |
 
 ## Current metadata registry
 
@@ -104,6 +104,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RF-SWARM-001` | [`reference/mcp-servers/swarm.md`](./reference/mcp-servers/swarm.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SEQ-MCP-TOOL-CALL-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SKILL-CFR` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STATE-GOAL-LIFECYCLE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-19 | VERIFIED |
 | `DIAG-STATE-KANBAN-MOVE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-08-28 | VERIFIED |
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-19 | VERIFIED |
@@ -134,7 +135,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 
-Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and seventeen at 2026-09-19. All 102 active records are `VERIFIED`.
+Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and eighteen at 2026-09-19. All 103 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

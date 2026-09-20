@@ -254,13 +254,9 @@ three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-com
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 19 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
 - [Swarm MCP Server Reference](swarm.md) — 87 registered tools (48 cloud + 39 non-cloud), dual mode, swarm-intelligence skill ecosystem, consent-gated cloud spend
-- [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets + companies layer over `hkask-forecast` (folded from the deleted explanation page)
+- [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets + companies layer over `hkask-forecast`
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
-- Companies MCP Code Review — adversarial code review of the companies server
-- Companies Semantic Graph Audit — internal module dependency graph health
-- Scenarios Adversarial Review — code smell inventory for the scenarios server
-- Research MCP Adversarial Review — code smell inventory for the research server
-- Research MCP Adversarial Review (Follow-Up 2026-07-20) — 11 new findings: dead CapabilityContext, edit_tags feed-relabeling bug, missing transactions, stored SSRF, stub health checks; 7 follow-up items including panic-safe transactions, permissive SSRF for RSS, and circuit-breaker ADR
+- The point-in-time adversarial reviews of the companies, scenarios, and research servers (2026-07) are archived in git history; they are not current-state references.
 
 ## Kata-Kanban Server Architecture (DIAG-IC-017)
 

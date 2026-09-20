@@ -1,8 +1,8 @@
 ---
-title: "Kanban Diagrams — Task Status Lifecycle, Move Controller"
+title: "Kanban Diagrams — Task Status Lifecycle, Move Controller, Goal Lifecycle"
 audience: [architects, developers]
-last_updated: 2026-08-28
-version: "1.0.0"
+last_updated: 2026-09-19
+version: "1.1.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [lifecycle, composition]
@@ -12,8 +12,10 @@ mds_categories: [lifecycle, composition]
 
 Consolidated state diagrams for the kanban system: the task-status wire
 lifecycle shared by the `hkask-mcp-kata-kanban` MCP server and the
-`hkask-kanban-widget` GPUI view, and the widget's move-dispatch state
-machine. Unique `DIAGRAM_ALIGNMENT` IDs are preserved from the originals.
+`hkask-kanban-widget` GPUI view, the widget's move-dispatch state
+machine, and the functional-goal lifecycle — the platform's core
+improvement loop. Unique `DIAGRAM_ALIGNMENT` IDs are preserved from the
+originals.
 
 ## Task Status Lifecycle
 
@@ -94,6 +96,45 @@ stateDiagram-v2
 id: DIAG-STATE-KANBAN-MOVE
 verified_date: 2026-08-28
 verified_against: crates/hkask-kanban-widget/src/move_controller.rs (dispatch_in_flight L61, optimistic_move L65, dispatch_error L69, pending_move L73, accessors L96-121); crates/hkask-kanban-widget/src/view.rs (render_dispatch_status L260, evaluate_move L974)
+status: VERIFIED
+-->
+
+## Goal Lifecycle
+
+The functional goal (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:20`)
+is the kata target condition as a first-class object: 1–4 observable criteria, an
+optional intake prediction, a verdict history, and a scored resolution. Goals persist
+as RDF h_mems in the same DB-backed `HMemStore` as boards and tasks
+(`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:1-23`).
+
+The lifecycle is a persistent-until-acknowledged outbox. `kanban_goal_score` records
+the resolution but **retains** the row across restarts; only `kanban_goal_memory_acknowledge`
+— after the production turn-ingestion path confirms the scored outcome is stored in
+curator memory — prunes it. Failed ingestion or acknowledgment leaves the row retryable.
+Scoring is idempotent for the same outcome and rejects a conflicting outcome
+(`goals.rs:255-267`). A judge verdict must judge every criterion exactly once; the
+verdict history is the learning record (`goals.rs:176-236`). The Brier score applies
+the intake prediction to the realized outcome; no prediction stays `None` — a
+synthetic 0 would read as perfect calibration (`GoalResolution`,
+`types/goal.rs:163-175`).
+
+```mermaid
+stateDiagram-v2
+    direction TD
+    [*] --> Open : goal_create (1-4 criteria, optional prediction)
+    Open --> Open : goal_judge (verdict appended, every criterion judged)
+    Open --> Resolved : goal_score (operator ground truth)
+    Open --> Open : goal_list (retained until resolution)
+    Resolved --> Resolved : re-score same outcome (idempotent retry)
+    Resolved --> Resolved : conflicting outcome rejected
+    Resolved --> Pruned : goal_acknowledge_memory (curator memory confirmed)
+    Pruned --> [*] : outbox row pruned
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-STATE-GOAL-LIFECYCLE
+verified_date: 2026-09-19
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L45, goal_get L127, goal_judge L176-236, goal_score L249-300, goal_acknowledge_memory L305, goal_persist L349, goal_prune L366); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L145, GoalResolution L163)
 status: VERIFIED
 -->
 

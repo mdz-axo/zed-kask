@@ -39,12 +39,12 @@ convergence-check phase consumes
 The production G-M1–G-M4 conditions and severities are computed by `math_decisions`
 in `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:38–78`.
 Five Kani 0.68.0 harnesses verified that allocation-free core over symbolic integer/
-enum inputs in the 2026-09-18 R2 cycle (records preserved in the gap-closure plan's
-§9 execution record); the harness set and its runner were removed 2026-09-19
+enum inputs in the 2026-09-18 R2 cycle; the harness set and its runner were removed 2026-09-19
 (commit `5b4799bcad`). Formatting, allocation, serialization and provider behavior are
 outside those proofs. A public `training_validate_config` characterization test
 pins complete output across 1,944 boundary/enum configurations. Local proof
-results are source-hash-bound in the gap-closure plan's §9 execution record;
+results are source-hash-bound in the preserved execution record (git history;
+the carrying plan was consolidated out 2026-09-19 — see the README lifecycle ledger);
 they do not prove training quality or establish a continuous promotion gate.
 
 ## Method Catalog

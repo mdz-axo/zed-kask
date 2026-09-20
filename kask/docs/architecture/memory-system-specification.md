@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-16
-version: "5.1.0"
+last_updated: 2026-09-19
+version: "5.1.1"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -770,7 +770,7 @@ model for a memory that degrades with disuse.
 
 ## 8. Design rationale
 
-The "why" behind the design, folded from the former explanation doc.
+The "why" behind the design.
 
 ### Vector + relational, linked by string key
 

@@ -185,9 +185,10 @@ inconsistent reports; missing evidence cannot mean recovery. Its self-test runs
 a real faulty Rust fixture, observes a corrective disposition, corrects the
 implementation under an unchanged contract/oracle, and remeasures. It also
 accepts an equivalent implementation. This demonstrates the local workflow,
-not measured improvement in the production product. See the existing
-[bounded improvement lifecycle](../plans/goedel-gap-closure-plan.md#r6--one-bounded-promotion-lifecycle)
-for authority, activation, and recovery work that remains distinct from testing.
+not measured improvement in the production product. See the
+[core and MCP repair plan](../plans/hkask-core-mcp-repair-improvement-plan.md)
+— P2 (invocation/outcome contract) and P3 (persistence and recovery) —
+for the authority, activation, and recovery work that remains distinct from testing.
 
 ### Running the local evidence boundary
 
@@ -271,4 +272,4 @@ check, not a claim of an independent before/after oracle.
 [^pyramid]: Ham Vocke, "The Practical Test Pyramid", 2020, https://martinfowler.com/articles/practical-test-pyramid.html — layered testing.
 [^quickcheck]: Koen Claessen and John Hughes, "QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs", ICFP 2000, https://doi.org/10.1145/351240.351266 — property-based testing with shrinking.
 [^kani]: Kani contributors, "Kani Rust Verifier", https://github.com/model-checking/kani — bounded model checking.
-[^goedel]: Gödel-machine gap closure plan, `kask/docs/plans/goedel-gap-closure-plan.md` §R2 — the allocation-surface cost record and pinned proof budgets.
+[^goedel]: the 2026-09-18 bounded-proof R2 cycle (plan removed 2026-09-19; git history) — allocation/formatting harnesses exhausted the pinned 2 GiB budget while the extracted pure decision core verified within it.

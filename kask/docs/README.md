@@ -16,14 +16,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 70 files under `kask/docs/` on 2026-09-19 (measured with `find kask/docs -type f`) — one over the fewer-than-70 cap. The operator-added `research/cmp-gap-methodology.md` (commit `ba61f23a5d`, 2026-09-19) landed concurrently with this realignment; its disposition (fold, cap amendment, or acceptance) is the operator's call.
+**Corpus size:** 69 files under `kask/docs/` on 2026-09-19 (measured with `find kask/docs -type f`), within the fewer-than-70 cap: the completed Gödel plan was consolidated out (see lifecycle ledger), offsetting the operator-added `research/cmp-gap-methodology.md`.
 
 ## Repair and improvement plans
 
 | Document | Status and purpose |
 | --- | --- |
 | [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Active, operator-authorized repair plan; no backward-compatibility requirements. §9 separates verified training/gallery/packaging slices from unfinished authority, cancellation, containment, attribution and recovery work. |
-| [`Gödel-machine gap closure plan`](plans/goedel-gap-closure-plan.md) | Active roadmap: finish existing process/Kani work, repair evaluation, demonstrate a real cycle, then enforce one bounded promotion lifecycle and test formal-checking value. Separates recorded work from runtime/CI enforcement and proof results; §8 provides a copy-ready agent continuation. Strict Gödel-machine proof search stays out of scope. |
 
 ## Architecture
 
@@ -66,9 +65,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 102 current `DIAGRAM_ALIGNMENT` records representing 102 unique IDs; 33 records are in the five consolidated files and 69 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 103 current `DIAGRAM_ALIGNMENT` records representing 103 unique IDs; 34 records are in the five consolidated files and 69 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
-| [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines. |
+| [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
 | [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
@@ -85,7 +84,7 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 70 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 69 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 
@@ -138,6 +137,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 | Deleted artifact | Named successor |
 | --- | --- |
 | `reports/bug-hunt-report.json` | The bug-hunt skill's trace-filesystem expedition report (`.agents/skills/bug-hunt/SKILL.md:86` writes reports to the run trace dir); git history (added `ed9be534cc`, updated `8c92966ca6`, converged `be80e66916`) remains the durable archive of the 2026-09-18/19 expeditions. The docs-tree copy violated the `DOCUMENTATION_STANDARDS.md` §6.2 location policy (no `reports/` class) and pushed the tree to the 70-file cap. |
+| `plans/goedel-gap-closure-plan.md` | Completed plan consolidated out: R1 (evaluation correctness), R2 (bounded proofs — predicate core verified, harness set removed `5b4799bcad`), R3 (Rust inventory checker), R4 (advisory goal-traceability), and the R5 approved acceptance cycle are delivered in code and tests; the acceptance protocol and Kani budget conventions live in [`reference/testing-protocol.md`](reference/testing-protocol.md); the remaining authority, activation, and recovery work is carried by [`plans/hkask-core-mcp-repair-improvement-plan.md`](plans/hkask-core-mcp-repair-improvement-plan.md) (P2/P3); the full plan and execution record remain in git history. |
 
 ### Verification gate
 
