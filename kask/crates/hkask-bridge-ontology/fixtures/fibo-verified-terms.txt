@@ -5,6 +5,9 @@
 #   Repository: https://github.com/EDMCouncil/FIBO (master branch)
 # Fetched: 2026-08-29 (full master tarball; every term below mechanically
 #   confirmed as defined in the listed module's RDF file).
+# Re-verified: 2026-09-20 (master tarball via codeload HEAD; TermStructure
+#   and InterestRate added — IND/Indicators/Indicators.rdf L230,
+#   FND/Accounting/CurrencyAmount.rdf L258).
 #
 # Prefix bindings (module namespaces under
 #   https://spec.edmcouncil.org/fibo/ontology/):
@@ -13,6 +16,8 @@
 #   fibo-sec-sec-ast: SEC/Securities/SecurityAssets/
 #   fibo-ind-mkt-bas: IND/MarketIndices/BasketIndices/
 #   fibo-ind-ir-ir:   IND/InterestRates/InterestRates/
+#   fibo-ind-ind-ind: IND/Indicators/Indicators/
+#   fibo-fnd-acc-cur: FND/Accounting/CurrencyAmount/
 #   fibo-ind-ei-ei:   IND/EconomicIndicators/EconomicIndicators/
 #   fibo-fbc-fi-ip:   FBC/FinancialInstruments/InstrumentPricing/
 #
@@ -36,3 +41,5 @@ fibo-ind-ei-ei:EconomicIndicator	IND/EconomicIndicators/EconomicIndicators.rdf
 fibo-ind-mkt-bas:ReferenceIndex	IND/MarketIndices/BasketIndices.rdf
 fibo-ind-ir-ir:ReferenceInterestRate	IND/InterestRates/InterestRates.rdf
 fibo-ind-ir-ir:InterestRateBenchmark	IND/InterestRates/InterestRates.rdf
+fibo-ind-ind-ind:TermStructure	IND/Indicators/Indicators.rdf
+fibo-fnd-acc-cur:InterestRate	FND/Accounting/CurrencyAmount.rdf

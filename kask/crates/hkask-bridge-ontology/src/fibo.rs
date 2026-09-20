@@ -96,6 +96,18 @@ fibo_terms! {
     /// specific maturity (e.g. Treasury yields).
     /// FIBO: IND/InterestRates.
     INTEREST_RATE_BENCHMARK = "fibo-ind-ir-ir:InterestRateBenchmark",
+
+    /// A term structure — a structured collection of rates or bond yields
+    /// with different terms to maturity from which a yield curve may be
+    /// constructed (FIBO's published definition, IND/Indicators L230,
+    /// mechanically verified 2026-09-20, FIBO master).
+    TERM_STRUCTURE = "fibo-ind-ind-ind:TermStructure",
+
+    /// An interest rate — the amount charged, expressed as a percentage of
+    /// principal, in exchange for the use of assets (FIBO's published
+    /// definition, FND/Accounting/CurrencyAmount L258, mechanically verified
+    /// 2026-09-20, FIBO master).
+    INTEREST_RATE = "fibo-fnd-acc-cur:InterestRate",
 }
 
 #[cfg(test)]

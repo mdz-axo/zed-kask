@@ -215,17 +215,6 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["self-improvement", "proof"],
         authority: "operator ruling 2026-09-18; Schmidhuber, Gödel machine: self-referential universal problem solvers (2003, 2006)",
     },
-    // Stopgap at the derived rung (operator ruling 2026-09-19, remedy path
-    // c): delete when the FIBO fixture refresh pins TermStructure — the
-    // published standard belongs at the domain-supplement rung.
-    DerivedConcept {
-        term: "term_structure",
-        aliases: &["cmp term structure", "probability term structure"],
-        identity: "one underlying's rates or contract prices indexed by time to maturity, from which a curve is constructed",
-        definition: "A structured collection of rates or prices with different terms to maturity such that a curve may be constructed for the structure (FIBO's published sense, revised in FIBO 2.0 to support yield curves). The prediction-market analog: one base event priced across a ladder of dated contracts, interpolated in log-odds space — probability as a function of horizon, not a single number. A single dated contract is not a term structure; the maturity ladder is the concept.",
-        constituents: &["rate", "maturity"],
-        authority: "FIBO IND/Indicators TermStructure (https://spec.edmcouncil.org/fibo/ontology/IND/Indicators/Indicators); operator ruling 2026-09-19",
-    },
     DerivedConcept {
         term: "risk_premium",
         aliases: &["risk premia", "equity risk premium"],
@@ -309,9 +298,6 @@ mod tests {
             "cybernetic feedback loop",
             "bounded model checking",
             "godel machine",
-            "term structure",
-            "term-structure",
-            "cmp term structure",
             "risk premium",
             "risk premia",
             "equity risk premium",
@@ -323,21 +309,6 @@ mod tests {
                 "{term} must resolve — nothing is undefined"
             );
         }
-    }
-
-    /// expect: [P5] The ratified 2026-09-19 finance rulings resolve with
-    /// identity and authority — the gap-program terms never a void.
-    #[test]
-    fn term_structure_resolves_with_identity_and_authority() {
-        let concept = resolve_derived("term structure").expect("term structure is defined");
-        assert_eq!(concept.term, "term_structure");
-        assert!(
-            concept.definition.contains("maturity ladder"),
-            "the definition carries the load-bearing semantics: {}",
-            concept.definition
-        );
-        assert!(concept.authority.contains("2026-09-19"));
-        assert!(concept.authority.contains("FIBO"));
     }
 
     #[test]

@@ -217,8 +217,23 @@ mod tests {
             ("Provenance", "domain_supplement", "OMC", "omc:Provenance"),
             ("State", "domain_supplement", "OMC", "omc:State"),
             ("net margin", "derived", "derived", "net_margin"),
+            (
+                "term structure",
+                "domain_supplement",
+                "FIBO",
+                "fibo-ind-ind-ind:TermStructure",
+            ),
+            (
+                "interest rate",
+                "domain_supplement",
+                "FIBO",
+                "fibo-fnd-acc-cur:InterestRate",
+            ),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),
+            // Accepted alias loss (stopgap retired 2026-09-20): the derived
+            // aliases died with the entry; core ground, never a false FIBO pin.
+            ("cmp term structure", "core", "core", "5w1h_core"),
         ] {
             let resolved = resolve_term(term);
             assert_eq!(resolved.tier, tier, "{term}: {resolved:?}");
