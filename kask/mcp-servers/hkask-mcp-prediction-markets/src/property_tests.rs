@@ -29,7 +29,6 @@ use crate::provider_kalshi::candlesticks_to_points;
 use crate::provider_kalshi::snapshot_open_markets;
 use crate::provider_polymarket::GammaMarket;
 use crate::provider_polymarket::resolved_observations_from_snapshots;
-use crate::types::canonical_bucket;
 
 // ── Fixtures (T0-verified shapes pinned by the parser structs) ──────────────
 

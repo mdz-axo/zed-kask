@@ -133,7 +133,7 @@ pub fn calibration_bucket_for_kalshi(event_ticker: &str, title: &str) -> String 
         .next()
         .unwrap_or(event_ticker)
         .to_lowercase();
-    crate::types::canonical_bucket(series_prefix)
+    crate::types::canonical_bucket(&series_prefix)
 }
 
 /// The calibration bucket a Polymarket Gamma market's snapshot accrues

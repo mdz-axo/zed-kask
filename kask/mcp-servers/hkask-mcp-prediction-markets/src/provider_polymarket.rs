@@ -460,7 +460,13 @@ mod calibration_scan_tests {
         // Every market seen gets a disposition; a silent zero is unattributable.
         let mut store = CalibrationStore::new();
         let markets = vec![
-            gamma("pm-3", "will-z-happen", "[\"0.60\", \"0.40\"]", false, false),
+            gamma(
+                "pm-3",
+                "will-z-happen",
+                "[\"0.60\", \"0.40\"]",
+                false,
+                false,
+            ),
             gamma("pm-4", "already-closed", "[\"1\", \"0\"]", true, true),
             gamma("pm-5", "no-price", "not-json", false, false),
         ];
@@ -476,13 +482,7 @@ mod calibration_scan_tests {
         // A rates question accrues under the family bucket readers query —
         // not the per-market slug key.
         let mut store = CalibrationStore::new();
-        let mut fed = gamma(
-            "pm-6",
-            "fed-decision",
-            "[\"0.55\", \"0.45\"]",
-            false,
-            false,
-        );
+        let mut fed = gamma("pm-6", "fed-decision", "[\"0.55\", \"0.45\"]", false, false);
         fed.question = "Will the Fed raise rates at the next FOMC meeting?".to_string();
         let outcome = snapshot_open_markets(&[fed], &mut store);
         assert_eq!(outcome.new.len(), 1);
@@ -495,8 +495,11 @@ mod calibration_scan_tests {
     #[test]
     fn clob_token_ids_decode_from_the_json_string_field() {
         let mut market = gamma("pm-7", "clob-test", "[]", false, false);
-        market.clob_token_ids = "[\"111", "222\"]".to_string();
-        assert_eq!(market.clob_token_ids(), vec!["111".to_string(), "222".to_string()]);
+        market.clob_token_ids = "[\"111\", \"222\"]".to_string();
+        assert_eq!(
+            market.clob_token_ids(),
+            vec!["111".to_string(), "222".to_string()]
+        );
         // Unparsable field decodes empty — never fabricated.
         let mut broken = gamma("pm-8", "clob-broken", "[]", false, false);
         broken.clob_token_ids = "not-json".to_string();
