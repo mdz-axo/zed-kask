@@ -1,8 +1,8 @@
 ---
 title: "The lisp_eval Dialect"
 audience: [agents, developers]
-last_updated: 2026-09-16
-version: "0.40.0"
+last_updated: 2026-09-19
+version: "0.40.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -33,7 +33,7 @@ Pass prior structured output through `env`, then read object members with `assoc
 
 ## Interpreter surface
 
-The built-in registry is installed by `standard_env` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:782-858`). Important dialect rules:
+The built-in registry is installed by `default_builtins` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:796-858`). Important dialect rules:
 
 - Boolean literals are `true`, `false`, and `nil`; `t` is also truthy and is suitable as the final `cond` clause.
 - `=` is numeric equality. Use `string=` for string-only equality and `eq` for structural equality (`kask/crates/hkask-lisp/src/hkask_lisp.rs:824-850`, `kask/crates/hkask-lisp/src/hkask_lisp.rs:1306-1321`).

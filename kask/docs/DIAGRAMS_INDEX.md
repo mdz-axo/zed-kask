@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
-version: "2.1.0"
+last_updated: 2026-09-19
+version: "2.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -10,9 +10,9 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-16 the corpus contains **101 active alignment records representing 101 unique IDs**: 32 records in the five consolidated diagram files and 69 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **102 active alignment records representing 102 unique IDs**: 33 records in the five consolidated diagram files and 69 inline records.
 
-The corpus contains 102 Mermaid blocks: 101 current-state blocks, each with one immediately adjacent alignment record, and one explicitly conceptual block in the operator-retained Proposed LogiSheets plan. The Proposed block is exempt until implementation under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2.
+The corpus contains 104 Mermaid blocks: 102 current-state blocks, each with one immediately adjacent alignment record; one explicitly conceptual future-state block in the operator-retained LogiSheets plan, exempt under `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2 (the spreadsheet capability's implementation began 2026-09-18 — whether the plan block converts to a registered implementation diagram is an open operator decision); and one not-yet-registered block in `research/cmp-gap-methodology.md` (added by the operator on 2026-09-19, commit `ba61f23a5d`; registration is pending alongside the file's frontmatter).
 
 ## Consolidated files
 
@@ -22,8 +22,8 @@ The corpus contains 102 Mermaid blocks: 101 current-state blocks, each with one 
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 4 |
 | [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
-| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 7 |
-| **Total** | **32** |
+| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 8 |
+| **Total** | **33** |
 
 ## Current metadata registry
 
@@ -32,7 +32,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | DIAGRAM_ID | Location | Verified date | Status |
 | --- | --- | --- | --- |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
-| `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-16 | VERIFIED |
+| `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/how-to.md`](./diataxis/kask_bridge/how-to.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
@@ -44,18 +44,18 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-CAP-004` | [`diataxis/hkask-tool-port/explanation.md`](./diataxis/hkask-tool-port/explanation.md) | 2026-08-28 | VERIFIED |
 | `DIAG-CAP-005` | [`diataxis/hkask-tool-port/explanation.md`](./diataxis/hkask-tool-port/explanation.md) | 2026-08-28 | VERIFIED |
 | `DIAG-CAP-006` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-16 | VERIFIED |
-| `DIAG-CMP-ARCH-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
-| `DIAG-CMP-ARCH-002` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
+| `DIAG-CMP-ARCH-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
+| `DIAG-CMP-ARCH-002` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-CMP-ARCH-003` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CMP-ARCH-004` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CMP-ARCH-005` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
-| `DIAG-CMP-FLOW-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-16 | VERIFIED |
+| `DIAG-CMP-FLOW-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-19 | VERIFIED |
 | `DIAG-CMP-FLOW-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-002` | [`diataxis/hkask-condenser/how-to.md`](./diataxis/hkask-condenser/how-to.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-004` | [`diataxis/hkask-condenser/explanation.md`](./diataxis/hkask-condenser/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-09 | VERIFIED |
-| `DIAG-DIA-SWARM-006` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-09 | VERIFIED |
+| `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-19 | VERIFIED |
+| `DIAG-DIA-SWARM-006` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-19 | VERIFIED |
 | `DIAG-DIA-SWARM-007` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-008` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-009` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
@@ -106,7 +106,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-SKILL-CFR` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STATE-KANBAN-MOVE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-08-28 | VERIFIED |
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-18 | VERIFIED |
-| `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-19 | VERIFIED |
 | `DIAG-STOR-002` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-19 | VERIFIED |
@@ -130,10 +130,11 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-GRAPH` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-KANBAN` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-PORTFOLIO` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
+| `DIAG-VIZ-SPREADSHEET-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-19 | VERIFIED |
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 
-Metadata-date distribution: 10 records at 2026-08-28, four at 2026-09-04, two at 2026-09-09, and 85 at 2026-09-16. All 101 active records are `VERIFIED`.
+Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and seventeen at 2026-09-19. All 102 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

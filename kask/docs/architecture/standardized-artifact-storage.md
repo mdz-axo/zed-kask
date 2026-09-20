@@ -1,8 +1,8 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-09-16
-version: "2.1.0"
+last_updated: 2026-09-19
+version: "2.2.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -125,7 +125,7 @@ section only defines the resolution precedence.
 `KaskSettings::mcp_env()` emits both `HKASK_DATA_DIR` and
 `HKASK_ARTIFACTS_DIR`; `build_mcp_server_env` filters them through each
 `BuiltinMcpServer.config_env` allowlist before child launch
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506`). Servers therefore
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-547`). Servers therefore
 receive only the roots they actually resolve.
 
 ## 2. Artifact-class → path mapping
@@ -145,12 +145,13 @@ flowchart TD
     A --> PO[portfolio-mcp/transactions]
     A --> CA[corpus-mcp/cache]
     A --> ME[media-mcp/generated]
+    A --> SP[spreadsheet-mcp/workbooks]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506
+verified_date: 2026-09-19
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,110-156,168-218,310-340; kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-547; kask/crates/hkask-spreadsheet/src/artifact_store.rs:1-27 (spreadsheet-mcp/workbooks visible-artifact root)
 status: VERIFIED
 -->
 
@@ -160,7 +161,7 @@ status: VERIFIED
 | User skills | `{data_dir}` | `skills/{skill_name}/` | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:209-241`); files: `SKILL.md`, `*.j2` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
 | User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` (`agent_paths.rs:157`) + `agent_db(name)` (`agent_paths.rs:198`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
-| User-facing MCP outputs | `{artifacts_dir}` | `{server}-mcp/{artifact-type}/` | readable purpose names such as `reports`, `transactions`, `cache`, `generated` | `resolve_under_artifacts_dir(mcp_artifacts_subdir(server_id, artifact_type))` (`agent_paths.rs:154-156,202-218`) |
+| User-facing MCP outputs | `{artifacts_dir}` | `{server}-mcp/{artifact-type}/` | readable purpose names such as `reports`, `transactions`, `cache`, `generated`, `workbooks` | `resolve_under_artifacts_dir(mcp_artifacts_subdir(server_id, artifact_type))` (`agent_paths.rs:154-156,202-218`) |
 
 ## 3. Ownership principle
 

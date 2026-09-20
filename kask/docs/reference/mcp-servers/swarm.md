@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-18
-version: "0.39.1"
+last_updated: 2026-09-19
+version: "0.39.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -167,7 +167,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 ## Tool reference — Non-cloud (39 tools)
 
-> The non-cloud partition is 32 local tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-232`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 87-tool router.
+> The non-cloud partition is 32 local tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 87-tool router.
 
 | Partition | Canonical tools |
 |---|---|

@@ -1,8 +1,8 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
-version: "2.2.0"
+last_updated: 2026-09-19
+version: "2.2.1"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
@@ -228,15 +228,21 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 **Note on `kanban`:** it is *both* a valid mermaid directive *and* a viz-widget
 fenced tag. The prompt must disambiguate the two, not deny either.
 
-### 5.4 Media display-hint bullets (D18)
+### 5.4 Display-hint bullets (D18)
 
-- **zed-kask** `:48-49`: copy the ` ```media ` block from a `display_hint` /
-  `display_hints` tool-result field verbatim into the reply.
-- **Upstream** has neither bullet.
-- **Why load-bearing:** the media block *renderer* lives in
+- **zed-kask** `:51`: copy the ` ```media ` block from a `display_hint`
+  tool-result field verbatim into the reply.
+- **zed-kask** `:52`: copy the ` ```spreadsheet ` block from a
+  `spreadsheet`/`portfolio` tool result's `display_hint` verbatim into the
+  reply — an editable workbook what-if from `spreadsheet_apply` or
+  `portfolio_what_if`.
+- **zed-kask** `:53`: copy the ` ```media ` blocks from a `display_hints`
+  array verbatim into the reply.
+- **Upstream** has none of these bullets.
+- **Why load-bearing:** the block *renderers* live in
   `hkask_viz_core::block_renderer()` (wired at
-  `crates/agent_ui/src/conversation_view.rs:3546`), so the prompt bullets
-  remain live for any tool that emits the ` ```media ` fenced block.
+  `crates/agent_ui/src/conversation_view.rs:3584`), so the prompt bullets
+  remain live for any tool that emits a display-hint fenced block.
 
 ### 5.5 `## Agent Skills` — project-aware body injection (D1)
 
@@ -796,7 +802,7 @@ registered `hkask-mcp-*` binaries as child processes over stdio, performs the MC
 handshake and tool discovery, and owns child shutdown/reconnect
 (`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-680`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-506`).[^mcp-spec-build][^ousterhout-mcp-build]
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-547`).[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Current crate shape
 

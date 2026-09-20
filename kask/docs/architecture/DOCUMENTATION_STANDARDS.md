@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-09-16
-version: "0.39.1"
+last_updated: 2026-09-19
+version: "0.39.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
-verified_date: 2026-09-16
+verified_date: 2026-09-19
 verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md:51-182; kask/docs/README.md:69-119; kask/docs/plans/logisheets-spreadsheet-capability-plan.md:1-17
 status: VERIFIED
 -->

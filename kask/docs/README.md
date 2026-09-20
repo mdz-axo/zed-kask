@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 69 files under `kask/docs/` on 2026-09-19 (measured with `find kask/docs -type f`), within the fewer-than-70 cap.
+**Corpus size:** 70 files under `kask/docs/` on 2026-09-19 (measured with `find kask/docs -type f`) — one over the fewer-than-70 cap. The operator-added `research/cmp-gap-methodology.md` (commit `ba61f23a5d`, 2026-09-19) landed concurrently with this realignment; its disposition (fold, cap amendment, or acceptance) is the operator's call.
 
 ## Repair and improvement plans
 
@@ -66,7 +66,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 101 current `DIAGRAM_ALIGNMENT` records representing 101 unique IDs; 32 records are in the five consolidated files and 69 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 102 current `DIAGRAM_ALIGNMENT` records representing 102 unique IDs; 33 records are in the five consolidated files and 69 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines. |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
@@ -81,10 +81,11 @@ The operator-retained Proposed LogiSheets plan contains one explicitly conceptua
 | --- | --- |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
+| [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator; frontmatter and diagram registration pending. |
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 69 files.
+Git history is the archive of record. Every removed document names its active successor here; the current tree contains 70 files.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 

@@ -1,8 +1,8 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.39.0"
+last_updated: 2026-09-19
+version: "0.39.1"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, lifecycle]
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-research`
 **Tools:** 26 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 4 research-run/paper tools (`begin_research_run`, `get_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
-**Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted RSS and research-run persistence require `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:281-323`).
+**Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted RSS and research-run persistence require `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:283-325`).
 
 The research server is the web-research surface: a provider pool
 (Exa/Tavily/Brave/SerpAPI/Firecrawl plus free Semantic Scholar/arXiv/RawFetch)

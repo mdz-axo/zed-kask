@@ -1,8 +1,8 @@
 ---
 title: "MCP Dispatch Diagrams — Runtime Invoke, Tool-Call Sequence, CMP Tool Flow"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
-version: "1.0.0"
+last_updated: 2026-09-19
+version: "1.0.1"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition, domain]
@@ -157,8 +157,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-001
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L488); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
+verified_date: 2026-09-19
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L498); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
 status: VERIFIED
 -->
 

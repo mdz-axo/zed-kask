@@ -1,8 +1,8 @@
 ---
-title: "UI Widget Diagrams — Graph, Kanban, Portfolio, Prediction Markets, Scenarios, Swarm"
+title: "UI Widget Diagrams — Graph, Kanban, Portfolio, Prediction Markets, Scenarios, Spreadsheet, Swarm"
 audience: [architects, developers]
-last_updated: 2026-09-16
-version: "1.0.0"
+last_updated: 2026-09-19
+version: "1.1.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -680,6 +680,107 @@ hKask-internal methodology labels, not ontology URIs — FIBO publishes no
 terms for forecast identifiers, Brier scores, or scenario probabilities
 (verified 2026-08-29).
 
+## Spreadsheet Widget
+
+`hkask-spreadsheet-widget` renders ```` ```spreadsheet ```` fenced blocks — the
+server-authoritative display hints emitted by `spreadsheet_apply` and by
+analytical publishers such as `portfolio_what_if` (the `SpreadsheetBlock`
+wire contract, `kask/crates/hkask-types/src/spreadsheet.rs`). Parsing is
+two-stage, matching the viz-widget contract in `hkask-viz-core`: the
+tolerant `SpreadsheetBlockBody`
+(`crates/hkask-spreadsheet-widget/src/block.rs:23-46`) parses any foreign
+shape without error, and only a body claiming `viz: "spreadsheet"`
+(`SPREADSHEET_VIZ`, `kask/crates/hkask-types/src/spreadsheet.rs:69`)
+proceeds to the strict `SpreadsheetBlock` parse — a claimed body with
+missing identity surfaces as a visible error state, never a panic
+(`block.rs:50-83`).
+
+Editing stays inside the authoritative-state boundary: staged edits modify
+the open revision's in-memory copy only, backed by the shared
+`WorkbookService` engine actor in this process
+(`crates/hkask-spreadsheet-widget/src/view.rs:48-56`); save dispatches the
+staged batches through the governed `ToolInvoker` seam to
+`spreadsheet_apply` — the spreadsheet MCP server is the only mutation
+owner (`view.rs:472-524`; server reference: [Spreadsheet MCP Server](../reference/mcp-servers/spreadsheet.md)).
+The visible save lifecycle distinguishes every dispatch outcome
+(`SaveStatus`, `view.rs:63-116`): `Interrupted` surfaces the reconciliation
+instruction (the outcome is unknown — reconcile via
+`spreadsheet_operation_get`, never blindly retry), a stale-base digest
+surfaces the conflict as the server's `failed_precondition` envelope, and
+`NotWired`/`Unavailable` remain distinct from `Failed`.
+
+```mermaid
+classDiagram
+    class SpreadsheetBlockBody {
+        +viz: Option~String~
+        +schema_version: Option~u32~
+        +title: Option~String~
+        +active_sheet: Option~String~
+        +artifact: Option~SpreadsheetArtifactRef~
+        +viewport: Option~SpreadsheetViewport~
+        +origin: Option~ArtifactOrigin~
+        +mutation: BlockProvenance
+        +claims() bool
+        +strict_block() Result~SpreadsheetBlock~
+    }
+    class parse_spreadsheet_body {
+        +parse_spreadsheet_body(body) Result~SpreadsheetBlockBody~
+    }
+    class SpreadsheetWidget {
+        +block: Result~SpreadsheetBlock~
+        +document: Option~WorkbookDocument~
+        +window: Option~SpreadsheetViewport~
+        +content: Option~ViewportContent~
+        +staged_batches: Vec~CellEdit~
+        +redo_buffer: Vec~CellEdit~
+        +save_status: SaveStatus
+        +new(body, cx) SpreadsheetWidget
+        +fetch_window(cx)
+        +move_active(nav, extend, cx)
+        +start_edit / commit_edit / cancel_edit
+        +stage_batch / undo / redo
+        +copy_selection / paste
+        +dispatch_save / apply_save_response
+        +switch_sheet(sheet, cx)
+    }
+    class SaveStatus {
+        <<enumeration>>
+        Idle
+        Saving
+        Saved
+        NotWired
+        Unavailable
+        Interrupted
+        Failed(String)
+    }
+    class EditorState {
+        +cell: (row, col)
+        +text: String
+    }
+    class shared_spreadsheet_service {
+        +shared_spreadsheet_service() Arc~WorkbookService~
+    }
+    class logic {
+        +window_covering(cell, sheet) SpreadsheetViewport
+        +selection_to_tsv(content, rect) String
+        +tsv_to_edits(tsv, at, sheet) Vec~CellEdit~
+        +commit_to_edit(text, at, sheet) CellEdit
+    }
+    parse_spreadsheet_body --> SpreadsheetBlockBody : tolerant parse
+    SpreadsheetBlockBody --> SpreadsheetWidget : strict contract after claim
+    shared_spreadsheet_service --> SpreadsheetWidget : engine actor
+    logic ..> SpreadsheetWidget : pure helpers
+    SpreadsheetWidget --> SaveStatus : dispatch outcomes
+    SpreadsheetWidget --> EditorState : active edit buffer
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-VIZ-SPREADSHEET-001
+verified_date: 2026-09-19
+verified_against: crates/hkask-spreadsheet-widget/src/block.rs (SpreadsheetBlockBody L23, parse_spreadsheet_body L44, claims L50, strict_block L56-83); crates/hkask-spreadsheet-widget/src/view.rs (shared_spreadsheet_service L48, SaveStatus L63, EditorState L117, SpreadsheetWidget L122, dispatch_save L472, apply_save_response L525); crates/hkask-spreadsheet-widget/src/logic.rs (window_covering L76, selection_to_tsv L151, tsv_to_edits L175, commit_to_edit L220); crates/hkask-viz-core/src/hkask_viz_core.rs (VIZ_TAG L161-164, widget registration L592, L605); kask/crates/hkask-types/src/spreadsheet.rs (SPREADSHEET_VIZ L69, SpreadsheetViewport L263, SpreadsheetArtifactRef L338, ArtifactOrigin L412); kask/crates/hkask-types/src/block_provenance.rs (BlockProvenance L33, is_dispatchable L54)
+status: VERIFIED
+-->
+
 ## Swarm Widget
 
 The `hkask-swarm-widget` crate renders ```` ```swarm_delegate_results ````
@@ -779,3 +880,4 @@ Notes:
 - [Architecture diagrams](./architecture.md) — the viz-core composition root (D18)
 - [Kanban diagrams](./kanban.md) — move controller + task status state machines
 - [Swarm diagrams](./swarm.md) — the swarm server whose tools produce these blocks
+- [Spreadsheet MCP Server Reference](../reference/mcp-servers/spreadsheet.md) — the mutation owner whose `spreadsheet_apply` publishes the workbook revisions this widget edits
