@@ -215,6 +215,33 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["self-improvement", "proof"],
         authority: "operator ruling 2026-09-18; Schmidhuber, Gödel machine: self-referential universal problem solvers (2003, 2006)",
     },
+    // Stopgap at the derived rung (operator ruling 2026-09-19, remedy path
+    // c): delete when the FIBO fixture refresh pins TermStructure — the
+    // published standard belongs at the domain-supplement rung.
+    DerivedConcept {
+        term: "term_structure",
+        aliases: &["cmp term structure", "probability term structure"],
+        identity: "one underlying's rates or contract prices indexed by time to maturity, from which a curve is constructed",
+        definition: "A structured collection of rates or prices with different terms to maturity such that a curve may be constructed for the structure (FIBO's published sense, revised in FIBO 2.0 to support yield curves). The prediction-market analog: one base event priced across a ladder of dated contracts, interpolated in log-odds space — probability as a function of horizon, not a single number. A single dated contract is not a term structure; the maturity ladder is the concept.",
+        constituents: &["rate", "maturity"],
+        authority: "FIBO IND/Indicators TermStructure (https://spec.edmcouncil.org/fibo/ontology/IND/Indicators/Indicators); operator ruling 2026-09-19",
+    },
+    DerivedConcept {
+        term: "risk_premium",
+        aliases: &["risk premia", "equity risk premium"],
+        identity: "expected return on the risky asset minus the known return on the risk-free asset",
+        definition: "The minimum amount by which the expected return on a risky asset must exceed the known return on a risk-free asset (Wikidata Q523022, verbatim). Compensation demanded for bearing risk, never the raw expected return — a quote naming a total return a 'premium' is the nameable violation. In the gap program, the first wedge leg: the compensation layer between a probability-market price and a traditional discount rate.",
+        constituents: &["expected return", "risk free rate"],
+        authority: "operator ruling 2026-09-19; Wikidata Q523022; Mehra & Prescott, The Equity Premium: A Puzzle, Journal of Monetary Economics 15(2) (1985)",
+    },
+    DerivedConcept {
+        term: "expectations_gap",
+        aliases: &[],
+        identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
+        definition: "The Mauboussin-Rappaport Expectations Investing sense: start from the known stock price, reverse-solve the expectations it implies, and hold them against what the fundamentals have demonstrated — Higgins SGR anchoring the growth leg. Not the audit sense (Liggio 1974), the macro sense (Treasury GDP-neutral level), or the strategy and EU-politics senses (Wikidata Q5034469, Q5162851). The nameable violation: calling a raw multiple an expectation without the reverse-solve.",
+        constituents: &["implied expectation", "demonstrated capability"],
+        authority: "operator ruling 2026-09-19; Rappaport & Mauboussin, Expectations Investing: Reading Stock Prices for Better Returns, Harvard Business School Press (2001)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -282,12 +309,58 @@ mod tests {
             "cybernetic feedback loop",
             "bounded model checking",
             "godel machine",
+            "term structure",
+            "term-structure",
+            "cmp term structure",
+            "risk premium",
+            "risk premia",
+            "equity risk premium",
+            "expectations gap",
+            "expectations_gap",
         ] {
             assert!(
                 resolve_derived(term).is_some(),
                 "{term} must resolve — nothing is undefined"
             );
         }
+    }
+
+    /// expect: [P5] The ratified 2026-09-19 finance rulings resolve with
+    /// identity and authority — the gap-program terms never a void.
+    #[test]
+    fn term_structure_resolves_with_identity_and_authority() {
+        let concept = resolve_derived("term structure").expect("term structure is defined");
+        assert_eq!(concept.term, "term_structure");
+        assert!(
+            concept.definition.contains("maturity ladder"),
+            "the definition carries the load-bearing semantics: {}",
+            concept.definition
+        );
+        assert!(concept.authority.contains("2026-09-19"));
+        assert!(concept.authority.contains("FIBO"));
+    }
+
+    #[test]
+    fn risk_premium_resolves_with_identity_and_authority() {
+        let concept = resolve_derived("risk premium").expect("risk premium is defined");
+        assert_eq!(concept.term, "risk_premium");
+        assert_eq!(
+            resolve_derived("equity risk premium").map(|c| c.term),
+            Some("risk_premium")
+        );
+        assert!(concept.definition.contains("Q523022"));
+        assert!(concept.authority.contains("2026-09-19"));
+    }
+
+    #[test]
+    fn expectations_gap_resolves_with_identity_and_authority() {
+        let concept = resolve_derived("expectations gap").expect("expectations gap is defined");
+        assert_eq!(concept.term, "expectations_gap");
+        assert!(concept.definition.contains("reverse-solve"));
+        assert!(concept.authority.contains("2026-09-19"));
+        // The audit homonym (Liggio 1974) is deliberately not aliased: the
+        // singular "expectation gap" stays unresolved.
+        assert!(resolve_derived("expectation gap").is_none());
     }
 
     /// expect: [P5] Every derived entry cites an authority — an entry with
