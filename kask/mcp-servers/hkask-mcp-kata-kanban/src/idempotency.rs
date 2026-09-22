@@ -16,16 +16,16 @@
 //!
 //! # Scope: only tools a replay would duplicate
 //!
-//! Most kanban mutations need nothing. `task_update`, `task_assign`,
-//! `task_delete`, and `board_delete` are already idempotent — they converge on
-//! the same state, and deleting an already-deleted task is a no-op. The unsafe
-//! ones are those that **mint a fresh server-side identity**
-//! (`Id::new()` → `Uuid::new_v4()`), because the client has no name for the thing
-//! it asked to create and so cannot ask whether it landed:
+//! Convergent updates and assignments need no replay record. Mutations that
+//! **mint fresh server-side identity** (`Id::new()` → `Uuid::new_v4()`) do,
+//! because the client has no name for the thing it asked to create and cannot
+//! determine whether an interrupted call landed:
 //!
 //! - `kanban_board_create` — a replay creates a second board
 //! - `kanban_task_create` — a replay creates a second task
 //! - `kanban_task_spawn` — a replay starts a second subagent
+//! - `kanban_board_import` — a replay creates a second board aggregate
+//! - `kanban_goal_create` — a replay creates a second functional goal
 //!
 //! # Design
 //!

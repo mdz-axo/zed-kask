@@ -57,8 +57,8 @@ hkask_mcp_server::mcp_server!(
         /// worktree-backed agent thread (isolated git worktree) via the zed IPC
         /// bridge. Missing authority or an uncertain reply never starts a fallback.
         pub worktree_spawn_port: Arc<dyn hkask_types::WorktreeSpawnPort>,
-        /// Replay protection for the three tools a duplicate call would harm
-        /// (`kanban_board_create`, `kanban_task_create`, `kanban_task_spawn`).
+        /// Replay protection for identity-minting mutations, including board,
+        /// task, spawn, and aggregate-import creation.
         /// Shares the kanban database, so protection has the same durability as
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
@@ -73,8 +73,8 @@ hkask_mcp_server::mcp_server!(
 
 /// Run `work` under replay protection when the caller supplied a key.
 ///
-/// Without a key this is a plain pass-through, so the three protected tools keep
-/// working for callers that do not opt in.
+/// Without a key this is a plain pass-through, so protected tools keep working
+/// for callers that do not opt in.
 ///
 /// With a key, the three outcomes map to what the client can safely do:
 /// - first call → run the work, record the response for later replays;
@@ -1515,7 +1515,8 @@ impl KanbanServer {
                     let name = board_name
                         .or(parsed.name.take())
                         .unwrap_or_else(|| "Imported Board".to_string());
-                    let columns = kanban::mermaid::columns_from_parsed(&parsed);
+                    let columns = kanban::mermaid::columns_from_parsed(&parsed)
+                        .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
                     let column_count = columns.len();
                     let tasks = parsed
                         .columns

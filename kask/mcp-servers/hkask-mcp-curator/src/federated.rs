@@ -1,0 +1,151 @@
+//! External-source registry for Curator federated search.
+//!
+//! Loading never hides a source failure: a missing manifest, malformed current
+//! contract, incompatible sealed identity, or unavailable database becomes a
+//! typed status returned by the public tool. Successfully loaded sources are
+//! immutable `ReadOnlyPassageSource` handles.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use hkask_memory::{FederatedRecallError, FederatedSourcesManifest, ReadOnlyPassageSource};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FederatedSourceState {
+    Ready,
+    Unconfigured,
+    Invalid,
+    Incompatible,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FederatedSourceStatus {
+    pub source_id: String,
+    pub source_kind: &'static str,
+    pub state: FederatedSourceState,
+    pub reason: Option<String>,
+    pub result_count: usize,
+}
+
+pub(crate) struct FederatedSourceRegistry {
+    sources: Vec<Arc<ReadOnlyPassageSource>>,
+    statuses: Vec<FederatedSourceStatus>,
+}
+
+impl FederatedSourceRegistry {
+    pub(crate) fn load(manifest_path: &Path, passphrase: Option<&str>) -> Self {
+        if manifest_path.as_os_str().is_empty() || !manifest_path.exists() {
+            return Self::single_status(
+                "external_sources",
+                FederatedSourceState::Unconfigured,
+                format!(
+                    "federated source manifest is not configured at {}",
+                    manifest_path.display()
+                ),
+            );
+        }
+        let manifest = match FederatedSourcesManifest::load(manifest_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                return Self::single_status(
+                    "external_sources",
+                    FederatedSourceState::Invalid,
+                    error.to_string(),
+                );
+            }
+        };
+        if manifest.sources.is_empty() {
+            return Self::single_status(
+                "external_sources",
+                FederatedSourceState::Unconfigured,
+                "federated source manifest contains no sources".to_string(),
+            );
+        }
+        let Some(passphrase) = passphrase else {
+            return Self {
+                statuses: manifest
+                    .sources
+                    .iter()
+                    .map(|source| FederatedSourceStatus {
+                        source_id: source.id.clone(),
+                        source_kind: "corpus",
+                        state: FederatedSourceState::Unavailable,
+                        reason: Some("HKASK_DB_PASSPHRASE is unavailable".to_string()),
+                        result_count: 0,
+                    })
+                    .collect(),
+                sources: Vec::new(),
+            };
+        };
+
+        let mut sources = Vec::new();
+        let mut statuses = Vec::with_capacity(manifest.sources.len());
+        for source in &manifest.sources {
+            match ReadOnlyPassageSource::open(source, passphrase) {
+                Ok(opened) => {
+                    statuses.push(FederatedSourceStatus {
+                        source_id: source.id.clone(),
+                        source_kind: "corpus",
+                        state: FederatedSourceState::Ready,
+                        reason: None,
+                        result_count: 0,
+                    });
+                    sources.push(Arc::new(opened));
+                }
+                Err(error) => statuses.push(FederatedSourceStatus {
+                    source_id: source.id.clone(),
+                    source_kind: "corpus",
+                    state: classify_error(&error),
+                    reason: Some(error.to_string()),
+                    result_count: 0,
+                }),
+            }
+        }
+        Self { sources, statuses }
+    }
+
+    pub(crate) fn sources(&self) -> &[Arc<ReadOnlyPassageSource>] {
+        &self.sources
+    }
+
+    pub(crate) fn statuses(&self) -> Vec<FederatedSourceStatus> {
+        self.statuses.clone()
+    }
+
+    fn single_status(source_id: &str, state: FederatedSourceState, reason: String) -> Self {
+        Self {
+            sources: Vec::new(),
+            statuses: vec![FederatedSourceStatus {
+                source_id: source_id.to_string(),
+                source_kind: "corpus",
+                state,
+                reason: Some(reason),
+                result_count: 0,
+            }],
+        }
+    }
+}
+
+pub(crate) fn default_manifest_path() -> PathBuf {
+    let relative = hkask_types::agent_paths::agent_dir("curator").join("federated-sources.json");
+    hkask_types::agent_paths::resolve_under_data_dir(&relative)
+}
+
+pub(crate) fn classify_error(error: &FederatedRecallError) -> FederatedSourceState {
+    match error {
+        FederatedRecallError::UnsupportedSchema { .. }
+        | FederatedRecallError::DigestMismatch { .. }
+        | FederatedRecallError::SchemaMismatch { .. }
+        | FederatedRecallError::IncompatibleEmbedding { .. }
+        | FederatedRecallError::IncompatibleEntity { .. } => FederatedSourceState::Incompatible,
+        FederatedRecallError::InvalidManifest(_)
+        | FederatedRecallError::MissingIndex { .. }
+        | FederatedRecallError::ParseArtifact { .. } => FederatedSourceState::Invalid,
+        FederatedRecallError::ReadArtifact { .. }
+        | FederatedRecallError::Database { .. }
+        | FederatedRecallError::Retrieval { .. } => FederatedSourceState::Unavailable,
+    }
+}

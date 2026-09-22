@@ -17,6 +17,7 @@
 //! and algedonic event history.
 
 pub(crate) mod distillation;
+pub(crate) mod federated;
 pub(crate) mod forgetting;
 pub(crate) mod governance;
 pub(crate) mod thread_turns;
@@ -34,7 +35,9 @@ use hkask_types::event::RegulationSink;
 use hkask_types::regulation::RegulationSpan;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -151,6 +154,8 @@ pub struct CuratorDb {
     stores: RwLock<CuratorStores>,
     db_path: Option<String>,
     passphrase: Option<String>,
+    federated_manifest_path: PathBuf,
+    federated_sources: OnceLock<federated::FederatedSourceRegistry>,
     /// The decay constant applied to every (re)opened memory store. Resolved
     /// once from env at construction so construction and heals apply the
     /// same operator setting.
@@ -202,10 +207,13 @@ impl CuratorDb {
             passphrase.as_deref(),
             memory_life_days,
         );
+        let federated_manifest_path = federated::default_manifest_path();
         let this = Self {
             stores: RwLock::new(stores),
             db_path: Some(db_path),
             passphrase,
+            federated_manifest_path,
+            federated_sources: OnceLock::new(),
             memory_life_days,
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled,
@@ -255,11 +263,41 @@ impl CuratorDb {
             stores: RwLock::new(stores),
             db_path: None,
             passphrase: None,
+            federated_manifest_path: PathBuf::new(),
+            federated_sources: OnceLock::new(),
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled: false,
             last_heal_attempt: std::sync::Mutex::new(None),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn from_stores_with_federated_manifest(
+        stores: CuratorStores,
+        manifest_path: PathBuf,
+        passphrase: String,
+    ) -> Self {
+        Self {
+            stores: RwLock::new(stores),
+            db_path: None,
+            passphrase: Some(passphrase),
+            federated_manifest_path: manifest_path,
+            federated_sources: OnceLock::new(),
+            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
+            heal_attempt_logged: AtomicBool::new(false),
+            heal_enabled: false,
+            last_heal_attempt: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn federated_sources(&self) -> &federated::FederatedSourceRegistry {
+        self.federated_sources.get_or_init(|| {
+            federated::FederatedSourceRegistry::load(
+                &self.federated_manifest_path,
+                self.passphrase.as_deref(),
+            )
+        })
     }
 
     fn db_level_down(stores: &CuratorStores) -> bool {
@@ -570,33 +608,18 @@ impl CuratorServer {
     /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
     /// embedding provider) or the store has no embedding index — callers fall
     /// back to exact-entity lookup and surface the reason.
-    async fn semantic_recall_fragments(
+    fn semantic_recall_fragments_for_vector(
         &self,
-        query: &str,
+        query_vector: &[f32],
         limit: usize,
     ) -> Result<Vec<(hkask_storage::HMem, f64)>, SemanticRecallError> {
         let stores = self.db.get();
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
-        let embedding_model =
-            curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
-        let vectors = self
-            .inference_port
-            .embed(&embedding_model, &[query.to_string()])
-            .await
-            .map_err(|source| SemanticRecallError::Embed { source })?;
-        let query_vector = vectors
-            .into_iter()
-            .next()
-            .ok_or(SemanticRecallError::NoVector)?;
-        // Fetch more KNN neighbors than the fragment limit: each distinct
-        // entity contributes at most MAX_FRAGMENTS_PER_ENTITY fragments, and
-        // the same entity holds one embedding per turn, so a 1:1 KNN limit
-        // under-fills the result set once capping bites.
         let knn_limit = limit.saturating_mul(MAX_FRAGMENTS_PER_ENTITY).max(limit);
         let results = memory
-            .search_similar(&query_vector, knn_limit)
+            .search_similar(query_vector, knn_limit)
             .map_err(|source| SemanticRecallError::Search { source })?;
         let mut fragments = Vec::with_capacity(results.len());
         let mut seen_h_mem_ids: std::collections::HashSet<String> =
@@ -611,8 +634,6 @@ impl CuratorServer {
             }
             match memory.query_deduped_untouched(&entity_ref) {
                 Ok(mut h_mems) => {
-                    // Freshest first: the newest turn under the entity is the
-                    // closest thing it has to current state.
                     h_mems.sort_by_key(|h_mem| std::cmp::Reverse(h_mem.observed_at));
                     for h_mem in h_mems {
                         if per_entity_counts.get(&entity_ref).copied().unwrap_or(0)
@@ -620,9 +641,6 @@ impl CuratorServer {
                         {
                             break;
                         }
-                        // Several KNN hits can resolve to the same h_mems
-                        // (multiple embeddings under one entity) — no
-                        // duplicate fragments.
                         if !seen_h_mem_ids.insert(h_mem.id.to_string()) {
                             continue;
                         }
@@ -633,10 +651,10 @@ impl CuratorServer {
                         fragments.push((h_mem, result.distance));
                     }
                 }
-                Err(e) => {
+                Err(error) => {
                     tracing::warn!(
                         target: "hkask.mcp.curator",
-                        error = %e,
+                        error = %error,
                         entity_ref = %entity_ref,
                         "failed to resolve KNN hit to its h_mem — skipping (non-fatal)"
                     );
@@ -645,6 +663,25 @@ impl CuratorServer {
         }
         fragments.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(fragments)
+    }
+
+    async fn semantic_recall_fragments(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(hkask_storage::HMem, f64)>, SemanticRecallError> {
+        let embedding_model =
+            curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
+        let vectors = self
+            .inference_port
+            .embed(&embedding_model, &[query.to_string()])
+            .await
+            .map_err(|source| SemanticRecallError::Embed { source })?;
+        let query_vector = vectors
+            .into_iter()
+            .next()
+            .ok_or(SemanticRecallError::NoVector)?;
+        self.semantic_recall_fragments_for_vector(&query_vector, limit)
     }
 
     #[tool(
@@ -725,7 +762,138 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Recall the Curator's memory about an entity. Set `recall_shape` to `perspective_scoped` (curator's own turns) or `entity_wide` (all h_mems for the entity) or `both`. Set `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) plus `ontology_value` to recall along the dual-axis ontology instead of the entity — e.g. every step of a PKO procedure, or every h_mem tagged by a domain ontology namespace."
+        description = "Search Curator memory and configured sealed corpus sources in one source-aware retrieval. Stores remain separate. Results preserve source and record provenance, corpus rows project passage_text only, and every source reports ready, unconfigured, incompatible, invalid, or unavailable status."
+    )]
+    pub async fn curator_federated_search(
+        &self,
+        Parameters(req): Parameters<FederatedSearchRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "curator_federated_search", async {
+            if req.query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            let limit = req.limit.unwrap_or(10).clamp(1, 50);
+            let embedding_model = curator_embedding_model().ok_or_else(|| {
+                McpToolError::permission_denied(
+                    "no embedding model configured — set kask.models.embedding_model",
+                )
+            })?;
+            let vectors = self
+                .inference_port
+                .embed(&embedding_model, std::slice::from_ref(&req.query))
+                .await
+                .map_err(|error| {
+                    McpToolError::unavailable(format!("Federated query embedding failed: {error}"))
+                })?;
+            let query_vector = vectors.into_iter().next().ok_or_else(|| {
+                McpToolError::unavailable("Federated query embedding returned no vector")
+            })?;
+
+            let mut statuses = Vec::new();
+            let mut batches = Vec::new();
+            match self.semantic_recall_fragments_for_vector(&query_vector, limit) {
+                Ok(fragments) => {
+                    let hits = fragments
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, (h_mem, distance))| {
+                            hkask_memory::semantic_passage_for_h_mem(&h_mem).map(|text| {
+                                hkask_memory::FederatedHit {
+                                    source_id: "curator".to_string(),
+                                    source_kind: hkask_memory::FederatedSourceKind::Curator,
+                                    record_id: h_mem.id.to_string(),
+                                    entity_ref: h_mem.entity,
+                                    text,
+                                    run_id: None,
+                                    model: embedding_model.clone(),
+                                    confidence: Some(h_mem.confidence.value()),
+                                    distance,
+                                    source_rank: index + 1,
+                                    fused_rank: 0,
+                                }
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    statuses.push(federated::FederatedSourceStatus {
+                        source_id: "curator".to_string(),
+                        source_kind: "curator",
+                        state: federated::FederatedSourceState::Ready,
+                        reason: None,
+                        result_count: hits.len(),
+                    });
+                    batches.push(hkask_memory::RankedSourceBatch {
+                        source_id: "curator".to_string(),
+                        hits,
+                    });
+                }
+                Err(error) => statuses.push(federated::FederatedSourceStatus {
+                    source_id: "curator".to_string(),
+                    source_kind: "curator",
+                    state: federated::FederatedSourceState::Unavailable,
+                    reason: Some(error.to_string()),
+                    result_count: 0,
+                }),
+            }
+
+            let registry = self.db.federated_sources();
+            let mut external_statuses = registry.statuses();
+            for source in registry.sources() {
+                match source.search(&embedding_model, &query_vector, limit) {
+                    Ok(batch) => {
+                        if let Some(status) = external_statuses
+                            .iter_mut()
+                            .find(|status| status.source_id == batch.source_id)
+                        {
+                            status.result_count = batch.hits.len();
+                        }
+                        let hits = batch
+                            .hits
+                            .into_iter()
+                            .map(|hit| hkask_memory::FederatedHit {
+                                source_id: hit.source_id,
+                                source_kind: hkask_memory::FederatedSourceKind::Corpus,
+                                record_id: hit.embedding_id,
+                                entity_ref: hit.entity_ref,
+                                text: hit.text,
+                                run_id: Some(hit.run_id),
+                                model: hit.model,
+                                confidence: None,
+                                distance: hit.distance,
+                                source_rank: hit.source_rank,
+                                fused_rank: 0,
+                            })
+                            .collect();
+                        batches.push(hkask_memory::RankedSourceBatch {
+                            source_id: source.identity().source_id.clone(),
+                            hits,
+                        });
+                    }
+                    Err(error) => {
+                        if let Some(status) = external_statuses
+                            .iter_mut()
+                            .find(|status| status.source_id == source.identity().source_id)
+                        {
+                            status.state = federated::classify_error(&error);
+                            status.reason = Some(error.to_string());
+                            status.result_count = 0;
+                        }
+                    }
+                }
+            }
+            statuses.extend(external_statuses);
+            let results = hkask_memory::interleave_ranked_batches(batches, limit);
+            Ok(json!({
+                "query": req.query,
+                "count": results.len(),
+                "results": results,
+                "sources": statuses,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Recall the Curator's memory about an entity. Set `recall_shape` to `perspective_scoped` (curator's own turns) or `entity_wide` (all h_mems for the entity) or `both`. Set `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) plus `ontology_value` to recall along the dual-axis ontology instead of the entity — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace."
     )]
     pub async fn curator_memory_recall(
         &self,
@@ -2163,8 +2331,8 @@ mod tool_surface_tests {
     use super::CuratorServer;
 
     #[test]
-    fn tool_surface_is_exactly_20_registered_tools() {
+    fn tool_surface_is_exactly_21_registered_tools() {
         let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(n, 20, "curator registered tool surface changed; got {n}");
+        assert_eq!(n, 21, "curator registered tool surface changed; got {n}");
     }
 }

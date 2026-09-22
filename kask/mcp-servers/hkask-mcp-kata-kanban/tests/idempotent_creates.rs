@@ -268,6 +268,60 @@ async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() 
     assert_eq!(status_for("Finished work"), Some("done"));
 }
 
+/// expect: "A failed import publishes no board, so retrying its key creates exactly one complete board."
+/// [P3] Motivating: Generative Space — retry recovers the requested workflow without duplication.
+/// [P2] Constraining: Transparent Imperfection — a late storage failure leaves no partial effect.
+/// pre: insertion of the imported task index is forced to fail on the first call
+/// post: first call leaves zero boards; same-key retry after recovery leaves one board and one task
+#[tokio::test]
+async fn failed_import_rolls_back_before_same_key_retry() {
+    let (server, driver) = make_server_with_shared_driver();
+    let markdown = "kanban\n  section Backlog\n    Planned work\n";
+    driver
+        .execute_batch(
+            "CREATE TRIGGER reject_import_index BEFORE INSERT ON hmems
+             WHEN NEW.entity LIKE 'kanban:board_tasks:%'
+             BEGIN SELECT RAISE(FAIL, 'forced import index failure'); END;",
+        )
+        .expect("install failure trigger");
+
+    let first = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Retry import".to_string()),
+            idempotency_key: Some("failed-import-gesture".to_string()),
+        }))
+        .await;
+    assert!(first.is_err());
+    assert_eq!(board_count(&server).await, 0);
+
+    driver
+        .execute_batch("DROP TRIGGER reject_import_index;")
+        .expect("remove failure trigger");
+    server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Retry import".to_string()),
+            idempotency_key: Some("failed-import-gesture".to_string()),
+        }))
+        .await
+        .expect("same-key retry succeeds after rollback");
+    assert_eq!(board_count(&server).await, 1);
+    let boards_output = server
+        .kanban_board_list(Parameters(BoardListRequest {}))
+        .await
+        .expect("board list succeeds");
+    let boards = parse(&boards_output);
+    let board_id = boards
+        .get("boards")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|board| board.get("board_id"))
+        .and_then(serde_json::Value::as_str)
+        .expect("retried board has an id");
+    assert_eq!(task_count(&server, board_id).await, 1);
+}
+
 /// Hammering the same key never produces a second row.
 #[tokio::test]
 async fn repeated_replays_never_duplicate() {

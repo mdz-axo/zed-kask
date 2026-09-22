@@ -2103,3 +2103,209 @@ async fn algedonic_log_empty_returns_window_and_events() {
         "events must be an array — got: {response}",
     );
 }
+
+fn federated_fixture_vector() -> Vec<f32> {
+    let mut vector = vec![0.0; test_dim()];
+    vector[0] = 1.0;
+    vector
+}
+
+fn federated_fixture_sha256(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn federated_source_fixture(
+    directory: &std::path::Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let database_path = directory.join("reference.db");
+    let database = database_path
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("non-UTF-8 database path"))?;
+    let entity_ref = "calibration:fixture:sealed-v1:reference:utf8-65766964656e63652e747874:0";
+    {
+        let store = hkask_memory::MemoryStore::open(database, "test-passphrase", test_dim())?;
+        store.store(hkask_storage::HMem::new(
+            entity_ref,
+            "text",
+            serde_json::json!("external corpus evidence"),
+            WebID::new(),
+        ))?;
+        store.store(hkask_storage::HMem::new(
+            entity_ref,
+            "method_signals",
+            serde_json::json!({"parataxis_ratio": 1.0}),
+            WebID::new(),
+        ))?;
+        store.store_embedding(
+            entity_ref,
+            &federated_fixture_vector(),
+            "test-embedding-model",
+            Some("external corpus evidence"),
+        )?;
+    }
+    {
+        let database = hkask_storage::open_or_repair(database, "test-passphrase")?;
+        let pool = database.sqlite_pool()?;
+        let connection = pool.get()?;
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    }
+    for suffix in [".maintenance-lock", "-wal", "-shm"] {
+        let sidecar = format!("{database}{suffix}");
+        if std::path::Path::new(&sidecar).exists() {
+            std::fs::remove_file(sidecar)?;
+        }
+    }
+    let digest = federated_fixture_sha256(&database_path)?;
+    let run_identity_path = directory.join("run-identity.json");
+    std::fs::write(
+        &run_identity_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 2,
+            "run_id": "fixture-run",
+            "requested_embedding_model": "test-embedding-model",
+            "actual_embedding_model": "test-embedding-model",
+            "indexes": {"reference": digest}
+        }))?,
+    )?;
+    let representations_path = directory.join("representations-manifest.json");
+    std::fs::write(
+        &representations_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "entity_ref_prefix": "calibration:fixture:sealed-v1"
+        }))?,
+    )?;
+    let manifest_path = directory.join("federated-sources.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "sources": [{
+                "id": "fixture-corpus",
+                "display_name": "Fixture corpus",
+                "database_path": database_path,
+                "run_identity_path": run_identity_path,
+                "representations_manifest_path": representations_path,
+                "index_name": "reference"
+            }]
+        }))?,
+    )?;
+    Ok(manifest_path)
+}
+
+/// expect: "One explicit search returns Curator experience and sealed corpus evidence with provenance." [P8]
+#[tokio::test]
+async fn federated_search_interleaves_sources_without_mutating_corpus()
+-> Result<(), Box<dyn std::error::Error>> {
+    ensure_embedding_model_env();
+    let directory = tempfile::tempdir()?;
+    let manifest_path = federated_source_fixture(directory.path())?;
+    let database_path = directory.path().join("reference.db");
+    let before = std::fs::read(&database_path)?;
+
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone())?;
+    let embedding_store = EmbeddingStore::from_driver(driver.clone(), test_dim())?;
+    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+    let local = hkask_storage::HMem::new(
+        "curator:decision:fixture",
+        "lesson",
+        serde_json::json!("curator experience"),
+        WebID::new(),
+    );
+    memory.store(local.clone())?;
+    memory.store_embedding(
+        &local.entity,
+        &federated_fixture_vector(),
+        "test-embedding-model",
+        Some("curator experience"),
+    )?;
+    let stores = CuratorStores {
+        escalation_queue: Some(Arc::new(EscalationQueue::from_driver(driver.clone())?)),
+        regulation_store: Some(Arc::new(RegulationArchive::from_driver(driver)?)),
+        memory: Some(memory),
+    };
+    let database = Arc::new(CuratorDb::from_stores_with_federated_manifest(
+        stores,
+        manifest_path,
+        "test-passphrase".to_string(),
+    ));
+    let server = CuratorServer::new(
+        WebID::new(),
+        database,
+        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
+    );
+
+    let response = parse(
+        &server
+            .curator_federated_search(Parameters(FederatedSearchRequest {
+                query: "compare local experience with external evidence".to_string(),
+                limit: Some(4),
+            }))
+            .await?,
+    );
+    assert_eq!(response["count"].as_u64(), Some(2));
+    assert_eq!(response["results"][0]["source_kind"], "curator");
+    assert_eq!(response["results"][0]["text"], "curator experience");
+    assert_eq!(response["results"][1]["source_kind"], "corpus");
+    assert_eq!(response["results"][1]["text"], "external corpus evidence");
+    assert_eq!(response["results"][1]["run_id"], "fixture-run");
+    assert_eq!(response["sources"][0]["state"], "ready");
+    assert_eq!(response["sources"][1]["state"], "ready");
+    assert!(!response.to_string().contains("parataxis_ratio"));
+    assert_eq!(std::fs::read(&database_path)?, before);
+    Ok(())
+}
+
+/// expect: "An unconfigured external source is visible and cannot suppress healthy Curator recall." [P8]
+#[tokio::test]
+async fn federated_search_surfaces_unconfigured_source_with_curator_results() {
+    let (server, memory) = make_server_with_embeddings();
+    let local = hkask_storage::HMem::new(
+        "curator:decision:unconfigured",
+        "lesson",
+        serde_json::json!("curator-only evidence"),
+        WebID::new(),
+    );
+    memory.store(local.clone()).expect("store local h_mem");
+    memory
+        .store_embedding(
+            &local.entity,
+            &federated_fixture_vector(),
+            "test-embedding-model",
+            Some("curator-only evidence"),
+        )
+        .expect("store local embedding");
+
+    let response = parse(
+        &server
+            .curator_federated_search(Parameters(FederatedSearchRequest {
+                query: "retrieve available experience with source status".to_string(),
+                limit: Some(4),
+            }))
+            .await
+            .expect("tool response"),
+    );
+    assert_eq!(response["count"].as_u64(), Some(1));
+    assert_eq!(response["results"][0]["source_kind"], "curator");
+    assert_eq!(response["sources"][0]["state"], "ready");
+    assert_eq!(response["sources"][1]["state"], "unconfigured");
+    assert!(
+        response["sources"][1]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("not configured"))
+    );
+}

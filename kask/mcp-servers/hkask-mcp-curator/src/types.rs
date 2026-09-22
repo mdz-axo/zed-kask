@@ -65,6 +65,12 @@ pub struct SemanticSearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct FederatedSearchRequest {
+    pub query: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct RegQueryRequest {
     /// Optional Regulation path prefix. Matches the exact path or dot-delimited
     /// descendants (for example, `reg.skill` includes `reg.skill.<id>`).

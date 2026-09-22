@@ -852,43 +852,23 @@ fn export_import_round_trip_preserves_board_structure() {
     // Parse the exported markdown.
     let parsed = parse_mermaid_kanban(&markdown).expect("parse exported markdown");
 
-    // Import: build columns from the parsed kanban and create a new board.
-    let new_columns = columns_from_parsed(&parsed);
-    let new_board = svc
-        .board_create(owner, "Imported Board", &new_columns)
-        .expect("imported board create");
-
-    // Re-create tasks on the new board in the order they appeared in each
-    // column of the parsed markdown, placing each in the column's status.
-    for column in &parsed.columns {
-        let target_status = new_board
-            .columns
-            .iter()
-            .find(|c| c.name == column.name)
-            .expect("column exists on new board")
-            .status;
-        for title in &column.tasks {
-            let task = svc
-                .task_create(new_board.id, TaskSpec::new(title.clone()), owner)
-                .expect("task create on new board");
-            // Walk the task through this board's configured columns until it
-            // reaches the parsed target status.
-            if target_status != TaskStatus::Backlog {
-                let mut ordered_columns = new_board.columns.iter().collect::<Vec<_>>();
-                ordered_columns.sort_by_key(|configured| configured.position);
-                for configured in ordered_columns {
-                    if configured.status == TaskStatus::Backlog {
-                        continue;
-                    }
-                    svc.task_move(task.id, configured.status, owner)
-                        .expect("task move toward target status");
-                    if configured.status == target_status {
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    let new_columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
+    let imported_tasks = parsed
+        .columns
+        .iter()
+        .zip(&new_columns)
+        .flat_map(|(column, definition)| {
+            column
+                .tasks
+                .iter()
+                .cloned()
+                .map(move |title| (TaskSpec::new(title), definition.status))
+        })
+        .collect();
+    let (new_board, imported_count) = svc
+        .board_import(owner, "Imported Board", &new_columns, imported_tasks)
+        .expect("atomic board import");
+    assert_eq!(imported_count, tasks.len());
 
     // Verify the new board's columns match the original's names and order.
     let original_names: Vec<&str> = board.columns.iter().map(|c| c.name.as_str()).collect();
@@ -927,9 +907,9 @@ fn export_import_round_trip_preserves_board_structure() {
 }
 
 #[test]
-fn export_import_round_trip_handles_special_characters() {
+fn export_parse_round_trip_handles_special_characters() {
     // Tasks with quotes, brackets, unicode, and backslashes in their titles
-    // must survive the export → parse → import round-trip unchanged.
+    // must survive the export → parse round-trip unchanged.
     let svc = KanbanService::new(make_store());
     let owner = WebID::new();
     let columns = vec![ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0)];
@@ -996,10 +976,11 @@ fn export_import_round_trip_preserves_column_order() {
 
     // Import as a new board and verify the new board's columns are in the
     // same order.
-    let new_columns = columns_from_parsed(&parsed);
-    let new_board = svc
-        .board_create(owner, "Re-imported Ordered Board", &new_columns)
-        .expect("imported board create");
+    let new_columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
+    let (new_board, imported_count) = svc
+        .board_import(owner, "Re-imported Ordered Board", &new_columns, Vec::new())
+        .expect("atomic board import");
+    assert_eq!(imported_count, 0);
     let new_order: Vec<&str> = new_board.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
         new_order, original_order,
@@ -1037,14 +1018,14 @@ fn import_empty_board() {
         "empty board should have no tasks"
     );
 
-    // Verify the parsed columns can drive a real board creation through the
-    // service layer.
+    // Verify the parsed columns drive the canonical aggregate import.
     let svc = KanbanService::new(make_store());
     let owner = WebID::new();
-    let columns = columns_from_parsed(&parsed);
-    let board = svc
-        .board_create(owner, "Empty Imported Board", &columns)
-        .expect("empty board create");
+    let columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
+    let (board, imported_count) = svc
+        .board_import(owner, "Empty Imported Board", &columns, Vec::new())
+        .expect("empty board import");
+    assert_eq!(imported_count, 0);
     assert_eq!(board.columns.len(), 1);
     let tasks = svc
         .task_list(board.id, TaskFilter::all())
