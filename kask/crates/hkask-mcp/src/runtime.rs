@@ -466,8 +466,6 @@ pub struct McpRuntime {
     children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
     /// Registered MCP servers (metadata)
     servers: Arc<RwLock<HashMap<String, McpServer>>>,
-    /// Tool registry (tool_name -> server_id)
-    tool_registry: Arc<RwLock<HashMap<String, String>>>,
     /// Live connections to MCP server processes, keyed by server ID
     connections: Arc<RwLock<HashMap<String, Connection>>>,
     /// Cancellation tokens for managed server processes
@@ -496,7 +494,6 @@ impl McpRuntime {
             lifecycle: Arc::new(Mutex::new(false)),
             children: Arc::new(Mutex::new(HashMap::new())),
             servers: Arc::new(RwLock::new(HashMap::new())),
-            tool_registry: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             cancellation_tokens: Arc::new(RwLock::new(HashMap::new())),
             launch_specs: Arc::new(RwLock::new(HashMap::new())),
@@ -573,7 +570,6 @@ impl McpRuntime {
     /// Register an MCP server (metadata only, no live connection).
     pub async fn register_server(&self, server: McpServer) {
         let mut servers = self.servers.write().await;
-        let mut tool_registry = self.tool_registry.write().await;
 
         info!(
             target: "hkask.mcp",
@@ -582,11 +578,6 @@ impl McpRuntime {
             tools = server.tools.len(),
             "Registering MCP server"
         );
-
-        // Register tools
-        for tool in &server.tools {
-            tool_registry.insert(tool.name.clone(), server.id.clone());
-        }
 
         servers.insert(server.id.clone(), server);
     }
@@ -1342,7 +1333,6 @@ impl McpRuntime {
             spec.cancel.cancel();
         }
         self.servers.write().await.clear();
-        self.tool_registry.write().await.clear();
         // Drop the connections before cancelling so a keeper task racing the
         // cancellation finds nothing of its own generation to reap.
         self.connections.write().await.clear();
@@ -1375,7 +1365,7 @@ impl McpRuntime {
         }
     }
 
-    /// Stop a single managed server process and drop its tool registry.
+    /// Stop a single managed server process and drop its registration.
     ///
     /// Used by the settings-change restart path: governed `McpRuntime`
     /// instances are started once at login, so a settings change that alters
@@ -1404,41 +1394,30 @@ impl McpRuntime {
         self.last_reconnect.write().await.remove(server_id);
         self.health_failures.write().await.remove(server_id);
         self.stop_children(Some(server_id)).await;
-        // Drop the server's tools from the registry so stale names do not
-        // resolve to a dead connection.
+        // Drop the registration so stale tool names do not resolve to a dead
+        // connection.
         let mut servers = self.servers.write().await;
         if let Some(server) = servers.remove(server_id) {
-            let tools = server.tools;
-            let tool_count = tools.len();
-            let mut tool_registry = self.tool_registry.write().await;
-            for tool in tools {
-                tool_registry.remove(&tool.name);
-            }
             info!(
                 target: "hkask.mcp",
                 server_id = %server_id,
-                tools = tool_count,
+                tools = server.tools.len(),
                 "MCP server stopped"
             );
         }
     }
 
-    /// Discover tools from all registered servers
+    /// Get a registered tool's metadata under a specific server.
+    ///
+    /// Server-scoped, mirroring `invoke`'s identity: the lookup answers "does
+    /// THIS server expose this tool," so two servers may register same-named
+    /// tools without shadowing each other. (The bare-name tool index this
+    /// replaced was last-writer-wins at registration, and `stop_server` could
+    /// delete a surviving server's entry by removing the shared name.)
     #[must_use]
-    pub async fn discover_tools(&self) -> Vec<String> {
-        let tool_registry = self.tool_registry.read().await;
-        tool_registry.keys().cloned().collect()
-    }
-
-    /// Get tool information with metadata
-    #[must_use]
-    pub async fn get_tool_info(&self, tool_name: &str) -> Option<ToolInfo> {
-        let tool_registry = self.tool_registry.read().await;
-        let server_id = tool_registry.get(tool_name)?;
-
+    pub async fn get_tool_info(&self, server: &str, tool_name: &str) -> Option<ToolInfo> {
         let servers = self.servers.read().await;
-        let server = servers.get(server_id)?;
-
+        let server = servers.get(server)?;
         server
             .tools
             .iter()
@@ -1447,14 +1426,7 @@ impl McpRuntime {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 input_schema: t.input_schema.clone(),
-                server_id: server_id.clone(),
             })
-    }
-
-    /// Check if a tool exists
-    pub(crate) async fn tool_exists(&self, tool_name: &str) -> bool {
-        let tool_registry = self.tool_registry.read().await;
-        tool_registry.contains_key(tool_name)
     }
 }
 
@@ -1603,15 +1575,12 @@ impl hkask_tool_port::ToolPort for McpRuntime {
         })
     }
 
-    fn discover_tools<'a>(&'a self) -> hkask_tool_port::ToolFuture<'a, Vec<String>> {
-        Box::pin(async move { McpRuntime::discover_tools(self).await })
-    }
-
     fn get_tool_info<'a>(
         &'a self,
-        tool_name: &'a str,
+        server: &'a str,
+        tool: &'a str,
     ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
-        Box::pin(async move { McpRuntime::get_tool_info(self, tool_name).await })
+        Box::pin(async move { McpRuntime::get_tool_info(self, server, tool).await })
     }
 }
 
@@ -1753,10 +1722,19 @@ impl McpRuntime {
     /// The error for a server with no live connection and no working reconnect,
     /// distinguishing an unknown tool from an unavailable server.
     async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_tool_port::ToolPortError {
-        if !self.tool_exists(tool).await {
+        // Server-scoped existence check, mirroring dispatch identity: the
+        // same tool name registered on another server must not flip this
+        // classification between NotFound and Unavailable.
+        let tool_registered = self
+            .servers
+            .read()
+            .await
+            .get(server)
+            .is_some_and(|s| s.tools.iter().any(|t| t.name == tool));
+        if !tool_registered {
             return hkask_tool_port::ToolPortError::NotFound(hkask_types::NotFound {
                 entity_type: "tool".to_string(),
-                id: format!("Tool '{}' not found in MCP runtime", tool),
+                id: format!("Tool '{tool}' is not registered on server '{server}'"),
             });
         }
         let known_launch = self.launch_specs.read().await.contains_key(server);
@@ -2014,8 +1992,8 @@ mod reconnect_path_tests {
     /// so `try_reconnect` reports `false` rather than pretending to recover.
     ///
     /// This is the metadata-only-server case: `register_server` populates
-    /// `servers` and `tool_registry` but not `launch_specs`, so a reconnect
-    /// has nothing to rebuild from.
+    /// `servers` but not `launch_specs`, so a reconnect has nothing to
+    /// rebuild from.
     #[tokio::test]
     async fn metadata_only_server_cannot_be_reconnected() {
         let runtime = McpRuntime::new();
@@ -2216,7 +2194,137 @@ mod reconnect_path_tests {
     }
 }
 
-// ── Metering + retry-classification tests ──────────────────────────────────
+// ── Tool identity tests ─────────────────────────────────────────────────
+//
+// These pin the server-scoped tool lookup: tool names are unique within a
+// server, never across servers. The bare-name tool index this replaced was
+// last-writer-wins at registration and deletable by the wrong `stop_server`,
+// so a same-named tool on another server could be shadowed or silently
+// dropped. These tests fail against that index and pass against the
+// server-scoped lookup.
+#[cfg(test)]
+mod tool_identity_tests {
+    use super::*;
+
+    fn tool_on(server: &str, name: &str) -> McpTool {
+        McpTool {
+            name: name.to_string(),
+            description: format!("{server}/{name}"),
+            input_schema: Value::Null,
+            server_id: server.to_string(),
+        }
+    }
+
+    /// Two servers exposing the same tool name must each resolve their own
+    /// metadata — same-named tools must not shadow each other.
+    #[tokio::test]
+    async fn same_named_tools_on_two_servers_keep_their_own_schemas() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "alpha".to_string(),
+                name: "alpha".to_string(),
+                tools: vec![tool_on("alpha", "lookup")],
+            })
+            .await;
+        runtime
+            .register_server(McpServer {
+                id: "beta".to_string(),
+                name: "beta".to_string(),
+                tools: vec![tool_on("beta", "lookup")],
+            })
+            .await;
+
+        let alpha = runtime
+            .get_tool_info("alpha", "lookup")
+            .await
+            .expect("alpha's lookup must resolve after beta registers the same name");
+        let beta = runtime
+            .get_tool_info("beta", "lookup")
+            .await
+            .expect("beta's lookup must resolve");
+        assert_eq!(alpha.description, "alpha/lookup");
+        assert_eq!(beta.description, "beta/lookup");
+    }
+
+    /// Stopping one server must not drop another server's same-named tool.
+    /// The bare-name index this replaced failed exactly here: `stop_server`
+    /// removed the shared name, deleting the surviving server's entry.
+    #[tokio::test]
+    async fn stopping_one_server_leaves_the_others_same_named_tool_lookup() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "alpha".to_string(),
+                name: "alpha".to_string(),
+                tools: vec![tool_on("alpha", "lookup")],
+            })
+            .await;
+        runtime
+            .register_server(McpServer {
+                id: "beta".to_string(),
+                name: "beta".to_string(),
+                tools: vec![tool_on("beta", "lookup")],
+            })
+            .await;
+
+        runtime.stop_server("alpha").await;
+
+        assert!(
+            runtime.get_tool_info("alpha", "lookup").await.is_none(),
+            "the stopped server's tool must stop resolving"
+        );
+        let beta = runtime
+            .get_tool_info("beta", "lookup")
+            .await
+            .expect("the surviving server's same-named tool must still resolve");
+        assert_eq!(beta.description, "beta/lookup");
+    }
+
+    /// The lookup is scoped to the named server: a tool name registered only
+    /// on alpha must not resolve under beta or an unregistered server.
+    #[tokio::test]
+    async fn get_tool_info_scopes_to_the_named_server() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "alpha".to_string(),
+                name: "alpha".to_string(),
+                tools: vec![tool_on("alpha", "only_on_alpha")],
+            })
+            .await;
+        runtime
+            .register_server(McpServer {
+                id: "beta".to_string(),
+                name: "beta".to_string(),
+                tools: vec![],
+            })
+            .await;
+
+        assert!(
+            runtime
+                .get_tool_info("beta", "only_on_alpha")
+                .await
+                .is_none(),
+            "a tool registered on alpha must not resolve under beta"
+        );
+        assert!(
+            runtime
+                .get_tool_info("no-such-server", "only_on_alpha")
+                .await
+                .is_none(),
+            "an unregistered server must not resolve anything"
+        );
+        assert!(
+            runtime
+                .get_tool_info("alpha", "only_on_alpha")
+                .await
+                .is_some()
+        );
+    }
+}
+
+// ── Metering + retry-classification tests ───────────────────────────────────
 //
 // These pin the public `ToolPort::invoke` metering behavior and the
 // `ToolPortError` retry-classification invariants. They use a real
@@ -2254,10 +2362,10 @@ mod metering_tests {
     #[tokio::test]
     async fn unregistered_agent_is_auto_registered_not_denied() {
         let runtime = governed_runtime();
-        // Register a server with a tool so `tool_exists` returns true and the
-        // dispatch path reaches `Unavailable` (registered but never started)
-        // rather than `NotFound` (unknown tool). The metering decision is
-        // what's under test, not the tool lookup.
+        // Register a server with the tool so the server-scoped registration
+        // check passes and the dispatch path reaches `Unavailable` (registered
+        // but never started) rather than `NotFound` (unknown tool). The
+        // metering decision is what's under test, not the tool lookup.
         runtime
             .register_server(McpServer {
                 id: "fixture".to_string(),

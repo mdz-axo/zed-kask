@@ -848,21 +848,23 @@ async fn dispatch(
                 },
             };
         }
-        let Some(info) = tool_port.get_tool_info(tool).await else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".into(),
-                    message: format!("tool definition '{qualified}' not found"),
-                },
-            };
-        };
-        if info.server_id != server || !info.input_schema.is_object() {
+        // Server-scoped lookup: the caller names the server, so a same-named
+        // tool on another server can neither answer this request nor shadow it.
+        let Some(info) = tool_port.get_tool_info(server, tool).await else {
             return InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "ToolPort".into(),
                     message: format!(
-                        "tool definition '{qualified}' has a mismatched server or invalid schema"
+                        "tool definition '{qualified}' not found on server '{server}'"
                     ),
+                },
+            };
+        };
+        if !info.input_schema.is_object() {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".into(),
+                    message: format!("tool definition '{qualified}' has a non-object schema"),
                 },
             };
         }
@@ -1308,11 +1310,11 @@ mod tests {
             })
         }
 
-        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
-            Box::pin(async { Vec::new() })
-        }
-
-        fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+        fn get_tool_info<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+        ) -> ToolFuture<'a, Option<ToolInfo>> {
             Box::pin(async { None })
         }
     }
@@ -1328,14 +1330,14 @@ mod tests {
         ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
             Box::pin(async { panic!("metadata lookup must not invoke a tool") })
         }
-        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
-            Box::pin(async { vec!["required_argument".into()] })
-        }
-        fn get_tool_info<'a>(&'a self, name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+        fn get_tool_info<'a>(
+            &'a self,
+            server: &'a str,
+            name: &'a str,
+        ) -> ToolFuture<'a, Option<ToolInfo>> {
             Box::pin(async move {
-                (name == "required_argument").then(|| ToolInfo {
+                (server == "fixture" && name == "required_argument").then(|| ToolInfo {
                     name: name.to_string(),
-                    server_id: "fixture".into(),
                     description: "Requires a query".into(),
                     input_schema: serde_json::json!({
                         "type": "object",
@@ -1422,10 +1424,11 @@ mod tests {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async { Ok(serde_json::json!({"ok":true})) })
         }
-        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
-            Box::pin(async { Vec::new() })
-        }
-        fn get_tool_info<'a>(&'a self, _: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+        fn get_tool_info<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+        ) -> ToolFuture<'a, Option<ToolInfo>> {
             Box::pin(async { None })
         }
     }

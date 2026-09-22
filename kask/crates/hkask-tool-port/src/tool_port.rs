@@ -104,21 +104,22 @@ pub trait ToolPort: Send + Sync {
         agent: hkask_types::WebID,
     ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>>;
 
-    /// Discover available tools.
-    ///
-    /// Tool schemas are public per the MCP protocol design: `tools/list` is an
-    /// unauthenticated handshake.
-    fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>>;
-
-    /// Get metadata for a specific tool.
-    fn get_tool_info<'a>(&'a self, tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>>;
+    /// Get a registered tool's metadata under a specific server. Server-scoped
+    /// by the same identity `invoke` uses: the caller names the server, so tool
+    /// names need only be unique within one server — two servers may expose the
+    /// same name without shadowing each other.
+    fn get_tool_info<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+    ) -> ToolFuture<'a, Option<ToolInfo>>;
 }
 
-/// Canonical tool metadata.
+/// Canonical tool metadata for a tool the caller already located by server:
+/// the server identity is the caller's `server` argument, not a field here.
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
-    pub server_id: String,
 }
