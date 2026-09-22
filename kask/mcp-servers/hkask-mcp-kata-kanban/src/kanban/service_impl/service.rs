@@ -437,18 +437,22 @@ impl KanbanService {
         spec: TaskSpec,
         owner: WebID,
     ) -> Result<Task, KanbanError> {
-        self.board_get(board_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "board".to_string(),
-                id: board_id.to_string(),
-            })
-        })?;
         self.validate_goal_citations(&spec.advances)?;
         let task = Task::new(board_id, spec, owner);
         let records = Self::task_h_mems(&task)?;
-        self.store.insert_batch_atomic(&records).map_err(|error| {
-            KanbanError::Internal(format!("atomic task publication failed: {error}"))
-        })?;
+        let board_id_text = board_id.to_string();
+        let inserted = self
+            .store
+            .insert_batch_if_key_exists_atomic(&records, BOARD_ENTITY, &board_id_text)
+            .map_err(|error| {
+                KanbanError::Internal(format!("atomic task publication failed: {error}"))
+            })?;
+        if !inserted {
+            return Err(KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: board_id_text,
+            }));
+        }
 
         // P9: Regulation span
         tracing::info!(
@@ -909,30 +913,33 @@ impl KanbanService {
     /// post: board h_mem and all associated task/index h_mems are deleted from the database
     #[must_use = "result must be used"]
     pub(crate) fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
-        self.board_get(board_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "board".to_string(),
-                id: board_id.to_string(),
-            })
-        })?;
-
-        let tasks = self.task_list(board_id, TaskFilter::all())?;
-        let mut record_ids = Vec::new();
-        for task in &tasks {
-            record_ids.extend(self.task_record_ids(task)?);
-        }
-        let board_rows = self
+        let board_id_text = board_id.to_string();
+        let deleted = self
             .store
-            .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
-            .map_err(|error| KanbanError::Internal(format!("board h_mem query failed: {error}")))?;
-        record_ids.extend(board_rows.into_iter().map(|row| row.id));
-
-        self.store
-            .delete_batch_by_id_atomic(&record_ids)
+            .delete_by_pko_procedure_atomic(&board_id_text)
             .map_err(|error| {
                 KanbanError::Internal(format!("atomic board deletion failed: {error}"))
             })?;
-        Ok(tasks.len())
+        let board_rows = deleted
+            .iter()
+            .filter(|(entity, attribute)| entity == BOARD_ENTITY && attribute == &board_id_text)
+            .count();
+        if board_rows == 0 {
+            return Err(KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: board_id_text,
+            }));
+        }
+        if board_rows != 1 {
+            return Err(KanbanError::Internal(format!(
+                "board {board_id} had {board_rows} durable roots; expected exactly one"
+            )));
+        }
+        let task_ids = deleted
+            .into_iter()
+            .filter_map(|(entity, attribute)| (entity == TASK_ENTITY).then_some(attribute))
+            .collect::<std::collections::HashSet<_>>();
+        Ok(task_ids.len())
     }
 
     // ── LLM Verification ──────────────────────────────────────────────

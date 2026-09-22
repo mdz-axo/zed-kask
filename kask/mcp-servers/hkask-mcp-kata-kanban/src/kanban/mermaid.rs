@@ -10,9 +10,11 @@
 //! ```mermaid
 //! kanban
 //! %% kanban board: <optional board name>
+//! %% kanban column status: backlog
 //!   section Backlog
 //!     Task Title 1
 //!     Task Title 2
+//! %% kanban column status: in_progress
 //!   section In Progress
 //!     Task Title 3
 //! ```
@@ -44,16 +46,10 @@ pub(crate) enum MermaidParseError {
     TooManyColumns { count: usize, max: usize },
     #[error("kanban columns map more than once to status {status}")]
     DuplicateStatus { status: TaskStatus },
-}
-
-/// A task reduced to the fields the mermaid format can carry: a slugified id
-/// (for renderers that benefit from unique node ids) and the title.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskSummary {
-    /// Slugified task id — safe to use as a mermaid node identifier.
-    pub id: String,
-    /// Task title — escaped on export, unescaped on parse.
-    pub title: String,
+    #[error("kanban section {column:?} has no preceding `%% kanban column status:` comment")]
+    MissingColumnStatus { column: String },
+    #[error("invalid kanban column status {status:?}")]
+    InvalidColumnStatus { status: String },
 }
 
 /// A parsed column from mermaid kanban markdown: a name and the task titles
@@ -61,6 +57,7 @@ pub(crate) struct TaskSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedColumn {
     pub name: String,
+    pub status: TaskStatus,
     pub tasks: Vec<String>,
 }
 
@@ -70,39 +67,6 @@ pub(crate) struct ParsedColumn {
 pub(crate) struct ParsedBoard {
     pub name: Option<String>,
     pub columns: Vec<ParsedColumn>,
-}
-
-/// Slugify a task id for use as a mermaid node identifier. Replaces any
-/// character that is not alphanumeric or underscore with `_` and prefixes
-/// `t_` so the result is a valid mermaid identifier (which must start with
-/// a letter).
-///
-/// Not involutive: `slugify(slugify(x))` double-prefixes (`slugify("foo")`
-/// = `"t_foo"`, `slugify("t_foo")` = `"t_t_foo"`). The output must not be
-/// fed back in as input. Render and parse each apply this once, so the
-/// render→parse cycle is sound; a future consumer that re-slugs a rendered
-/// node id would break matching. Making it involutive (e.g. stripping an
-/// existing `t_` prefix) would create real id collisions, so the
-/// non-involutive contract is intentional.
-pub(crate) fn slugify_task_id(id: &str) -> String {
-    let slug: String = id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let trimmed = slug.trim_matches('_');
-    if trimmed.is_empty() {
-        "t_task".to_string()
-    } else {
-        // The `t_` prefix guarantees the id starts with a letter, satisfying
-        // Mermaid's node-id grammar regardless of `trimmed`'s first character.
-        format!("t_{trimmed}")
-    }
 }
 
 /// Escape a task title for mermaid kanban markdown. The title appears on its
@@ -152,43 +116,21 @@ fn unescape_title(title: &str) -> String {
 /// convention that `task_list` returns newest-first, and the parsed markdown's
 /// source order is creation order (see the round-trip tests).
 pub(crate) fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
-    let columns: Vec<(String, Vec<TaskSummary>)> = board
-        .columns
-        .iter()
-        .map(|column| {
-            // `task_list` returns newest-first; reverse to get creation order
-            // so the markdown's source order is creation order.
-            let mut column_tasks: Vec<TaskSummary> = tasks
-                .iter()
-                .filter(|task| task.status == column.status)
-                .map(|task| TaskSummary {
-                    id: slugify_task_id(&task.id.to_string()),
-                    title: escape_title(&task.title),
-                })
-                .collect();
-            column_tasks.reverse();
-            (column.name.clone(), column_tasks)
-        })
-        .collect();
-    export_board_to_mermaid_from_parts(&board.name, &columns)
-}
-
-/// Render mermaid kanban markdown from pre-grouped columns.
-///
-/// This is the lower-level entry point used by the MCP tool layer, which
-/// builds the `(column_name, tasks)` pairs itself (e.g., to apply a different
-/// task ordering or filtering before export).
-pub(crate) fn export_board_to_mermaid_from_parts(
-    board_name: &str,
-    columns: &[(String, Vec<TaskSummary>)],
-) -> String {
     let mut out = String::from("```mermaid\nkanban\n");
-    // Board name comment — parsed back by `parse_mermaid_kanban`.
-    out.push_str(&format!("%% kanban board: {board_name}\n"));
-    for (column_name, column_tasks) in columns {
-        out.push_str(&format!("  section {column_name}\n"));
+    out.push_str(&format!("%% kanban board: {}\n", board.name));
+    for column in &board.columns {
+        out.push_str(&format!(
+            "%% kanban column status: {}\n",
+            column.status.as_str()
+        ));
+        out.push_str(&format!("  section {}\n", column.name));
+        let mut column_tasks = tasks
+            .iter()
+            .filter(|task| task.status == column.status)
+            .collect::<Vec<_>>();
+        column_tasks.reverse();
         for task in column_tasks {
-            out.push_str(&format!("    {}\n", task.title));
+            out.push_str(&format!("    {}\n", escape_title(&task.title)));
         }
     }
     out.push_str("```");

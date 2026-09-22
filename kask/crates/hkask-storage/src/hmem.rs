@@ -293,7 +293,8 @@ impl HMemStore {
     /// fails, dropping the transaction rolls back every earlier insert, so a
     /// trailing commit marker cannot survive without the records it covers.
     pub fn insert_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), HMemError> {
-        self.insert_batch_with_replacement(h_mems, None)
+        self.insert_batch_with_controls(h_mems, None, None)
+            .map(|_| ())
     }
 
     /// Atomically replace one EAV key while publishing a related h_mem batch.
@@ -309,16 +310,34 @@ impl HMemStore {
         entity: &str,
         attribute: &str,
     ) -> Result<(), HMemError> {
-        self.insert_batch_with_replacement(h_mems, Some((entity, attribute)))
+        self.insert_batch_with_controls(h_mems, Some((entity, attribute)), None)
+            .map(|_| ())
     }
 
-    fn insert_batch_with_replacement(
+    /// Publish a batch only while a required EAV key exists.
+    ///
+    /// expect: "Child records cannot be published after their durable parent is deleted."
+    /// [P3] Motivating: Generative Space — aggregate creation retains its parent boundary.
+    /// [P2] Constraining: Transparent Imperfection — a missing parent produces no partial write.
+    /// pre: required_entity + required_attribute identify the parent key
+    /// post: returns true and commits the full batch, or false and commits nothing when the key is absent
+    pub fn insert_batch_if_key_exists_atomic(
+        &self,
+        h_mems: &[HMem],
+        required_entity: &str,
+        required_attribute: &str,
+    ) -> Result<bool, HMemError> {
+        self.insert_batch_with_controls(h_mems, None, Some((required_entity, required_attribute)))
+    }
+
+    fn insert_batch_with_controls(
         &self,
         h_mems: &[HMem],
         replacement: Option<(&str, &str)>,
-    ) -> Result<(), HMemError> {
-        if h_mems.is_empty() {
-            return Ok(());
+        required: Option<(&str, &str)>,
+    ) -> Result<bool, HMemError> {
+        if h_mems.is_empty() && required.is_none() {
+            return Ok(true);
         }
         let rows = h_mems
             .iter()
@@ -355,6 +374,20 @@ impl HMemStore {
         let transaction = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        if let Some((entity, attribute)) = required {
+            let exists = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM hmems WHERE entity = ?1 AND attribute = ?2)",
+                    rusqlite::params![entity, attribute],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+            if !exists {
+                return Ok(false);
+            }
+        }
         if let Some((entity, attribute)) = replacement {
             transaction
                 .execute(
@@ -383,7 +416,7 @@ impl HMemStore {
         transaction
             .commit()
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
-        Ok(())
+        Ok(true)
     }
 
     /// Delete a set of h_mems in one transaction.
@@ -418,6 +451,59 @@ impl HMemStore {
                 .map_err(|error| {
                     HMemError::Infra(InfrastructureError::database(error.to_string()))
                 })?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        Ok(deleted)
+    }
+
+    /// Delete every h_mem in one PKO procedure on one transaction.
+    ///
+    /// expect: "Deleting a procedure removes its root, steps, and indexes as one durable change."
+    /// [P3] Motivating: Generative Space — procedure lifecycle owns all process records.
+    /// [P2] Constraining: Transparent Imperfection — failure preserves the complete procedure.
+    /// pre: procedure is the exact pko_procedure identifier
+    /// post: all matching rows are deleted atomically and their entity/attribute identities are returned
+    pub fn delete_by_pko_procedure_atomic(
+        &self,
+        procedure: &str,
+    ) -> Result<Vec<(String, String)>, HMemError> {
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "atomic procedure deletion requires a SqliteDriver",
+            ))
+        })?;
+        let mut connection = pool
+            .get()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let mut deleted = Vec::new();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "DELETE FROM hmems
+                     WHERE json_valid(ontology)
+                       AND json_extract(ontology, '$.pko_procedure') = ?1
+                     RETURNING entity, attribute",
+                )
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+            let rows = statement
+                .query_map([procedure], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+            for row in rows {
+                deleted.push(row.map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?);
+            }
         }
         transaction
             .commit()

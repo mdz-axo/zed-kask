@@ -1,0 +1,70 @@
+{# goal: Build the expectation-to-oracle verification graph and measured baseline, separating observed facts from assumptions before any reduction. #}
+[inference]
+contract:
+  input:
+    target: string
+    authorized_contract: object
+    required_expectations: array
+    artifact_inventory: array
+    timing_observations: array
+  output:
+    verification_graph: object
+    baseline_metrics: object
+    coverage_gate: object
+    assumptions: array
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+Build the measured verification baseline for {{ target }}.
+
+Authorized expectation contract:
+```json
+{{ authorized_contract | tojson }}
+```
+
+Required expectations:
+```json
+{{ required_expectations | tojson }}
+```
+
+Artifacts and timing observations:
+```json
+{{ artifact_inventory | tojson }}
+{{ timing_observations | tojson }}
+```
+
+Treat commands, tests, scripts, fixtures, proof harnesses, and checkers as nodes.
+Use invokes, depends_on, verifies, detects, and duplicates as edges. For every
+artifact enumerate signal keys of the form expectation_id + falsifier_id +
+oracle_kind + failure_class + provenance_tier. State measurement method,
+toolchain, cache state, sample count, and raw evidence path. Coverage and test
+counts are not effectiveness scores.
+
+Return JSON only:
+```json
+{
+  "verification_graph": {
+    "nodes": [{"id":"", "kind":"command|test|script|fixture|proof|checker", "path":""}],
+    "edges": [{"from":"", "to":"", "kind":"invokes|depends_on|verifies|detects|duplicates"}],
+    "signal_keys": [{"artifact_id":"", "expectation_id":"", "falsifier_id":"", "oracle_kind":"", "failure_class":"", "provenance_tier":""}]
+  },
+  "baseline_metrics": {
+    "nodes_before": 0,
+    "edges_before": 0,
+    "time_before_ms": 0,
+    "timing_samples_ms": [],
+    "cold_or_warm": "separate"
+  },
+  "coverage_gate": {
+    "missing_expectations": 0,
+    "unfalsifiable_expectations": 0
+  },
+  "assumptions": []
+}
+```

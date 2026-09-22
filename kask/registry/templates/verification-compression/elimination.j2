@@ -1,0 +1,69 @@
+{# goal: Synthesize falsifiability, architecture, and essentialist evidence into one reduction candidate whose removed signals map completely to retained oracles. #}
+[inference]
+contract:
+  input:
+    inventory: object
+    falsification_result: object
+    architecture_result: object
+    essentialist_result: object
+    mode: string
+  output:
+    candidate: object
+    signal_mapping: array
+    decisions: array
+    blockers: array
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+Produce one verification reduction candidate from the supplied evidence.
+
+Inventory:
+```json
+{{ inventory | tojson }}
+```
+Falsification:
+```json
+{{ falsification_result | tojson }}
+```
+Architecture:
+```json
+{{ architecture_result | tojson }}
+```
+Essentialist gates:
+```json
+{{ essentialist_result | tojson }}
+```
+Mode: {{ mode }}
+
+Classify each artifact RETAIN, REMOVE, MERGE, or DEFER. A removed artifact must
+have every signal key mapped to a retained artifact and must have survived a
+discriminating harmful-change test. Missing mappings are blockers. Select one
+candidate domain only; do not trade signal loss for speed.
+
+Return JSON only:
+```json
+{
+  "candidate": {
+    "id":"",
+    "domain":"",
+    "removed_artifacts":[],
+    "retained_artifacts":[],
+    "merged_artifacts":[],
+    "predicted_graph_delta":{"nodes":0,"edges":0},
+    "predicted_time_delta_ms":0
+  },
+  "signal_mapping": [
+    {"removed_artifact":"", "signal_key":"", "retained_artifact":"", "empirical_falsifier":"", "status":"covered|missing"}
+  ],
+  "decisions": [
+    {"artifact":"", "decision":"RETAIN|REMOVE|MERGE|DEFER", "constraint_force":"Prohibition|Guardrail|Guideline|Evidence|Hypothesis", "basis":""}
+  ],
+  "blockers": []
+}
+```

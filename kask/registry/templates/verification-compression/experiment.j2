@@ -1,0 +1,79 @@
+{# goal: Compare fixed-oracle before-and-after observations and issue a non-compensable verdict on signal preservation, graph compression, and measured execution speed. #}
+[inference]
+contract:
+  input:
+    baseline: object
+    candidate: object
+    lean_result: object
+    before_observations: object
+    after_observations: object
+    targets: object
+  output:
+    preservation: object
+    metrics: object
+    falsification_log: array
+    verdict: string
+    next_step: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+Evaluate one verification-compression experiment. Hold expectation contracts,
+oracle inputs, toolchain, environment, and harmful cases fixed.
+
+Baseline and candidate:
+```json
+{{ baseline | tojson }}
+{{ candidate | tojson }}
+```
+Lean result:
+```json
+{{ lean_result | tojson }}
+```
+Before and after observations:
+```json
+{{ before_observations | tojson }}
+{{ after_observations | tojson }}
+```
+Targets:
+```json
+{{ targets | tojson }}
+```
+
+Any lost expectation, falsifier, failure class, provenance tier, or uncompiled
+Lean obligation forces REVERT regardless of acceleration. Compute graph and
+time deltas only from observed integer values. Distinguish cold and warm timing.
+Corroborated means the candidate survived; never call it proven effective.
+
+Return JSON only:
+```json
+{
+  "preservation": {
+    "missing_expectations":0,
+    "lost_falsifiers":0,
+    "lost_failure_classes":0,
+    "downgraded_provenance":0,
+    "lean_proof_passed":false
+  },
+  "metrics": {
+    "nodes_before":0,
+    "edges_before":0,
+    "nodes_after":0,
+    "edges_after":0,
+    "time_before_ms":0,
+    "time_after_ms":0,
+    "timing_samples_before_ms":[],
+    "timing_samples_after_ms":[]
+  },
+  "falsification_log": [
+    {"hypothesis":"", "prediction":"", "observation":"", "disposition":"eliminated|corroborated|irreducible"}
+  ],
+  "verdict":"compressed_preserved|essential_no_safe_reduction|blocked|reverted",
+  "next_step":""
+}
+```

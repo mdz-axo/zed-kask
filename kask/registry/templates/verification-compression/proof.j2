@@ -1,0 +1,59 @@
+{# goal: Convert the removed-to-retained signal mapping into explicit Lean propositions proving finite verification-graph coverage preservation without claiming runtime effectiveness. #}
+[inference]
+contract:
+  input:
+    candidate: object
+    signal_mapping: array
+    required_signal_ids: array
+    lean_version: string
+  output:
+    proof_obligations: array
+    lean_source: string
+    proof_scope: object
+    empirical_residual: array
+visibility: Public
+---
+
+[inference]
+temperature = 0.0
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+Construct Lean 4 obligations for this finite verification graph reduction.
+
+Candidate:
+```json
+{{ candidate | tojson }}
+```
+Signal mapping:
+```json
+{{ signal_mapping | tojson }}
+```
+Required signal IDs:
+```json
+{{ required_signal_ids | tojson }}
+```
+Lean version: {{ lean_version }}
+
+Model signal IDs as finite decidable values. Prove that every required signal
+covered by the original graph is covered by the retained graph when every
+removed signal maps into retained coverage. Instantiate the theorem for this
+candidate. Do not model or claim test effectiveness, I/O, timing, fault
+realism, or provenance truth; list those as empirical residual obligations.
+Use no `sorry`, new axioms, or unsafe proof escape.
+
+Return JSON only:
+```json
+{
+  "proof_obligations": [
+    {"id":"coverage_preserved", "proposition":"", "decidable":true, "method":"term|tactic|decide"}
+  ],
+  "lean_source":"complete compilable Lean 4 source",
+  "proof_scope": {
+    "proves":["finite required-signal coverage preservation"],
+    "does_not_prove":["runtime oracle quality","fault realism","timing improvement"]
+  },
+  "empirical_residual": []
+}
+```
