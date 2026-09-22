@@ -1,8 +1,8 @@
 ---
 title: "kask Testing Protocol: Expectation Contracts and Evidence"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-19
-version: "1.3.0"
+last_updated: 2026-09-22
+version: "1.4.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -190,6 +190,54 @@ not measured improvement in the production product. See the
 — P2 (invocation/outcome contract) and P3 (persistence and recovery) —
 for the authority, activation, and recovery work that remains distinct from testing.
 
+## Verification compression process
+
+The reusable process is `.agents/skills/verification-compression/SKILL.md`.
+It applies verification reduction only after building an expectation-to-oracle
+graph whose signal key is `(expectation, falsifier, oracle kind, failure
+class, provenance tier)`. Harrold, Gupta, and Soffa's representative-subset
+method motivates preserving declared requirements during reduction[^harrold].
+Mutation/fault injection supplies the effectiveness check[^mutation]; coverage
+and test counts remain diagnostics because they are not reliable effectiveness
+targets[^coverage-effectiveness].
+
+The process composes five existing methods in a fixed bounded loop:
+
+1. `kata-improvement` records direction, measured current condition, target,
+   and one-change experiment.
+2. `falsifiability` tests whether a verification artifact contributes unique
+   signal, duplicate signal, weak-oracle signal, or orchestration-only cost.
+3. `refactor-architecture` maps graph friction and selects one deepening or
+   consolidation candidate.
+4. `essentialist` applies Exist → Surface → Contract before any deletion.
+5. `lean-prover` checks the finite removed-to-retained signal mapping in Lean.
+
+Signal preservation is non-compensable. A candidate is rejected or reverted
+when any required expectation, falsifier, failure class, or provenance tier is
+lost, even if it is much faster. Lean proves only the declared finite graph
+relation under propositions-as-types[^lean-proofs]; it does not establish
+runtime oracle quality, fault realism, I/O behavior, or performance. Those
+remain empirical obligations under fixed harmful cases and allowed-change
+controls. A Lean source containing `sorry`, an unavailable toolchain, timeout,
+unsupported proposition, or compile error is not proof.
+
+Graph compression is measured over verification artifact nodes and their
+`invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges.
+Execution acceleration is reported only from comparable observed before/after
+timing samples with toolchain, cache state, environment, oracle inputs, and
+source identity held fixed. Focused RED/GREEN commands remain development
+evidence, but a final closeout may omit their duplicate invocations when the
+retained fixed-oracle suite demonstrably executes the exact same test
+identities. The tests and harmful controls themselves are not deleted.
+
+The cycle is bounded to three candidates and terminates as
+`compressed_preserved`, `essential_no_safe_reduction`, `blocked`, or
+`reverted`. `analyze` mode never changes verification code. `execute` mode
+requires explicit operator approval, updates this protocol and the owning
+expectation contracts, and deletes superseded wrappers, fixtures, scripts,
+dependencies, comments, and transient plans in the same change. No legacy
+verification path or compatibility shim is retained.
+
 ### Running the local evidence boundary
 
 Build `check_test_evidence` from the trusted checkout, then invoke the runner
@@ -273,3 +321,7 @@ check, not a claim of an independent before/after oracle.
 [^quickcheck]: Koen Claessen and John Hughes, "QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs", ICFP 2000, https://doi.org/10.1145/351240.351266 — property-based testing with shrinking.
 [^kani]: Kani contributors, "Kani Rust Verifier", https://github.com/model-checking/kani — bounded model checking.
 [^goedel]: the 2026-09-18 bounded-proof R2 cycle (plan removed 2026-09-19; git history) — allocation/formatting harnesses exhausted the pinned 2 GiB budget while the extracted pure decision core verified within it.
+[^harrold]: Mary Jean Harrold, Rajiv Gupta, and Mary Lou Soffa, "A Methodology for Controlling the Size of a Test Suite," ACM TOSEM 2(3), 1993, https://doi.org/10.1145/152388.152391 — representative subsets preserve declared test requirements.
+[^mutation]: Yue Jia and Mark Harman, "An Analysis and Survey of the Development of Mutation Testing," IEEE TSE 37(5), 2011, https://doi.org/10.1109/TSE.2010.62 — fault-based test adequacy.
+[^coverage-effectiveness]: Laura Inozemtseva and Reid Holmes, "Coverage Is Not Strongly Correlated with Test Suite Effectiveness," ICSE 2014, https://doi.org/10.1145/2568225.2568271 — coverage is not an effectiveness target.
+[^lean-proofs]: Jeremy Avigad, Leonardo de Moura, Soonho Kong, Sebastian Ullrich, and the Lean community, "Theorem Proving in Lean 4 — Propositions and Proofs," https://lean-lang.org/theorem_proving_in_lean4/Propositions-and-Proofs — propositions as types and kernel-checked proof terms.

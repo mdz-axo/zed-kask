@@ -217,7 +217,7 @@ async fn replayed_board_create_yields_one_board() {
 #[tokio::test]
 async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() {
     let server = make_server();
-    let markdown = "kanban\n  section Backlog\n    Planned work\n  section In Progress\n    Active work\n  section Done\n    Finished work\n";
+    let markdown = "kanban\n%% kanban column status: backlog\n  section Backlog\n    Planned work\n%% kanban column status: in_progress\n  section In Progress\n    Active work\n%% kanban column status: done\n  section Done\n    Finished work\n";
 
     let first_output = server
         .kanban_board_import(Parameters(BoardImportRequest {
@@ -276,7 +276,8 @@ async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() 
 #[tokio::test]
 async fn failed_import_rolls_back_before_same_key_retry() {
     let (server, driver) = make_server_with_shared_driver();
-    let markdown = "kanban\n  section Backlog\n    Planned work\n";
+    let markdown =
+        "kanban\n%% kanban column status: backlog\n  section Backlog\n    Planned work\n";
     driver
         .execute_batch(
             "CREATE TRIGGER reject_import_index BEFORE INSERT ON hmems

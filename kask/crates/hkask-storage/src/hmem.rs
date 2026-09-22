@@ -463,12 +463,14 @@ impl HMemStore {
     /// expect: "Deleting a procedure removes its root, steps, and indexes as one durable change."
     /// [P3] Motivating: Generative Space — procedure lifecycle owns all process records.
     /// [P2] Constraining: Transparent Imperfection — failure preserves the complete procedure.
-    /// pre: procedure is the exact pko_procedure identifier
-    /// post: all matching rows are deleted atomically and their entity/attribute identities are returned
-    pub fn delete_by_pko_procedure_atomic(
+    /// pre: procedure is the exact pko_procedure identifier; required key identifies its root
+    /// post: Some identities are returned after atomic deletion, None leaves state unchanged when the root is absent
+    pub fn delete_by_pko_procedure_if_key_exists_atomic(
         &self,
         procedure: &str,
-    ) -> Result<Vec<(String, String)>, HMemError> {
+        required_entity: &str,
+        required_attribute: &str,
+    ) -> Result<Option<Vec<(String, String)>>, HMemError> {
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
             HMemError::Infra(InfrastructureError::database(
                 "atomic procedure deletion requires a SqliteDriver",
@@ -480,6 +482,21 @@ impl HMemStore {
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let root_count = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![required_entity, required_attribute],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        if root_count == 0 {
+            return Ok(None);
+        }
+        if root_count != 1 {
+            return Err(HMemError::Infra(InfrastructureError::database(format!(
+                "required procedure root {required_entity}/{required_attribute} has {root_count} rows"
+            ))));
+        }
         let mut deleted = Vec::new();
         {
             let mut statement = transaction
@@ -508,7 +525,7 @@ impl HMemStore {
         transaction
             .commit()
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
-        Ok(deleted)
+        Ok(Some(deleted))
     }
 
     /// Query h_mems by entity.

@@ -105,7 +105,11 @@ fn guarded_publication_raced_with_procedure_delete_leaves_no_orphans() -> anyhow
     let delete_store = store.clone();
     let delete = std::thread::spawn(move || {
         barrier.wait();
-        delete_store.delete_by_pko_procedure_atomic(procedure)
+        delete_store.delete_by_pko_procedure_if_key_exists_atomic(
+            procedure,
+            "kanban:board",
+            procedure,
+        )
     });
 
     insert

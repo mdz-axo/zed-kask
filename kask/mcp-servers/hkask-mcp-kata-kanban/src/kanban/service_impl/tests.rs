@@ -995,7 +995,7 @@ fn import_empty_board() {
     // Markdown with the `kanban` directive and one `section` but no tasks
     // must parse successfully, yielding one column with zero tasks. The
     // resulting columns can then be used to create an empty board.
-    let md = "```mermaid\nkanban\n  section Backlog\n```";
+    let md = "```mermaid\nkanban\n%% kanban column status: backlog\n  section Backlog\n```";
     let parsed = parse_mermaid_kanban(md).expect("parse empty board");
     assert_eq!(parsed.columns.len(), 1, "should have one column");
     assert_eq!(parsed.columns[0].name, "Backlog");

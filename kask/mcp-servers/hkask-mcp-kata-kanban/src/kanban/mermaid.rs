@@ -152,6 +152,7 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
     let mut name: Option<String> = None;
     let mut columns: Vec<ParsedColumn> = Vec::new();
     let mut current_column: Option<usize> = None;
+    let mut pending_status: Option<TaskStatus> = None;
 
     let mut saw_kanban_directive = false;
 
@@ -162,7 +163,6 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
         }
         let trimmed = line.trim_start();
 
-        // Board name comment: `%% kanban board: <name>`
         if let Some(rest) = trimmed.strip_prefix("%%") {
             let rest = rest.trim();
             if let Some(board_name) = rest.strip_prefix("kanban board:") {
@@ -170,8 +170,14 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
                 if !board_name.is_empty() {
                     name = Some(board_name.to_string());
                 }
+            } else if let Some(status) = rest.strip_prefix("kanban column status:") {
+                let status = status.trim();
+                pending_status = Some(TaskStatus::parse_str(status).ok_or_else(|| {
+                    MermaidParseError::InvalidColumnStatus {
+                        status: status.to_string(),
+                    }
+                })?);
             }
-            // Other %% comments are ignored.
             continue;
         }
 
@@ -188,11 +194,19 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
             continue;
         }
 
-        // `section <name>` — starts a new column.
+        // `section <name>` — starts the column described by the preceding
+        // explicit status comment. Implicit name/order inference is not supported.
         if let Some(column_name) = trimmed.strip_prefix("section ") {
             let column_name = column_name.trim();
+            let status =
+                pending_status
+                    .take()
+                    .ok_or_else(|| MermaidParseError::MissingColumnStatus {
+                        column: column_name.to_string(),
+                    })?;
             columns.push(ParsedColumn {
                 name: column_name.to_string(),
+                status,
                 tasks: Vec::new(),
             });
             current_column = Some(columns.len() - 1);
@@ -246,11 +260,11 @@ fn strip_code_fence(markdown: &str) -> String {
     }
 }
 
-/// Build [`ColumnDef`]s from a parsed board with a one-to-one status mapping.
+/// Build [`ColumnDef`]s from explicit parsed statuses.
 ///
-/// Standard status names claim their matching status. Other names receive the
-/// next unused status in [`TaskStatus::STANDARD_ORDER`]. More than five columns
-/// or two columns naming the same standard status are rejected explicitly.
+/// Every section carries its current-format status metadata. More than five
+/// columns or duplicate statuses are rejected; no name or position inference
+/// remains.
 pub(crate) fn columns_from_parsed(
     parsed: &ParsedBoard,
 ) -> Result<Vec<ColumnDef>, MermaidParseError> {
@@ -262,129 +276,56 @@ pub(crate) fn columns_from_parsed(
     }
 
     let mut used = std::collections::HashSet::new();
-    let mut assigned = Vec::with_capacity(parsed.columns.len());
-    for column in &parsed.columns {
-        let status = match_column_name_to_status(&column.name);
-        if let Some(status) = status
-            && !used.insert(status)
-        {
-            return Err(MermaidParseError::DuplicateStatus { status });
-        }
-        assigned.push(status);
-    }
-    for status in &mut assigned {
-        if status.is_some() {
-            continue;
-        }
-        let generated = TaskStatus::STANDARD_ORDER
-            .iter()
-            .copied()
-            .find(|candidate| !used.contains(candidate))
-            .ok_or(MermaidParseError::TooManyColumns {
-                count: parsed.columns.len(),
-                max: TaskStatus::STANDARD_ORDER.len(),
-            })?;
-        used.insert(generated);
-        *status = Some(generated);
-    }
-
     parsed
         .columns
         .iter()
-        .zip(assigned)
         .enumerate()
-        .map(|(position, (column, status))| {
-            status
-                .map(|status| ColumnDef::new(column.name.clone(), status, position as u32))
-                .ok_or(MermaidParseError::TooManyColumns {
-                    count: parsed.columns.len(),
-                    max: TaskStatus::STANDARD_ORDER.len(),
-                })
+        .map(|(position, column)| {
+            if !used.insert(column.status) {
+                return Err(MermaidParseError::DuplicateStatus {
+                    status: column.status,
+                });
+            }
+            Ok(ColumnDef::new(
+                column.name.clone(),
+                column.status,
+                position as u32,
+            ))
         })
         .collect()
 }
 
-/// Match a parsed mermaid column name to a [`TaskStatus`] by case-insensitive
-/// comparison against the standard status display names and wire strings.
-fn match_column_name_to_status(name: &str) -> Option<TaskStatus> {
-    let lower = name.to_lowercase();
-    // Standard display names.
-    if lower == "backlog" {
-        return Some(TaskStatus::Backlog);
-    }
-    if lower == "ready" {
-        return Some(TaskStatus::Ready);
-    }
-    if lower == "in progress" || lower == "in_progress" || lower == "inprogress" {
-        return Some(TaskStatus::InProgress);
-    }
-    if lower == "review" {
-        return Some(TaskStatus::Review);
-    }
-    if lower == "done" {
-        return Some(TaskStatus::Done);
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{TaskStatus, columns_from_parsed, parse_mermaid_kanban, slugify_task_id};
+    use super::{TaskStatus, columns_from_parsed, parse_mermaid_kanban};
 
+    /// expect: "Current Mermaid import requires explicit status metadata for every section."
+    /// [P3] Motivating: Generative Space — import never guesses workflow identity.
+    /// [P4] Constraining: Clear Boundaries — implicit legacy sections are rejected.
+    /// pre: a section has no `kanban column status` comment
+    /// post: parsing returns MissingColumnStatus
     #[test]
-    fn slugify_alphanumeric_id_keeps_content_under_t_prefix() {
-        assert_eq!(slugify_task_id("task-42"), "t_task_42");
+    fn implicit_column_status_is_rejected() {
+        let error = parse_mermaid_kanban("kanban\n  section Backlog\n")
+            .expect_err("implicit status must be rejected");
+        assert!(matches!(
+            error,
+            super::MermaidParseError::MissingColumnStatus { .. }
+        ));
     }
 
+    /// expect: "Explicit status metadata preserves custom column names without inference."
+    /// [P3] Motivating: Generative Space — displayed names and workflow states vary independently.
+    /// [P4] Constraining: Clear Boundaries — each section names exactly one status.
+    /// pre: Queue explicitly names Ready and Inbox explicitly names Backlog
+    /// post: parsed columns retain those exact statuses and source order
     #[test]
-    fn slugify_digit_leading_id_still_gets_letter_prefix() {
-        // Mermaid node ids must start with a letter. A raw id beginning with a
-        // digit must still be prefixed with `t_`; the prefix is load-bearing,
-        // not cosmetic.
-        assert_eq!(slugify_task_id("9start"), "t_9start");
-        assert!(slugify_task_id("9start").starts_with('t'));
-    }
-
-    #[test]
-    fn slugify_empty_or_all_symbols_id_falls_back_to_t_task() {
-        assert_eq!(slugify_task_id(""), "t_task");
-        assert_eq!(slugify_task_id("!!!"), "t_task");
-        assert_eq!(slugify_task_id("___"), "t_task");
-    }
-
-    #[test]
-    fn slugify_trims_leading_and_trailing_underscores() {
-        assert_eq!(slugify_task_id("_foo_"), "t_foo");
-    }
-
-    #[test]
-    fn slugify_is_not_involutive_output_must_not_be_refed() {
-        // Pinning a known property, not a bug: applying slugify twice
-        // double-prefixes. Render and parse each apply it once, so this is
-        // safe today; a future consumer that re-feeds a rendered node id
-        // would break. This test exists so a "fix" that makes it involutive
-        // (e.g. stripping an existing `t_` prefix) trips here before it
-        // silently introduces id collisions (`"foo"` and `"t_foo"` would
-        // both slug to `"t_foo"`).
-        let once = slugify_task_id("foo");
-        let twice = slugify_task_id(&once);
-        assert_ne!(once, twice, "slugify must not be involutive; see doc note");
-        assert_eq!(once, "t_foo");
-        assert_eq!(twice, "t_t_foo");
-    }
-
-    /// expect: "Explicit status names keep their status even when an unnamed column appears first."
-    /// [P3] Motivating: Generative Space — imported column identity does not depend on source order.
-    /// [P4] Constraining: Clear Boundaries — generated assignments cannot steal an explicit status.
-    /// pre: an unknown column appears before an explicitly named Backlog column
-    /// post: conversion succeeds with two distinct statuses and Backlog belongs to the named column
-    #[test]
-    fn explicit_status_is_reserved_before_assigning_unknown_columns() {
-        let markdown = "kanban\n  section Queue\n  section Backlog\n";
-        let parsed = parse_mermaid_kanban(markdown).expect("valid mermaid parses");
+    fn explicit_column_status_is_preserved() {
+        let markdown = "kanban\n%% kanban column status: ready\n  section Queue\n%% kanban column status: backlog\n  section Inbox\n";
+        let parsed = parse_mermaid_kanban(markdown).expect("explicit format parses");
         let columns = columns_from_parsed(&parsed).expect("columns map uniquely");
         assert_eq!(columns.len(), 2);
-        assert_ne!(columns[0].status, TaskStatus::Backlog);
+        assert_eq!(columns[0].status, TaskStatus::Ready);
         assert_eq!(columns[1].status, TaskStatus::Backlog);
     }
 
@@ -395,7 +336,7 @@ mod tests {
     /// post: column conversion returns an explicit error
     #[test]
     fn six_columns_are_rejected_instead_of_falling_back_to_backlog() {
-        let markdown = "kanban\n  section One\n  section Two\n  section Three\n  section Four\n  section Five\n  section Six\n";
+        let markdown = "kanban\n%% kanban column status: backlog\n  section One\n%% kanban column status: ready\n  section Two\n%% kanban column status: in_progress\n  section Three\n%% kanban column status: review\n  section Four\n%% kanban column status: done\n  section Five\n%% kanban column status: backlog\n  section Six\n";
         let parsed = parse_mermaid_kanban(markdown).expect("valid mermaid parses");
         assert!(columns_from_parsed(&parsed).is_err());
     }

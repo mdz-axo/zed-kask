@@ -1635,44 +1635,18 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // Resolve the DB passphrase through the canonical 2-tier chain
                 // (ctx.credentials → resolve_credential which does env → keychain).
                 // See `hkask_mcp_server::server::resolve_db_passphrase`.
-                let passphrase = match resolve_db_passphrase(&ctx.credentials) {
-                    Ok(passphrase) => Some(passphrase),
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.kata_kanban",
-                            %error,
-                            "Falling back to in-memory mode. Kanban data will not persist across restarts."
-                        );
-                        None
-                    }
-                };
-                let durable_db = passphrase.is_some();
-                let db = if let Some(passphrase) = passphrase {
-                    hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                } else {
-                    // No passphrase configured — fall back to in-memory mode.
-                    // All DBs should be encrypted at rest; using a hardcoded
-                    // public key provides zero confidentiality. In-memory mode
-                    // loses persistence but matches the security posture of
-                    // the curator server.
-                    hkask_storage::Database::in_memory()
-                        .map_err(|e| anyhow::anyhow!("in-memory DB: {e}"))?
-                };
-                let pool = db.sqlite_pool().map_err(|e| anyhow::anyhow!("pool: {e}"))?;
+                let passphrase = resolve_db_passphrase(&ctx.credentials)
+                    .map_err(|error| anyhow::anyhow!("HKASK_DB_PASSPHRASE: {error}"))?;
+                let db = hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                let pool = db
+                    .sqlite_pool()
+                    .map_err(|error| anyhow::anyhow!("pool: {error}"))?;
                 let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(
                     hkask_storage::database::sqlite::SqliteDriver::new_labeled(
                         pool,
                         kanban_db_path.as_str(),
-                    )
-                    // The no-passphrase fallback is an in-memory pool that
-                    // still carries the would-be DB path as its label — the
-                    // label cannot reveal the stance, so claim it here.
-                    // is_durable() feeds the replay-protection durability
-                    // label and the construction warning; without this the
-                    // in-memory mode advertised cross-restart protection it
-                    // could not keep.
-                    .with_durability(durable_db),
+                    ),
                 );
                 // Clone the handle before `HMemStore` takes ownership: replay
                 // protection lives in the same database as the writes it guards.
@@ -1720,40 +1694,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             .block_on(hkask_inference::resolve_worktree_spawn_port())
                     });
 
-                // Replay protection shares the kanban driver, so it inherits the
-                // same durability and encryption as the writes it guards. When
-                // the DB is in-memory (no passphrase), the store reports
-                // `is_durable() == false` and every protected response carries
-                // `idempotency_durable: false` — an operator must not be told a
-                // call was replay-protected across restarts when it was not.
-                let idempotency = match idempotency::IdempotencyStore::with_driver(
+                // Replay protection shares the durable encrypted kanban driver.
+                // Schema initialization failure aborts startup; accepting writes
+                // without durable replay protection would violate the same
+                // persistence contract as an unavailable kanban database.
+                let idempotency = idempotency::IdempotencyStore::with_driver(
                     idempotency_driver,
-                ) {
-                    Ok(store) => {
-                        if !store.is_durable() {
-                            tracing::warn!(
-                                target: "hkask.mcp.kata_kanban",
-                                "Replay protection is process-local (in-memory kanban DB) — \
-                                 a retry after a server restart may duplicate a create. \
-                                 Set HKASK_DB_PASSPHRASE for durable replay protection."
-                            );
-                        }
-                        store
-                    }
-                    Err(error) => {
-                        // Fall back to the in-memory store rather than failing
-                        // startup: the server is still useful, but say plainly
-                        // that the guarantee is weaker.
-                        tracing::warn!(
-                            target: "hkask.mcp.kata_kanban",
-                            %error,
-                            "Could not initialise the replay-protection schema — falling back \
-                             to process-local protection. Retries after a restart may \
-                             duplicate a create."
-                        );
-                        idempotency::IdempotencyStore::default()
-                    }
-                };
+                )
+                .map_err(|error| anyhow::anyhow!(
+                    "replay-protection schema initialization failed: {error}"
+                ))?;
 
                 // Goals persist through resolution until curator-memory
                 // acknowledgment (operator ruling 2026-09-16), so their replay
@@ -1770,7 +1720,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             })
         },
         vec![
-            hkask_mcp_server::CredentialRequirement::optional(
+            hkask_mcp_server::CredentialRequirement::required(
                 "HKASK_DB_PASSPHRASE",
                 "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
             ),
@@ -1797,6 +1747,26 @@ fn tool_names_match_live_router() {
         live.iter().map(String::as_str).collect::<Vec<_>>(),
         "TOOL_NAMES (build.rs-generated) must match the live tool_router surface"
     );
+}
+
+/// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."
+/// [P1] Motivating: User Sovereignty — the operator can trust persisted workflow state.
+/// [P2] Constraining: Transparent Imperfection — missing durability is an explicit startup failure.
+/// pre: the production startup source is compiled
+/// post: no volatile DB/replay fallback remains and HKASK_DB_PASSPHRASE is required
+#[test]
+fn kanban_startup_requires_durable_storage() {
+    let source = include_str!("hkask_mcp_kata_kanban.rs");
+    let volatile_database = ["Database", "::in_memory()"].concat();
+    let volatile_replay = ["IdempotencyStore", "::default()"].concat();
+    let required_passphrase = [
+        "CredentialRequirement::required(",
+        "\n                \"HKASK_DB_PASSPHRASE\"",
+    ]
+    .concat();
+    assert!(!source.contains(&volatile_database));
+    assert!(!source.contains(&volatile_replay));
+    assert!(source.contains(&required_passphrase));
 }
 
 // D28 — pins the default DB path resolution.

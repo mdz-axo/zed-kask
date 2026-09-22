@@ -1,8 +1,8 @@
 ---
 title: "Kanban Boards — Reference Models from Established Open-Source Implementations"
 audience: [architects, developers, agents]
-last_updated: 2026-09-18
-version: "1.2.0"
+last_updated: 2026-09-22
+version: "1.3.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -186,11 +186,11 @@ The **concept model and server implementation already satisfy** R1 (partially
 - The panel's create-board form is name-first (placeholder "Board name",
   `crates/kanban_panel/src/kanban_panel.rs:1426-1434`; submit refuses an
   all-whitespace name client-side, `crates/kanban_panel/src/task_actions.rs:638-641`).
-- Board identity already round-trips through export/import: the mermaid
-  export writes `%% kanban board: <name>`
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/mermaid.rs:183`) and the
-  parser reads it back (`mermaid.rs:219-227`); the panel's import deliberately
-  preserves the exported name (`task_actions.rs:776-780`).
+- Board identity and workflow topology round-trip through export/import: the
+  current Mermaid format writes `%% kanban board: <name>` plus one explicit
+  `%% kanban column status: <wire-status>` before every section. The parser
+  requires that metadata rather than inferring statuses from names or order;
+  the panel preserves the exported board name when importing.
 - `kanban_board_delete` cascades to the board's tasks
   (`hkask_mcp_kata_kanban.rs:352-390`) — R8.
 - The board h_mem is ontology-anchored as the PKO procedure root

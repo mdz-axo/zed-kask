@@ -916,25 +916,20 @@ impl KanbanService {
         let board_id_text = board_id.to_string();
         let deleted = self
             .store
-            .delete_by_pko_procedure_atomic(&board_id_text)
+            .delete_by_pko_procedure_if_key_exists_atomic(
+                &board_id_text,
+                BOARD_ENTITY,
+                &board_id_text,
+            )
             .map_err(|error| {
                 KanbanError::Internal(format!("atomic board deletion failed: {error}"))
+            })?
+            .ok_or_else(|| {
+                KanbanError::NotFound(NotFound {
+                    entity_type: "board".to_string(),
+                    id: board_id_text.clone(),
+                })
             })?;
-        let board_rows = deleted
-            .iter()
-            .filter(|(entity, attribute)| entity == BOARD_ENTITY && attribute == &board_id_text)
-            .count();
-        if board_rows == 0 {
-            return Err(KanbanError::NotFound(NotFound {
-                entity_type: "board".to_string(),
-                id: board_id_text,
-            }));
-        }
-        if board_rows != 1 {
-            return Err(KanbanError::Internal(format!(
-                "board {board_id} had {board_rows} durable roots; expected exactly one"
-            )));
-        }
         let task_ids = deleted
             .into_iter()
             .filter_map(|(entity, attribute)| (entity == TASK_ENTITY).then_some(attribute))

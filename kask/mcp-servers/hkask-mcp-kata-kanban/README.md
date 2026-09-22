@@ -12,7 +12,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
 | `kanban_board_delete` | Delete a kanban board and all its tasks |
 | `kanban_board_export` | Export a kanban board as mermaid kanban markdown |
-| `kanban_board_import` | Import mermaid kanban markdown as a new board |
+| `kanban_board_import` | Import current-format mermaid kanban markdown as one atomic board aggregate; every section requires explicit `%% kanban column status: <wire-status>` metadata |
 
 ### Task CRUD
 | Tool | Description |
