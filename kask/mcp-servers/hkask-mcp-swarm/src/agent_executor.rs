@@ -479,7 +479,31 @@ impl AgentExecutor {
             // the next round sees them (provider-safe message shape).
             let mut round_results = Vec::new();
             for call in &result.tool_calls {
-                let qualified = &call.tool;
+                // The zed IPC bridge emits a qualified tool name in `tool`
+                // with an empty `server`. Other inference implementations may
+                // populate `server` and use an unqualified `tool`; never let
+                // contradictory fields turn into an authorized call.
+                let qualified = if call.server.is_empty() || call.tool.contains('/') {
+                    call.tool.clone()
+                } else {
+                    format!("{}/{}", call.server, call.tool)
+                };
+                if !call.server.is_empty()
+                    && call.tool.contains('/')
+                    && !qualified.starts_with(&format!("{}/", call.server))
+                {
+                    let summary = serde_json::json!({
+                        "tool": qualified,
+                        "ok": false,
+                        "error": "tool server conflicts with qualified name",
+                    });
+                    tool_calls_made.push(summary);
+                    round_results.push(
+                        "Tool call server conflicts with qualified name — not dispatched"
+                            .to_string(),
+                    );
+                    continue;
+                }
 
                 // Built-in reasoning tool: handled locally, not dispatched
                 // via IPC. Records a structured reasoning step and returns
@@ -504,7 +528,7 @@ impl AgentExecutor {
 
                 let declared = declared_tools
                     .iter()
-                    .find(|(s, t)| format!("{s}/{t}") == *qualified);
+                    .find(|(s, t)| format!("{s}/{t}") == qualified);
                 let (outcome, summary) = match declared {
                     Some((server, tool)) => {
                         match self
@@ -831,8 +855,8 @@ mod tests {
                 if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     result.text.clear();
                     result.tool_calls.push(hkask_types::StructuredToolCall {
-                        server: "fixture".into(),
-                        tool: "lookup".into(),
+                        server: String::new(),
+                        tool: "fixture/lookup".into(),
                         args: serde_json::json!({"query": "needle"}),
                         call_id: Some("lookup-1".into()),
                     });
@@ -876,6 +900,36 @@ mod tests {
         assert_eq!(inference.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
+    /// The same required-argument schema and dispatch must survive the
+    /// concurrent delegate_batch path, not only direct AgentExecutor::run.
+    #[tokio::test]
+    async fn batch_delegation_uses_registered_required_argument_schema() {
+        let inference = Arc::new(ToolThenAnswer(std::sync::atomic::AtomicUsize::new(0)));
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            inference,
+            Arc::new(StubDispatch),
+            String::new(),
+        );
+        let card = LocalAgentCard {
+            agent_id: "batch-tool".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["fixture/lookup".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let results = runtime
+            .delegate_batch(vec![(card, "look up needle".into())])
+            .await;
+        let result = results
+            .into_iter()
+            .next()
+            .expect("one result")
+            .expect("delegation");
+        assert_eq!(result.response, "stub");
+        assert_eq!(result.tool_calls[0]["ok"], true);
+    }
+
     struct ForgedTool(std::sync::atomic::AtomicUsize);
     impl hkask_types::InferencePort for ForgedTool {
         fn generate(
@@ -898,8 +952,8 @@ mod tests {
                 if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     result.text.clear();
                     result.tool_calls.push(hkask_types::StructuredToolCall {
-                        server: "other".into(),
-                        tool: "secret".into(),
+                        server: String::new(),
+                        tool: "other/secret".into(),
                         args: serde_json::json!({"query":"needle"}),
                         call_id: Some("forged".into()),
                     });
@@ -979,8 +1033,8 @@ mod tests {
                 .await?;
                 result.text.clear();
                 result.tool_calls.push(hkask_types::StructuredToolCall {
-                    server: "fixture".into(),
-                    tool: "lookup".into(),
+                    server: String::new(),
+                    tool: "fixture/lookup".into(),
                     args: serde_json::json!({"query": "needle"}),
                     call_id: Some("lookup".into()),
                 });

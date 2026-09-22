@@ -866,13 +866,15 @@ async fn dispatch(
                 },
             };
         }
+        let mut input_schema = info.input_schema;
+        language_model_core::tool_schema::normalize_tool_schema(&mut input_schema);
         return InferenceOutcome::ToolDefinition {
             definition: hkask_types::ChatToolDefinition {
                 tool_type: "function".into(),
                 function: hkask_types::ChatToolFunction {
                     name: qualified,
                     description: info.description,
-                    parameters: info.input_schema,
+                    parameters: input_schema,
                 },
             },
         };
@@ -1337,7 +1339,8 @@ mod tests {
                     description: "Requires a query".into(),
                     input_schema: serde_json::json!({
                         "type": "object",
-                        "properties": {"query": {"type": "string"}},
+                        "$defs": {"LookupQuery": {"type": "string"}},
+                        "properties": {"query": {"$ref": "#/$defs/LookupQuery"}},
                         "required": ["query"]
                     }),
                 })
@@ -1399,6 +1402,11 @@ mod tests {
         assert_eq!(definition.function.name, "fixture/required_argument");
         assert_eq!(definition.function.description, "Requires a query");
         assert_eq!(definition.function.parameters["required"][0], "query");
+        assert_eq!(
+            definition.function.parameters["properties"]["query"]["type"],
+            "string"
+        );
+        assert!(definition.function.parameters.get("$defs").is_none());
         crate::revoke_delegation_grant(&server);
     }
 
