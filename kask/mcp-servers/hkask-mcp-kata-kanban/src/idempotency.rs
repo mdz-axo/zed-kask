@@ -90,26 +90,10 @@ pub enum Reservation {
 
 /// Replay-protection store for state-changing kanban tools.
 ///
-/// Two backends, mirroring the kanban DB's own fallback: SQLite when a
-/// passphrase is configured, in-memory otherwise. [`Self::is_durable`] reports
-/// which, because an in-memory store cannot dedupe across a restart and callers
-/// must not advertise protection it does not have.
+/// SQLite-backed replay protection shares the Kanban database. An in-memory
+/// SQLite driver remains available to tests, but there is no second backend.
 pub struct IdempotencyStore {
-    inner: Inner,
-}
-
-enum Inner {
-    /// Process-local fallback. Correct within one process; lost on restart.
-    Memory(std::sync::Mutex<std::collections::HashMap<(String, String), Option<String>>>),
-    Sqlite(Arc<dyn DatabaseDriver>),
-}
-
-impl Default for IdempotencyStore {
-    fn default() -> Self {
-        Self {
-            inner: Inner::Memory(std::sync::Mutex::new(std::collections::HashMap::new())),
-        }
-    }
+    driver: Arc<dyn DatabaseDriver>,
 }
 
 impl IdempotencyStore {
@@ -128,22 +112,15 @@ impl IdempotencyStore {
                  PRIMARY KEY (tool, key) \
              )",
         )?;
-        Ok(Self {
-            inner: Inner::Sqlite(driver),
-        })
+        Ok(Self { driver })
     }
 
     /// Whether a recorded key survives a server restart.
     ///
-    /// `false` for the in-memory fallback. Callers must surface this so an
-    /// operator is not told a call was replay-protected when it was not (the
-    /// repo's advertised-invariant rule: a claimed guarantee must point at its
-    /// enforcement, or say it is absent).
+    /// The underlying driver reports whether keys survive a restart; tests
+    /// using in-memory SQLite truthfully report `false`.
     pub fn is_durable(&self) -> bool {
-        match &self.inner {
-            Inner::Memory(_) => false,
-            Inner::Sqlite(driver) => driver.is_durable(),
-        }
+        self.driver.is_durable()
     }
 
     /// Validate a client-supplied key.
@@ -172,74 +149,60 @@ impl IdempotencyStore {
     /// A store failure returns `Err` — fail closed. Proceeding on an unrecorded
     /// reservation would silently drop the very protection the caller asked for.
     pub fn reserve(&self, tool: &str, key: &str) -> Result<Reservation, DbError> {
-        match &self.inner {
-            Inner::Memory(map) => {
-                let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
-                match map.get(&(tool.to_string(), key.to_string())) {
-                    Some(Some(response)) => Ok(Reservation::Replay {
-                        response: response.clone(),
-                    }),
-                    Some(None) => Ok(Reservation::Pending),
-                    None => {
-                        map.insert((tool.to_string(), key.to_string()), None);
-                        Ok(Reservation::Fresh)
-                    }
-                }
+        let driver = &self.driver;
+        {
+            // Lazy expiry sweep, as in `consent.rs`: correctness rests on the
+            // TTL filter in the lookup below, not on this running.
+            let cutoff =
+                (chrono::Utc::now() - chrono::Duration::seconds(IDEMPOTENCY_TTL_SECS)).to_rfc3339();
+            if let Err(error) = driver.execute(
+                "DELETE FROM idempotency_keys WHERE created_at < ?1",
+                &[DbValue::Text(cutoff.clone())],
+            ) {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    %error,
+                    "idempotency key sweep failed - stale keys retained"
+                );
             }
-            Inner::Sqlite(driver) => {
-                // Lazy expiry sweep, as in `consent.rs`: correctness rests on the
-                // TTL filter in the lookup below, not on this running.
-                let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(IDEMPOTENCY_TTL_SECS))
-                    .to_rfc3339();
-                if let Err(error) = driver.execute(
-                    "DELETE FROM idempotency_keys WHERE created_at < ?1",
-                    &[DbValue::Text(cutoff.clone())],
-                ) {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        %error,
-                        "idempotency key sweep failed - stale keys retained"
-                    );
-                }
 
-                // Claim attempt. A primary-key conflict means someone was here
-                // first, which is the signal we want — not an error.
-                let inserted = driver.execute(
-                    "INSERT OR IGNORE INTO idempotency_keys (tool, key, response, created_at) \
+            // Claim attempt. A primary-key conflict means someone was here
+            // first, which is the signal we want — not an error.
+            let inserted = driver.execute(
+                "INSERT OR IGNORE INTO idempotency_keys (tool, key, response, created_at) \
                      VALUES (?1, ?2, NULL, ?3)",
-                    &[
-                        DbValue::Text(tool.to_string()),
-                        DbValue::Text(key.to_string()),
-                        DbValue::Text(chrono::Utc::now().to_rfc3339()),
-                    ],
-                )?;
-                if inserted > 0 {
-                    return Ok(Reservation::Fresh);
-                }
+                &[
+                    DbValue::Text(tool.to_string()),
+                    DbValue::Text(key.to_string()),
+                    DbValue::Text(chrono::Utc::now().to_rfc3339()),
+                ],
+            )?;
+            if inserted > 0 {
+                return Ok(Reservation::Fresh);
+            }
 
-                // Someone claimed it. Fetch what they recorded, ignoring
-                // entries the sweep should have removed.
-                let row = driver.query_optional(
-                    "SELECT response FROM idempotency_keys \
+            // Someone claimed it. Fetch what they recorded, ignoring
+            // entries the sweep should have removed.
+            let row = driver.query_optional(
+                "SELECT response FROM idempotency_keys \
                      WHERE tool = ?1 AND key = ?2 AND created_at >= ?3",
-                    &[
-                        DbValue::Text(tool.to_string()),
-                        DbValue::Text(key.to_string()),
-                        DbValue::Text(cutoff),
-                    ],
-                )?;
-                let Some(row) = row else {
-                    // Expired between the sweep and this read. Treat as fresh:
-                    // no live gesture is waiting on an hour-old reservation.
-                    return Ok(Reservation::Fresh);
-                };
-                match row.get_str(0) {
-                    Ok(response) => Ok(Reservation::Replay {
-                        response: response.to_string(),
-                    }),
-                    // NULL response — claimed but never completed.
-                    Err(_) => Ok(Reservation::Pending),
-                }
+                &[
+                    DbValue::Text(tool.to_string()),
+                    DbValue::Text(key.to_string()),
+                    DbValue::Text(cutoff),
+                ],
+            )?;
+            let Some(row) = row else {
+                // Expired between the sweep and this read. Treat as fresh:
+                // no live gesture is waiting on an hour-old reservation.
+                return Ok(Reservation::Fresh);
+            };
+            match row.get_str(0) {
+                Ok(response) => Ok(Reservation::Replay {
+                    response: response.to_string(),
+                }),
+                // NULL response — claimed but never completed.
+                Err(_) => Ok(Reservation::Pending),
             }
         }
     }
@@ -251,30 +214,23 @@ impl IdempotencyStore {
     /// for it. Logged loudly instead — a silent loss would leave the next retry
     /// duplicating work while the operator believed it was protected.
     pub fn record(&self, tool: &str, key: &str, response: &str) {
-        match &self.inner {
-            Inner::Memory(map) => {
-                map.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                    (tool.to_string(), key.to_string()),
-                    Some(response.to_string()),
+        let driver = &self.driver;
+        {
+            if let Err(error) = driver.execute(
+                "UPDATE idempotency_keys SET response = ?3 WHERE tool = ?1 AND key = ?2",
+                &[
+                    DbValue::Text(tool.to_string()),
+                    DbValue::Text(key.to_string()),
+                    DbValue::Text(response.to_string()),
+                ],
+            ) {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    tool = %tool,
+                    %error,
+                    "failed to record idempotency response - a retry of this call \
+                     will re-run it instead of replaying"
                 );
-            }
-            Inner::Sqlite(driver) => {
-                if let Err(error) = driver.execute(
-                    "UPDATE idempotency_keys SET response = ?3 WHERE tool = ?1 AND key = ?2",
-                    &[
-                        DbValue::Text(tool.to_string()),
-                        DbValue::Text(key.to_string()),
-                        DbValue::Text(response.to_string()),
-                    ],
-                ) {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        tool = %tool,
-                        %error,
-                        "failed to record idempotency response - a retry of this call \
-                         will re-run it instead of replaying"
-                    );
-                }
             }
         }
     }
@@ -284,28 +240,22 @@ impl IdempotencyStore {
     /// Called when the work failed: the key must not stay `Pending`, or a retry
     /// would be told "outcome unknown" when in fact nothing happened.
     pub fn release(&self, tool: &str, key: &str) {
-        match &self.inner {
-            Inner::Memory(map) => {
-                map.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&(tool.to_string(), key.to_string()));
-            }
-            Inner::Sqlite(driver) => {
-                if let Err(error) = driver.execute(
-                    "DELETE FROM idempotency_keys WHERE tool = ?1 AND key = ?2",
-                    &[
-                        DbValue::Text(tool.to_string()),
-                        DbValue::Text(key.to_string()),
-                    ],
-                ) {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        tool = %tool,
-                        %error,
-                        "failed to release idempotency claim - a retry will report \
-                         'outcome unknown' even though the call failed cleanly"
-                    );
-                }
+        let driver = &self.driver;
+        {
+            if let Err(error) = driver.execute(
+                "DELETE FROM idempotency_keys WHERE tool = ?1 AND key = ?2",
+                &[
+                    DbValue::Text(tool.to_string()),
+                    DbValue::Text(key.to_string()),
+                ],
+            ) {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    tool = %tool,
+                    %error,
+                    "failed to release idempotency claim - a retry will report \
+                     'outcome unknown' even though the call failed cleanly"
+                );
             }
         }
     }

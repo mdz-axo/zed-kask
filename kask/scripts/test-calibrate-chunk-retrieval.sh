@@ -299,12 +299,15 @@ jq --arg path "$tmp/dirty-source.txt" --arg digest "$dirty_digest" \
      | .accepted_sources[0].raw_sha256 = $digest
      | .accepted_sources[0].canonical_sha256 = $digest' \
     "$tmp/run-spec.json" > "$tmp/dirty-run-spec.json"
+embed_calls_before_dirty=$(if [[ -f "$FAKE_EMBED_CALL_LOG" ]]; then wc -l < "$FAKE_EMBED_CALL_LOG"; else echo 0; fi)
 if "$runner" "$tmp/dirty-run-spec.json" "$tmp/dirty-run" \
     >"$tmp/dirty-run.stdout" 2>"$tmp/dirty-run.stderr"; then
     echo "calibration accepted a representation containing a distribution watermark" >&2
     exit 1
 fi
 grep -F 'representation retains forbidden watermark or boilerplate' "$tmp/dirty-run.stderr" >/dev/null
+[[ $(wc -l < "$FAKE_EMBED_CALL_LOG") -eq "$embed_calls_before_dirty" ]]
+[[ ! -e "$tmp/dirty-run/reference.db" ]]
 [[ ! -e "$tmp/dirty-run/run-identity.json" ]]
 
 cp "$host_call" "$tmp/shared-host-call.original"

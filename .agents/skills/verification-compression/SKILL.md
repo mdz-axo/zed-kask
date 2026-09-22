@@ -74,7 +74,9 @@ Record before starting:
 - `mode`: `analyze` or `execute`;
 - `authorized_contract`: user decision or canonical specification;
 - `required_expectations`: expectation IDs and falsifiers;
-- `sample_count`: at least 2 comparable timed runs; 3 is preferred;
+- `sample_count`: at least 2 comparable timed runs per claimed timing state; 3 is preferred;
+- `timing_scope`: `cold`, `warm`, or `both`; select before measuring;
+  unselected states are `not_run` and earn no speedup claim;
 - `compression_target` and `speed_target`: caller-selected, never hidden;
 - `max_cycles`: 1–3, default 2.
 
@@ -135,8 +137,9 @@ verification code.
    `proof_unavailable`, never pass; no reduction may proceed.
 9. Call `skill` for `kata-improvement` and execute one bounded experiment.
    Hold the contract, oracle inputs, toolchain, environment, cache state, harmful
-   cases, and allowed-change control fixed. Run before/after timings separately
-   for cold and warm states. Re-run every discriminating fault from step 4 and
+   cases, and allowed-change control fixed. Run before/after timings in the
+   declared `timing_scope`. If both states are selected, measure them separately;
+   never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4 and
    require the allowed-change control to keep passing.
 10. Call `read_file` for
     `kask/registry/templates/verification-compression/experiment.j2` and produce
@@ -145,9 +148,9 @@ verification code.
     - env: `{ "check": <preservation block> }`
     - False means reject/revert the candidate regardless of speedup.
 11. Call `lisp_eval` for measured deltas:
-    - form: `(let ((gb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (ga (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cold (assoc "cold" metrics)) (warm (assoc "warm" metrics))) (list (list "graph_compression" (if (= gb 0) 0 (- 1 (/ ga gb)))) (list "cold_speedup" (if (= (assoc "time_after_ms" cold) 0) 0 (/ (assoc "time_before_ms" cold) (assoc "time_after_ms" cold)))) (list "warm_speedup" (if (= (assoc "time_after_ms" warm) 0) 0 (/ (assoc "time_before_ms" warm) (assoc "time_after_ms" warm))))))`
-    - env: `{ "metrics": <measured integer graph plus cold/warm metrics> }`
-    - Never infer acceleration from fewer commands; use observed time.
+    - form: `(let ((gb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (ga (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cold (assoc "cold" metrics)) (warm (assoc "warm" metrics))) (list (list "graph_compression" (if (= gb 0) nil (- 1 (/ ga gb)))) (list "cold_speedup" (if (= (assoc "time_after_ms" cold) 0) nil (/ (assoc "time_before_ms" cold) (assoc "time_after_ms" cold)))) (list "warm_speedup" (if (= (assoc "time_after_ms" warm) 0) nil (/ (assoc "time_before_ms" warm) (assoc "time_after_ms" warm))))))`
+    - env: `{ "metrics": <graph metrics plus cold/warm blocks; unmeasured states carry time_after_ms=0 and status=not_run> }`
+    - A missing or `nil` speedup never satisfies a speed target. Never infer acceleration from fewer commands; use observed time.
 
 ### ACT — Converge, retain, or revert
 

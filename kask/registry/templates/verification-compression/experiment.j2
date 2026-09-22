@@ -50,7 +50,8 @@ Any lost expectation, falsifier, oracle kind, failure class, provenance tier,
 failed harmful case, failed allowed-change control, changed measurement context,
 or uncompiled Lean obligation forces REVERT regardless of acceleration. Compute
 graph and time deltas only from observed integer values. Keep cold and warm
-timing as separate before/after blocks.
+timing as separate before/after blocks; mark an unselected timing state
+`not_run` and do not compute or claim its speedup.
 Corroborated means the candidate survived; never call it proven effective.
 
 Return JSON only:
@@ -82,8 +83,8 @@ Return JSON only:
     "edges_before":0,
     "nodes_after":0,
     "edges_after":0,
-    "cold":{"time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]},
-    "warm":{"time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]}
+    "cold":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]},
+    "warm":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]}
   },
   "falsification_log": [
     {"hypothesis":"", "prediction":"", "observation":"", "disposition":"eliminated|corroborated|irreducible"}

@@ -8,7 +8,7 @@ use hkask_types::{HMemOntology, WebID};
 /// pre: two target rows and one unrelated row exist; deletion of the second target is forced to fail
 /// post: both target rows and the unrelated row remain; a later successful retry deletes only the targets
 #[test]
-fn atomic_id_delete_rolls_back_earlier_rows_on_late_failure() -> anyhow::Result<()> {
+fn atomic_key_delete_rolls_back_earlier_rows_on_late_failure() -> anyhow::Result<()> {
     let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
     let first = HMem::new(
         "delete:target",
@@ -31,16 +31,17 @@ fn atomic_id_delete_rolls_back_earlier_rows_on_late_failure() -> anyhow::Result<
     for memory in [&first, &second, &unrelated] {
         store.insert(memory)?;
     }
-    let trigger = format!(
+    store.driver().execute_batch(
         "CREATE TRIGGER fail_second_target_delete BEFORE DELETE ON hmems
-         WHEN OLD.id = '{}'
+         WHEN OLD.entity = 'delete:target' AND OLD.attribute = 'second'
          BEGIN SELECT RAISE(FAIL, 'forced late delete failure'); END;",
-        second.id
-    );
-    store.driver().execute_batch(&trigger)?;
+    )?;
 
-    let target_ids = [first.id, second.id];
-    assert!(store.delete_batch_by_id_atomic(&target_ids).is_err());
+    assert!(
+        store
+            .delete_related_keys_atomic("delete:target", "first", "delete:target", "second")
+            .is_err()
+    );
     for memory in [&first, &second, &unrelated] {
         assert!(store.get_by_id(&memory.id)?.is_some());
     }
@@ -48,10 +49,51 @@ fn atomic_id_delete_rolls_back_earlier_rows_on_late_failure() -> anyhow::Result<
     store
         .driver()
         .execute_batch("DROP TRIGGER fail_second_target_delete;")?;
-    assert_eq!(store.delete_batch_by_id_atomic(&target_ids)?, 2);
+    assert!(store.delete_related_keys_atomic(
+        "delete:target",
+        "first",
+        "delete:target",
+        "second"
+    )?);
     assert!(store.get_by_id(&first.id)?.is_none());
     assert!(store.get_by_id(&second.id)?.is_none());
     assert!(store.get_by_id(&unrelated.id)?.is_some());
+    Ok(())
+}
+
+/// expect: "Related-key deletion removes the current payload even if an update replaced its row ID."
+/// [P3] Motivating: Generative Space — deletion cannot leave an invisible task payload.
+/// [P2] Constraining: Transparent Imperfection — row identity changes do not silently degrade cleanup.
+/// pre: a primary record is replaced by HMemStore::update before deletion
+/// post: both current primary and dependent key are absent; unrelated records remain
+#[test]
+fn atomic_key_delete_follows_replaced_row_identity() -> anyhow::Result<()> {
+    let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+    let owner = WebID::new();
+    let payload = HMem::new("kanban:task", "task-1", serde_json::json!("before"), owner);
+    let index = HMem::new(
+        "kanban:board_tasks:board-1",
+        "task-1",
+        serde_json::json!("task-1"),
+        owner,
+    );
+    for row in [&payload, &index] {
+        store.insert(row)?;
+    }
+    store.update(&payload.id, serde_json::json!("after"), 1.0)?;
+    assert!(store.get_by_id(&payload.id)?.is_none());
+    assert!(store.delete_related_keys_atomic(
+        "kanban:task",
+        "task-1",
+        "kanban:board_tasks:board-1",
+        "task-1",
+    )?);
+    assert!(store.query_by_entity("kanban:task")?.is_empty());
+    assert!(
+        store
+            .query_by_entity("kanban:board_tasks:board-1")?
+            .is_empty()
+    );
     Ok(())
 }
 

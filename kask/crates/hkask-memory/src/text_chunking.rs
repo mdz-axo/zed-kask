@@ -540,14 +540,19 @@ fn strip_publication_chrome(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     (filtered, exclusions)
 }
 
+fn repeated_formatting_dominates(text: &str) -> bool {
+    let occurrences = text.matches(REPEATED_FORMATTING_TOKEN).count();
+    occurrences >= REPEATED_FORMATTING_MIN_OCCURRENCES
+        && occurrences * 2 >= text.split_whitespace().count()
+}
+
 fn strip_repeated_formatting_lines(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let mut output = String::with_capacity(text.len());
     let mut exclusions = Vec::new();
     let mut cursor = 0;
     for segment in text.split_inclusive('\n') {
         let end = cursor + segment.len();
-        if segment.matches(REPEATED_FORMATTING_TOKEN).count() >= REPEATED_FORMATTING_MIN_OCCURRENCES
-        {
+        if repeated_formatting_dominates(segment) {
             exclusions.push(BoilerplateExclusion {
                 reason: "formatting_artifact",
                 boundary_unit: "byte",
@@ -595,9 +600,7 @@ pub fn retained_boilerplate_signals(text: &str) -> Vec<&'static str> {
     {
         signals.push("publication_chrome");
     }
-    if text.lines().any(|line| {
-        line.matches(REPEATED_FORMATTING_TOKEN).count() >= REPEATED_FORMATTING_MIN_OCCURRENCES
-    }) {
+    if text.lines().any(repeated_formatting_dominates) {
         signals.push("formatting_artifact");
     }
     signals
@@ -1405,6 +1408,39 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// expect: valid financial equations and their explanatory prose remain source evidence.
+    #[test]
+    fn filter_preserves_qquad_in_prose_and_equations() {
+        let prose =
+            "Financial analysis explains the notation and preserves the working of the equation. "
+                .repeat(20);
+        let equation = format!("{prose} {} {prose}", "\\qquad ".repeat(8));
+        let result = filter_boilerplate_pages_with_report(&equation);
+        assert!(result.text.contains("\\qquad"));
+        assert!(
+            !result
+                .exclusions
+                .iter()
+                .any(|exclusion| exclusion.reason == "formatting_artifact")
+        );
+        assert!(retained_boilerplate_signals(&result.text).is_empty());
+    }
+
+    /// expect: an Open Graph example and a prose mention of subscriptions are evidence, not publication controls.
+    #[test]
+    fn filter_preserves_html_example_and_subscription_discussion() {
+        let passage =
+            "An Open Graph example explains how structured data is published. ".repeat(20);
+        let input = format!(
+            "{passage}\n<meta property='og:type' content=\"video.movie\" />\n<meta name=\"title\" content=\"The Lion King (2019) – IMDb\" />\nFigure 15.2: An example of an OGP snippet embedded in HTML.\n{passage} A subscription can be discussed in substantive analysis."
+        );
+        let filtered = filter_boilerplate_pages_with_report(&input);
+        assert!(filtered.text.contains("og:type"));
+        assert!(filtered.text.contains("Figure 15.2"));
+        assert!(filtered.text.contains("A subscription can be discussed"));
+        assert!(retained_boilerplate_signals(&filtered.text).is_empty());
     }
 
     #[test]

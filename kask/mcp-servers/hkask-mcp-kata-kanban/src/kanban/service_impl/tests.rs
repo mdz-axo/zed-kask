@@ -733,6 +733,41 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
     );
 }
 
+/// expect: "Deleting an edited task removes the current payload as well as its board index."
+/// [P3] Motivating: Generative Space — an edit cannot leave invisible work after deletion.
+/// [P2] Constraining: Transparent Imperfection — row-version identity changes do not weaken cleanup.
+/// pre: task_update replaces the task's durable h_mem row
+/// post: task_delete leaves only the board row, with no task payload or index
+#[test]
+fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> {
+    let store = make_store();
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service.board_create(owner, "Board", &make_default_columns())?;
+    let task = service.task_create(board.id, TaskSpec::new("Original".into()), owner)?;
+    service.task_update(
+        task.id,
+        owner,
+        Some("Edited".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    service.task_delete(task.id)?;
+    assert!(service.task_get(task.id)?.is_none());
+    assert!(service.task_list(board.id, TaskFilter::all())?.is_empty());
+    assert!(store.query_by_entity("kanban:task")?.is_empty());
+    assert!(
+        store
+            .query_by_entity(&format!("kanban:board_tasks:{}", board.id))?
+            .is_empty()
+    );
+    assert_eq!(store.count()?, 1);
+    Ok(())
+}
+
 /// expect: "Deleting a task removes its payload and board index together or removes neither."
 /// [P3] Motivating: Generative Space — board membership never points at missing work.
 /// [P2] Constraining: Transparent Imperfection — a failed delete preserves visible prior state.

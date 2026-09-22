@@ -228,9 +228,11 @@ Graph compression is measured over verification artifact nodes and their
 `invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges.
 Execution acceleration is reported only from comparable observed before/after
 timing samples with toolchain, environment fingerprint, cache state, source
-and oracle hashes, sample count, and evidence paths recorded. Cold and warm
-measurements remain separate; one cannot stand in for the other. Focused RED/GREEN commands remain development
-evidence, but a final closeout may omit their duplicate invocations when the
+and oracle hashes, sample count, and evidence paths recorded. Declare a cold,
+warm, or both-state target before measuring. Measurements stay separate; an
+unselected state is `not_run` and earns no speedup claim. Focused RED/GREEN
+commands remain development evidence, but a final closeout may omit their
+duplicate invocations when the
 retained fixed-oracle suite demonstrably executes the exact same test
 identities. The tests and harmful controls themselves are not deleted.
 

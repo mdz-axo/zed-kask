@@ -419,20 +419,23 @@ impl HMemStore {
         Ok(true)
     }
 
-    /// Delete a set of h_mems in one transaction.
+    /// Delete a primary EAV row and its related EAV row under one write lock.
     ///
-    /// expect: "Deleting related durable records either removes the whole set or preserves it."
+    /// expect: "Deleting related durable records either removes both current keys or preserves both."
     /// [P3] Motivating: Generative Space — compound domain state stays coherent.
     /// [P2] Constraining: Transparent Imperfection — failure preserves the last durable state.
-    /// pre: ids identify zero or more h_mem rows
-    /// post: all matching rows are deleted and their count is returned, or no row is deleted
-    pub fn delete_batch_by_id_atomic(&self, ids: &[HMemId]) -> Result<usize, HMemError> {
-        if ids.is_empty() {
-            return Ok(0);
-        }
+    /// pre: primary key identifies at most one row; related key identifies its dependent records
+    /// post: true removes both keys atomically, false leaves state unchanged when the primary is absent
+    pub fn delete_related_keys_atomic(
+        &self,
+        primary_entity: &str,
+        primary_attribute: &str,
+        related_entity: &str,
+        related_attribute: &str,
+    ) -> Result<bool, HMemError> {
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
             HMemError::Infra(InfrastructureError::database(
-                "atomic h_mem batch deletion requires a SqliteDriver",
+                "atomic related-key deletion requires a SqliteDriver",
             ))
         })?;
         let mut connection = pool
@@ -441,12 +444,29 @@ impl HMemStore {
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
-        let mut deleted = 0usize;
-        for id in ids {
-            deleted += transaction
+        let count = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![primary_entity, primary_attribute],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        if count == 0 {
+            return Ok(false);
+        }
+        if count != 1 {
+            return Err(HMemError::Infra(InfrastructureError::database(format!(
+                "required primary key {primary_entity}/{primary_attribute} has {count} rows"
+            ))));
+        }
+        for (entity, attribute) in [
+            (primary_entity, primary_attribute),
+            (related_entity, related_attribute),
+        ] {
+            transaction
                 .execute(
-                    "DELETE FROM hmems WHERE id = ?1",
-                    rusqlite::params![id.to_string()],
+                    "DELETE FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                    rusqlite::params![entity, attribute],
                 )
                 .map_err(|error| {
                     HMemError::Infra(InfrastructureError::database(error.to_string()))
@@ -455,7 +475,7 @@ impl HMemStore {
         transaction
             .commit()
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
-        Ok(deleted)
+        Ok(true)
     }
 
     /// Delete every h_mem in one PKO procedure on one transaction.

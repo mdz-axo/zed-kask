@@ -509,7 +509,9 @@ verify_no_retained_boilerplate() {
             (.text | contains("Leave a comment")) or
             (.text | contains("Play in Reduct")) or
             (.text | contains("This page intentionally left blank")) or
-            (([.text | scan("\\\\qquad")] | length) >= 8);
+            (([.text | scan("\\\\qquad")] | length) as $occurrences
+              | $occurrences >= 8 and
+                ($occurrences * 2 >= ([.text | scan("\\S+")] | length)));
           select(retained_boilerplate)
         ' "$representation" >/dev/null; then
             echo "representation retains forbidden watermark or boilerplate: $representation" >&2

@@ -177,8 +177,8 @@ The **concept model and server implementation already satisfy** R1 (partially
   name longer than the 128-character cap (`validate_board_name`,
   `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:117-135`).
 - `task_create` verifies the board exists and returns `NotFound` otherwise
-  (`service_impl/service.rs:278-284`) — R5 is enforced at the service seam,
-  not just the schema. (No test currently pins this; T3.)
+  (`service_impl/service.rs`, `task_create`) — R5 is enforced at the service
+  seam, not just the schema; `task_create_rejects_unknown_board` pins this.
 - `kanban_task_create` requires a `board_id`
   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:601`),
   and the board index prefix `BOARD_TASKS_PREFIX`
@@ -203,7 +203,12 @@ The **concept model and server implementation already satisfy** R1 (partially
   so the model layer functions end to end. The mismatch the operator
   reported lives in the **panel presentation layer**, not the model.
 
-### 5.2 Gaps
+### 5.2 Historical gaps (pre-implementation, 2026-09-18)
+
+The following table records the state **before** the implementation in §10.
+It is retained as the review's historical problem statement, not a claim
+about the current tree; §10 documents the closed G1–G9 items. File line
+references in this table refer to that pre-implementation snapshot.
 
 | # | Gap | Violates | Site |
 | --- | --- | --- | --- |

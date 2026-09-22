@@ -15,7 +15,7 @@ use hkask_types::Dimension;
 use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
-use hkask_types::id::{BoardId, HMemId, TaskId};
+use hkask_types::id::{BoardId, TaskId};
 use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use serde_json::Value;
 
@@ -775,23 +775,6 @@ impl KanbanService {
 
     // ── Lifecycle operations (P0) ─────────────────────────────────────
 
-    fn task_record_ids(&self, task: &Task) -> Result<Vec<HMemId>, KanbanError> {
-        let task_rows = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task.id.to_string())
-            .map_err(|error| KanbanError::Internal(format!("task h_mem query failed: {error}")))?;
-        let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
-        let index_rows = self
-            .store
-            .query_by_entity_attribute(&index_entity, &task.id.to_string())
-            .map_err(|error| KanbanError::Internal(format!("task index query failed: {error}")))?;
-        Ok(task_rows
-            .into_iter()
-            .chain(index_rows)
-            .map(|row| row.id)
-            .collect())
-    }
-
     /// Delete a task and its board index entry.
     ///
     /// pre:  task_id is valid
@@ -800,12 +783,24 @@ impl KanbanService {
     pub(crate) fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
         let task = self.require_task(task_id)?;
 
-        let record_ids = self.task_record_ids(&task)?;
-        self.store
-            .delete_batch_by_id_atomic(&record_ids)
+        let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
+        let deleted = self
+            .store
+            .delete_related_keys_atomic(
+                TASK_ENTITY,
+                &task_id.to_string(),
+                &index_entity,
+                &task_id.to_string(),
+            )
             .map_err(|error| {
                 KanbanError::Internal(format!("atomic task deletion failed: {error}"))
             })?;
+        if !deleted {
+            return Err(KanbanError::NotFound(NotFound {
+                entity_type: "task".to_string(),
+                id: task_id.to_string(),
+            }));
+        }
         Ok(())
     }
 

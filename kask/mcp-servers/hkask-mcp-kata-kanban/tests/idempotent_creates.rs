@@ -535,7 +535,12 @@ async fn replay_is_absorbed_across_processes() {
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
                 .expect("idempotency schema"),
         ),
-        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
     );
 
     let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared"))
@@ -567,8 +572,18 @@ async fn non_durable_protection_is_labelled_in_the_response() {
         KanbanService::new(store),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
-        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
-        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
     );
 
     let board = create_board(&server, "Board", Some("labelled")).await;
@@ -765,18 +780,6 @@ fn in_memory_drivers_report_not_durable() {
     );
 }
 
-#[test]
-fn with_durability_false_overrides_the_labeled_default() {
-    let pool = SqliteDriver::in_memory_pool().expect("pool");
-    let driver = SqliteDriver::new_labeled(pool, "in-memory fallback").with_durability(false);
-    let store = hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::new(driver))
-        .expect("store init");
-    assert!(
-        !store.is_durable(),
-        "the production in-memory fallback shape (labeled driver, with_durability(false)) must report non-durable"
-    );
-}
-
 /// Within one process, a keyed goal create is replay-protected — the goal
 /// replay store (sharing the kanban driver) absorbs the retry and returns
 /// the original goal. The in-memory test driver honestly reports
@@ -845,19 +848,6 @@ fn wire_field_name_matches_what_clients_send() {
     }))
     .expect("spawn payload deserializes");
     assert_eq!(spawn.idempotency_key.as_deref(), Some("k"));
-}
-
-/// Omitting the field still deserializes, so unprotected callers keep working.
-#[test]
-fn wire_contract_is_backward_compatible() {
-    let legacy: TaskCreateRequest =
-        serde_json::from_value(serde_json::json!({ "board_id": "b", "title": "t" }))
-            .expect("a request without the field must still deserialize");
-    assert!(
-        legacy.idempotency_key.is_none(),
-        "adding the field must not break callers that never send it (the agent \
-         does not)"
-    );
 }
 
 // ── Spawn on an unfunded ledger ─────────────────────────────────────────────
@@ -1052,7 +1042,12 @@ fn make_spawn_server() -> (
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
         Arc::new(idempotency),
-        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
     );
     (server, driver, port)
 }
@@ -1204,7 +1199,12 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
                 .expect("idempotency schema"),
         ),
-        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
     );
 
     let error = spawn_task(&restarted, &task_id, Some("crashed"))
