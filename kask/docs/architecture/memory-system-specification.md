@@ -240,8 +240,11 @@ enforced by:
 2. `hkask_memory::semantic_passage_for_h_mem` is the one passage-identity
    contract used by production recall and embedding backfill. Mutable lessons
    project their provenance-bearing `recall_text`; goal events remove the
-   private calibration receipt before reconstructing tool + JSON. Backfill
-   therefore cannot report success with a passage production recall will reject.
+   private calibration receipt before reconstructing tool + JSON. Backfill is
+   scoped by exact `(entity, passage)`, so one successful sibling vector cannot
+   hide another failed h_mem. Goal rows are excluded: invalid goal publication
+   is rejected, never healed by a compatibility backfill. Backfill therefore
+   cannot report success with a passage production recall will reject.
 3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
    `persisted_goal_event_is_semantically_visible_by_entity_ref`,
