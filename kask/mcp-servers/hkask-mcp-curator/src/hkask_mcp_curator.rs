@@ -1652,7 +1652,8 @@ impl CuratorServer {
             let mut embedded_count = 0usize;
             let mut failed_count = 0usize;
             for h_mem in candidates {
-                let embed_text = memory_embed_text(&h_mem.entity, &h_mem.attribute, &h_mem.value);
+                let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem)
+                    .unwrap_or_else(|| memory_embed_text(&h_mem.entity, &h_mem.attribute, &h_mem.value));
                 let embedded = embed_for_semantic_recall(
                     self.inference_port.as_ref(),
                     memory,

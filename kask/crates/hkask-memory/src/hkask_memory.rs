@@ -15,9 +15,10 @@
 //!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash
 //! over canonical entity-attribute-value content, first-seen-wins). There is
-//! no shared rendering layer: each consuming surface (chat service, MCP server,
-//! HTTP API, TUI) joins and serializes recalled memories in the shape its own
-//! consumer needs. See ADR-060 for the decision and rationale.
+//! no shared UI rendering layer: each consuming surface serializes recalled
+//! memories in its own shape. Writers, backfill, and recall do share one
+//! semantic-passage identity function so an embedding always joins the same
+//! h_mem representation. See ADR-060 for the rendering decision and rationale.
 
 pub(crate) mod bayesian; // Confidence combination via log-odds pooling
 pub mod consolidation_service; // Memory consolidator (cleanup + budget pruning)
@@ -28,7 +29,9 @@ pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;
 
-pub use memory_store::{DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome};
+pub use memory_store::{
+    DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome, semantic_passage_for_h_mem,
+};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
 pub use bayesian::combine_confidences;

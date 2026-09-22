@@ -57,41 +57,6 @@ pub(crate) use ingest::WriteContext;
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
-/// Reconstruct the exact passage representation an h_mem writer embedded.
-///
-/// expect: "A semantic hit can join back to the structured memory that produced its passage."
-/// [P8] Motivating: Semantic Grounding — passage identity is the KNN-to-h_mem join contract.
-/// pre: h_mem is a plain chunk, a distilled lesson object, or a goal-event object
-/// post: returns the writer's deterministic passage text, or None for unsupported shapes
-fn embedding_passage_for_h_mem(h_mem: &hkask_storage::HMem) -> Option<String> {
-    if let Some(text) = h_mem.value.as_str() {
-        return (!text.is_empty()).then(|| text.to_string());
-    }
-    if h_mem
-        .value
-        .get("mutable_state")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-    {
-        return h_mem
-            .value
-            .get("recall_text")
-            .and_then(serde_json::Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(ToString::to_string);
-    }
-    if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
-        return (!text.is_empty()).then(|| text.to_string());
-    }
-    h_mem.entity.starts_with("curator:goal:").then(|| {
-        let mut public_value = h_mem.value.clone();
-        if let Some(object) = public_value.as_object_mut() {
-            object.remove("_memory_calibration");
-        }
-        format!("goal event {}: {}", h_mem.attribute, public_value)
-    })
-}
-
 /// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
 /// Stores each completed turn as cleaned, word-bounded chunks under the
@@ -672,7 +637,8 @@ impl RealMemoryPort {
                         };
                         if let Ok(h_mems) = store.query_deduped_untouched(entity_ref) {
                             for h_mem in h_mems {
-                                let Some(text) = embedding_passage_for_h_mem(&h_mem) else {
+                                let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem)
+                                else {
                                     continue;
                                 };
                                 if text != matched_passage {
@@ -1112,13 +1078,14 @@ pub(crate) mod tests {
             WebID::new(),
         );
         assert!(
-            embedding_passage_for_h_mem(&lesson).is_none(),
+            hkask_memory::semantic_passage_for_h_mem(&lesson).is_none(),
             "mutable claims without provenance-bearing recall_text are not injected"
         );
         lesson.value["recall_text"] = serde_json::json!(
             "The server exposes five tools. [mutable state; source: kask/file.rs; version/date: abc123]"
         );
-        let projected = embedding_passage_for_h_mem(&lesson).expect("bounded recall text");
+        let projected =
+            hkask_memory::semantic_passage_for_h_mem(&lesson).expect("bounded recall text");
         assert!(projected.contains("kask/file.rs"));
         assert!(projected.contains("abc123"));
     }

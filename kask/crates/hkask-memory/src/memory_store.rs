@@ -42,6 +42,40 @@ pub enum MemoryStoreError {
     NoEmbeddingsForCentroid(String),
 }
 
+/// Reconstruct the exact semantic passage a supported h_mem writer embeds.
+///
+/// Plain chunks use their string value. Distilled mutable state requires its
+/// provenance-bearing `recall_text`; durable lessons use `text`. Goal events
+/// remove the private calibration receipt before reconstructing tool + JSON.
+pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
+    if let Some(text) = h_mem.value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    if h_mem
+        .value
+        .get("mutable_state")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        return h_mem
+            .value
+            .get("recall_text")
+            .and_then(serde_json::Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string);
+    }
+    if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    h_mem.entity.starts_with("curator:goal:").then(|| {
+        let mut public_value = h_mem.value.clone();
+        if let Some(object) = public_value.as_object_mut() {
+            object.remove("_memory_calibration");
+        }
+        format!("goal event {}: {}", h_mem.attribute, public_value)
+    })
+}
+
 /// Result of computing a style centroid over a prefix-scoped embedding set.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CentroidResult {

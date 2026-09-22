@@ -1482,6 +1482,22 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         WebID::new(),
     );
     memory.store(ruling).expect("seed ruling");
+    let mutable_recall_text = "The server exposes five tools. [mutable state; source: kask/file.rs; version/date: abc123]";
+    let mutable_lesson = hkask_storage::HMem::new(
+        "server-tool-count",
+        "current-count",
+        serde_json::json!({
+            "text": "The server exposes five tools.",
+            "recall_text": mutable_recall_text,
+            "mutable_state": true,
+            "state_provenance": {
+                "source_locator": "kask/file.rs",
+                "version_or_date": "abc123"
+            }
+        }),
+        WebID::new(),
+    );
+    memory.store(mutable_lesson).expect("seed mutable lesson");
     let shared_turn = hkask_storage::HMem::new(
         "curator:thread:backfill-test",
         "turn",
@@ -1511,7 +1527,7 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         .store_embedding("curator:thread:backfill-test", &vector, "test-model", None)
         .expect("seed turn embedding");
 
-    // Dry run: lists the ruling only, embeds nothing.
+    // Dry run: lists the ruling and mutable lesson, embeds nothing.
     let dry = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
@@ -1523,8 +1539,8 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     assert_eq!(dry["dry_run"].as_bool(), Some(true));
     assert_eq!(
         dry["candidate_count"].as_u64(),
-        Some(1),
-        "only the knowledge-layer entity is a candidate — got: {dry}",
+        Some(2),
+        "both knowledge-layer entities are candidates — got: {dry}",
     );
     assert_eq!(
         memory.embedding_count().expect("count"),
@@ -1532,7 +1548,7 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         "dry run must not embed anything",
     );
 
-    // Real run: the ruling gains an embedding; turns and watermark untouched.
+    // Real run: both knowledge rows gain canonical embeddings; turns and watermark untouched.
     let run = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
@@ -1543,14 +1559,26 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     );
     assert_eq!(
         run["backfilled"].as_u64(),
-        Some(1),
-        "one entity backfilled — got: {run}",
+        Some(2),
+        "two entities backfilled — got: {run}",
     );
     assert_eq!(run["failed"].as_u64(), Some(0));
     assert_eq!(
         memory.embedding_count().expect("count"),
-        2,
-        "the ruling's embedding landed; no turn/watermark embeddings added",
+        3,
+        "the two knowledge embeddings landed; no turn/watermark embeddings added",
+    );
+    let mutable_passage = memory
+        .all_embeddings_with_text()
+        .expect("embedding inventory")
+        .into_iter()
+        .find_map(|(entity, _vector, passage)| {
+            (entity == "server-tool-count").then_some(passage).flatten()
+        })
+        .expect("mutable lesson passage");
+    assert_eq!(
+        mutable_passage, mutable_recall_text,
+        "backfill and production recall must share the provenance-bearing passage"
     );
 
     // Idempotent: a second run finds no candidates.

@@ -951,6 +951,15 @@ fn prepare_lesson(
         .with_confidence(hkask_types::Confidence::new(0.5))
         .with_visibility(hkask_types::Visibility::Shared)
         .with_dimension(hkask_types::Dimension::Why);
+    let Some(recall_text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
+        tracing::warn!(
+            target: "hkask.mcp.curator.distillation",
+            entity,
+            attribute,
+            "Skipping lesson with no canonical semantic passage"
+        );
+        return Ok(None);
+    };
     Ok(Some(PreparedLesson {
         h_mem,
         entity: entity.to_string(),
