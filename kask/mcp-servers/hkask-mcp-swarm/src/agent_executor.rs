@@ -237,7 +237,7 @@ impl AgentExecutor {
             Ok(models) => (
                 models
                     .into_iter()
-                    .filter(|model| model != &agent.capabilities.model)
+                    .filter(|model| Some(model.as_str()) != self.model_override(agent))
                     .take(MAX_MODEL_SUGGESTIONS)
                     .collect::<Vec<_>>(),
                 "available".to_string(),
@@ -300,8 +300,8 @@ impl AgentExecutor {
         (!configured.is_empty()).then_some(configured)
     }
 
-    /// Run a local agent: execute declared skills, build the declared tool
-    /// set, and run the multi-round inference/tool-dispatch loop. Returns the
+    /// Run a local agent: build the declared MCP tool set and run the
+    /// multi-round inference/tool-dispatch loop. Returns the
     /// raw result and observed usage; there is no token-budget debit.
     ///
     /// `task_clean` is the already-stripped task (the runtime strips `@mentions`
@@ -1174,6 +1174,35 @@ mod tests {
         assert!(message.contains("developers.openai.com/api/docs/models/gpt-5.6-sol"));
         assert!(message.contains("\"catalogue_as_of\":\"2026-09-16\""));
         assert!(message.contains("\"selected_model\":\"host_session_default\""));
+    }
+
+    #[tokio::test]
+    async fn configured_swarm_model_is_named_on_inference_failure() {
+        let inference = Arc::new(MandatoryReasoningInference {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            suggestions: vec![
+                "Configured/swarm-model".to_string(),
+                "Other/model".to_string(),
+            ],
+        });
+        let executor = AgentExecutor::new(inference, Arc::new(StubDispatch))
+            .with_default_agent_model("Configured/swarm-model".to_string());
+        let card = LocalAgentCard {
+            agent_id: "swarm-default".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                model_params: Some(serde_json::json!({"thinking_allowed": false})),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = match executor.run(&card, "task").await {
+            Ok(_) => panic!("incompatible configured model must fail"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("\"selected_model\":\"Configured/swarm-model\""));
+        assert!(message.contains("Other/model"));
+        assert!(!message.contains("Configured suggestions: Configured/swarm-model"));
     }
 
     /// A stub that records the `model_override` it was called with, so tests

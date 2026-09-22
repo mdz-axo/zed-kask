@@ -503,6 +503,37 @@ injected by the governed `build_mcp_server_env` credential path — it never app
 | —                                     | `HKASK_SWARM_CONSENT_STORE`         | (data dir)                       | Consent store SQLite path (operator env var only)             |
 | —                                     | `HKASK_ABW_API_KEY`                 | —                                | ABW Pro API key (keychain credential, **never** in `mcp_env`) |
 
+Local model resolution is evaluated at delegation time: a non-empty
+`LocalAgentCapabilities::model` wins, otherwise the operator's non-empty
+`kask.swarm.default_agent_model` is passed through the inference bridge; if
+both are empty, the bridge uses the host session model. Existing local cards
+remain unpinned. A model-resolution or provider error is surfaced; the
+executor does not silently switch to another model.
+
+### Local-agent execution gaps (audited 2026-09-22)
+
+- **Declared skills are metadata only.** `LocalAgentCapabilities::skills` is
+  persisted at create/clone/reconfigure time, but `AgentExecutor::run` does not
+  expose the Zed `skill` tool to local agents. That tool is per-project and
+  registered on a Zed thread, not through the MCP `ToolDispatchPort`. To close:
+  introduce an explicitly scoped skill execution/resolution port through the
+  governed IPC boundary, admit only the card's declared skills, and pin a
+  positive retrieve/use test plus undeclared-skill rejection through
+  `swarm_delegate_local`. Do not advertise runtime skill use until that test
+  exercises it.
+- **Declared MCP tools receive placeholder input schemas.** The executor
+  advertises every `server/tool` with `{"type":"object","properties":{}}`
+  rather than the server's actual input schema. The zed-side dispatch still
+  enforces the qualified tool allowlist, but providers may be unable to
+  construct valid arguments for tools with required fields. To close: extend
+  the governed tool-definition port to return actual registered schemas,
+  preserve the allowlist at both declaration and invocation, and test a tool
+  with a required parameter plus rejection of an undeclared tool.
+- **Round exhaustion now fails visibly.** An agent that requests tools in all
+  four rounds without a final answer receives an execution error instead of
+  an empty successful response. The 4-round bound still applies to reasoning
+  steps and MCP tool calls together.
+
 ## Security posture
 
 The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-security]

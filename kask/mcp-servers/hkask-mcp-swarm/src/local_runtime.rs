@@ -3,7 +3,7 @@
 //! Extracted from the swarm server root. `LazyLocalSwarmRuntime` defers
 //! construction to the first tool call (the `run_server` factory is sync).
 //! `LocalSwarmRuntime::delegate` runs a local agent: tool loop → measured
-//! result. The inference/skill/tool ports are resolved once at construction.
+//! result. The inference and tool-dispatch ports are resolved once at construction.
 //! Token usage is measured, not a budget or admission gate. Inference uses
 //! configured platform models, including cloud providers that may charge.
 //! Request deadlines and tool-loop bounds are separate execution controls.
@@ -162,7 +162,7 @@ impl LazyLocalSwarmRuntime {
 /// records per-agent stats. It does not impose token quotas or debit a local
 /// account. Platform inference may use paid cloud providers.
 pub struct LocalSwarmRuntime {
-    /// The agent-run policy (inference + tool dispatch + skill exec).
+    /// The agent-run policy (inference + tool dispatch).
     /// Constructed once from the resolved IPC-bridge ports; the runtime
     /// calls `executor.run` and measures the result.
     executor: AgentExecutor,
@@ -214,8 +214,10 @@ impl LocalSwarmRuntime {
     pub(crate) fn new_for_test(
         inference: std::sync::Arc<dyn hkask_types::InferencePort>,
         tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
+        default_agent_model: String,
     ) -> Self {
-        let executor = AgentExecutor::new(inference, tool_dispatch);
+        let executor = AgentExecutor::new(inference, tool_dispatch)
+            .with_default_agent_model(default_agent_model);
         // A throwaway stats store — tests exercise the delegate logic, not
         // stats persistence (that is unit-tested on `AgentStatsStore`
         // directly).
@@ -299,7 +301,7 @@ impl LocalSwarmRuntime {
         self.executor.inference()
     }
 
-    /// Execute a local agent: run the agent (skill execution + tool loop, via
+    /// Execute a local agent: run the agent (tool loop, via
     /// `AgentExecutor::run`) and measure the result. Returns the response
     /// text, model, token usage, latency, and a tool-call summary.
     ///

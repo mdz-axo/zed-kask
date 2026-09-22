@@ -691,6 +691,7 @@ mod smoke_tests {
                 LocalSwarmRuntime::new_for_test(
                     Arc::new(Replies(std::sync::Mutex::new(replies.into()))),
                     Arc::new(NoTools),
+                    String::new(),
                 ),
             ));
             // A file in the parent position fails before the DB connection timeout.
@@ -888,12 +889,9 @@ mod smoke_tests {
             "the error must name the env var, got: {error}"
         );
     }
-    /// The operator's spec, pinned end-to-end: creating a local agent WITHOUT
-    /// a model must leave the card's model EMPTY — "host session default,
-    /// resolved at run time". No config default may be stamped into the card
-    /// (a frozen stamp silently diverges from the session model the operator
-    /// chose, and a hardcoded fallback model is exactly the inferior-model
-    /// lock-up the spec forbids).
+    /// Creating a local agent without an explicit model keeps its card empty.
+    /// The operator's Swarm default (or, if unset, the host session default)
+    /// resolves at execution time; a stamped value would become stale.
     #[tokio::test]
     async fn create_local_agent_without_model_writes_empty_card_model() {
         let base = std::env::var("CARGO_TARGET_TMPDIR")

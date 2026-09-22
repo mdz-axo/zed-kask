@@ -3704,7 +3704,7 @@ mod tests {
             call_count: call_count.clone(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
 
         let good_agent = mock_agent_card(
             "good",
@@ -3750,7 +3750,7 @@ mod tests {
             call_count: call_count.clone(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
 
         let agent = mock_agent_card(
             "good",
@@ -3803,6 +3803,106 @@ mod tests {
         }
     }
 
+    /// Pin the configured model through the actual local delegation path,
+    /// including explicit-card precedence and an unchanged empty card.
+    #[tokio::test]
+    async fn delegate_inherits_swarm_model_without_stamping_card() {
+        struct ModelRecorder(std::sync::Mutex<Vec<Option<String>>>);
+
+        impl hkask_types::InferencePort for ModelRecorder {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &hkask_types::LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async {
+                    Ok(hkask_types::InferenceResult {
+                        text: "ok".into(),
+                        model: "mock".into(),
+                        usage: Default::default(),
+                        finish_reason: "stop".into(),
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+
+            fn generate_with_messages(
+                &self,
+                _messages: &[hkask_types::ChatMessage],
+                _parameters: &hkask_types::LLMParameters,
+                model_override: Option<&str>,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                self.0
+                    .lock()
+                    .expect("recorder lock")
+                    .push(model_override.map(str::to_string));
+                Box::pin(async {
+                    Ok(hkask_types::InferenceResult {
+                        text: "ok".into(),
+                        model: "mock".into(),
+                        usage: Default::default(),
+                        finish_reason: "stop".into(),
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+        }
+
+        let inference = Arc::new(ModelRecorder(std::sync::Mutex::new(Vec::new())));
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            inference.clone(),
+            Arc::new(NoopDispatch),
+            "Configured/swarm-model".to_string(),
+        );
+        let mut card = mock_agent_card("inheriting", "You answer briefly.");
+        runtime
+            .delegate(&card, "hello")
+            .await
+            .expect("inherited model runs");
+        assert!(
+            card.capabilities.model.is_empty(),
+            "the card remains unpinned"
+        );
+        card.capabilities.model = "Explicit/card-model".to_string();
+        runtime
+            .delegate(&card, "hello")
+            .await
+            .expect("explicit model runs");
+        assert_eq!(
+            inference.0.lock().expect("recorder lock").as_slice(),
+            &[
+                Some("Configured/swarm-model".to_string()),
+                Some("Explicit/card-model".to_string())
+            ],
+        );
+    }
+
     /// The grounding gate is wired into the shared delegate path: a
     /// contracted agent's delegation result carries the grounding report,
     /// the completeness report, and the one-token reliance verdict — stamped
@@ -3828,7 +3928,7 @@ mod tests {
             text: r#"{"price": 42.50, "outlook": "bullish"}"#.to_string(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
 
         let result = runtime
             .delegate(&agent, "analyze")
@@ -3891,7 +3991,7 @@ mod tests {
             text: r#"{"summary": "hello"}"#.to_string(),
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch);
+        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
         let result = runtime.delegate(&agent, "summarize").await.expect("ok");
         assert_eq!(
             result
@@ -3908,7 +4008,7 @@ mod tests {
             text: "just prose, no document".to_string(),
         });
         let prose_runtime =
-            LocalSwarmRuntime::new_for_test(prose_inference, Arc::new(NoopDispatch));
+            LocalSwarmRuntime::new_for_test(prose_inference, Arc::new(NoopDispatch), String::new());
         let prose_result = prose_runtime
             .delegate(&agent, "summarize")
             .await
