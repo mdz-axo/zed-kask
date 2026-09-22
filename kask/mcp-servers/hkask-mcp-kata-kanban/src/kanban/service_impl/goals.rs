@@ -145,15 +145,24 @@ impl KanbanService {
             .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
 
         let mut goals: Vec<Goal> = Vec::new();
-        for t in &h_mems {
-            if t.access.owner_webid == *owner
-                && let Ok(goal) = serde_json::from_value::<Goal>(t.value.clone())
-            {
-                goals.push(goal);
+        let mut goal_ids = std::collections::HashSet::new();
+        for h_mem in h_mems {
+            if h_mem.access.owner_webid != *owner {
+                continue;
             }
+            let goal = serde_json::from_value::<Goal>(h_mem.value).map_err(|error| {
+                KanbanError::Internal(format!("goal deserialization failed: {error}"))
+            })?;
+            if !goal_ids.insert(goal.id) {
+                return Err(KanbanError::Internal(format!(
+                    "goal {} has duplicate durable rows",
+                    goal.id
+                )));
+            }
+            goals.push(goal);
         }
 
-        goals.sort_by_key(|g| std::cmp::Reverse(g.created_at));
+        goals.sort_by_key(|goal| std::cmp::Reverse(goal.created_at));
         Ok(goals)
     }
 

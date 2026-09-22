@@ -693,7 +693,9 @@ pub(crate) struct BoardExportResponse {
 /// create a new board with tasks in the parsed columns.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardImportRequest {
-    /// Mermaid kanban markdown (the output of `kanban_board_export`).
+    /// Current-format Mermaid kanban markdown from `kanban_board_export`.
+    /// Every section must be preceded by
+    /// `%% kanban column status: <wire-status>`; implicit legacy mappings are rejected.
     pub markdown: String,
     /// Optional override for the board name. When `None`, the name parsed
     /// from the `%% kanban board: <name>` comment is used; when the markdown
