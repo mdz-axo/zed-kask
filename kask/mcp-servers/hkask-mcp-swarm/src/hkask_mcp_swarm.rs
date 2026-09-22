@@ -284,9 +284,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             //
             // The runtime is constructed lazily on first tool call (the
             // `run_server` factory closure is sync — it cannot `.await` the
-            // inference port resolution). `LocalSwarmRuntime::lazy` stores
-            // the config; `LocalSwarmRuntime::get_or_init` does the async
-            // init on first use.
+            // inference port resolution). `LazyLocalSwarmRuntime::lazy` stores
+            // the operator's selected default model; `get_or_init` does the
+            // async init on first use.
             //
             // Per-agent execution stats — the local analog of fermi's
             // `measured_exec_stats`. One store, two handles: the runtime
@@ -295,8 +295,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let agent_stats = std::sync::Arc::new(agent_stats::AgentStatsStore::load(
                 &config.local_agents_dir,
             ));
-            let local_runtime =
-                std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
+            let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
+                agent_stats.clone(),
+                config.default_agent_model.clone(),
+            ));
 
             // The rollout event store (event-substrate data plane). D28
             // layout: `mcp/swarm/events.db` under the data dir,
@@ -499,7 +501,10 @@ mod smoke_tests {
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
+            agent_stats.clone(),
+            String::new(),
+        ));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
         let local_memory = Arc::new(LazyLocalMemory::lazy(
             memory_path,
@@ -905,7 +910,10 @@ mod smoke_tests {
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(
             &scratch.join("stats").to_string_lossy(),
         ));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(agent_stats.clone()));
+        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
+            agent_stats.clone(),
+            String::new(),
+        ));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(
             scratch.join("swarms").to_string_lossy().to_string(),
         ));
@@ -964,8 +972,8 @@ mod smoke_tests {
                 .expect("card is json");
         assert_eq!(
             card["capabilities"]["model"], "",
-            "no model supplied — the card must carry an EMPTY model (host session default at \
-             run time), never a stamped config default"
+            "no model supplied — the card must remain unpinned so the Swarm setting or host \
+             session default resolves at run time"
         );
         assert_eq!(
             card["capabilities"]["model_params"]["thinking_allowed"], false,

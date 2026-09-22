@@ -62,21 +62,12 @@ thinking_budget = "full"
   Bloom Step 2: Mind the gaps — what is said AND what is not said.
   Compare content against baseline expectations.
 
-  Args:
-    content: The text/document to analyze
-    expectations: List of expected elements/topics/metrics
-
-  Returns:
-    List of gaps (expected but absent)
+  Expectations are candidates for evidence review, not substring checks:
+  a mention may explicitly say the topic is absent.
 #}
-{%- set gaps = [] -%}
-{%- for expectation in expectations -%}
-{%- if expectation not in content -%}
-{%- set _ = gaps.append(expectation) -%}
-{%- endif -%}
-{%- endfor -%}
-{%- for gap in gaps -%}
-GAP: {{ gap }}
+{%- for expectation in expectations %}
+- Check {{ expectation }}: cite the text that addresses it, explicitly denies it,
+  or mark it not established. Do not infer intention from absence.
 {%- endfor -%}
 {% endmacro %}
 
@@ -121,13 +112,13 @@ Gap: {{ gap }}
   Returns:
     Calibrated analysis that rejects mediocrity
 #}
-{%- for bias in biases -%}
-Checking bias: {{ bias }}
-{%- endfor -%}
-{%- for assumption in assumptions -%}
-Questioning assumption: {{ assumption }}
-{%- endfor -%}
-Reject mediocrity. See clearly.
+{% for bias in biases %}
+- Check bias: {{ bias }}
+{% endfor %}
+{% for assumption in assumptions %}
+- Question assumption: {{ assumption }}
+{% endfor %}
+See clearly; do not assume intention.
 {% endmacro %}
 
 {% macro find_not_inferno(content, inferno_markers) %}
@@ -142,10 +133,8 @@ Reject mediocrity. See clearly.
   Returns:
     Elements that are NOT inferno — the exceptional
 #}
-{%- set not_inferno = [] -%}
 {%- for element in content -%}
-{%- if element not in inferno_markers -%}
-{%- set _ = not_inferno.append(element) -%}
+{%- if element not in inferno_markers %}
 Found not-inferno: {{ element }}
 Give it space.
 {%- endif -%}
@@ -165,19 +154,11 @@ Give it space.
   - Hamlet's Acts IV-V gap (transformation in absence)
   - Falstaff's offstage death (Henry IV)
 #}
-{%- set ellipses = [] -%}
 {%- for element in expected_elements -%}
-{%- if element not in text -%}
-{%- set _ = ellipses.append({
-    'missing': element,
-    'type': 'ellipsis',
-    'meaning': 'Reader fills gap — creates interpretive space'
-}) -%}
+{%- if element not in text %}
+Ellipsis detected: {{ element }}
+Meaning: Reader fills gap — creates interpretive space
 {%- endif -%}
-{%- endfor -%}
-{%- for ellipsis in ellipses -%}
-Ellipsis detected: {{ ellipsis.missing }}
-Meaning: {{ ellipsis.meaning }}
 {%- endfor -%}
 {% endmacro %}
 
@@ -190,19 +171,11 @@ Meaning: {{ ellipsis.meaning }}
   - API docs missing edge cases
   - Financial report omitting key metric unintentionally
 #}
-{%- set leaks = [] -%}
 {%- for element in required_elements -%}
-{%- if element not in text -%}
-{%- set _ = leaks.append({
-    'missing': element,
-    'type': 'leak',
-    'consequence': 'Information loss — may cause error'
-}) -%}
+{%- if element not in text %}
+Leak detected: {{ element }}
+Consequence: Information loss — may cause error
 {%- endif -%}
-{%- endfor -%}
-{%- for leak in leaks -%}
-Leak detected: {{ leak.missing }}
-Consequence: {{ leak.consequence }}
 {%- endfor -%}
 {% endmacro %}
 
@@ -472,13 +445,17 @@ BaNANa.
 
 {{ mind_the_gaps(text, expectations) }}
 
-## 3. See Past Yourself
+## 3. Classify only grounded gaps
+
+For each expectation not established by the text, explain the evidence for its absence. Mark it `ellipsis` only with evidence of deliberate omission, `leak` only with evidence of unintentional information loss, or `unknown` otherwise. An explicit denial is not an omission. Do not treat keyword matches as proof of coverage.
+
+## 4. See Past Yourself
 
 {{ see_past_yourself(biases, assumptions) }}
 
-## 4. Curator's Bloom Analysis
+## 5. Find What Is Not Inferno
 
-{{ curator_analysis(text, domain) }}
+Identify any exceptional, supported element in the text worth preserving, or say none was established. Return an `analysis` object with each expectation's status, supporting quote or evidence gap, and any justified ellipsis/leak classification. Separate observed text from inferred intent.
 
 ---
 

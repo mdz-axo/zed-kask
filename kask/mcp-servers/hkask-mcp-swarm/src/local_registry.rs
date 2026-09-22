@@ -189,14 +189,10 @@ pub struct LocalAgentDependencies {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCapabilities {
-    /// The agent's model — an EXPLICIT per-agent override only. Empty (the
-    /// default) means "run on the host session's default model", resolved
-    /// at RUN time by the executor (empty → no override → the zed session
-    /// default via the inference bridge; direct fallback → the platform
-    /// default). Nothing stamps a model into a card at create/clone time —
-    /// a frozen default would silently diverge from the session model the
-    /// operator chose (the operator's spec: local agents use the host
-    /// session's model, never a hardcoded inferior one).
+    /// Explicit per-agent model override. An empty card inherits the
+    /// operator's Swarm Default Agent Model when configured; otherwise it
+    /// inherits the host session's default at execution time. No default is
+    /// stamped into cards at creation or clone time.
     #[serde(default)]
     pub model: String,
     #[serde(default)]

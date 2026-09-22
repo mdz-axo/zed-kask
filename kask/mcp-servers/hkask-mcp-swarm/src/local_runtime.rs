@@ -49,6 +49,7 @@ pub struct LazyLocalSwarmRuntime {
     /// runtime's result path). Passed through to the runtime so recording
     /// and surfacing see one store.
     agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+    default_agent_model: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
 
@@ -123,15 +124,20 @@ impl LazyLocalSwarmRuntime {
     pub(crate) fn with_runtime(runtime: LocalSwarmRuntime) -> Self {
         Self {
             agent_stats: runtime.stats.clone(),
+            default_agent_model: String::new(),
             inner: tokio::sync::OnceCell::new_with(Some(runtime)),
         }
     }
 
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub fn lazy(agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>) -> Self {
+    pub fn lazy(
+        agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+        default_agent_model: String,
+    ) -> Self {
         Self {
             agent_stats,
+            default_agent_model,
             inner: tokio::sync::OnceCell::new(),
         }
     }
@@ -141,7 +147,10 @@ impl LazyLocalSwarmRuntime {
     /// return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
-            .get_or_try_init(|| async { LocalSwarmRuntime::new(self.agent_stats.clone()).await })
+            .get_or_try_init(|| async {
+                LocalSwarmRuntime::new(self.agent_stats.clone(), self.default_agent_model.clone())
+                    .await
+            })
             .await
     }
 }
@@ -174,6 +183,7 @@ impl LocalSwarmRuntime {
     /// ports once at construction.
     pub(crate) async fn new(
         stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+        default_agent_model: String,
     ) -> Result<Self, LocalSwarmError> {
         // Resolve the agent-run ports once at construction: inference and
         // tool dispatch both route through the zed IPC bridge (or fall back
@@ -184,7 +194,8 @@ impl LocalSwarmRuntime {
         // MCP servers.
         let inference = hkask_inference::resolve_inference_port().await;
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
-        let executor = AgentExecutor::new(inference, tool_dispatch);
+        let executor = AgentExecutor::new(inference, tool_dispatch)
+            .with_default_agent_model(default_agent_model);
 
         Ok(Self {
             executor,

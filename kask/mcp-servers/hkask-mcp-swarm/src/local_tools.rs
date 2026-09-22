@@ -1778,14 +1778,10 @@ impl SwarmServer {
                         .to_string(),
                 )
             })?;
-            // Model semantics (the operator's spec): an EMPTY card model
-            // means "run on the host session's default model" — resolved at
-            // RUN time by the executor (empty → no override → the zed
-            // session default via the inference bridge). Nothing is stamped
-            // here: a frozen default would silently diverge from the
-            // session model the operator actually chose. A non-empty model
-            // is an explicit per-agent override, resolved via the zed
-            // LanguageModelRegistry.
+            // An empty model inherits the configured Swarm default at run
+            // time (or the host session model if unset). Keep cards unpinned
+            // so settings changes affect existing agents. A non-empty model
+            // remains an explicit per-agent override.
             let model = req.model.clone();
             let model_params = validate_model_params(req.model_params)?;
             let card = LocalAgentCard {

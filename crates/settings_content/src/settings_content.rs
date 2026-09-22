@@ -1846,11 +1846,9 @@ pub struct KaskSwarmSettingsContent {
     /// When `true`, Xaman Ek curator calls do not require a per-call consent
     /// token. Default `false` (opt-in per call).
     pub curator_consent_default: Option<bool>,
-    /// Default model id for newly created ABW agents when the caller omits
-    /// `model`. Operator-configurable so the default is not a code literal
-    /// that goes stale when the provider renames/deprecates the model
-    /// (KA-05). When empty, uses the server default
-    /// (`qwen/qwen3-235b-a22b-thinking-2507`).
+    /// Operator-selected model for new ABW agents without an explicit model
+    /// and for unpinned local agents at execution time. When empty, ABW
+    /// chooses its own default and local agents use the host session model.
     pub default_agent_model: Option<String>,
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
     /// exposes local agents to external A2A clients). Default `false`

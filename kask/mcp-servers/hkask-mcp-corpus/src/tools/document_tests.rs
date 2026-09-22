@@ -178,6 +178,22 @@ async fn pdf_raw_order_reads_column_source_sequentially() -> anyhow::Result<()> 
     Ok(())
 }
 
+/// expect: a PDF-only reading-order choice never silently changes text or batch conversion.
+#[tokio::test]
+async fn pdf_raw_order_rejects_non_pdf_and_directory() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let text = dir.path().join("notes.txt");
+    std::fs::write(&text, "Substantive source prose for a non-PDF conversion.")?;
+    for input in [&text, dir.path()] {
+        let mut request = request(input, &dir.path().join("rejected.txt"));
+        request.pdf_text_order = super::PdfTextOrder::Raw;
+        let result = server().corpus_convert(Parameters(request)).await;
+        assert!(result.is_err(), "raw order must reject {}", input.display());
+        assert!(!dir.path().join("rejected.txt").exists());
+    }
+    Ok(())
+}
+
 /// expect: [P7] Every approved book can use normal conversion, even when PDF bytes exceed the text-input cap.
 /// pre: a contained native-text PDF larger than MAX_READ_BYTES, with Poppler installed.
 /// post: directory conversion writes its extracted text without inference or scope loss.

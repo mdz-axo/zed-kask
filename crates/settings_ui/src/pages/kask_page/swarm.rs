@@ -334,10 +334,9 @@ pub(crate) fn render_swarm_page(
                 .child(Label::new("Default Agent Model"))
                 .child(
                     Label::new(
-                        "Default model id for newly created ABW agents when the caller omits \
-                         `model`. Leave empty for the server default \
-                         (qwen/qwen3-235b-a22b-thinking-2507). Or set \
-                         HKASK_ABW_DEFAULT_AGENT_MODEL.",
+                        "Default model for new ABW agents and local agents without an explicit \
+                         model. Leave empty for ABW's default or the local host session model. \
+                         Explicit agent models take precedence. Env: HKASK_ABW_DEFAULT_AGENT_MODEL.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

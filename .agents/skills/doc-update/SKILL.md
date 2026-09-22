@@ -151,9 +151,14 @@ Run every gate; all must pass before the pass is done:
    `grep`). If any fails, re-verify all citations in that artifact.
 4. **Frontmatter gate**: every `.md` has the six-field metadata header with a
    valid `status`.
-5. **No-deleted-surfaces gate**: grep the recomposed docs for names of
-   deleted crates/files; only tombstone mentions ("no longer exists") are
-   allowed.
+5. **No-deleted-surfaces gate**: search only the current tracked docs (use
+   `git grep -n` scoped to `kask/docs/`, not recursive grep from the repo root
+   through historical worktrees). Search exact deleted paths or identifiers,
+   not generic basenames such as `tutorial.md` that also name surviving files.
+   Inspect each hit: a live link or claim that the deleted surface exists
+   fails; a lifecycle-ledger tombstone or explicit historical mention passes.
+   An empty exact-name search is not a substitute for checking the links and
+   claims in the affected docs.
 
 Convergence check — call `lisp_eval` with the gate results:
 

@@ -135,6 +135,9 @@ pub type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
 pub struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
+    /// Operator-selected Swarm model for unpinned local agents. Empty leaves
+    /// model resolution to the host session; cards retain only explicit models.
+    default_agent_model: String,
     /// Optional capture sink. `None` = capture not wired (the executor runs
     /// exactly as before — zero behavior change for non-captured paths).
     /// Interior mutability so the runtime can wire it through the shared
@@ -157,9 +160,15 @@ impl AgentExecutor {
         Self {
             inference,
             tool_dispatch,
+            default_agent_model: String::new(),
             capture: std::sync::Arc::new(std::sync::Mutex::new(None)),
             capture_send_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    pub(crate) fn with_default_agent_model(mut self, model: String) -> Self {
+        self.default_agent_model = model;
+        self
     }
 
     /// Wire the capture sink. Called by the runtime when the event store
@@ -263,11 +272,7 @@ impl AgentExecutor {
             "No compatible recommendation is currently available; review the registry status in compatibility_context before selecting another model."
                 .to_string()
         };
-        let selected_model = if agent.capabilities.model.is_empty() {
-            "host_session_default"
-        } else {
-            agent.capabilities.model.as_str()
-        };
+        let selected_model = self.model_override(agent).unwrap_or("host_session_default");
         let compatibility_context = serde_json::json!({
             "failure_kind": "mandatory_reasoning_incompatible",
             "selected_model": selected_model,
@@ -284,6 +289,15 @@ impl AgentExecutor {
         LocalSwarmError::Unavailable(format!(
             "local inference failed: {error}. The card explicitly sets model_params.thinking_allowed=false, but the selected endpoint requires reasoning. {guidance} compatibility_context={compatibility_context}"
         ))
+    }
+
+    fn model_override<'a>(&'a self, agent: &'a LocalAgentCard) -> Option<&'a str> {
+        let explicit = agent.capabilities.model.trim();
+        if !explicit.is_empty() {
+            return Some(explicit);
+        }
+        let configured = self.default_agent_model.trim();
+        (!configured.is_empty()).then_some(configured)
     }
 
     /// Run a local agent: execute declared skills, build the declared tool
@@ -372,11 +386,7 @@ impl AgentExecutor {
         // append results) → inference … The round cap bounds cost
         // amplification; the per-dispatch ceiling is the credit gate.
         let params = sampling_params(agent);
-        let model_override = if agent.capabilities.model.is_empty() {
-            None
-        } else {
-            Some(agent.capabilities.model.clone())
-        };
+        let model_override = self.model_override(agent);
         let mut messages = vec![hkask_types::ChatMessage {
             role: "user".to_string(),
             content: prompt,
@@ -404,7 +414,7 @@ impl AgentExecutor {
             .unwrap_or_default();
             let result = match self
                 .inference
-                .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
+                .generate_with_messages(&messages, &params, model_override, tools_slice)
                 .await
             {
                 Ok(result) => result,
@@ -413,7 +423,7 @@ impl AgentExecutor {
                     // real event, not an absence.
                     self.capture_inference(CapturedInference {
                         rollout_id: rollout_id.clone(),
-                        model: agent.capabilities.model.clone(),
+                        model: model_override.unwrap_or("host_session_default").to_string(),
                         status: "error",
                         latency_ms: inference_started.elapsed().as_millis(),
                         total_tokens: 0,
@@ -546,6 +556,13 @@ impl AgentExecutor {
                 role: "user".to_string(),
                 content: round_results.join("\n\n"),
             });
+        }
+
+        if final_text.is_empty() && !tool_calls_made.is_empty() {
+            return Err(LocalSwarmError::Unavailable(format!(
+                "agent '{}' exhausted {MAX_TOOL_ROUNDS} tool-call rounds without a final answer",
+                agent.agent_id
+            )));
         }
 
         Ok(RawDelegateResult {
@@ -835,6 +852,61 @@ mod tests {
         assert_eq!(result.text, "stub");
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(inference.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    struct AlwaysTool;
+
+    impl hkask_types::InferencePort for AlwaysTool {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                let mut result = hkask_types::InferencePort::generate(
+                    &StubInference,
+                    "",
+                    &Default::default(),
+                    None,
+                )
+                .await?;
+                result.text.clear();
+                result.tool_calls.push(hkask_types::StructuredToolCall {
+                    server: "fixture".into(),
+                    tool: "lookup".into(),
+                    args: serde_json::json!({}),
+                    call_id: Some("lookup".into()),
+                });
+                Ok(result)
+            })
+        }
+    }
+
+    /// expect: "An agent that only requests tools cannot report an empty answer as success" [P3]
+    #[tokio::test]
+    async fn tool_loop_exhaustion_is_a_surfaced_failure() {
+        let executor = AgentExecutor::new(Arc::new(AlwaysTool), Arc::new(StubDispatch));
+        let card = LocalAgentCard {
+            agent_id: "tool-loop".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["fixture/lookup".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = match executor.run(&card, "task").await {
+            Ok(_) => panic!("no final answer must not be reported as success"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("exhausted 4 tool-call rounds"));
     }
 
     struct StubDispatch;
@@ -1180,11 +1252,9 @@ mod tests {
         }
     }
 
-    /// The model-resolution contract (the operator's spec): an EMPTY card
-    /// model means "host session default" — the executor must pass NO
-    /// override so the inference bridge resolves the session's model. A
-    /// non-empty model is an explicit override and must be passed through.
-    /// Nothing stamps a default into the chain.
+    /// Explicit card model wins over the operator's Swarm default. Empty
+    /// cards inherit that default without stamping it onto the card; when
+    /// the setting is empty too, inference resolves the host session model.
     #[tokio::test]
     async fn empty_card_model_passes_no_override_and_explicit_model_passes_through() {
         use crate::local_registry::LocalAgentCapabilities;
@@ -1220,16 +1290,33 @@ mod tests {
             "empty card model must produce no override — the host session default resolves it"
         );
 
-        // Explicit model → passed through as the override.
+        // Configured Swarm default → override for an empty card.
+        let configured = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch))
+            .with_default_agent_model("Configured/swarm-model".to_string());
+        configured
+            .run(&card, "task")
+            .await
+            .expect("configured model runs");
+        assert_eq!(
+            inference.override_seen.lock().unwrap().as_slice(),
+            &[None, Some("Configured/swarm-model".to_string())],
+            "an unpinned card inherits the operator-selected Swarm model"
+        );
+
+        // Explicit model → wins over the configured Swarm default.
         card.capabilities.model = "OpenRouter/z-ai/glm-5.2".to_string();
-        executor
+        configured
             .run(&card, "task")
             .await
             .expect("explicit model runs");
         assert_eq!(
             inference.override_seen.lock().unwrap().as_slice(),
-            &[None, Some("OpenRouter/z-ai/glm-5.2".to_string())],
-            "an explicit per-agent model must be passed through as the override"
+            &[
+                None,
+                Some("Configured/swarm-model".to_string()),
+                Some("OpenRouter/z-ai/glm-5.2".to_string()),
+            ],
+            "an explicit per-agent model must override the Swarm default"
         );
     }
 }

@@ -432,8 +432,8 @@ pub struct KaskSwarmSettings {
     pub curator_consent_default: bool,
 
     /// Default model id for newly created ABW agents when the caller omits
-    /// `model` (KA-05). When empty, uses the server default
-    /// (`qwen/qwen3-235b-a22b-thinking-2507`).
+    /// `model` (KA-05); also used by local agents without a per-card model.
+    /// Empty leaves ABW and the host session to resolve their own defaults.
     pub default_agent_model: String,
 
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that

@@ -282,7 +282,7 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/s
 | `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
 | `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
-| `default_agent_model` | `String` | `""` | server configuration | Empty uses the server's own default agent model |
+| `default_agent_model` | `String` | `""` | `HKASK_ABW_DEFAULT_AGENT_MODEL` | New ABW agents and unpinned local agents inherit this model; empty uses ABW's default or the local host session model respectively. Explicit card models win. |
 | `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
 | `embedding_dim` | `usize` | `1024` | `HKASK_EMBEDDING_DIM` | Shared semantic-memory vector dimension |
 

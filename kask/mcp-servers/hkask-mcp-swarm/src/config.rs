@@ -75,16 +75,12 @@ pub struct SwarmConfig {
     pub max_credits_per_dispatch: u32,
     /// Whether Xaman Ek sessions may be initiated without per-call opt-in (S5 policy).
     pub curator_consent_default: bool,
-    /// Default model id for newly created ABW (CLOUD) agents when the caller
-    /// omits `model` — an explicit operator choice for their own ABW agents.
-    /// Operator-configurable via `HKASK_ABW_DEFAULT_AGENT_MODEL` (KA-05).
-    /// EMPTY (the default) means "not set": cloud create then OMITS the
-    /// model and fermi applies its own default — never a hidden code
-    /// constant (the operator's no-hidden-models spec; the prior default
-    /// was a hardcoded 235B thinking model). CLOUD-CREATE ONLY: local
-    /// agents never consult this — a local agent with no explicit per-card
-    /// model runs on the host session's default model, resolved at run time
-    /// (see `LocalAgentCapabilities::model`).
+    /// Operator-selected default model for both new ABW agents (when create
+    /// omits `model`) and local agents without a per-card model. Configured
+    /// through `HKASK_ABW_DEFAULT_AGENT_MODEL` (KA-05); empty means cloud
+    /// create omits the model and local execution uses the host session's
+    /// default. Local cards remain unpinned so changing this setting takes
+    /// effect on the next swarm server restart; an explicit card model wins.
     pub default_agent_model: String,
     /// Directory containing local agent cards (`<id>/agent_card.json`),
     /// read by `LocalAgentRegistry` in `Local` mode. Default
