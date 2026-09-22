@@ -30,7 +30,7 @@ use std::io::Write;
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Extract text from a document or directory. Detects format and automatically falls back to page-image OCR for scanned PDF pages. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. File conversion with an output path writes the full text there and returns summary metadata without duplicating the text in the tool response. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
+        description = "Extract text from a document or directory. For a single PDF, pdf_text_order=raw follows the PDF text-object order (use after verifying column reading order); layout is the default. Detects format and automatically falls back to page-image OCR for scanned PDF pages. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. File conversion with an output path writes the full text there and returns summary metadata without duplicating the text in the tool response. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
     )]
     pub async fn corpus_convert(
         &self,
@@ -43,6 +43,14 @@ impl CorpusServer {
             pdf_text_order,
         }): Parameters<ConvertRequest>,
     ) -> Result<String, McpToolError> {
+        if matches!(pdf_text_order, PdfTextOrder::Raw)
+            && (std::path::Path::new(&path).is_dir()
+                || crate::convert::detect_format(&path).0 != "pdf")
+        {
+            return Err(McpToolError::invalid_argument(
+                "pdf_text_order=raw requires a single PDF; convert other sources with the default layout order",
+            ));
+        }
         if std::path::Path::new(&path).is_dir() {
             return self
                 .convert_directory(&path, output.as_deref(), force_ocr)
@@ -100,6 +108,9 @@ impl CorpusServer {
                 // never an LLM-invented one. Unmapped extensions surface a
                 // note — the absence of the type is visible, not silent.
                 let mut result = result;
+                if crate::convert::detect_format(&requested_path).0 == "pdf" {
+                    result["pdf_text_order"] = serde_json::json!(pdf_text_order);
+                }
                 match crate::convert::dc_type_for_path(&result["path"].as_str().unwrap_or("")) {
                     Some(dc_type) => {
                         result["dc_type"] = serde_json::json!(dc_type);
@@ -937,7 +948,7 @@ fn is_supported_document(path: &std::path::Path) -> bool {
 
 // ── Request structs ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, serde::Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PdfTextOrder {
     #[default]

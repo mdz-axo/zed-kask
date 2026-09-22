@@ -75,7 +75,11 @@ extraction, including when its whole-file text passes quality checks. File mode 
 PDF extraction and page rendering consume a contained file path, not an
 in-memory copy of the PDF container. A PDF larger than the 32 MiB raw-text/JSONL
 read cap can therefore use normal conversion without forcing paid OCR of native
-pages. Text inputs retain that cap; this does not promise a bound on Poppler's
+pages. Single-file `corpus_convert` accepts `pdf_text_order=raw` for PDFs whose
+text-object order reads columns sequentially; `layout` remains the default.
+Choose `raw` only after comparing page order and tables on the source PDF;
+non-PDF and directory conversions reject it. The option does not repair damaged
+mathematical glyphs or authorize accepting a conversion without a source audit. Text inputs retain that cap; this does not promise a bound on Poppler's
 memory use or extracted output size. `tools/document_tests.rs` pins large native
 PDF conversion, oversized-text rejection and PDF symlink containment.
 

@@ -134,18 +134,27 @@ async fn pdf_raw_order_reads_column_source_sequentially() -> anyhow::Result<()> 
     )?;
     drop(file);
 
-    let raw = crate::services::convert::extract_text_with_order(
-        &input.to_string_lossy(),
-        super::PdfTextOrder::Raw,
-    )
-    .await?;
-    let layout = crate::services::convert::extract_text(&input.to_string_lossy()).await?;
-    let crate::services::convert::ExtractOutcome::Success { text: raw, .. } = raw else {
-        anyhow::bail!("raw extraction must produce native text")
-    };
-    let crate::services::convert::ExtractOutcome::Success { text: layout, .. } = layout else {
-        anyhow::bail!("layout extraction must produce native text")
-    };
+    let raw_output = dir.path().join("raw.txt");
+    let layout_output = dir.path().join("layout.txt");
+    let mut raw_request = request(&input, &raw_output);
+    raw_request.pdf_text_order = super::PdfTextOrder::Raw;
+    let raw_report = server().corpus_convert(Parameters(raw_request)).await?;
+    let raw_report =
+        hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&raw_report)?);
+    assert_eq!(raw_report["output"], raw_output.to_string_lossy().as_ref());
+    assert_eq!(raw_report["pdf_text_order"], "raw");
+    let layout_report = server()
+        .corpus_convert(Parameters(request(&input, &layout_output)))
+        .await?;
+    let layout_report =
+        hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&layout_report)?);
+    assert_eq!(
+        layout_report["output"],
+        layout_output.to_string_lossy().as_ref()
+    );
+    assert_eq!(layout_report["pdf_text_order"], "layout");
+    let raw = std::fs::read_to_string(raw_output)?;
+    let layout = std::fs::read_to_string(layout_output)?;
     let raw_left_end = raw
         .find("Left column continues")
         .ok_or_else(|| anyhow::anyhow!("left-column continuation missing"))?;
