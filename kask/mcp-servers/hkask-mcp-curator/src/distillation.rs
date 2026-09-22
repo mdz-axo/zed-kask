@@ -8,13 +8,14 @@
 //! lesson h_mems automatically, so lessons survive the session without
 //! anyone choosing to save them.
 //!
-//! Sovereignty contract (memory-system-specification.md §10): the pass is
-//! ADDITIVE-ONLY. It inserts lesson h_mems (Shared visibility, 0.5
-//! confidence floor, evidence-verified) plus one Private watermark h_mem
-//! per distilled thread. It never edits or deletes an existing
-//! h_mem — promotion, contradiction resolution, and pruning remain the
-//! user's tools (`memory_update`, `memory_resolve_contradiction`,
-//! therapy). Pinned by `distillation_pass_is_additive_only`.
+//! Sovereignty contract (memory-system-specification.md §10): the lesson
+//! layer is ADDITIVE-ONLY. It inserts evidence-verified lesson h_mems at the
+//! 0.5 confidence floor and never edits or deletes an existing lesson;
+//! promotion, contradiction resolution, and pruning remain the user's tools.
+//! The Private distillation watermark is control state, not a lesson: each
+//! atomic publication replaces that thread's prior marker so only the newest
+//! proven coverage boundary remains. Pinned by the additive-layer and atomic
+//! replacement tests.
 //!
 //! Idempotency: each distilled thread carries a watermark h_mem
 //! (`curator:distilled:{thread_id}`, attribute `distilled_through`) whose
@@ -398,8 +399,8 @@ pub(crate) struct DistillationOutcome {
 
 /// The distillation core, directly testable against a `MemoryStore`.
 ///
-/// Additive-only: accepted lessons and their watermark are inserted in one
-/// atomic batch; no update or delete call exists in this function.
+/// Accepted lessons are additive. Their control watermark replaces the prior
+/// marker in the same atomic batch, preserving one proven coverage boundary.
 pub(crate) async fn distill_store(
     memory: &hkask_memory::MemoryStore,
     inference_port: &dyn hkask_types::InferencePort,
@@ -464,14 +465,42 @@ pub(crate) async fn distill_store(
         // thread-id source would read a sibling thread's watermark here —
         // switch to an exact-match read before introducing one (the T09
         // prefix-collision observation, recorded 2026-09-07).
-        let through = match memory.h_mems_by_entity_prefix(&watermark_entity) {
-            Ok(watermarks) => watermarks.iter().filter_map(parse_watermark_through).max(),
+        let watermarks = match memory.h_mems_by_entity_prefix(&watermark_entity) {
+            Ok(watermarks) => watermarks
+                .into_iter()
+                .filter(|watermark| watermark.attribute == "distilled_through")
+                .collect::<Vec<_>>(),
             Err(error) => {
                 tracing::warn!(
                     target: "hkask.mcp.curator.distillation",
                     thread_id = %thread_id,
                     %error,
                     "Failed to read distillation watermark — thread retried next pass"
+                );
+                outcome.threads_pending.insert(thread_id, now);
+                continue;
+            }
+        };
+        let through = match watermarks.as_slice() {
+            [] => None,
+            [watermark] => match parse_watermark_through(watermark) {
+                Some(through) => Some(through),
+                None => {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator.distillation",
+                        thread_id = %thread_id,
+                        "Distillation watermark is malformed — thread not modified"
+                    );
+                    outcome.threads_pending.insert(thread_id, now);
+                    continue;
+                }
+            },
+            _ => {
+                tracing::warn!(
+                    target: "hkask.mcp.curator.distillation",
+                    thread_id = %thread_id,
+                    count = watermarks.len(),
+                    "Multiple distillation watermarks violate the latest-only invariant — run therapy hygiene"
                 );
                 outcome.threads_pending.insert(thread_id, now);
                 continue;
@@ -494,12 +523,36 @@ pub(crate) async fn distill_store(
         // earlier batches are already covered by their own watermarks,
         // and the failed batch's turns stay pending for the next pass.
         let mut thread_distilled = true;
-        // Lessons extracted by earlier batches of this thread THIS pass —
-        // fed into later batch prompts so the model neither re-extracts
-        // them nor drifts the entity slug (the 2026-09-09 audit's root
-        // cause). In-pass only: cross-pass duplication (new turns arriving
-        // to a long-distilled thread) is rarer and left to therapy dedup.
-        let mut prior_lessons: Vec<(String, String, String)> = Vec::new();
+        // Seed the prompt with durable lessons from earlier passes over this
+        // exact source thread, then extend that context with lessons accepted
+        // by earlier batches in this pass. The bounded source-thread query
+        // closes the cross-pass slug-drift gap without inventing a global
+        // semantic-similarity threshold.
+        let mut prior_lessons: Vec<(String, String, String)> = match memory
+            .h_mems_by_source_thread(&thread_id, MAX_TURNS_PER_PROMPT)
+        {
+            Ok(lessons) => lessons
+                .into_iter()
+                .filter_map(|lesson| {
+                    lesson
+                        .value
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|text| (lesson.entity, lesson.attribute, text.to_string()))
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.curator.distillation",
+                    thread_id = %thread_id,
+                    %error,
+                    "Failed to load prior lessons — thread retried to avoid cross-pass duplicates"
+                );
+                outcome.extraction_failures += 1;
+                outcome.threads_pending.insert(thread_id.clone(), now);
+                continue;
+            }
+        };
         for batch in pending.chunks(MAX_TURNS_PER_PROMPT) {
             let prompt = build_distillation_prompt(&thread_id, batch, &prior_lessons);
             // Route to the non-thinking model: the port default is
@@ -570,9 +623,10 @@ pub(crate) async fn distill_store(
             }
 
             // The watermark is the commit marker consumed by the forgetting
-            // pass. Publish every accepted lesson and the trailing watermark
+            // pass. Publish every accepted lesson and replace the prior marker
             // in one transaction so no covered turn can exist without its
-            // durable lessons and a failed batch is safe to retry.
+            // durable lessons, failed batches preserve the old boundary, and
+            // control-row history stays bounded to one marker per thread.
             let through_newest = batch
                 .last()
                 .expect("chunks yields non-empty slices")
@@ -591,7 +645,11 @@ pub(crate) async fn distill_store(
             let mut publication: Vec<HMem> =
                 prepared.iter().map(|lesson| lesson.h_mem.clone()).collect();
             publication.push(watermark);
-            if let Err(error) = memory.store_batch_atomic(&publication) {
+            if let Err(error) = memory.store_batch_replacing_key_atomic(
+                &publication,
+                &watermark_entity,
+                "distilled_through",
+            ) {
                 tracing::warn!(
                     target: "hkask.mcp.curator.distillation",
                     thread_id = %thread_id,
@@ -615,7 +673,7 @@ pub(crate) async fn distill_store(
                     inference_port,
                     memory,
                     &lesson.entity,
-                    &lesson.text,
+                    &lesson.recall_text,
                 )
                 .await;
             }
@@ -647,12 +705,53 @@ pub(crate) fn parse_watermark_through(h_mem: &HMem) -> Option<chrono::DateTime<c
         .map(|parsed| parsed.with_timezone(&chrono::Utc))
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct MutableStateProvenance {
+    source_locator: String,
+    version_or_date: String,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct LessonCandidate {
     entity: String,
     attribute: String,
     text: String,
     evidence: Vec<String>,
+    #[serde(default)]
+    mutable_state: Option<bool>,
+    #[serde(default)]
+    state_provenance: Option<MutableStateProvenance>,
+}
+
+fn has_mutable_state_markers(candidate: &LessonCandidate) -> bool {
+    let key = format!("{} {}", candidate.entity, candidate.attribute).to_lowercase();
+    let text = candidate.text.to_lowercase();
+    [
+        "current-",
+        "current_",
+        "known-defect",
+        "tool-count",
+        "selected-model",
+        "build-state",
+        "implementation-status",
+        "configuration-status",
+    ]
+    .iter()
+    .any(|marker| key.contains(marker))
+        || [
+            "currently ",
+            "current implementation",
+            "current configuration",
+            "known defect",
+            "tool count",
+            "tools as of",
+            "at commit ",
+            "selected model",
+            "build state",
+            "implementation status",
+        ]
+        .iter()
+        .any(|marker| text.contains(marker))
 }
 
 /// A distillation-output parse failure. The Display message is surfaced in
@@ -734,6 +833,7 @@ struct PreparedLesson {
     entity: String,
     attribute: String,
     text: String,
+    recall_text: String,
 }
 
 fn prepare_lesson(
@@ -758,12 +858,23 @@ fn prepare_lesson(
         );
         return Ok(None);
     }
+    let Some(declared_mutable_state) = candidate.mutable_state else {
+        tracing::warn!(
+            target: "hkask.mcp.curator.distillation",
+            entity,
+            attribute,
+            "Skipping lesson without the required mutable_state classification"
+        );
+        return Ok(None);
+    };
+    let mutable_state = declared_mutable_state || has_mutable_state_markers(candidate);
     let evidence: Vec<String> = candidate
         .evidence
         .iter()
         .take(MAX_EVIDENCE_IDS)
         .cloned()
         .collect();
+    let mut evidence_text = String::new();
     for id in &evidence {
         let parsed = match id.parse::<hkask_storage::HMemId>() {
             Ok(parsed) => parsed,
@@ -777,20 +888,64 @@ fn prepare_lesson(
                 return Ok(None);
             }
         };
-        if memory.get_by_id(&parsed)?.is_none() {
+        let Some(source) = memory.get_by_id(&parsed)? else {
             tracing::warn!(
                 target: "hkask.mcp.curator.distillation",
                 evidence_id = %id,
                 "Lesson cites nonexistent evidence h_mem — skipping lesson"
             );
             return Ok(None);
+        };
+        evidence_text.push_str(&source.value.to_string());
+        evidence_text.push('\n');
+    }
+    if mutable_state {
+        let Some(provenance) = candidate.state_provenance.as_ref() else {
+            tracing::warn!(
+                target: "hkask.mcp.curator.distillation",
+                entity,
+                attribute,
+                "Skipping mutable-state lesson without source locator and version/date provenance"
+            );
+            return Ok(None);
+        };
+        let source_locator = provenance.source_locator.trim();
+        let version_or_date = provenance.version_or_date.trim();
+        let evidence_lower = evidence_text.to_lowercase();
+        if source_locator.is_empty()
+            || version_or_date.is_empty()
+            || !evidence_lower.contains(&source_locator.to_lowercase())
+            || !evidence_lower.contains(&version_or_date.to_lowercase())
+        {
+            tracing::warn!(
+                target: "hkask.mcp.curator.distillation",
+                entity,
+                attribute,
+                "Skipping mutable-state lesson whose provenance is absent from cited evidence"
+            );
+            return Ok(None);
         }
     }
     let text = truncate_chars(text, MAX_TEXT_CHARS);
+    let recall_text = if mutable_state {
+        let Some(provenance) = candidate.state_provenance.as_ref() else {
+            return Ok(None);
+        };
+        format!(
+            "{text} [mutable state; source: {}; version/date: {}]",
+            provenance.source_locator.trim(),
+            provenance.version_or_date.trim()
+        )
+    } else {
+        text.clone()
+    };
     let value = serde_json::json!({
         "text": text,
+        "recall_text": recall_text,
         "evidence": evidence,
         "source_thread": thread_id,
+        "mutable_state": mutable_state,
+        "state_provenance": candidate.state_provenance.as_ref(),
     });
     let h_mem = HMem::new(entity, attribute, value, webid)
         .with_confidence(hkask_types::Confidence::new(0.5))
@@ -801,6 +956,7 @@ fn prepare_lesson(
         entity: entity.to_string(),
         attribute: attribute.to_string(),
         text,
+        recall_text,
     }))
 }
 
@@ -868,14 +1024,25 @@ fn build_distillation_prompt(
          Thread: {thread_id}\n\
          Passages (oldest first):\n{turns}\n{prior_section}\n\
          Extract 0-{MAX_LESSONS_PER_THREAD} durable, generalizable lessons — \
-         stable facts, preferences, decisions, and corrections a future session \
-         should know. Not task narration, not transient details. Each lesson must \
-         cite at least one h_mem_id from the passages above as evidence.\n\n\
+         decisions, invariants, user preferences, and repeated verified failure \
+         patterns a future session should know. Not task narration or transient \
+         detail. Before minting a new entity/attribute key, compare the listed \
+         prior lessons and reuse an exact matching key when available.\n\n\
+         Do not publish current implementation descriptions, defect status, tool \
+         counts, or configuration as timeless lessons. A mutable-state claim is \
+         admissible only when the passages provide both a source locator and a \
+         commit, version, or verification date. Mark it mutable_state=true and \
+         carry those values in state_provenance; otherwise omit it. Durable \
+         lessons use mutable_state=false and state_provenance=null. Each lesson \
+         must cite at least one h_mem_id from the passages above as evidence.\n\n\
          Return ONLY a JSON array, no prose, no code fences:\n\
          [{{\"entity\": \"<short-stable-subject-slug>\", \
          \"attribute\": \"<what-is-remembered>\", \
          \"text\": \"<the lesson, one or two sentences>\", \
-         \"evidence\": [\"<h_mem_id>\"]}}]\n\n\
+         \"evidence\": [\"<h_mem_id>\"], \
+         \"mutable_state\": false, \"state_provenance\": null}}]\n\n\
+         Mutable state_provenance shape: {{\"source_locator\": \"<file, URL, or tool record>\", \
+         \"version_or_date\": \"<commit, version, or ISO date>\"}}. \
          Return [] if nothing durable.",
         turns = serde_json::to_string_pretty(&turns_json).unwrap_or_default(),
     )
@@ -1001,6 +1168,8 @@ mod tests {
             "attribute": attribute,
             "text": text,
             "evidence": evidence,
+            "mutable_state": false,
+            "state_provenance": null,
         }])
         .to_string()
     }
@@ -1412,23 +1581,10 @@ mod tests {
         let watermarks = store
             .h_mems_by_entity_prefix("curator:distilled:t-batch")
             .expect("watermarks");
-        assert_eq!(watermarks.len(), 2, "each batch advances its own watermark");
-        let throughs: Vec<chrono::DateTime<chrono::Utc>> = watermarks
-            .iter()
-            .filter_map(parse_watermark_through)
-            .collect();
-        let turn12 = store
-            .h_mems_by_entity_prefix("curator:thread:t-batch")
-            .expect("turns")
-            .into_iter()
-            .find(|h| {
-                h.observed_at
-                    == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(11)
-            })
-            .expect("turn 12");
-        assert!(
-            throughs.contains(&turn12.observed_at),
-            "the first batch's watermark must cover exactly its 12 turns"
+        assert_eq!(
+            watermarks.len(),
+            1,
+            "each successful batch must atomically replace the prior coverage marker"
         );
         let turn15 = store
             .h_mems_by_entity_prefix("curator:thread:t-batch")
@@ -1439,9 +1595,70 @@ mod tests {
                     == now - chrono::Duration::seconds(600) + chrono::Duration::seconds(14)
             })
             .expect("turn 15");
-        assert!(
-            throughs.contains(&turn15.observed_at),
-            "the second batch's watermark must cover the thread's newest turn"
+        assert_eq!(
+            parse_watermark_through(&watermarks[0]),
+            Some(turn15.observed_at),
+            "the one surviving watermark must cover the thread's newest turn"
+        );
+    }
+
+    /// Multiple markers are invalid latest-only control state. Distillation
+    /// leaves the thread pending and neither calls inference nor rewrites them.
+    #[tokio::test]
+    async fn distillation_rejects_multiple_watermarks_for_one_thread() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turns = seed_turns(&store, "t-duplicate-markers", 1, webid, now);
+        for offset in [700, 650] {
+            let mut watermark = HMem::new(
+                "curator:distilled:t-duplicate-markers",
+                "distilled_through",
+                serde_json::json!({
+                    "through": (now - chrono::Duration::seconds(offset)).to_rfc3339(),
+                    "turns": 1
+                }),
+                webid,
+            );
+            watermark.observed_at = now - chrono::Duration::seconds(offset);
+            store.store(watermark).expect("seed duplicate watermark");
+        }
+        let port = CallCountingPort {
+            response: lesson_response(
+                "should-not-publish",
+                "fact",
+                "duplicate control state must block publication",
+                &[&turns[0].to_string()],
+            ),
+            fail_on_call: 0,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert!(outcome.threads_pending.contains_key("t-duplicate-markers"));
+        assert_eq!(outcome.lessons_inserted, 0);
+        assert_eq!(
+            port.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "inference must not run against invalid control state"
+        );
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t-duplicate-markers")
+                .expect("watermarks")
+                .len(),
+            2,
+            "distillation does not reconcile invalid marker state"
         );
     }
 
@@ -1543,6 +1760,11 @@ mod tests {
         let watermarks_after = store
             .h_mems_by_entity_prefix("curator:distilled:t-partial")
             .expect("watermarks");
+        assert_eq!(
+            watermarks_after.len(),
+            1,
+            "retry must replace the earlier partial-coverage marker"
+        );
         assert!(
             watermarks_after
                 .iter()
@@ -1655,6 +1877,242 @@ mod tests {
         );
     }
 
+    /// Existing lessons from an earlier distillation pass must seed the same
+    /// key-reuse context as lessons from an earlier batch in the current pass.
+    /// Otherwise a later turn in a long-lived thread mints a fresh slug for an
+    /// already-known lesson after every restart.
+    #[tokio::test]
+    async fn prior_cross_pass_lessons_reach_the_next_prompt() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-cross-pass",
+            "remember the stable publication contract",
+            "the same entity key should be reused",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        store
+            .store(
+                HMem::new(
+                    "stable-publication-contract",
+                    "key-reuse",
+                    serde_json::json!({
+                        "text": "Reuse the stable publication key across passes.",
+                        "evidence": [turn_id.to_string()],
+                        "source_thread": "t-cross-pass"
+                    }),
+                    webid,
+                )
+                .with_confidence(hkask_types::Confidence::new(0.5)),
+            )
+            .expect("seed prior lesson");
+        let port = ScriptedResponsesPort {
+            responses: vec!["[]".to_string()],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.extraction_failures, 0);
+        let prompts = port.prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 1);
+        assert!(
+            prompts[0].contains("stable-publication-contract"),
+            "cross-pass prior lesson key must be available for exact reuse"
+        );
+        assert!(prompts[0].contains("Do NOT re-extract"));
+    }
+
+    /// expect: "Mutable implementation status never becomes a timeless lesson without source and version provenance."
+    /// [P8] Motivating: Semantic Grounding — current state needs an authority and validity point.
+    /// [P2] Constraining: Transparent Imperfection — missing provenance is skipped and surfaced.
+    /// pre: the model marks a candidate mutable_state but omits state_provenance
+    /// post: the candidate is skipped and no lesson h_mem is published
+    #[tokio::test]
+    async fn mutable_state_lesson_without_provenance_is_rejected() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-mutable-state",
+            "the server currently has five tools",
+            "store this current implementation status",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: serde_json::json!([{
+                "entity": "server-tool-count",
+                "attribute": "current-count",
+                "text": "The server currently exposes five tools.",
+                "evidence": [turn_id.to_string()],
+                "mutable_state": true
+            }])
+            .to_string(),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 0);
+        assert_eq!(outcome.lessons_skipped, 1);
+        assert!(
+            store
+                .h_mems_by_entity_prefix("server-tool-count")
+                .expect("query")
+                .is_empty(),
+            "unproven mutable status must not be published"
+        );
+    }
+
+    /// Omitted classification, false-labeling an obvious status claim, and
+    /// fabricated non-empty provenance are all fail-closed publication errors.
+    #[tokio::test]
+    async fn mutable_state_contract_rejects_omission_false_label_and_fabricated_provenance() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-mutable-adversarial",
+            "verified actual/file.rs at commit real123",
+            "the server currently exposes five tools",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: serde_json::json!([
+                {
+                    "entity": "unclassified-lesson",
+                    "attribute": "invariant",
+                    "text": "A candidate omitted the required state classification.",
+                    "evidence": [turn_id.to_string()]
+                },
+                {
+                    "entity": "server-tool-count",
+                    "attribute": "current-count",
+                    "text": "The server currently exposes five tools.",
+                    "evidence": [turn_id.to_string()],
+                    "mutable_state": false,
+                    "state_provenance": null
+                },
+                {
+                    "entity": "server-tool-count-fabricated",
+                    "attribute": "current-count",
+                    "text": "The server currently exposes five tools.",
+                    "evidence": [turn_id.to_string()],
+                    "mutable_state": true,
+                    "state_provenance": {
+                        "source_locator": "invented/file.rs",
+                        "version_or_date": "fake999"
+                    }
+                }
+            ])
+            .to_string(),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 0);
+        assert_eq!(outcome.lessons_skipped, 3);
+    }
+
+    /// A source- and version-bound mutable-state lesson remains admissible
+    /// and preserves that provenance in its durable value.
+    #[tokio::test]
+    async fn mutable_state_lesson_with_provenance_is_preserved() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-mutable-provenance",
+            "verified kask/file.rs at commit abc123",
+            "the server currently exposes five tools",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: serde_json::json!([{
+                "entity": "server-tool-count",
+                "attribute": "current-count",
+                "text": "At commit abc123 the server exposes five tools.",
+                "evidence": [turn_id.to_string()],
+                "mutable_state": true,
+                "state_provenance": {
+                    "source_locator": "kask/file.rs",
+                    "version_or_date": "abc123"
+                }
+            }])
+            .to_string(),
+        };
+
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 1);
+        let stored = store
+            .h_mems_by_entity_prefix("server-tool-count")
+            .expect("query");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].value["mutable_state"].as_bool(), Some(true));
+        assert_eq!(
+            stored[0].value["state_provenance"]["source_locator"].as_str(),
+            Some("kask/file.rs")
+        );
+        assert_eq!(
+            stored[0].value["state_provenance"]["version_or_date"].as_str(),
+            Some("abc123")
+        );
+        let recall_text = stored[0].value["recall_text"]
+            .as_str()
+            .expect("mutable lesson carries provenance-bearing recall text");
+        assert!(recall_text.contains("kask/file.rs"));
+        assert!(recall_text.contains("abc123"));
+    }
+
     /// Corrupted evidence IDs are recovered against the batch's actual
     /// turn IDs (unique match within edit distance 3); an id with no
     /// near match stays rejected — the validation backstop is unchanged
@@ -1677,12 +2135,16 @@ mod tests {
                 "attribute": "recovered-attribute",
                 "text": "lesson with a corrupted citation",
                 "evidence": [corrupted],
+                "mutable_state": false,
+                "state_provenance": null,
             },
             {
                 "entity": "bogus-entity",
                 "attribute": "bogus-attribute",
                 "text": "lesson with a bogus citation",
                 "evidence": ["totally-bogus-id"],
+                "mutable_state": false,
+                "state_provenance": null,
             }
         ])
         .to_string();

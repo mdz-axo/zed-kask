@@ -87,6 +87,8 @@ narrative generation loop.
    - Embed: every chunk in one batched call; each vector stored under the
      thread entity with its `passage_text`, so KNN pinpoints the matched
      chunk
+   - Goal events: each individual create/judge/score result is embedded and
+     stored under `curator:goal:{goal_id}`; whole-list snapshots are skipped
    - Single copy per turn (2026-09-04 ruling): no perspective duplicate,
      no goal duplicate
 2. **Recalls** relevant memories on every qualifying prompt by:
@@ -229,14 +231,16 @@ The embedding's `entity_ref` and the h_mem's `entity` are plain `TEXT`
 columns with no foreign key. The invariant (`entity_ref == entity`) is
 enforced by:
 
-1. The ingestion call site: every chunk h_mem and its embedding are
-   written under the same `curator:thread:{id}` entity in the same loop
-   iteration (`kask/crates/kask_bridge/src/memory/ingest.rs`), and the
-   vector's `passage_text` is set to the chunk's value text — the KNN
-   join always resolves and pinpoints the matched chunk.
-2. The regression test `recall_context_finds_turn_by_embedding_only`
-   plus the round-trip pin
-   `ingest_turn_embeds_every_chunk_with_passage_text`
+1. The ingestion call site: every chunk h_mem and its embedding use the
+   same `curator:thread:{id}` entity, while every persisted goal event and
+   its prerequisite embedding use the same `curator:goal:{goal_id}` entity
+   (`kask/crates/kask_bridge/src/memory/ingest.rs`). Goal publication orders
+   the vector before the h_mem and removes that exact vector if h_mem storage
+   fails, so an embedding-invisible goal row is never exposed.
+2. The regression tests `recall_context_finds_turn_by_embedding_only`,
+   `ingest_turn_embeds_every_chunk_with_passage_text`,
+   `persisted_goal_event_is_semantically_visible_by_entity_ref`, and
+   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`
    (`kask/crates/kask_bridge/src/memory.rs`).
 
 A future `EntityRef(String)` newtype shared between `HMemStore` and
@@ -331,7 +335,13 @@ When a thread turn completes, the turn loop calls
 | ----- | ------ | --------- | ---------- | ------- |
 | Curator store (every turn, one row per chunk) | `curator:thread:{id}` | `chunk:{index}` | Shared | Cleaned chunk text (plain string, role prefixes inline), structural + content ontology blob |
 | Curator store (embedding, every chunk) | `curator:thread:{id}` | — | — | Vector of the chunk text + `passage_text` = the chunk text |
-| Curator store (goal events, one row per event) | `curator:goal:{goal_id}` | tool name | Shared | The goal tool result JSON |
+| Curator store (individual goal events, one row per event) | `curator:goal:{goal_id}` | tool name | Shared | The goal tool result JSON |
+| Curator store (embedding, every persisted goal event) | `curator:goal:{goal_id}` | — | — | Vector of deterministic `goal event {tool}: {JSON}` passage text, stored before the h_mem becomes visible |
+
+`kanban_goal_list` whole-list snapshots are observed by `TurnRecord` but are
+not durable memories: they duplicate the individual event stream and grow with
+the complete goal list. Any other id-less goal result is malformed and is
+surfaced rather than filed under a synthetic `curator:goal:list` identity.
 
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
 (`ingest.rs`) — used for logging only; the write path is identical for
@@ -344,10 +354,18 @@ rebuilds the consolidation service.
 
 A `kanban_goal_score` goal event is the one outcome the memory system
 observes automatically. The kanban database retains the resolved goal until
-this score event is stored successfully; the production thread path then calls
-`kanban_goal_memory_acknowledge` to prune the retained outbox row. A failed
-memory write returns failure and emits no acknowledgment, while retrying the
-same score deduplicates the curator-memory outcome. The Brier it carries closes
+this score event and its semantic embedding are stored successfully; the
+production thread path then calls `kanban_goal_memory_acknowledge` to prune the
+retained outbox row. A failed embedding generation/storage or h_mem write
+returns failure and emits no acknowledgment. The create record's confidence
+replacement and `_memory_calibration.score` receipt commit in one atomic h_mem
+update. Retrying the same score requires its exact passage embedding,
+resumes calibration when the receipt is absent, and no-ops when the exact
+receipt is present—never republishing the score or counting its Brier twice.
+Every individual goal event fails ingestion when semantic publication fails;
+none is silently skipped or persisted as an embedding-invisible h_mem. A
+non-null score with no create record also fails and leaves no score h_mem or
+vector. The Brier it carries closes
 the calibration loop (spec §11 item 4) and is mapped to a confidence signal —
 `(1 − 2·Brier)` clamped to [0.05, 0.95], so a binary no-skill prediction
 (Brier 0.25) is the neutral point — and Bayesian-combined
@@ -396,8 +414,11 @@ sequenceDiagram
     Write->>Curator: get() — re-attempt open if down<br/>(rebuild consolidation if healed)
 
     rect rgb(245, 248, 252)
-        Note over Write,Curator: Phase 1 — Goal events (single shared copy)
-        Write->>Curator: store(goal h_mem)<br/>curator:goal:{goal_id}, tool_name, Shared
+        Note over Write,EmbedPort: Phase 1 — Individual goal events (list snapshots skipped)
+        Write->>+EmbedPort: embed(model, [goal event tool + JSON])
+        EmbedPort-->>-Write: exactly one vector<br/>failure → ingestion error, no h_mem
+        Write->>Curator: store_embedding(curator:goal:{goal_id}, vector, passage)
+        Write->>Curator: store(goal h_mem)<br/>same entity, tool_name, Shared, 0.5 floor<br/>failure → exact new vector removed
     end
 
     rect rgb(248, 252, 245)
@@ -430,27 +451,30 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-INGEST
-verified_date: 2026-09-04
-verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn: semaphore + WriteContext), kask/crates/kask_bridge/src/memory/ingest.rs (write_turn: heal/rebuild, goal events, clean_turn_text, chunk_text, tag_chunks_with_llm, batch embed, chunk writes + store_embedding with passage_text), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
+verified_date: 2026-09-21
+verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn tests: goal semantic visibility + chunk recall), kask/crates/kask_bridge/src/memory/ingest.rs (write_turn: goal vector-before-h_mem publication, list exclusion, heal/rebuild, clean/chunk/tag, batch chunk embedding), kask/crates/hkask-types/src/ports/memory_port.rs (GoalEvent identity/passage contract), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
 status: VERIFIED
 -->
 
 #### Key invariants (write side)
 
-1. **The embedding's `entity_ref` equals the chunk h_mem's `entity`**
-   (`curator:thread:{thread_id}`) and its `passage_text` equals the chunk's
-   value text — the KNN join always resolves and pinpoints the matched
-   chunk. A vector that cannot name its passage injects nothing (no
-   whole-entity fallback — that was the 500KB-blob behavior the pipeline
-   replaces). See [the entity_ref invariant](#the-entity_ref-invariant).
+1. **Every persisted h_mem that advertises semantic visibility has a
+   joinable embedding under the same entity.** Chunk vectors use
+   `curator:thread:{thread_id}` with `passage_text` equal to the chunk value.
+   Goal vectors use `curator:goal:{goal_id}` with deterministic tool + JSON
+   passage text and are stored before the goal h_mem. See
+   [the entity_ref invariant](#the-entity_ref-invariant).
 2. **All writes go to the curator's `curator.db`, one copy per turn.** There
    is no user memory store and no perspective duplicate — `RealMemoryPort`
-   holds only the `CuratorStore`. Goal events are single-keyed under
-   `curator:goal:{goal_id}`.
-3. **Embedding and tagging failures are non-fatal.** The h_mems are pure
-   SQL; recall degrades to keyword-only (embedding) or structural-only
-   tags (classifier) with a `tracing::warn!` — never silently.
-4. **Curator-store failures are non-fatal and self-healing.** A failed
+   holds only the `CuratorStore`. Individual goal events are single-keyed
+   under `curator:goal:{goal_id}`; list snapshots are excluded.
+3. **Turn-chunk embedding and tagging failures are non-fatal.** Chunk h_mems
+   remain keyword-recallable or structurally tagged and the degradation is
+   warned. Goal-event embedding is different: failure returns an ingestion
+   error and blocks that event's h_mem publication; a score remains in its
+   outbox for retry.
+4. **Curator-store failures are non-fatal and self-healing except where a
+   resolved-goal acknowledgment would be lost.** A failed
    initial open leaves the store `None`; every `get()` re-attempts the
    open, and a successful re-open rebuilds the consolidation service.
    Persistent failure warns once per healing attempt — never silently.
@@ -591,12 +615,12 @@ decoupled from ingestion — it runs on the timer, never in the
    `memory_store.rs:112`) is the attenuator for unbounded memory
    growth[^ashby]. Decoupling pruning from ingestion means the pruning
    decision is made on a schedule, not under write pressure.
-4. **Editing is deliberate.** Reflection that *modifies* memory —
-   promotion, re-tagging, contradiction resolution — is the therapy
-   skill's job: user-initiated, user-approved. Automatic *additive*
-   distillation (below) inserts candidate lessons without touching
-   existing h_mems; the sovereignty line is drawn at modification, not
-   addition.
+4. **Editing lessons is deliberate.** Reflection that modifies lesson
+   content — promotion, re-tagging, contradiction resolution — is the
+   therapy skill's job: user-initiated and user-approved. Automatic
+   distillation inserts candidate lessons additively; only its private
+   per-thread watermark control row is replaced to keep one current coverage
+   boundary. Control-state replacement never edits an existing lesson.
 
 **T17 scheduling enforcement (2026-09-08):** `start_consolidation_timer`
 uses an interval of `max(consolidation_cadence_secs, 60)` seconds, skips the
@@ -623,23 +647,41 @@ so lessons survive the session without anyone choosing to save them.
 - **Finished means idle.** A thread is distilled when its newest turn is
   at least `distillation_idle_secs` old (default 300s) — an active
   conversation is never distilled mid-flight.
-- **Additive-only.** The pass atomically inserts lesson h_mems (Shared
-  visibility, the 0.5 confidence floor,
-  every cited evidence h_mem verified to exist — the same invariants
-  `memory_insert` enforces) plus one Private watermark h_mem per
-  distilled thread. It never edits or deletes anything. Pinned
-  by `distillation_pass_is_additive_only`.
-- **Idempotent by watermark.** Each thread carries
-  `curator:distilled:{thread_id}` / `distilled_through` watermark h_mems;
-  a pass distills only turns newer than the newest watermark, so
-  restarts and re-runs insert no duplicates. Accepted lessons and the
-  trailing watermark publish in one transaction; any insertion failure
-  rolls back the complete batch and keeps the thread pending for retry.
-  The watermark is therefore durable proof that every accepted lesson in
-  the covered batch was stored. Pinned by
-  `lesson_store_failure_does_not_advance_the_watermark`,
-  `watermark_failure_rolls_back_the_distillation_batch`, and
-  `distillation_pass_respects_watermark`.
+- **Additive lesson layer, bounded control layer.** The pass atomically
+  inserts lesson h_mems (Shared visibility, the 0.5 confidence floor, every
+  cited evidence h_mem verified to exist — the same invariants
+  `memory_insert` enforces). In that same transaction it replaces the
+  thread's Private `distilled_through` watermark, leaving one current marker
+  instead of an append-only marker history. Existing lesson h_mems are never
+  edited or deleted. Pinned by `distillation_pass_is_additive_only`,
+  `long_threads_distill_in_batches_with_per_batch_watermarks`, and
+  `atomic_replacement_failure_preserves_prior_marker`.
+- **Idempotent by latest watermark.** Each thread carries one
+  `curator:distilled:{thread_id}` / `distilled_through` marker; a pass
+  distills only turns newer than it, so restarts and re-runs insert no
+  duplicates. Accepted lessons and the replacement marker publish in one
+  transaction. Any insertion failure rolls back both new lessons and marker
+  replacement, preserving the prior proven boundary and keeping the thread
+  pending for retry.
+- **Cross-pass key reuse is source-bound.** Before generating lessons, the
+  pass loads a bounded set of existing lessons whose `source_thread` equals
+  the current thread and supplies their exact entity/attribute keys to the
+  prompt. Later batches in the same pass extend the same context. This closes
+  restart/session slug drift without an uncalibrated global similarity
+  threshold. Pinned by `prior_lessons_reach_later_batch_prompts` and
+  `prior_cross_pass_lessons_reach_the_next_prompt`.
+- **Mutable state requires provenance.** Current implementation descriptions,
+  defect status, tool counts, and configuration are omitted unless the model
+  marks them `mutable_state` and supplies both a `source_locator` and a
+  `version_or_date` (commit, version, or verification date). Validation rejects
+  marked mutable state without both fields, promotes obvious status/count/
+  configuration markers to mutable even when labeled false, and requires both
+  provenance strings to appear in the cited evidence text. Accepted mutable
+  lessons persist a provenance-bearing `recall_text`; that complete text—not
+  the unbounded claim alone—is embedded and injected into future sessions.
+  Durable decisions, invariants, preferences, and repeated verified failure
+  patterns use `mutable_state: false`. Pinned by the `mutable_state_lesson_*`
+  and mutable projection tests.
 - **Lessons are semantically recallable.** Each lesson's text is
   embedded under the lesson's entity (the entity_ref invariant, §3), so
   future sessions find them by meaning, not just by entity name.
@@ -712,9 +754,11 @@ construction. Time-based and distillation-gated, never count-based
   to preserve — a turn's content lives only in its shared chunks, so
   forgetting the shared copies forgets the covered turns (the lessons
   stay). The legacy `chat:thread:` rows that predate the ruling were
-  deleted by the therapy hygiene pass, not by this pass. Watermarks are
-  never deleted (idempotence markers). A never-distilled thread is never
-  forgotten (no watermark, no proof of extraction). A watermark whose
+  deleted by the therapy hygiene pass, not by this pass. The forgetting pass
+  does not delete watermark control state; the distillation publisher
+  atomically replaces each thread's prior marker when coverage advances. A
+  never-distilled thread is never forgotten (no watermark, no proof of
+  extraction). A watermark whose
   `through` position cannot be parsed skips deletion — no proof, no
   deletion. Pinned by `forgetting_deletes_only_aged_distilled_shared_turns`
   and `forgetting_skips_threads_without_a_parseable_watermark`.
@@ -996,9 +1040,10 @@ sovereignty:
   `test_curator_memory_edit_tools_available_to_non_curator_threads`); the
   write invariants — evidence citation, 0.5 confidence floor — are
   enforced by the curator server regardless of caller. The distillation
-  pass (§6) is additive-only by the same ruling: it inserts candidates
-  without a consent gate but never modifies — the sovereignty line is
-  drawn at modification, not addition.
+  pass (§6) inserts lesson candidates additively without a consent gate and
+  never modifies an existing lesson. Its private per-thread watermark is
+  operational control state: replacing that marker advances the proven
+  coverage boundary but does not revise user-facing memory content.
 
 - **The user can run without recall.** The zed agent (the default coding
   agent) has no recall — the `MemoryPort` trait impls are no-ops
@@ -1070,7 +1115,7 @@ knowledge or consent.
 | 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1037-1179`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
 | 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |
-| 8 | ALWAYS-mode distillation pass | ✅ Done (2026-09-01) — `distillation.rs`, additive-only + watermark-idempotent, 6 pins |
+| 8 | ALWAYS-mode distillation pass | ✅ Done — additive lesson layer, latest-only transactional watermark, source-thread key reuse, and mutable-state provenance gate (`distillation.rs`) |
 
 ## 12. Passphrases and provisioning
 

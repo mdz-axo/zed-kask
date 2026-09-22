@@ -232,6 +232,21 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Publish related h_mems while atomically replacing one EAV control key.
+    pub fn store_batch_replacing_key_atomic(
+        &self,
+        h_mems: &[HMem],
+        entity: &str,
+        attribute: &str,
+    ) -> Result<(), MemoryStoreError> {
+        self.h_mem_store
+            .insert_batch_replacing_key_atomic(h_mems, entity, attribute)?;
+        for h_mem in h_mems {
+            self.emit_store_event(h_mem);
+        }
+        Ok(())
+    }
+
     fn emit_store_event(&self, h_mem: &HMem) {
         if let Some(sink) = &self.event_sink {
             let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "stored");
@@ -392,6 +407,18 @@ impl MemoryStore {
             .map_err(Into::into)
     }
 
+    /// Load the newest lessons attributed to one source thread, untouched by
+    /// decay and bounded for prompt construction.
+    pub fn h_mems_by_source_thread(
+        &self,
+        source_thread: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store
+            .query_by_source_thread(source_thread, limit)
+            .map_err(Into::into)
+    }
+
     /// Query h_mems by entity prefix observed at or after `since`, without
     /// decay or dedup. The curator's distillation pass uses this to find
     /// threads with un-distilled turns without loading the whole store.
@@ -497,6 +524,23 @@ impl MemoryStore {
         Ok(self
             .embedding
             .store(entity_ref, vector, model, passage_text)?)
+    }
+
+    /// Return whether one entity already has an embedding for exact passage text.
+    pub fn has_embedding_for_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<bool, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .contains_entity_passage(entity_ref, passage_text)?)
+    }
+
+    /// Delete one exact embedding ID without touching sibling passages that
+    /// share the same entity_ref.
+    pub fn delete_embedding_by_id(&self, id: &str) -> Result<(), MemoryStoreError> {
+        Ok(self.embedding.delete_by_id(id)?)
     }
 
     pub fn search_similar(

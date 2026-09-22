@@ -1262,6 +1262,7 @@ async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
                 error: "closed-vocabulary validation form errored".to_string(),
                 tool_input: None,
                 failure_type: None,
+                failure_origin: SkillUseFailureOrigin::AgentExecution,
             }))
             .await
             .expect("tool ok"),
@@ -1276,6 +1277,16 @@ async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
         .query_deduped_untouched("skill_use_issue:grounding-verify")
         .expect("query stored reports");
     assert_eq!(stored.len(), 1, "one report must be stored");
+    assert_eq!(
+        response["failure_origin"].as_str(),
+        Some("agent_execution"),
+        "the tool response must surface typed ownership — got: {response}",
+    );
+    assert_eq!(
+        stored[0].value["failure_origin"].as_str(),
+        Some("agent_execution"),
+        "the durable report must preserve typed ownership",
+    );
     assert!(
         (stored[0].confidence.value() - 0.5).abs() < 1e-9,
         "issue reports start at the 0.5 floor, not the HMem::new 1.0 default — got {}",
@@ -1353,6 +1364,7 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
                 error: "announce-then-stop".to_string(),
                 tool_input: None,
                 failure_type: None,
+                failure_origin: SkillUseFailureOrigin::ToolImplementation,
             }))
             .await
             .expect("report must succeed without embeddings"),

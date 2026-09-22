@@ -320,6 +320,22 @@ impl EmbeddingStore {
     /// pre:  query_vector matches store dimension, limit > 0
     /// post: returns `Vec<SimilarityResult>` ordered by ascending distance
     #[must_use = "result must be used"]
+    /// Return whether one entity already has an embedding for exact passage text.
+    pub fn contains_entity_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<bool, EmbeddingError> {
+        let rows = self.query_driver(
+            "SELECT 1 FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2 LIMIT 1",
+            &[
+                DbValue::Text(entity_ref.to_string()),
+                DbValue::Text(passage_text.to_string()),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     pub fn search(
         &self,
         query_vector: &[f32],
@@ -369,58 +385,76 @@ impl EmbeddingStore {
         }
         Ok(results)
     }
-    /// Delete embedding from both tables (single transaction).
-    /// Delete an embedding by entity_ref.
+    /// Delete one exact embedding from both tables in one transaction.
     ///
-    /// expect: "The system provides durable storage for embedding data"
-    /// \[P3\] Motivating: Generative Space — delete embedding
-    /// pre:  entity_ref is non-empty
-    /// post: embedding deleted if existed
-    pub fn delete(&self, entity_ref: &str) -> Result<(), EmbeddingError> {
-        let rows = self.query_driver(
-            "SELECT id FROM embeddings WHERE entity_ref = ?",
-            &[DbValue::Text(entity_ref.to_string())],
-        )?;
-        let id = match rows.first() {
-            Some(row) => row.get(0)?.as_text()?.to_string(),
-            None => {
-                return Err(EmbeddingError::NotFound(NotFound {
-                    entity_type: "embedding".to_string(),
-                    id: entity_ref.to_string(),
-                }));
-            }
-        };
+    /// expect: "A failed compound publication can remove exactly the vector it created."
+    /// \[P3\] Motivating: Generative Space — compensation must not delete a sibling passage.
+    /// \[P4\] Constraining: Clear Boundaries — embedding identity, not entity breadth, bounds deletion.
+    /// pre: id names one stored embedding
+    /// post: matching metadata and vec0 rows are deleted; sibling embeddings survive
+    pub fn delete_by_id(&self, id: &str) -> Result<(), EmbeddingError> {
         let conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         conn.execute_batch("BEGIN TRANSACTION;")?;
-        // vec0 is rowid-keyed; resolve the UUID to the embeddings rowid
-        // and delete the vector by integer key (fast B-tree lookup,
-        // avoids the inefficient >12-char TEXT metadata scan).
-        if let Err(e) = conn.execute(
+        if let Err(error) = conn.execute(
             "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
             rusqlite::params![id],
         ) {
-            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after vec_embeddings DELETE error");
             }
-            return Err(EmbeddingError::Storage(e));
+            return Err(EmbeddingError::Storage(error));
         }
-        // Delete from embeddings on the SAME connection — not via self.exec,
-        // which would acquire a second pool connection and self-deadlock
-        // on SQLite's single-writer lock (busy_timeout=5000 → SQLITE_BUSY).
-        if let Err(e) = conn.execute(
+        let deleted = match conn.execute(
             "DELETE FROM embeddings WHERE id = ?1",
             rusqlite::params![id],
         ) {
-            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
+            Ok(deleted) => deleted,
+            Err(error) => {
+                if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(error));
             }
-            return Err(EmbeddingError::Storage(e));
+        };
+        if deleted == 0 {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after missing embedding ID");
+            }
+            return Err(EmbeddingError::NotFound(NotFound {
+                entity_type: "embedding".to_string(),
+                id: id.to_string(),
+            }));
         }
         conn.execute_batch("COMMIT;")?;
         Ok(())
+    }
+
+    /// Delete the first embedding stored for an entity.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — delete embedding
+    /// pre: entity_ref is non-empty
+    /// post: one embedding is deleted if it exists
+    pub fn delete(&self, entity_ref: &str) -> Result<(), EmbeddingError> {
+        let rows = self.query_driver(
+            "SELECT id FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )?;
+        let id = rows
+            .first()
+            .ok_or_else(|| {
+                EmbeddingError::NotFound(NotFound {
+                    entity_type: "embedding".to_string(),
+                    id: entity_ref.to_string(),
+                })
+            })?
+            .get(0)?
+            .as_text()?
+            .to_string();
+        self.delete_by_id(&id)
     }
 
     /// Delete every embedding under an entity — the vector rows AND the
@@ -784,6 +818,32 @@ mod tests {
             vec![first, second],
             "ordinary append rows survive replacement"
         );
+        Ok(())
+    }
+
+    /// expect: "Compensating a failed publication removes only its new vector, not sibling passages."
+    /// [P4] Motivating: Clear Boundaries — embedding identity bounds the rollback.
+    /// pre: two embeddings share one entity_ref
+    /// post: deleting the first ID leaves the second metadata and vec0 row searchable
+    #[test]
+    fn delete_by_id_preserves_sibling_embeddings() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let first_vector = vec![0.25; dim];
+        let second_vector = vec![0.75; dim];
+        let first = store.store("curator:goal:test", &first_vector, "m", Some("first"))?;
+        let second = store.store("curator:goal:test", &second_vector, "m", Some("second"))?;
+
+        store.delete_by_id(&first)?;
+
+        assert_eq!(store.count()?, 1);
+        let hits = store.search(&second_vector, 4)?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].embedding.id, second);
+        assert_eq!(hits[0].embedding.passage_text.as_deref(), Some("second"));
         Ok(())
     }
 }

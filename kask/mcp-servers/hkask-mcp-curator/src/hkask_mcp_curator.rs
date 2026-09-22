@@ -1123,7 +1123,7 @@ impl CuratorServer {
     /// messages, add fallbacks). Complements the existing runtime telemetry
     /// (reg.* spans, algedonic events).
     #[tool(
-        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an h_mem for Curator pattern analysis. The report includes: skill name, tool name, step ordinal, error description, optional tool input, and optional failure type classification."
+        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an h_mem for Curator pattern analysis. The report includes skill/tool/step evidence, a granular failure_type, and a required controlled failure_origin ownership class."
     )]
     pub async fn curator_report_skill_use_issue(
         &self,
@@ -1143,6 +1143,7 @@ impl CuratorServer {
                 "error": req.error,
                 "tool_input": req.tool_input,
                 "failure_type": req.failure_type,
+                "failure_origin": req.failure_origin.as_str(),
                 "reported_at": now.to_rfc3339(),
             });
 
@@ -1168,10 +1169,11 @@ impl CuratorServer {
             // finds it by meaning (the contract the doc comment above
             // advertises). Non-fatal; the degradation is surfaced below.
             let embed_text = format!(
-                "skill-use issue: {skill} / {tool} (step {step}): {error}",
+                "skill-use issue: {skill} / {tool} (step {step}, origin {origin}): {error}",
                 skill = req.skill_name,
                 tool = req.tool_name,
                 step = req.step_ordinal,
+                origin = req.failure_origin.as_str(),
                 error = req.error,
             );
             let embedded = embed_for_semantic_recall(
@@ -1189,6 +1191,7 @@ impl CuratorServer {
                 "tool_name": req.tool_name,
                 "step_ordinal": req.step_ordinal,
                 "failure_type": req.failure_type,
+                "failure_origin": req.failure_origin.as_str(),
                 "semantic_recall": if embedded { "embedded" } else { DEGRADED_EMBEDDING_NOTE },
                 "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' or curator_semantic_search to retrieve accumulated reports."
             }))

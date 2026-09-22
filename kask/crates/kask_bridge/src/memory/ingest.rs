@@ -30,7 +30,7 @@ use hkask_memory::MemoryConsolidator;
 use hkask_storage::HMem;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
-    Confidence, Dimension, HMemOntology, MemoryError, TurnRecord, Visibility, WebID,
+    Confidence, Dimension, GoalEvent, HMemOntology, MemoryError, TurnRecord, Visibility, WebID,
 };
 
 use crate::inference_embedding::LanguageModelEmbeddingPort;
@@ -95,6 +95,146 @@ impl IngestionReport {
     pub(crate) fn degraded(self) -> bool {
         self.failed > 0 || self.degraded > 0
     }
+}
+
+/// Generate exactly one semantic vector for a durable goal event.
+///
+/// expect: "A goal h_mem is never published without its searchable passage vector."
+/// [P8] Motivating: Semantic Grounding — vector and h_mem share one canonical entity.
+/// [P2] Constraining: Transparent Imperfection — unavailable embeddings stop publication.
+/// pre: event is not a whole-list snapshot and carries a goal_id
+/// post: returns one vector or a surfaced ingestion error; never fabricates a vector
+async fn embed_goal_event(
+    ctx: &WriteContext<'_>,
+    event: &GoalEvent,
+) -> Result<(String, Vec<f32>), MemoryError> {
+    let embedding_port = ctx.embedding_port.cloned().ok_or_else(|| {
+        MemoryError::Ingestion(format!(
+            "embedding capability unavailable for {}",
+            event.tool_name
+        ))
+    })?;
+    let embedding_model = ctx.embedding_model.to_string();
+    let passage = event.semantic_text();
+    let passages = vec![passage.clone()];
+    let result = ctx
+        .tokio_handle
+        .spawn(async move { embedding_port.embed(&embedding_model, &passages).await })
+        .await
+        .map_err(|error| {
+            MemoryError::Ingestion(format!(
+                "goal embedding task failed for {}: {error}",
+                event.tool_name
+            ))
+        })?
+        .map_err(|error| {
+            MemoryError::Ingestion(format!(
+                "goal embedding generation failed for {}: {error}",
+                event.tool_name
+            ))
+        })?;
+    if result.len() != 1 {
+        return Err(MemoryError::Ingestion(format!(
+            "goal embedding count mismatch for {}: expected 1, got {}",
+            event.tool_name,
+            result.len()
+        )));
+    }
+    let vector = result.into_iter().next().ok_or_else(|| {
+        MemoryError::Ingestion(format!(
+            "goal embedding response was empty for {}",
+            event.tool_name
+        ))
+    })?;
+    Ok((passage, vector))
+}
+
+const GOAL_CALIBRATION_KEY: &str = "_memory_calibration";
+
+/// Apply one score event to its goal-create confidence exactly once.
+///
+/// The confidence and exact score receipt replace the create h_mem in one
+/// storage operation. A failed update leaves both absent; a retry can resume.
+/// A successful retry sees the receipt and cannot count the score twice.
+fn calibrate_goal_prediction(
+    curator_store: &hkask_memory::MemoryStore,
+    thread_id: &str,
+    goal_id: &str,
+    score_output: &serde_json::Value,
+) -> Result<(), MemoryError> {
+    let brier = score_output
+        .get("brier")
+        .or_else(|| score_output.pointer("/content/brier"))
+        .and_then(serde_json::Value::as_f64);
+    let Some(brier) = brier else {
+        tracing::debug!(
+            target: "reg.memory",
+            goal_id,
+            "Goal score without a Brier — no prediction to calibrate"
+        );
+        return Ok(());
+    };
+    let goal_entity = format!("curator:goal:{goal_id}");
+    let create_records = curator_store
+        .h_mems_by_entity_prefix(&goal_entity)
+        .map_err(|error| {
+            MemoryError::Ingestion(format!(
+                "failed to query goal {goal_id} records for Brier calibration: {error}"
+            ))
+        })?
+        .into_iter()
+        .filter(|h_mem| h_mem.attribute == "kanban_goal_create")
+        .collect::<Vec<_>>();
+    if create_records.is_empty() {
+        return Err(MemoryError::Ingestion(format!(
+            "goal score {goal_id} carried Brier {brier} but no kanban_goal_create h_mem exists"
+        )));
+    }
+
+    let signal = (1.0 - 2.0 * brier).clamp(0.05, 0.95);
+    let mut calibrated = 0usize;
+    let mut already_calibrated = 0usize;
+    for create_record in create_records {
+        if create_record
+            .value
+            .pointer("/_memory_calibration/score")
+            .is_some_and(|applied_score| applied_score == score_output)
+        {
+            already_calibrated += 1;
+            continue;
+        }
+        let combined =
+            hkask_memory::combine_confidences(create_record.confidence, Confidence::new(signal));
+        let mut updated_value = create_record.value.clone();
+        let value_object = updated_value.as_object_mut().ok_or_else(|| {
+            MemoryError::Ingestion(format!(
+                "goal {goal_id} create record is not a JSON object; calibration receipt cannot be stored"
+            ))
+        })?;
+        value_object.insert(
+            GOAL_CALIBRATION_KEY.to_string(),
+            serde_json::json!({"score": score_output, "brier": brier}),
+        );
+        curator_store
+            .update_confidence(&create_record.id, updated_value, combined)
+            .map_err(|error| {
+                MemoryError::Ingestion(format!(
+                    "failed to calibrate goal {goal_id} create confidence: {error}"
+                ))
+            })?;
+        calibrated += 1;
+    }
+    tracing::info!(
+        target: "reg.memory",
+        thread_id,
+        goal_id,
+        brier,
+        signal,
+        calibrated,
+        already_calibrated,
+        "Brier score calibrated goal-create memory confidence"
+    );
+    Ok(())
 }
 
 /// Write a completed turn into the curator's memory as cleaned, embedded,
@@ -167,24 +307,35 @@ pub(crate) async fn write_turn(
     // is stored here and the thread path acknowledges the handoff. Score writes
     // therefore fail the ingestion and deduplicate retries; other goal events
     // retain their existing best-effort behavior.
-    // Each `kanban_goal_*` tool result becomes one structured goal h_mem so
+    // Each individual `kanban_goal_*` change becomes one structured goal h_mem so
     // therapy / algedonic-review find goal entities (text, criteria,
     // verdicts, Brier scores), not prose archaeology. One key convention:
     // `curator:goal:{goal_id}` (the 2026-09-04 single-copy ruling retired the
     // curator-perspective `goal:{id}` duplicate and the legacy `*:list` keys).
     for event in &record.goal_events {
+        // A list response repeats every goal and grows with the whole board;
+        // the individual create/judge/score events below are the durable log.
+        if event.is_list_snapshot() {
+            tracing::debug!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                "Skipping non-durable kanban_goal_list snapshot"
+            );
+            continue;
+        }
+
         // `extract_goal_events` hands us the raw MCP tool result, which the
         // response envelope wraps as `{"content": {...}}` — the goal_id
         // lives one level down. The top-level probe stays for results that
-        // bypass the envelope (parsed text contents), and id-less outputs
-        // (e.g. `kanban_goal_list`) deliberately land under the `list`
-        // entity so list-shaped events still file somewhere stable.
-        let goal_id = event
-            .output
-            .get("goal_id")
-            .or_else(|| event.output.pointer("/content/goal_id"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("list");
+        // bypass the envelope (parsed text contents). Other id-less outputs
+        // are malformed events, not a synthetic `list` goal identity.
+        let is_score = event.tool_name == "kanban_goal_score";
+        let Some(goal_id) = event.goal_id() else {
+            return Err(MemoryError::Ingestion(format!(
+                "{} result carried no goal_id",
+                event.tool_name
+            )));
+        };
         let goal_ontology = HMemOntology {
             dimensions: vec![Dimension::Why.as_str().to_string()],
             // `pplan:Step` (P-Plan, soft-reused by PKO) — the same term the
@@ -200,14 +351,10 @@ pub(crate) async fn write_turn(
         };
 
         let goal_entity = format!("curator:goal:{goal_id}");
-        let is_score = event.tool_name == "kanban_goal_score";
         let Some(ref curator_store) = curator_store else {
-            if is_score {
-                return Err(MemoryError::Ingestion(format!(
-                    "curator store unavailable for resolved goal {goal_id}"
-                )));
-            }
-            continue;
+            return Err(MemoryError::Ingestion(format!(
+                "curator store unavailable for goal event {goal_id}"
+            )));
         };
         let already_stored = if is_score {
             curator_store
@@ -222,113 +369,75 @@ pub(crate) async fn write_turn(
         } else {
             false
         };
-        if !already_stored {
-            let shared_goal = HMem::new(
-                &goal_entity,
-                event.tool_name.as_str(),
-                event.output.clone(),
-                ctx.curator_webid,
-            )
-            .with_visibility(Visibility::Shared)
-            .with_ontology(goal_ontology)
-            .with_confidence(Confidence::new(0.5));
-            if let Err(e) = curator_store.store(shared_goal) {
-                if is_score {
-                    return Err(MemoryError::Ingestion(format!(
-                        "failed to store resolved goal {goal_id}: {e}"
-                    )));
-                }
-                tracing::warn!(
-                    target: "reg.memory",
-                    thread_id = %thread_id,
-                    error = %e,
-                    "Failed to store shared goal h_mem"
-                );
+        if already_stored {
+            let passage = event.semantic_text();
+            let semantically_visible = curator_store
+                .has_embedding_for_passage(&goal_entity, &passage)
+                .map_err(|error| {
+                    MemoryError::Ingestion(format!(
+                        "failed to verify resolved goal {goal_id} embedding: {error}"
+                    ))
+                })?;
+            if !semantically_visible {
+                return Err(MemoryError::Ingestion(format!(
+                    "stored goal score {goal_id} violates the semantic-publication invariant"
+                )));
             }
+            // The score h_mem proves publication started. Its exact
+            // calibration receipt determines whether outcome processing also
+            // completed; the idempotent update below safely resumes or no-ops.
+            if is_score {
+                calibrate_goal_prediction(curator_store, &thread_id, goal_id, &event.output)?;
+            }
+            continue;
         }
 
-        // ── Brier loop → memory confidence (spec §11 item 4) ──────────
-        // The goal score is the one outcome the memory system observes
-        // automatically: its Brier calibrates the confidence of the goal's
-        // prediction record (the `kanban_goal_create` h_mem) via Bayesian
-        // combination — never a raw confidence write. Mapping: a binary
-        // no-skill prediction scores Brier 0.25, the neutral point; 0 →
-        // 0.95 (strong confirm), 1 → 0.05 (strong disconfirm, which drops
-        // the record below the consolidation floor so cleanup deletes it).
-        if event.tool_name == "kanban_goal_score" {
-            let brier = event
-                .output
-                .get("brier")
-                .or_else(|| event.output.pointer("/content/brier"))
-                .and_then(serde_json::Value::as_f64);
-            let Some(brier) = brier else {
-                // `brier` is null when no intake prediction was recorded —
-                // nothing to calibrate, not a failure.
-                tracing::debug!(
-                    target: "reg.memory",
-                    goal_id = %goal_id,
-                    "Goal score without a Brier — no prediction to calibrate"
-                );
-                continue;
-            };
-            let goal_entity = format!("curator:goal:{goal_id}");
-            let create_records = match curator_store.h_mems_by_entity_prefix(&goal_entity) {
-                Ok(records) => records
-                    .into_iter()
-                    .filter(|h_mem| h_mem.attribute == "kanban_goal_create")
-                    .collect::<Vec<_>>(),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        goal_id = %goal_id,
-                        error = %e,
-                        "Failed to query goal records for Brier calibration"
-                    );
-                    continue;
-                }
-            };
-            if create_records.is_empty() {
+        let (passage, vector) = embed_goal_event(ctx, event).await?;
+        let embedding_id = curator_store
+            .store_embedding(&goal_entity, &vector, ctx.embedding_model, Some(&passage))
+            .map_err(|error| {
+                MemoryError::Ingestion(format!("failed to store goal {goal_id} embedding: {error}"))
+            })?;
+        if is_score
+            && let Err(error) =
+                calibrate_goal_prediction(curator_store, &thread_id, goal_id, &event.output)
+        {
+            if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
                 tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
-                    goal_id = %goal_id,
-                    brier,
-                    "Goal score carried a Brier but no kanban_goal_create h_mem exists to calibrate"
+                    goal_id,
+                    embedding_id,
+                    error = %cleanup_error,
+                    "Failed to remove score embedding after calibration failure"
                 );
-                continue;
             }
-            let signal = (1.0 - 2.0 * brier).clamp(0.05, 0.95);
-            let mut calibrated = 0usize;
-            for create_record in create_records {
-                let combined = hkask_memory::combine_confidences(
-                    create_record.confidence,
-                    Confidence::new(signal),
+            return Err(error);
+        }
+
+        let shared_goal = HMem::new(
+            &goal_entity,
+            event.tool_name.as_str(),
+            event.output.clone(),
+            ctx.curator_webid,
+        )
+        .with_visibility(Visibility::Shared)
+        .with_ontology(goal_ontology)
+        .with_confidence(Confidence::new(0.5));
+        if let Err(error) = curator_store.store(shared_goal) {
+            if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    goal_id,
+                    embedding_id,
+                    error = %cleanup_error,
+                    "Failed to remove orphan goal embedding after h_mem publication failure"
                 );
-                match curator_store.update_confidence(
-                    &create_record.id,
-                    create_record.value.clone(),
-                    combined,
-                ) {
-                    Ok(()) => calibrated += 1,
-                    Err(e) => tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        goal_id = %goal_id,
-                        error = %e,
-                        "Failed to calibrate goal-create confidence from Brier score"
-                    ),
-                }
             }
-            tracing::info!(
-                target: "reg.memory",
-                thread_id = %thread_id,
-                goal_id = %goal_id,
-                brier,
-                signal,
-                calibrated,
-                "Brier score calibrated goal-create memory confidence"
-            );
+            return Err(MemoryError::Ingestion(format!(
+                "failed to store goal {goal_id}: {error}"
+            )));
         }
     }
 

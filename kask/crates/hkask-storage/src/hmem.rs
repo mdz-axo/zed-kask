@@ -293,6 +293,30 @@ impl HMemStore {
     /// fails, dropping the transaction rolls back every earlier insert, so a
     /// trailing commit marker cannot survive without the records it covers.
     pub fn insert_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), HMemError> {
+        self.insert_batch_with_replacement(h_mems, None)
+    }
+
+    /// Atomically replace one EAV key while publishing a related h_mem batch.
+    ///
+    /// expect: "A newer commit marker replaces the old marker without exposing a partial batch."
+    /// \[P5\] Motivating: Organic Growth — control state stays bounded as history grows.
+    /// \[P2\] Constraining: Transparent Imperfection — failed publication preserves the prior marker.
+    /// pre: h_mems contains the replacement row for entity + attribute
+    /// post: lessons and the one replacement row commit together; prior key versions are absent
+    pub fn insert_batch_replacing_key_atomic(
+        &self,
+        h_mems: &[HMem],
+        entity: &str,
+        attribute: &str,
+    ) -> Result<(), HMemError> {
+        self.insert_batch_with_replacement(h_mems, Some((entity, attribute)))
+    }
+
+    fn insert_batch_with_replacement(
+        &self,
+        h_mems: &[HMem],
+        replacement: Option<(&str, &str)>,
+    ) -> Result<(), HMemError> {
         if h_mems.is_empty() {
             return Ok(());
         }
@@ -322,15 +346,25 @@ impl HMemStore {
             .collect::<Result<Vec<_>, HMemError>>()?;
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
             HMemError::Infra(InfrastructureError::database(
-                "HMemStore::insert_batch_atomic requires a SqliteDriver",
+                "atomic h_mem batch publication requires a SqliteDriver",
             ))
         })?;
         let mut conn = pool
             .get()
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
         let transaction = conn
-            .transaction()
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        if let Some((entity, attribute)) = replacement {
+            transaction
+                .execute(
+                    "DELETE FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                    rusqlite::params![entity, attribute],
+                )
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+        }
         for row in rows {
             transaction
                 .execute(
@@ -365,6 +399,34 @@ impl HMemStore {
             &[DbValue::Text(entity.to_string())],
         )
     }
+
+    /// Query the newest structured memories attributed to one source thread.
+    ///
+    /// expect: "A later distillation pass can reuse keys learned from the same thread."
+    /// \[P8\] Motivating: Semantic Grounding — source_thread provenance defines the exact reuse scope.
+    /// pre: source_thread is non-empty and limit > 0
+    /// post: returns at most limit JSON-object h_mems, newest first
+    pub fn query_by_source_thread(
+        &self,
+        source_thread: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, HMemError> {
+        if source_thread.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE json_valid(value) AND json_extract(value, '$.source_thread') = ?1 \
+                 ORDER BY valid_from DESC LIMIT ?2"
+            ),
+            &[
+                DbValue::Text(source_thread.to_string()),
+                DbValue::Integer(limit as i64),
+            ],
+        )
+    }
+
     /// Query h_mems by entity prefix (LIKE 'prefix%'), bounded by `limit`.
     ///
     /// Used by recall paths that need to load h_mems for a family of
@@ -966,6 +1028,56 @@ mod tests {
             "the lesson inserted before the failing watermark must roll back"
         );
         assert_eq!(store.count()?, 0);
+        Ok(())
+    }
+
+    /// expect: "A failed marker replacement restores the prior marker and publishes no partial lesson."
+    /// [P5] Motivating: Organic Growth — latest-only control state must remain crash-safe.
+    /// [P2] Constraining: Transparent Imperfection — failure preserves the last proven coverage boundary.
+    /// pre: one prior marker exists and the replacement insert is forced to fail
+    /// post: prior marker survives; replacement marker and lesson are absent
+    #[test]
+    fn atomic_replacement_failure_preserves_prior_marker() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let entity = "curator:distilled:replace";
+        let old_marker = HMem::new(
+            entity,
+            "distilled_through",
+            serde_json::json!({"through": "2026-09-20T00:00:00Z"}),
+            WebID::new(),
+        );
+        store.insert(&old_marker)?;
+        let lesson = HMem::new(
+            "lesson:replacement",
+            "fact",
+            serde_json::json!("new lesson"),
+            WebID::new(),
+        );
+        let new_marker = HMem::new(
+            entity,
+            "distilled_through",
+            serde_json::json!({"through": "2026-09-21T00:00:00Z"}),
+            WebID::new(),
+        );
+        store.driver().execute_batch(
+            "CREATE TRIGGER fail_replacement_marker BEFORE INSERT ON hmems
+             WHEN NEW.entity = 'curator:distilled:replace'
+             BEGIN SELECT RAISE(FAIL, 'forced replacement failure'); END;",
+        )?;
+
+        assert!(
+            store
+                .insert_batch_replacing_key_atomic(
+                    &[lesson.clone(), new_marker.clone()],
+                    entity,
+                    "distilled_through",
+                )
+                .is_err()
+        );
+        assert!(store.get_by_id(&old_marker.id)?.is_some());
+        assert!(store.get_by_id(&lesson.id)?.is_none());
+        assert!(store.get_by_id(&new_marker.id)?.is_none());
+        assert_eq!(store.count()?, 1);
         Ok(())
     }
 

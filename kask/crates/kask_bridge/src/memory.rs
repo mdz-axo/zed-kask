@@ -57,6 +57,41 @@ pub(crate) use ingest::WriteContext;
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
+/// Reconstruct the exact passage representation an h_mem writer embedded.
+///
+/// expect: "A semantic hit can join back to the structured memory that produced its passage."
+/// [P8] Motivating: Semantic Grounding — passage identity is the KNN-to-h_mem join contract.
+/// pre: h_mem is a plain chunk, a distilled lesson object, or a goal-event object
+/// post: returns the writer's deterministic passage text, or None for unsupported shapes
+fn embedding_passage_for_h_mem(h_mem: &hkask_storage::HMem) -> Option<String> {
+    if let Some(text) = h_mem.value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    if h_mem
+        .value
+        .get("mutable_state")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        return h_mem
+            .value
+            .get("recall_text")
+            .and_then(serde_json::Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string);
+    }
+    if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    h_mem.entity.starts_with("curator:goal:").then(|| {
+        let mut public_value = h_mem.value.clone();
+        if let Some(object) = public_value.as_object_mut() {
+            object.remove("_memory_calibration");
+        }
+        format!("goal event {}: {}", h_mem.attribute, public_value)
+    })
+}
+
 /// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
 /// Stores each completed turn as cleaned, word-bounded chunks under the
@@ -637,8 +672,10 @@ impl RealMemoryPort {
                         };
                         if let Ok(h_mems) = store.query_deduped_untouched(entity_ref) {
                             for h_mem in h_mems {
-                                let text = h_mem.value.as_str().unwrap_or("").to_string();
-                                if text.is_empty() || text != matched_passage {
+                                let Some(text) = embedding_passage_for_h_mem(&h_mem) else {
+                                    continue;
+                                };
+                                if text != matched_passage {
                                     continue;
                                 }
                                 candidates.push(Candidate {
@@ -1020,6 +1057,10 @@ pub(crate) mod tests {
     /// channel-closed `for_tests()` stub. For tests that exercise the
     /// end-to-end embedding recall path. The receiver task runs on the
     /// current tokio runtime (the test's `#[tokio::test]` reactor).
+    fn in_memory_port_with_embeddings() -> RealMemoryPort {
+        in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]))
+    }
+
     pub(crate) fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
     where
         F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
@@ -1053,6 +1094,33 @@ pub(crate) mod tests {
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
+    }
+
+    #[test]
+    fn mutable_lesson_projection_requires_and_preserves_provenance_boundary() {
+        let mut lesson = hkask_storage::HMem::new(
+            "mutable:lesson",
+            "status",
+            serde_json::json!({
+                "text": "The server exposes five tools.",
+                "mutable_state": true,
+                "state_provenance": {
+                    "source_locator": "kask/file.rs",
+                    "version_or_date": "abc123"
+                }
+            }),
+            WebID::new(),
+        );
+        assert!(
+            embedding_passage_for_h_mem(&lesson).is_none(),
+            "mutable claims without provenance-bearing recall_text are not injected"
+        );
+        lesson.value["recall_text"] = serde_json::json!(
+            "The server exposes five tools. [mutable state; source: kask/file.rs; version/date: abc123]"
+        );
+        let projected = embedding_passage_for_h_mem(&lesson).expect("bounded recall text");
+        assert!(projected.contains("kask/file.rs"));
+        assert!(projected.contains("abc123"));
     }
 
     #[tokio::test]
@@ -1115,7 +1183,7 @@ pub(crate) mod tests {
         // curator's memory is the durable vehicle. A zed turn's goal events
         // get a SHARED goal h_mem (curator recall) but NO curator-perspective
         // h_mem — the curator only remembers goals it was involved with.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
             thread_id: "zed-thread".to_string(),
@@ -1170,6 +1238,142 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "A goal remembered by the Curator is discoverable through semantic recall, not only exact lookup."
+    /// [P8] Motivating: Semantic Grounding — persisted goal content must have a matching entity_ref embedding.
+    /// [P2] Constraining: Transparent Imperfection — an invisible goal must not be reported as persisted.
+    /// pre: the curator store and deterministic embedding provider are available
+    /// post: production recall returns the goal entity with its structured passage text
+    #[tokio::test]
+    async fn persisted_goal_event_is_semantically_visible_by_entity_ref() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        let record = TurnRecord {
+            thread_id: "goal-semantic-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {
+                        "goal_id": "g-semantic",
+                        "goal_text": "The user can filter by date",
+                        "prediction": 0.8
+                    }
+                }),
+            }],
+        };
+
+        port.ingest_turn(record).await.expect("goal ingest");
+        let snippets = port
+            .recall_context_curator("filter goals by date", 10)
+            .await
+            .expect("production recall");
+        let goal = snippets
+            .iter()
+            .find(|snippet| snippet.entity == "curator:goal:g-semantic")
+            .expect("persisted goal must survive the production embedding-to-h_mem join");
+        assert!(goal.text.contains("kanban_goal_create"));
+        assert!(goal.text.contains("The user can filter by date"));
+    }
+
+    /// expect: "If semantic publication fails, the Curator does not claim the goal was remembered."
+    /// [P2] Motivating: Transparent Imperfection — no embedding means no durable goal h_mem.
+    /// [P8] Constraining: Semantic Grounding — score acknowledgment retries until visibility exists.
+    /// pre: the embedding provider rejects every request
+    /// post: both create and score return errors and leave no goal h_mem
+    #[tokio::test]
+    async fn goal_embedding_failure_blocks_persistence_and_score_acknowledgment() {
+        let port = in_memory_port();
+        let create = TurnRecord {
+            thread_id: "goal-embedding-failure".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-no-vector", "goal_text": "must remain visible"}
+                }),
+            }],
+        };
+        assert!(
+            port.ingest_turn(create).await.is_err(),
+            "every individual goal event fails closed when semantic publication is unavailable"
+        );
+        let curator_store = port.curator_store.get().expect("curator store");
+        assert!(
+            curator_store
+                .query_deduped_untouched("curator:goal:g-no-vector")
+                .expect("goal query")
+                .is_empty(),
+            "a failed embedding must leave no goal h_mem"
+        );
+
+        let score = TurnRecord {
+            thread_id: "goal-embedding-failure".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-no-vector", "achieved": false, "brier": null}
+                }),
+            }],
+        };
+        assert!(
+            port.ingest_turn(score).await.is_err(),
+            "a score must remain unacknowledged until semantic publication succeeds"
+        );
+        assert!(
+            curator_store
+                .query_deduped_untouched("curator:goal:g-no-vector")
+                .expect("goal query")
+                .is_empty(),
+            "failed score publication must leave no goal h_mem"
+        );
+    }
+
+    /// expect: "A non-null score cannot be acknowledged when its create memory is absent."
+    /// [P9] Motivating: Homeostatic Self-Regulation — outcome evidence needs the prediction it calibrates.
+    /// pre: embedding works but no kanban_goal_create h_mem exists
+    /// post: ingestion fails and leaves neither score h_mem nor score embedding
+    #[tokio::test]
+    async fn goal_score_with_brier_requires_a_create_record() {
+        let port = in_memory_port_with_embeddings();
+        let result = port
+            .ingest_turn(TurnRecord {
+                thread_id: "goal-missing-create".to_string(),
+                user_input: String::new(),
+                agent_response: String::new(),
+                model: "test-model".to_string(),
+                thread_title: None,
+                agent_id: Some("zed".to_string()),
+                goal_events: vec![hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "content": {"goal_id": "g-missing-create", "achieved": true, "brier": 0.04}
+                    }),
+                }],
+            })
+            .await;
+        assert!(result.is_err());
+        let curator_store = port.curator_store.get().expect("curator store");
+        assert!(
+            curator_store
+                .h_mems_by_entity_prefix("curator:goal:g-missing-create")
+                .expect("goal query")
+                .is_empty()
+        );
+        assert_eq!(curator_store.embedding_count().expect("embedding count"), 0);
+    }
+
     #[tokio::test]
     async fn goal_score_brier_calibrates_goal_create_confidence() {
         // Spec §11 item 4 — the Brier loop → memory confidence. A
@@ -1178,7 +1382,7 @@ pub(crate) mod tests {
         // no-skill prediction scores Brier 0.25 — the neutral point;
         // 0.0625 maps to a 0.875 signal, which combined with the 0.5 floor
         // is 0.875.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let create_record = TurnRecord {
             thread_id: "goal-thread".to_string(),
             user_input: "set a goal".to_string(),
@@ -1244,11 +1448,148 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "Retrying one scored outcome does not count the same evidence twice."
+    /// [P9] Motivating: Homeostatic Self-Regulation — Brier feedback is one outcome signal per goal.
+    /// [P8] Constraining: Semantic Grounding — publication retry is not independent evidence.
+    /// pre: a goal-create record exists and the same non-null score is ingested twice
+    /// post: one score h_mem exists and create confidence equals one Bayesian update
+    #[tokio::test]
+    async fn goal_score_retry_does_not_reapply_brier_calibration() {
+        let port = in_memory_port_with_embeddings();
+        let create = TurnRecord {
+            thread_id: "goal-retry-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_create".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-retry", "goal_text": "retry safely", "prediction": 0.75}
+                }),
+            }],
+        };
+        port.ingest_turn(create).await.expect("create ingest");
+        let score = TurnRecord {
+            thread_id: "goal-retry-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!({
+                    "content": {"goal_id": "g-retry", "achieved": true, "brier": 0.0625}
+                }),
+            }],
+        };
+        port.ingest_turn(score.clone())
+            .await
+            .expect("first score ingest");
+        port.ingest_turn(score).await.expect("retry score ingest");
+
+        let goals = port
+            .curator_store
+            .get()
+            .expect("curator store")
+            .h_mems_by_entity_prefix("curator:goal:g-retry")
+            .expect("goal query");
+        let create = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_create")
+            .expect("create record");
+        assert!(
+            (create.confidence.value() - 0.875).abs() < 1e-9,
+            "one Brier outcome must produce one update, got {}",
+            create.confidence.value()
+        );
+        assert_eq!(
+            create.value["_memory_calibration"]["score"]["content"]["brier"].as_f64(),
+            Some(0.0625),
+            "confidence and the exact score receipt must commit in one replacement"
+        );
+        assert_eq!(
+            goals
+                .iter()
+                .filter(|h_mem| h_mem.attribute == "kanban_goal_score")
+                .count(),
+            1
+        );
+    }
+
+    /// expect: "A stored score without its required embedding is rejected, not repaired by a compatibility path."
+    /// [P8] Motivating: Semantic Grounding — an incomplete publication cannot be acknowledged.
+    /// pre: matching score h_mem exists without its passage embedding
+    /// post: retry fails, publishes nothing, and leaves calibration unapplied
+    #[tokio::test]
+    async fn goal_score_retry_rejects_a_missing_embedding() {
+        let port = in_memory_port_with_embeddings();
+        let create_output = serde_json::json!({
+            "content": {"goal_id": "g-repair", "goal_text": "repair safely", "prediction": 0.75}
+        });
+        let event = hkask_types::GoalEvent {
+            tool_name: "kanban_goal_score".to_string(),
+            output: serde_json::json!({
+                "content": {"goal_id": "g-repair", "achieved": true, "brier": 0.0625}
+            }),
+        };
+        let curator_store = port.curator_store.get().expect("curator store");
+        for (attribute, value) in [
+            ("kanban_goal_create", create_output),
+            ("kanban_goal_score", event.output.clone()),
+        ] {
+            curator_store
+                .store(
+                    hkask_storage::HMem::new(
+                        "curator:goal:g-repair",
+                        attribute,
+                        value,
+                        port.curator_webid,
+                    )
+                    .with_visibility(hkask_types::Visibility::Shared)
+                    .with_confidence(hkask_types::Confidence::new(0.5)),
+                )
+                .expect("seed embedding-incomplete goal h_mem");
+        }
+
+        let retry = TurnRecord {
+            thread_id: "goal-repair-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![event],
+        };
+        assert!(
+            port.ingest_turn(retry).await.is_err(),
+            "an embedding-incomplete stored score must fail closed"
+        );
+
+        let goals = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-repair")
+            .expect("goal query");
+        assert_eq!(
+            goals.len(),
+            2,
+            "rejection must not mutate either goal h_mem"
+        );
+        let create = goals
+            .iter()
+            .find(|h_mem| h_mem.attribute == "kanban_goal_create")
+            .expect("create record");
+        assert!((create.confidence.value() - 0.5).abs() < 1e-9);
+        assert!(create.value.get("_memory_calibration").is_none());
+        assert_eq!(curator_store.embedding_count().expect("embedding count"), 0);
+    }
+
     #[tokio::test]
     async fn goal_score_without_brier_leaves_create_confidence_at_floor() {
         // `brier` is null when no intake prediction was recorded — nothing
         // to calibrate. The create record must stay at the 0.5 floor.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let create_record = TurnRecord {
             thread_id: "goal-thread".to_string(),
             user_input: "set a goal".to_string(),
@@ -1311,7 +1652,7 @@ pub(crate) mod tests {
         // BELOW the 0.5 floor — where the consolidation service's
         // floor-delete cleans it up. Calibration by outcome, cleanup by
         // floor: the two mechanisms compose.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let create_record = TurnRecord {
             thread_id: "goal-thread".to_string(),
             user_input: "set a goal".to_string(),
@@ -1370,7 +1711,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn resolved_goal_ingestion_is_idempotent_and_fails_when_memory_is_unavailable() {
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let record = TurnRecord {
             thread_id: "goal-ack".to_string(),
             user_input: String::new(),
@@ -1429,7 +1770,7 @@ pub(crate) mod tests {
         // 2026-09-04 single-copy ruling: goal events get ONE shared h_mem
         // under curator:goal:{goal_id} — the curator-perspective goal:{id}
         // duplicate is gone, for curator and zed turns alike.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
             thread_id: "curator-thread".to_string(),
@@ -1440,12 +1781,11 @@ pub(crate) mod tests {
             agent_id: Some("Curator".to_string()),
             goal_events: vec![
                 hkask_types::GoalEvent {
-                    tool_name: "kanban_goal_score".to_string(),
+                    tool_name: "kanban_goal_judge".to_string(),
                     output: serde_json::json!({
                         "content": {
                             "goal_id": "g-456",
-                            "achieved": true,
-                            "brier": 0.04
+                            "verdict": "done"
                         }
                     }),
                 },
@@ -1461,24 +1801,28 @@ pub(crate) mod tests {
             .expect("ingest should succeed");
         let curator_store = port.curator_store.get().expect("curator store");
 
-        // Shared copies for both events (perspective-free recall path).
-        let shared_score = curator_store
+        // The score has one shared copy; the list snapshot is excluded.
+        let shared_judge = curator_store
             .query_deduped_untouched("curator:goal:g-456")
             .expect("query should succeed");
-        assert_eq!(shared_score.len(), 1);
-        assert_eq!(shared_score[0].attribute, "kanban_goal_score");
+        assert_eq!(shared_judge.len(), 1);
+        assert_eq!(shared_judge[0].attribute, "kanban_goal_judge");
         assert_eq!(
-            shared_score[0]
+            shared_judge[0]
                 .value
-                .pointer("/content/brier")
-                .and_then(|v| v.as_f64()),
-            Some(0.04)
+                .pointer("/content/verdict")
+                .and_then(|value| value.as_str()),
+            Some("done")
         );
-        // The list event (no goal_id) lands under the list entity.
+        // Whole-list snapshots duplicate the individual goal-event stream and
+        // grow quadratically as the list grows. They are not durable memories.
         let shared_list = curator_store
             .query_deduped_untouched("curator:goal:list")
             .expect("query should succeed");
-        assert_eq!(shared_list.len(), 1, "goal_list event uses the list entity");
+        assert!(
+            shared_list.is_empty(),
+            "kanban_goal_list snapshots must not enter curator memory"
+        );
 
         // No curator-perspective duplicates — one key convention.
         let perspective = curator_store
@@ -1496,7 +1840,7 @@ pub(crate) mod tests {
         // tool results carry; the top-level probe exists for results that
         // bypass the envelope (parsed text contents). This pins the
         // `or_else` order so neither branch is "fixed" away later.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {
             thread_id: "top-level-thread".to_string(),
@@ -1535,7 +1879,7 @@ pub(crate) mod tests {
         // `memory_insert` starts distilled memories at — so recall ranking
         // can discriminate and the consolidation floor is reachable. The
         // `HMem::new` default of 1.0 starved both consumers of confidence.
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let record = TurnRecord {
             thread_id: "confidence-floor-thread".to_string(),
             user_input: "check the write confidence".to_string(),
@@ -1784,7 +2128,7 @@ pub(crate) mod tests {
     /// are written, but goal events still land (they are separate records).
     #[tokio::test]
     async fn ingest_turn_skips_chunks_when_turn_is_empty() {
-        let port = in_memory_port();
+        let port = in_memory_port_with_embeddings();
         let record = TurnRecord {
             thread_id: "fully-empty-thread".to_string(),
             user_input: String::new(),

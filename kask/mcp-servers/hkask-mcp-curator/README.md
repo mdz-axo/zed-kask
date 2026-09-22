@@ -20,7 +20,7 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_consult` | Consult Curator memory with a question. |
 | `curator_algedonic_log` | Read the newest algedonic events in a time window. |
 | `reg_query` | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting. |
-| `curator_report_skill_use_issue` | Record a failed or unexpected skill/tool execution. |
+| `curator_report_skill_use_issue` | Record a failed or unexpected skill/tool execution with granular `failure_type` and controlled `failure_origin` ownership. |
 | `memory_insert` | Insert an evidence-cited semantic memory. |
 | `memory_update` | Bayesian-combine new confidence or value evidence into a memory. |
 | `memory_resolve_contradiction` | Resolve contradictory memories by forgetting or lowering confidence. |
@@ -28,6 +28,12 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_memory_dedup` | Deterministically deduplicate normalized string memories. |
 | `curator_memory_backfill_embeddings` | Backfill missing semantic embeddings for knowledge-layer memories. |
 | `curator_memory_extract` | Extract candidate memories from a thread's turn history. |
+
+`curator_report_skill_use_issue` stores one controlled ownership value:
+`skill_contract`, `agent_execution`, `tool_implementation`,
+`provider_transport`, `environment_or_baseline`, `operator_interruption`,
+`expected_absence`, or explicit `unknown`. The field is required; granular symptoms remain in
+`failure_type`; ownership is never inferred from that free-form field.
 
 `reg_query` is the general governance-observability read path. With no
 namespace it includes records from every Regulation namespace and cycle phase;

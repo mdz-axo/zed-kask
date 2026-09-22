@@ -249,8 +249,9 @@ pub struct KaskMemorySettings {
 
     /// ALWAYS-mode distillation cadence in seconds (0 = disabled). The
     /// curator server's background pass distills finished threads into
-    /// candidate lesson h_mems on this cadence — additive-only, at the
-    /// 0.5 confidence floor, never editing existing memories.
+    /// additive candidate lesson h_mems at the 0.5 confidence floor. Its
+    /// per-thread watermark is bounded control state: each successful batch
+    /// atomically replaces the prior marker.
     pub distillation_cadence_secs: u64,
 
     /// A thread counts as finished when its newest turn is at least this

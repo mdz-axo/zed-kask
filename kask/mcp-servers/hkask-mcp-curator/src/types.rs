@@ -1,7 +1,7 @@
 //! Request types for hkask-mcp-curator MCP tools.
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PingRequest {}
@@ -138,6 +138,41 @@ pub struct CuratorConsultRequest {
 /// The report is stored as an episodic h_mem in the curator's memory store
 /// with entity `skill_use_issue:<skill_name>` so it is queryable via
 /// `curator_memory_recall` and `curator_semantic_search`.
+/// Ownership class for a reported skill-use failure.
+///
+/// expect: "Every skill-use failure names who can act on it, or explicitly says ownership is unknown."
+/// [P8] Motivating: Semantic Grounding — attribution controls which evidence can justify a skill change.
+/// [P4] Constraining: Clear Boundaries — ownership is a closed vocabulary, never a free string.
+/// pre: serialized values use the snake_case wire names below
+/// post: unknown or omitted ownership maps to `Unknown`; invented values are rejected
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillUseFailureOrigin {
+    SkillContract,
+    AgentExecution,
+    ToolImplementation,
+    ProviderTransport,
+    EnvironmentOrBaseline,
+    OperatorInterruption,
+    ExpectedAbsence,
+    Unknown,
+}
+
+impl SkillUseFailureOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SkillContract => "skill_contract",
+            Self::AgentExecution => "agent_execution",
+            Self::ToolImplementation => "tool_implementation",
+            Self::ProviderTransport => "provider_transport",
+            Self::EnvironmentOrBaseline => "environment_or_baseline",
+            Self::OperatorInterruption => "operator_interruption",
+            Self::ExpectedAbsence => "expected_absence",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReportSkillUseIssueRequest {
     /// The skill manifest ID (e.g. "superforecasting", "scenario-builder").
@@ -151,10 +186,90 @@ pub struct ReportSkillUseIssueRequest {
     pub error: String,
     /// Optional: the input that was sent to the tool (JSON string).
     pub tool_input: Option<String>,
-    /// Optional: classification of the failure (e.g. "wrong_inputs",
+    /// Optional granular symptom classification (e.g. "wrong_inputs",
     /// "missing_fields", "timeout", "unexpected_empty_result",
-    /// "schema_mismatch").
+    /// "schema_mismatch"). Ownership belongs in `failure_origin`.
     pub failure_type: Option<String>,
+    /// The subsystem that owns the failure. Callers must choose one controlled
+    /// value, including explicit `unknown`; omission is rejected.
+    pub failure_origin: SkillUseFailureOrigin,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReportSkillUseIssueRequest, SkillUseFailureOrigin};
+
+    /// expect: "Skill-use reports cannot invent new ownership categories."
+    /// [P8] Motivating: Semantic Grounding — failure ownership is a closed vocabulary.
+    /// [P4] Constraining: Clear Boundaries — unknown ownership is explicit, not a free string.
+    /// pre: request JSON carries all required report fields and an invalid failure_origin
+    /// post: deserialization rejects the request
+    #[test]
+    fn skill_use_failure_origin_is_closed_vocabulary() {
+        let request = serde_json::json!({
+            "skill_name": "program-manager",
+            "tool_name": "terminal",
+            "step_ordinal": 1,
+            "error": "command failed",
+            "tool_input": null,
+            "failure_type": "invalid_command",
+            "failure_origin": "invented_owner"
+        });
+
+        let parsed = serde_json::from_value::<ReportSkillUseIssueRequest>(request);
+        assert!(
+            parsed.is_err(),
+            "an invented failure origin must be rejected by the request contract"
+        );
+    }
+
+    #[test]
+    fn omitted_skill_use_failure_origin_is_rejected() {
+        let request = serde_json::json!({
+            "skill_name": "program-manager",
+            "tool_name": "terminal",
+            "step_ordinal": 1,
+            "error": "command failed",
+            "tool_input": null,
+            "failure_type": "invalid_command"
+        });
+        let parsed = serde_json::from_value::<ReportSkillUseIssueRequest>(request);
+        assert!(
+            parsed.is_err(),
+            "callers must send explicit unknown rather than rely on an omitted legacy field"
+        );
+    }
+
+    #[test]
+    fn skill_use_failure_origins_round_trip_the_closed_wire_vocabulary() {
+        for (wire, expected) in [
+            ("skill_contract", SkillUseFailureOrigin::SkillContract),
+            ("agent_execution", SkillUseFailureOrigin::AgentExecution),
+            (
+                "tool_implementation",
+                SkillUseFailureOrigin::ToolImplementation,
+            ),
+            (
+                "provider_transport",
+                SkillUseFailureOrigin::ProviderTransport,
+            ),
+            (
+                "environment_or_baseline",
+                SkillUseFailureOrigin::EnvironmentOrBaseline,
+            ),
+            (
+                "operator_interruption",
+                SkillUseFailureOrigin::OperatorInterruption,
+            ),
+            ("expected_absence", SkillUseFailureOrigin::ExpectedAbsence),
+            ("unknown", SkillUseFailureOrigin::Unknown),
+        ] {
+            let parsed: SkillUseFailureOrigin =
+                serde_json::from_value(serde_json::json!(wire)).expect("allowed origin");
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_str(), wire);
+        }
+    }
 }
 
 // ── Curator memory edit tools (Priority 5) ───────────────────────────────

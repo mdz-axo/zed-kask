@@ -123,10 +123,10 @@ pub(crate) fn forget_distilled_threads(
     let cutoff = now - chrono::Duration::days(min_age_days as i64);
     let mut outcome = ForgettingOutcome::default();
 
-    // Newest watermark per thread — a thread is distilled through its
-    // newest watermark; older watermarks are prior passes. The h_mem is
-    // kept so its `through` position (the coverage boundary) is available.
-    let mut newest_by_thread: HashMap<String, HMem> = HashMap::new();
+    // Latest-only is an invariant, not a read-time reconciliation policy.
+    // Duplicate marker rows are surfaced and skipped until therapy removes
+    // them; the forgetting pass never chooses one version on the user's behalf.
+    let mut watermarks_by_thread: HashMap<String, Vec<HMem>> = HashMap::new();
     for watermark in memory.h_mems_by_entity_prefix(WATERMARK_PREFIX)? {
         if watermark.attribute != "distilled_through" {
             continue;
@@ -134,20 +134,26 @@ pub(crate) fn forget_distilled_threads(
         let Some(thread_id) = watermark.entity.strip_prefix(WATERMARK_PREFIX) else {
             continue;
         };
-        match newest_by_thread.get_mut(thread_id) {
-            Some(newest) => {
-                if watermark.observed_at > newest.observed_at {
-                    *newest = watermark;
-                }
-            }
-            None => {
-                newest_by_thread.insert(thread_id.to_string(), watermark);
-            }
-        }
+        watermarks_by_thread
+            .entry(thread_id.to_string())
+            .or_default()
+            .push(watermark);
     }
-    outcome.threads_examined = newest_by_thread.len();
+    outcome.threads_examined = watermarks_by_thread.len();
 
-    for (thread_id, newest) in newest_by_thread {
+    for (thread_id, mut watermarks) in watermarks_by_thread {
+        if watermarks.len() != 1 {
+            tracing::warn!(
+                target: "hkask.mcp.curator.forgetting",
+                thread_id = %thread_id,
+                count = watermarks.len(),
+                "Multiple distillation watermarks violate the latest-only invariant — no turns deleted"
+            );
+            continue;
+        }
+        let Some(newest) = watermarks.pop() else {
+            continue;
+        };
         if newest.observed_at >= cutoff {
             continue; // still inside the grace window
         }
@@ -313,7 +319,7 @@ mod tests {
             .expect("seed embedding");
     }
 
-    /// Only threads whose NEWEST watermark has aged past the threshold
+    /// Only threads whose single watermark has aged past the threshold
     /// are forgotten — and only their shared-copy turns. Recent
     /// threads, never-distilled threads, curator-perspective originals,
     /// and the watermarks themselves are untouched.
@@ -443,7 +449,7 @@ mod tests {
 
     /// expect: "Forgetting deletes only what the watermark proves was
     /// distilled — turns added after the last pass stay recallable." [P1]
-    /// pre: the thread's newest watermark (through = T) has aged past the
+    /// pre: the thread's watermark (through = T) has aged past the
     /// threshold, and the thread holds covered turns (observed_at ≤ T) plus
     /// turns added after the last distillation pass (observed_at > T), each
     /// with its own embedding.
@@ -607,7 +613,7 @@ mod tests {
 
     /// expect: "Without a parseable coverage boundary the pass deletes
     /// nothing." [P1]
-    /// pre: the thread's newest watermark has aged past the threshold but
+    /// pre: the thread's watermark has aged past the threshold but
     /// carries no `through` position (malformed value).
     /// post: the thread is examined but skipped — no proof of coverage, no
     /// deletion. Failing closed beats deleting unproven content.
@@ -645,6 +651,38 @@ mod tests {
                 .len(),
             1,
             "the unproven thread is untouched"
+        );
+    }
+
+    /// Multiple marker versions are invalid control state, not a compatibility
+    /// shape. Forgetting surfaces the violation and deletes no turn.
+    #[test]
+    fn forgetting_rejects_multiple_watermarks_for_one_thread() {
+        let (memory, _driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:duplicate-markers",
+            "must survive",
+            old - chrono::Duration::days(1),
+        );
+        seed_watermark(&memory, "duplicate-markers", old);
+        seed_watermark(
+            &memory,
+            "duplicate-markers",
+            old + chrono::Duration::hours(1),
+        );
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(outcome.threads_examined, 1);
+        assert_eq!(outcome.threads_forgotten, 0);
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:duplicate-markers")
+                .expect("query")
+                .len(),
+            1
         );
     }
 
