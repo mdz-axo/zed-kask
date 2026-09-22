@@ -494,6 +494,31 @@ jq -e '
   .validation.child_map_parent_sources_agree
 ' "$representation_manifest" >/dev/null
 
+verify_no_retained_boilerplate() {
+    local representation
+    for representation in \
+        "$reference_representation" "$current_representation" \
+        "$fine_representation" "$parent_representation"; do
+        if jq -e '
+          def retained_boilerplate:
+            (.text | contains("OceanofPDF.com")) or
+            (.text | contains("Thanks for reading ")) or
+            (.text | contains("Subscribe for free to receive new posts and support my work.")) or
+            (.text | contains("Share Merchant Adventures")) or
+            (.text | contains("Subscribe now")) or
+            (.text | contains("Leave a comment")) or
+            (.text | contains("Play in Reduct")) or
+            (.text | contains("This page intentionally left blank")) or
+            (([.text | scan("\\\\qquad")] | length) >= 8);
+          select(retained_boilerplate)
+        ' "$representation" >/dev/null; then
+            echo "representation retains forbidden watermark or boilerplate: $representation" >&2
+            return 65
+        fi
+    done
+}
+verify_no_retained_boilerplate
+
 verify_hashed_json "$preseal_identity"
 preseal_run_id=$(jq -er '.run_id' "$preseal_identity")
 verify_runtime_identity() {

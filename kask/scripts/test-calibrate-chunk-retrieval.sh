@@ -289,6 +289,24 @@ awk -F '\t' '$2 > 1000 || $3 != 4 { exit 1 }' "$FAKE_EMBED_CALL_LOG"
 [[ $(awk -F '\t' '$1 == "reference" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 [[ $(awk -F '\t' '$1 == "fine" { count++ } END { print count + 0 }' "$FAKE_EMBED_CALL_LOG") -gt 1 ]]
 
+cat "$tmp/source-a.txt" > "$tmp/dirty-source.txt"
+printf '%s\n' 'OceanofPDF.com' >> "$tmp/dirty-source.txt"
+dirty_digest=$(sha256sum "$tmp/dirty-source.txt" | cut -d' ' -f1)
+jq --arg path "$tmp/dirty-source.txt" --arg digest "$dirty_digest" \
+    '.entity_ref_prefix = "calibration:e2e-dirty"
+     | .accepted_sources[0].raw_path = $path
+     | .accepted_sources[0].canonical_path = $path
+     | .accepted_sources[0].raw_sha256 = $digest
+     | .accepted_sources[0].canonical_sha256 = $digest' \
+    "$tmp/run-spec.json" > "$tmp/dirty-run-spec.json"
+if "$runner" "$tmp/dirty-run-spec.json" "$tmp/dirty-run" \
+    >"$tmp/dirty-run.stdout" 2>"$tmp/dirty-run.stderr"; then
+    echo "calibration accepted a representation containing a distribution watermark" >&2
+    exit 1
+fi
+grep -F 'representation retains forbidden watermark or boilerplate' "$tmp/dirty-run.stderr" >/dev/null
+[[ ! -e "$tmp/dirty-run/run-identity.json" ]]
+
 cp "$host_call" "$tmp/shared-host-call.original"
 export FAKE_MUTATE_SHARED_ONCE_MARKER="$tmp/shared-runtime-mutated"
 export FAKE_MUTATE_SHARED_PATH="$host_call"

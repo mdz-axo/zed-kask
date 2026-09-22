@@ -2184,8 +2184,15 @@ fn federated_source_fixture(
     std::fs::write(
         &representations_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
-            "entity_ref_prefix": "calibration:fixture:sealed-v1"
+            "schema_version": 2,
+            "entity_ref_prefix": "calibration:fixture:sealed-v1",
+            "boilerplate_exclusion_reports": {
+                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
+            },
+            "validation": {
+                "accepted_source_count": 1,
+                "boilerplate_filter_applied": true
+            }
         }))?,
     )?;
     let manifest_path = directory.join("federated-sources.json");

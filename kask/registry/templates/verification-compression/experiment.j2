@@ -10,6 +10,7 @@ contract:
     targets: object
   output:
     preservation: object
+    measurement_context_check: object
     metrics: object
     falsification_log: array
     verdict: string
@@ -45,9 +46,11 @@ Targets:
 {{ targets | tojson }}
 ```
 
-Any lost expectation, falsifier, failure class, provenance tier, or uncompiled
-Lean obligation forces REVERT regardless of acceleration. Compute graph and
-time deltas only from observed integer values. Distinguish cold and warm timing.
+Any lost expectation, falsifier, oracle kind, failure class, provenance tier,
+failed harmful case, failed allowed-change control, changed measurement context,
+or uncompiled Lean obligation forces REVERT regardless of acceleration. Compute
+graph and time deltas only from observed integer values. Keep cold and warm
+timing as separate before/after blocks.
 Corroborated means the candidate survived; never call it proven effective.
 
 Return JSON only:
@@ -56,19 +59,31 @@ Return JSON only:
   "preservation": {
     "missing_expectations":0,
     "lost_falsifiers":0,
+    "lost_oracle_kinds":0,
     "lost_failure_classes":0,
     "downgraded_provenance":0,
-    "lean_proof_passed":false
+    "failed_harmful_cases":0,
+    "allowed_change_control_failures":0,
+    "lean_proof_passed":false,
+    "measurement_context_equal":false
+  },
+  "measurement_context_check": {
+    "toolchain_equal":false,
+    "environment_equal":false,
+    "cache_state_equal":false,
+    "source_hashes_equal":false,
+    "oracle_hashes_equal":false,
+    "sample_count_before":0,
+    "sample_count_after":0,
+    "evidence_paths":[]
   },
   "metrics": {
     "nodes_before":0,
     "edges_before":0,
     "nodes_after":0,
     "edges_after":0,
-    "time_before_ms":0,
-    "time_after_ms":0,
-    "timing_samples_before_ms":[],
-    "timing_samples_after_ms":[]
+    "cold":{"time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]},
+    "warm":{"time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]}
   },
   "falsification_log": [
     {"hypothesis":"", "prediction":"", "observation":"", "disposition":"eliminated|corroborated|irreducible"}

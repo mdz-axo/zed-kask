@@ -505,6 +505,104 @@ fn strip_pdf_distribution_watermarks(text: &str) -> (String, Vec<BoilerplateExcl
     (output, exclusions)
 }
 
+const PUBLICATION_CHROME_MARKERS: &[&str] = &[
+    "Share Merchant Adventures",
+    "Subscribe now",
+    "Leave a comment",
+    "Play in Reduct",
+];
+const REPEATED_FORMATTING_TOKEN: &str = "\\qquad";
+const REPEATED_FORMATTING_MIN_OCCURRENCES: usize = 8;
+
+fn strip_publication_chrome(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let mut filtered = text.to_string();
+    let mut exclusions = Vec::new();
+    for marker in PUBLICATION_CHROME_MARKERS {
+        let mut output = String::with_capacity(filtered.len());
+        let mut cursor = 0;
+        while let Some(relative_start) = filtered[cursor..].find(marker) {
+            let start = cursor + relative_start;
+            let end = start + marker.len();
+            output.push_str(&filtered[cursor..start]);
+            output.push(' ');
+            exclusions.push(BoilerplateExclusion {
+                reason: "publication_chrome",
+                boundary_unit: "byte",
+                start,
+                end,
+                removed_words: marker.split_whitespace().count(),
+            });
+            cursor = end;
+        }
+        output.push_str(&filtered[cursor..]);
+        filtered = output;
+    }
+    (filtered, exclusions)
+}
+
+fn strip_repeated_formatting_lines(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    let mut output = String::with_capacity(text.len());
+    let mut exclusions = Vec::new();
+    let mut cursor = 0;
+    for segment in text.split_inclusive('\n') {
+        let end = cursor + segment.len();
+        if segment.matches(REPEATED_FORMATTING_TOKEN).count() >= REPEATED_FORMATTING_MIN_OCCURRENCES
+        {
+            exclusions.push(BoilerplateExclusion {
+                reason: "formatting_artifact",
+                boundary_unit: "byte",
+                start: cursor,
+                end,
+                removed_words: segment.split_whitespace().count(),
+            });
+        } else {
+            output.push_str(segment);
+        }
+        cursor = end;
+    }
+    (output, exclusions)
+}
+
+/// Return canonical boilerplate signals that remain after filtering.
+///
+/// expect: I can fail a corpus build before embedding if known watermark,
+/// publication-chrome, blank-page, or repeated-layout artifacts survive.
+/// [P4] Motivating: Transparent Imperfection — a dirty retained view fails visibly.
+/// [P1] Constraining: Human Agency — the signal names the retained artifact.
+/// pre: text is the canonical retained source view
+/// post: every returned label names a still-present ineligible artifact class
+pub fn retained_boilerplate_signals(text: &str) -> Vec<&'static str> {
+    let mut signals = Vec::new();
+    for (label, marker) in [
+        ("distribution_watermark", "OceanofPDF.com"),
+        ("newsletter_call_to_action", "Thanks for reading "),
+        (
+            "newsletter_call_to_action",
+            "Subscribe for free to receive new posts and support my work.",
+        ),
+        (
+            "intentionally_blank_page",
+            "This page intentionally left blank",
+        ),
+    ] {
+        if text.contains(marker) && !signals.contains(&label) {
+            signals.push(label);
+        }
+    }
+    if PUBLICATION_CHROME_MARKERS
+        .iter()
+        .any(|marker| text.contains(marker))
+    {
+        signals.push("publication_chrome");
+    }
+    if text.lines().any(|line| {
+        line.matches(REPEATED_FORMATTING_TOKEN).count() >= REPEATED_FORMATTING_MIN_OCCURRENCES
+    }) {
+        signals.push("formatting_artifact");
+    }
+    signals
+}
+
 fn strip_markdown_images(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let mut output = String::with_capacity(text.len());
     let mut exclusions = Vec::new();
@@ -577,6 +675,10 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     exclusions.extend(promotional_exclusions);
     let (filtered, watermark_exclusions) = strip_pdf_distribution_watermarks(&filtered);
     exclusions.extend(watermark_exclusions);
+    let (filtered, chrome_exclusions) = strip_publication_chrome(&filtered);
+    exclusions.extend(chrome_exclusions);
+    let (filtered, formatting_exclusions) = strip_repeated_formatting_lines(&filtered);
+    exclusions.extend(formatting_exclusions);
     let (filtered, image_exclusions) = strip_markdown_images(&filtered);
     exclusions.extend(image_exclusions);
     let retained_words = filtered.split_whitespace().count();

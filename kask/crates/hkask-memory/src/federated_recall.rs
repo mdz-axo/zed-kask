@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const RUN_IDENTITY_SCHEMA_VERSION: u32 = 2;
-const REPRESENTATIONS_SCHEMA_VERSION: u32 = 1;
+const REPRESENTATIONS_SCHEMA_VERSION: u32 = 2;
 
 const CURRENT_HMEM_COLUMNS: &[&str] = &[
     "id",
@@ -318,6 +318,25 @@ impl ReadOnlyPassageSource {
                 actual: representations.schema_version,
             });
         }
+        if !representations.validation.boilerplate_filter_applied {
+            return Err(FederatedRecallError::SchemaMismatch {
+                source_id: spec.id.clone(),
+                reason: "representations manifest does not attest canonical boilerplate filtering"
+                    .to_string(),
+            });
+        }
+        if representations.boilerplate_exclusion_reports.len()
+            != representations.validation.accepted_source_count
+        {
+            return Err(FederatedRecallError::SchemaMismatch {
+                source_id: spec.id.clone(),
+                reason: format!(
+                    "representations manifest reports exclusions for {} of {} accepted sources",
+                    representations.boilerplate_exclusion_reports.len(),
+                    representations.validation.accepted_source_count
+                ),
+            });
+        }
         validate_required_identity(
             &spec.id,
             "entity_ref_prefix",
@@ -565,6 +584,14 @@ struct RunIdentity {
 struct RepresentationsManifest {
     schema_version: u32,
     entity_ref_prefix: String,
+    boilerplate_exclusion_reports: BTreeMap<String, serde_json::Value>,
+    validation: RepresentationsValidation,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepresentationsValidation {
+    accepted_source_count: usize,
+    boilerplate_filter_applied: bool,
 }
 
 struct EmbeddingIdentityRow {

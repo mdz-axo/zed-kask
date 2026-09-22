@@ -213,9 +213,12 @@ The process composes five existing methods in a fixed bounded loop:
 5. `lean-prover` checks the finite removed-to-retained signal mapping in Lean.
 
 Signal preservation is non-compensable. A candidate is rejected or reverted
-when any required expectation, falsifier, failure class, or provenance tier is
-lost, even if it is much faster. Lean proves only the declared finite graph
-relation under propositions-as-types[^lean-proofs]; it does not establish
+when any required expectation, falsifier, oracle kind, failure class, or
+provenance tier is lost; when a harmful case escapes; when the allowed-change
+control fails; or when the before/after measurement context differs, even if
+the candidate is much faster. Lean models the complete five-field signal key,
+not an opaque ID, and proves only the declared finite graph relation under
+propositions-as-types[^lean-proofs]; it does not establish
 runtime oracle quality, fault realism, I/O behavior, or performance. Those
 remain empirical obligations under fixed harmful cases and allowed-change
 controls. A Lean source containing `sorry`, an unavailable toolchain, timeout,
@@ -224,8 +227,9 @@ unsupported proposition, or compile error is not proof.
 Graph compression is measured over verification artifact nodes and their
 `invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges.
 Execution acceleration is reported only from comparable observed before/after
-timing samples with toolchain, cache state, environment, oracle inputs, and
-source identity held fixed. Focused RED/GREEN commands remain development
+timing samples with toolchain, environment fingerprint, cache state, source
+and oracle hashes, sample count, and evidence paths recorded. Cold and warm
+measurements remain separate; one cannot stand in for the other. Focused RED/GREEN commands remain development
 evidence, but a final closeout may omit their duplicate invocations when the
 retained fixed-oracle suite demonstrably executes the exact same test
 identities. The tests and harmful controls themselves are not deleted.

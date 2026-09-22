@@ -3,7 +3,7 @@
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
 use hkask_memory::text_chunking::{
     ChunkConfig, TextChunk, chunk_text_with_config, filter_boilerplate_pages_with_report,
-    sanitize_text,
+    retained_boilerplate_signals, sanitize_text,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -609,6 +609,14 @@ fn filter_source(
     source: &str,
 ) -> Result<(String, SourceFilterReport), McpToolError> {
     let filtered = filter_boilerplate_pages_with_report(source);
+    let retained_signals = retained_boilerplate_signals(&filtered.text);
+    if !retained_signals.is_empty() {
+        return Err(McpToolError::failed_precondition(format!(
+            "canonical source {} retains forbidden boilerplate after filtering: {}",
+            accepted.source,
+            retained_signals.join(", ")
+        )));
+    }
     if normalize_words(&filtered.text).is_empty() {
         return Err(McpToolError::failed_precondition(format!(
             "canonical source {} has no retained words after boilerplate filtering",

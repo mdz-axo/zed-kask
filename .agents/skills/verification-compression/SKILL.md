@@ -145,8 +145,8 @@ verification code.
     - env: `{ "check": <preservation block> }`
     - False means reject/revert the candidate regardless of speedup.
 11. Call `lisp_eval` for measured deltas:
-    - form: `(let ((gb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (ga (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (tb (assoc "time_before_ms" metrics)) (ta (assoc "time_after_ms" metrics))) (list (list "graph_compression" (if (= gb 0) 0 (- 1 (/ ga gb)))) (list "speedup" (if (= ta 0) 0 (/ tb ta)))))`
-    - env: `{ "metrics": <measured integer metrics> }`
+    - form: `(let ((gb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (ga (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cold (assoc "cold" metrics)) (warm (assoc "warm" metrics))) (list (list "graph_compression" (if (= gb 0) 0 (- 1 (/ ga gb)))) (list "cold_speedup" (if (= (assoc "time_after_ms" cold) 0) 0 (/ (assoc "time_before_ms" cold) (assoc "time_after_ms" cold)))) (list "warm_speedup" (if (= (assoc "time_after_ms" warm) 0) 0 (/ (assoc "time_before_ms" warm) (assoc "time_after_ms" warm))))))`
+    - env: `{ "metrics": <measured integer graph plus cold/warm metrics> }`
     - Never infer acceleration from fewer commands; use observed time.
 
 ### ACT — Converge, retain, or revert
