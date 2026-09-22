@@ -3,7 +3,7 @@ title: "Phase 1 source-aware federated retrieval plan"
 creator: "Z-K technical program manager"
 date: "2026-09-21"
 type: "bibo:Document"
-status: "Authorized; implementation in progress"
+status: "Phase 1 implemented and benchmarked; Checkpoint A operator review pending"
 baseline: "6b5f19a9c8d13758167309ad04e587cf79b56817"
 goal_id: "7e65977c-610c-4ec7-a830-021b2fac8092"
 ---
@@ -29,7 +29,7 @@ Automatic prompt injection and lesson promotion are explicitly out of scope unti
 2. **Read-only is enforced at SQLite open.** A sealed source uses `SQLITE_OPEN_READ_ONLY`, no parent creation, maintenance lock, WAL configuration, schema initialization, migration, repair, recall touch, link write, or delete.
 3. **The shared memory layer owns federation primitives.** `hkask-memory` gains a small source-aware module for read-only passage retrieval and deterministic fusion. It does not open arbitrary paths or depend on either MCP leaf server.
 4. **Curator exposes the explicit tool.** `hkask-mcp-curator` loads an exact configured manifest, embeds once, obtains untouched Curator candidates plus read-only corpus candidates, and returns source-labeled results.
-5. **Rank, do not normalize unlike scores.** Each source preserves its internal ranking; balanced reserved quotas and reciprocal-rank fusion prevent one store from crowding out the other. Raw Curator distance and corpus distance remain diagnostic fields, not one claimed probability scale.
+5. **Rank, do not normalize unlike scores.** Each source preserves its internal ranking; deterministic source-rank interleaving gives every non-exhausted source one turn per round. Curator is first authority for exact duplicate text. Raw Curator and corpus distances remain diagnostic fields, not one claimed probability scale.
 6. **Corpus projection is `passage_text` only.** `method_signals` never enter federated results.
 7. **Configuration presence is the toggle.** No `*_enabled` setting is introduced. An absent manifest produces an explicit `unconfigured` source status.
 8. **Failures stay source-local and visible.** A failed source cannot erase healthy-source results or masquerade as an empty successful search.
@@ -136,13 +136,23 @@ The checkpoint passes only when:
 
 The operator reviews Checkpoint A before automatic context injection or promotion work begins.
 
+### Checkpoint A evidence — 2026-09-22
+
+- Foundation and shared retrieval landed in commit `abb3bf2acce6`; Curator registry/tool integration landed in `a3f334dd6df1`. Both commits also contain unrelated concurrent kata-kanban work, so they are tree hashes, not isolated federation commits.
+- Focused automated checks passed: storage read-only integration **2/2**, shared federation integration **4/4**, public Curator federation behavior **2/2**, and registered-tool surface **1/1**.
+- The canonical manifest is `$HKASK_DATA_DIR/agents/curator/federated-sources.json`, bound to sealed-v9 reference run `4a7041f888466e282704541f9d2e0a25a028e5a523d58dbe4818d52d3a4ab005` and index SHA-256 `8a0e10e7b0d382a1298702979619b00bb249d15f8e455985372b184c0c6f1efa`.
+- Live stdio MCP smoke `target/federated-smoke-20260922T160750Z/` returned both sources `ready` and alternated Curator/corpus hits. The corpus snapshot reconciled exactly before/after: SHA-256, size, mtime, inode, h_mem count 119,684, embedding count 59,842, link count 0, and existing sidecars.
+- Mixed evidence: `target/federated-benchmark-20260922T160857Z/` passed Curator generalization plus corpus Dunning-Kruger, deep-module, and Toyota-Kata cases. Its initial merge-policy oracle was rejected because the recorded policy was no longer in the current standalone Curator top-three; federation correctly preserved the actual top-three. Replacement live oracle `target/federated-smoke-passphrase-20260922T161015Z/` confirmed the current standalone passphrase-rotation record survived federation at fused rank 1, with both sources ready and the same corpus-integrity reconciliation.
+- First-call duration was 12.5–12.7 s, dominated by one-time verification of the 802 MB sealed index; warm calls in the same process were 0.84–0.91 s. The source registry caches only successfully verified handles for the process lifetime.
+- Live result payloads contained `passage_text` and complete source/record/run provenance; zero `method_signals` fields appeared.
+
 ## Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Read-only path still writes PRAGMAs or lock files | Sealed evidence is modified | SQLite read-only flags, separate pool initializer, byte/metadata/sidecar oracle |
 | Model identity differs from the sealed run | False ranking | Require an exact current requested/actual model identity; reject aliases and legacy names visibly |
-| One source crowds out the other | Curator or corpus value disappears | Reserved quotas plus rank fusion; benchmark both directions |
+| One source crowds out the other | Curator or corpus value disappears | Source-rank interleaving; benchmark both directions |
 | Corpus text contains instructions | Prompt injection when Phase 2 arrives | Preserve existing data-boundary framing; Phase 1 returns data only |
 | Manifest drifts from DB | False provenance | Bind run ID, index SHA-256, prefix, model, dimension; cache only while file identity is unchanged |
 | New tool silently degrades | Broken feedback loop | Per-source status and typed tool-level errors |

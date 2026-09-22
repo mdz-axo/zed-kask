@@ -1,10 +1,10 @@
 # hkask-mcp-curator — Curator MCP Server
 
-MCP server exposing Curator tools: system health, escalation management, Regulation observability, semantic memory search, memory recall, and algedonic event history.
+MCP server exposing Curator tools: system health, escalation management, Regulation observability, semantic and federated memory search, memory recall, and algedonic event history.
 
 **Version:** v0.40.0 | **Crate:** `hkask-mcp-curator`
 
-## Tools (20)
+## Tools (21)
 
 | Tool | Description |
 | --- | --- |
@@ -16,6 +16,7 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_escalation_dismiss` | Dismiss an escalation as not actionable. |
 | `curator_escalation_dismiss_by_pattern` | Dismiss pending escalations with an exact output match. |
 | `curator_semantic_search` | Search Curator memory by semantic similarity. |
+| `curator_federated_search` | Search Curator memory plus configured sealed corpus sources without merging stores; returns source/record provenance and per-source status. |
 | `curator_memory_recall` | Recall memory about an entity, optionally scoped to an ontology axis. |
 | `curator_consult` | Consult Curator memory with a question. |
 | `curator_algedonic_log` | Read the newest algedonic events in a time window. |
@@ -51,7 +52,26 @@ Final review transitions use the escalation row as a durable outbox and publish 
 
 ## Configuration
 
-No environment variables required. The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
+The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
+
+Federated retrieval is configured by the presence of
+`$HKASK_DATA_DIR/agents/curator/federated-sources.json`; there is no separate
+enable toggle. The current schema is version 1. Each source names an ID,
+display name, database path, sealed `run-identity.json`, representation
+manifest, and index name. The server derives and verifies the run ID, database
+SHA-256, exact requested/actual embedding identities, dimensions, passage
+prefix, current database schema, and passage count. Legacy manifests, schemas,
+model aliases, and database shapes are rejected rather than migrated or
+adapted.
+
+Configured external stores open through SQLite `mode=ro&immutable=1`; the
+federated path creates no maintenance lock, inventory entry, WAL/SHM sidecar,
+schema, migration, recall touch, co-occurrence link, or corpus write. Corpus
+results project only `embeddings.passage_text`, never h_mems such as
+`method_signals`. `curator_federated_search` rank-interleaves already-ranked
+source batches and exposes `ready`, `unconfigured`, `invalid`, `incompatible`,
+or `unavailable` status per source. Phase 1 is explicit search only: no
+automatic prompt injection and no automatic lesson promotion.
 
 ## Dependencies
 

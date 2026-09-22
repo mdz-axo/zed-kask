@@ -101,6 +101,14 @@ narrative generation loop.
    (`kask/crates/kask_bridge/src/memory.rs`)
 3. **Consolidates** on a background timer — confidence-floor cleanup plus
    budget pruning only (`kask/crates/hkask-memory/src/consolidation_service.rs:29-33`).
+4. **Federates explicit searches** without merging stores. `curator_federated_search`
+   embeds once, retrieves untouched Curator candidates plus passage text from
+   identity-bound sealed corpus databases, and rank-interleaves the already-ranked
+   source batches. Every hit carries source and record provenance; every source
+   reports `ready`, `unconfigured`, `invalid`, `incompatible`, or `unavailable`.
+   External stores open through SQLite `mode=ro&immutable=1` and cannot be
+   migrated, repaired, touched, linked, or written (`hkask-memory/federated_recall.rs`;
+   `hkask-mcp-curator/federated.rs`).
 
 ### What it does NOT do
 
@@ -114,6 +122,13 @@ narrative generation loop.
   `recall_thread` are no-ops returning empty vecs; recall is curator-only
   via the inherent `recall_context_curator` / `recall_thread_curator`
   methods (`memory.rs:499-519`, `memory.rs:568-614`)
+- No automatic external-evidence injection — Phase 1 federation is an explicit
+  Curator tool call, not part of `BridgeContextInjector`.
+- No automatic corpus-to-Curator promotion — external evidence remains in its
+  sealed source. Reification still requires a separately reviewed memory write.
+- No backward compatibility for federated sources — only the current manifest,
+  run-identity, representation-manifest, database-schema, and exact model
+  identities are accepted; older forms are rejected without shims or migration.
 
 ## 2. Architecture
 
@@ -925,8 +940,10 @@ alone. Two reasons, both grounded in the calibration literature[^tetlock]:
 
 The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`)
 exposes the memory surface. Read tools (available to all threads):
-`curator_semantic_search` (`:557`), `curator_memory_recall` (`:632`),
-`curator_consult` (`:764`). Write tools (available to all threads since
+`curator_semantic_search`, `curator_federated_search`,
+`curator_memory_recall`, and `curator_consult`. Federated search reads Curator
+memory plus separately configured sealed sources; it does not make those source
+rows Curator memories. Write tools (available to all threads since
 2026-09-01, when the curator-thread gate was removed by operator
 decision — models cannot reliably emit calls to tools absent from their
 visible list; the write invariants — evidence citation, 0.5 confidence
@@ -1034,10 +1051,10 @@ The memory system is transparent to the user and respects user
 sovereignty:
 
 - **The user can see what's in memory.** The curator MCP server's
-  `curator_memory_recall` (`hkask_mcp_curator.rs:560`) and
-  `curator_semantic_search` (`:485`) tools are read-only and available to
-  all threads — the user can query the curator's memory at any time to see
-  what's stored.
+  `curator_memory_recall`, `curator_semantic_search`, and
+  `curator_federated_search` tools are read-only and available to all threads.
+  Federated results label Curator versus corpus provenance explicitly, so
+  external evidence cannot masquerade as stored Curator knowledge.
 
 - **The user approves all memory modifications.** Therapy requires user
   approval for every modification — no autonomous memory editing. The
