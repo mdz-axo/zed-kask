@@ -311,6 +311,15 @@ impl AgentExecutor {
         agent: &LocalAgentCard,
         task_clean: &str,
     ) -> Result<RawDelegateResult, LocalSwarmError> {
+        if !agent.capabilities.skills.is_empty() {
+            return Err(LocalSwarmError::Unavailable(format!(
+                "agent '{}' declares skills, but local skill execution is not wired: \
+                 project identity and non-core skill authorization are required. \
+                 Remove the declaration or use a project-bound agent thread until \
+                 the governed skill port is available",
+                agent.agent_id
+            )));
+        }
         // Build the prompt: system prompt + task.
         let system_prompt = agent
             .capabilities
@@ -930,7 +939,11 @@ mod tests {
         assert_eq!(result.tool_calls[0]["ok"], true);
     }
 
-    struct ForgedTool(std::sync::atomic::AtomicUsize);
+    struct ForgedTool {
+        calls: std::sync::atomic::AtomicUsize,
+        server: &'static str,
+        tool: &'static str,
+    }
     impl hkask_types::InferencePort for ForgedTool {
         fn generate(
             &self,
@@ -949,11 +962,11 @@ mod tests {
                 let mut result = StubInference
                     .generate("", &Default::default(), None)
                     .await?;
-                if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     result.text.clear();
                     result.tool_calls.push(hkask_types::StructuredToolCall {
-                        server: String::new(),
-                        tool: "other/secret".into(),
+                        server: self.server.into(),
+                        tool: self.tool.into(),
                         args: serde_json::json!({"query":"needle"}),
                         call_id: Some("forged".into()),
                     });
@@ -967,7 +980,11 @@ mod tests {
     #[tokio::test]
     async fn forged_undeclared_tool_call_is_denied() {
         let executor = AgentExecutor::new(
-            Arc::new(ForgedTool(std::sync::atomic::AtomicUsize::new(0))),
+            Arc::new(ForgedTool {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                server: "",
+                tool: "other/secret",
+            }),
             Arc::new(StubDispatch),
         );
         let card = LocalAgentCard {
@@ -988,6 +1005,62 @@ mod tests {
             result.tool_calls[0]["error"],
             "not in declared mcp_tools allowlist"
         );
+    }
+
+    #[tokio::test]
+    async fn contradictory_server_and_qualified_tool_are_not_dispatched() {
+        let executor = AgentExecutor::new(
+            Arc::new(ForgedTool {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                server: "other",
+                tool: "fixture/lookup",
+            }),
+            Arc::new(StubDispatch),
+        );
+        let card = LocalAgentCard {
+            agent_id: "conflicting-tool".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["fixture/lookup".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = executor
+            .run(&card, "task")
+            .await
+            .expect("denial returned to model");
+        assert_eq!(result.text, "stub");
+        assert_eq!(result.tool_calls[0]["ok"], false);
+        assert_eq!(
+            result.tool_calls[0]["error"],
+            "tool server conflicts with qualified name"
+        );
+    }
+
+    #[tokio::test]
+    async fn declared_skills_fail_visibly_before_local_inference() {
+        let inference = Arc::new(RecordingInference {
+            override_seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
+        let card = LocalAgentCard {
+            agent_id: "skill-probe".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                skills: vec!["code-review".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = match executor.run(&card, "review").await {
+            Ok(_) => panic!("an unwired declared skill must not be ignored"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("project identity and non-core skill authorization")
+        );
+        assert!(inference.override_seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

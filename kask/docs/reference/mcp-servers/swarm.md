@@ -512,10 +512,12 @@ executor does not silently switch to another model.
 
 ### Local-agent execution gaps (audited 2026-09-22)
 
-- **Declared skills are metadata only.** `LocalAgentCapabilities::skills` is
-  persisted at create/clone/reconfigure time, but `AgentExecutor::run` does not
-  expose the Zed `skill` tool to local agents. That tool is per-project and
-  registered on a Zed thread, not through the MCP `ToolDispatchPort`. To close:
+- **Declared skills are not yet executable locally.** `LocalAgentCapabilities::skills`
+  is persisted at create/clone/reconfigure time, but `AgentExecutor::run` does
+  not expose the Zed `skill` tool. A non-empty declaration now fails visibly
+  before inference rather than silently running without its skills. Zed's tool
+  is per-project and registered on a thread, not via the MCP `ToolDispatchPort`.
+  To close:
   introduce an explicitly scoped skill execution/resolution port through the
   governed IPC boundary, admit only the card's declared skills, and pin a
   positive retrieve/use test plus undeclared-skill rejection through
