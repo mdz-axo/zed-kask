@@ -205,7 +205,8 @@ pub struct LocalAgentCapabilities {
     #[serde(default)]
     pub mcp_tools: Vec<String>,
     /// Skill ids this agent declares. Carried through create/clone/push.
-    /// Skills are available to the agent via the `skill` tool at runtime.
+    /// Local delegation does not yet expose a skill execution port; see the
+    /// local-agent execution gaps in the swarm server reference.
     #[serde(default)]
     pub skills: Vec<String>,
     /// Optional output contract for the agent's structured output.

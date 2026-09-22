@@ -157,7 +157,7 @@ impl LazyLocalSwarmRuntime {
 
 /// The initialized local swarm runtime — agent executor + measured stats.
 ///
-/// The *agent-run* policy (skill execution, tool-loop orchestration) lives in
+/// The *agent-run* policy (tool-loop orchestration) lives in
 /// `AgentExecutor`; the runtime measures the run (tokens, latency) and
 /// records per-agent stats. It does not impose token quotas or debit a local
 /// account. Platform inference may use paid cloud providers.
@@ -305,8 +305,8 @@ impl LocalSwarmRuntime {
     /// `AgentExecutor::run`) and measure the result. Returns the response
     /// text, model, token usage, latency, and a tool-call summary.
     ///
-    /// The agent-run policy (skill execution, tool-loop orchestration) lives
-    /// in `AgentExecutor::run`; the runtime measures the run without a token
+    /// The agent-run policy (tool-loop orchestration) lives in
+    /// `AgentExecutor::run`; the runtime measures the run without a token
     /// quota. ABW credit consent is a distinct cloud-swarm operation and is
     /// not a requirement for this path; model-provider billing still applies.
     ///

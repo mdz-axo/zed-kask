@@ -3881,6 +3881,7 @@ mod tests {
             "Configured/swarm-model".to_string(),
         );
         let mut card = mock_agent_card("inheriting", "You answer briefly.");
+        card.capabilities.model.clear();
         runtime
             .delegate(&card, "hello")
             .await
