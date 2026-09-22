@@ -4,7 +4,7 @@ contract:
   input:
     candidate: object
     signal_mapping: array
-    required_signal_ids: array
+    required_signal_keys: array
     lean_version: string
   output:
     proof_obligations: array
@@ -30,15 +30,17 @@ Signal mapping:
 ```json
 {{ signal_mapping | tojson }}
 ```
-Required signal IDs:
+Required complete signal keys:
 ```json
-{{ required_signal_ids | tojson }}
+{{ required_signal_keys | tojson }}
 ```
 Lean version: {{ lean_version }}
 
-Model signal IDs as finite decidable values. Prove that every required signal
-covered by the original graph is covered by the retained graph when every
-removed signal maps into retained coverage. Instantiate the theorem for this
+Model `SignalKey` as a finite decidable structure containing expectation ID,
+falsifier ID, oracle kind, failure class, and provenance tier. Do not replace
+the tuple with an opaque ordinal. Prove that every complete required key covered
+by the original graph is covered by the retained graph when every removed key
+maps into retained coverage. Instantiate the theorem for this
 candidate. Do not model or claim test effectiveness, I/O, timing, fault
 realism, or provenance truth; list those as empirical residual obligations.
 Use no `sorry`, new axioms, or unsafe proof escape.

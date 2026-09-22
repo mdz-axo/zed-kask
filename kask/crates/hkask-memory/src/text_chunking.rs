@@ -1244,6 +1244,67 @@ mod tests {
         assert_eq!(watermark.removed_words, 3);
     }
 
+    /// expect: I can retrieve article prose without embedded publication chrome becoming remembered evidence.
+    #[test]
+    fn filter_removes_inline_publication_chrome_without_touching_prose() {
+        let before =
+            "Substantive analysis before the publication controls remains source evidence. "
+                .repeat(20);
+        let after = "Substantive analysis after the publication controls remains source evidence. "
+            .repeat(20);
+        let document = format!(
+            "{before}Share Merchant Adventures Subscribe now Leave a comment Play in Reduct {after}"
+        );
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("analysis before"));
+        assert!(result.text.contains("analysis after"));
+        for marker in [
+            "Share Merchant Adventures",
+            "Subscribe now",
+            "Leave a comment",
+            "Play in Reduct",
+        ] {
+            assert!(!result.text.contains(marker), "retained marker: {marker}");
+        }
+        assert_eq!(
+            result
+                .exclusions
+                .iter()
+                .filter(|exclusion| exclusion.reason == "publication_chrome")
+                .count(),
+            4
+        );
+    }
+
+    /// expect: I can retrieve surrounding financial prose without a repeated LaTeX-layout artifact becoming passages.
+    #[test]
+    fn filter_removes_qquad_dominated_lines_without_touching_prose() {
+        let before =
+            "Substantive financial analysis before the malformed layout line remains evidence. "
+                .repeat(20);
+        let after =
+            "Substantive financial analysis after the malformed layout line remains evidence. "
+                .repeat(20);
+        let formatting_artifact = format!("\\uparrow {}\\q�", "\\qquad ".repeat(20));
+        let document = format!("{before}\n{formatting_artifact}\n{after}");
+
+        let result = filter_boilerplate_pages_with_report(&document);
+
+        assert!(result.text.contains("analysis before"));
+        assert!(result.text.contains("analysis after"));
+        assert!(!result.text.contains("\\qquad"));
+        assert_eq!(
+            result
+                .exclusions
+                .iter()
+                .filter(|exclusion| exclusion.reason == "formatting_artifact")
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn filter_removes_ocr_images_but_preserves_surrounding_source_text() {
         let prose = "Substantive source prose remains available for evidence\n".repeat(30);

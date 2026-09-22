@@ -91,8 +91,11 @@ verification code.
    - `invokes`, `depends_on`, `verifies`, `detects`, and `duplicates` edges;
    - wall time, toolchain, cache state, environment, and sample count;
    - every signal key and its producing artifact.
-2. Read `kask/registry/templates/verification-compression/inventory.j2` and
-   produce its JSON shape. Keep observations separate from interpretations.
+2. Call `read_file` for
+   `kask/registry/templates/verification-compression/inventory.j2` and produce
+   its JSON shape. Keep observations separate from interpretations. Populate
+   `measurement_context` with toolchain, environment/cache identity, source and
+   oracle hashes, sample count, and raw evidence paths.
 3. Call `lisp_eval` to ensure every required expectation has at least one
    baseline signal:
    - form: `(and (= (assoc "missing_expectations" gate) 0) (= (assoc "unfalsifiable_expectations" gate) 0))`
@@ -113,27 +116,32 @@ verification code.
    mode unless the operator explicitly authorized autonomous simplification.
    A removal candidate survives only when its signal-key set is a subset of
    retained signal and its discriminating faults are still detected.
-7. Read `kask/registry/templates/verification-compression/elimination.j2` and
-   produce a candidate graph plus an explicit removed→retained signal mapping.
+7. Call `read_file` for
+   `kask/registry/templates/verification-compression/elimination.j2` and produce
+   a candidate graph plus an explicit removed→retained signal mapping.
    No mapping means retain the artifact.
 
 ### CHECK — Prove graph preservation and run the experiment
 
-8. Call `skill` for `lean-prover`. Read
+8. Call `skill` for `lean-prover`, then call `read_file` for
    `kask/registry/templates/verification-compression/proof.j2`. Encode the
    finite preservation claim in Lean: every required signal present before is
    present after, and every removed artifact's signal set is covered by retained
-   artifacts. Store proof files under `target/verification-compression/<run-id>/`.
+   artifacts. Model each `SignalKey` as the complete expectation, falsifier,
+   oracle-kind, failure-class, and provenance-tier tuple; an opaque ordinal is
+   insufficient. Store proof files under `target/verification-compression/<run-id>/`.
    Run `lean` or `lake build` as the extrinsic oracle. Any `sorry`, missing
    toolchain, timeout, unsupported proposition, or compile error is
    `proof_unavailable`, never pass; no reduction may proceed.
 9. Call `skill` for `kata-improvement` and execute one bounded experiment.
-   Hold the contract, oracle inputs, toolchain, environment, and harmful cases
-   fixed. Run before/after timings separately for cold and warm states. Re-run
-   every discriminating fault from step 4.
-10. Read `kask/registry/templates/verification-compression/experiment.j2` and
-    produce the result. Call `lisp_eval` for the non-compensable gate:
-    - form: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (eq (assoc "lean_proof_passed" check) t))`
+   Hold the contract, oracle inputs, toolchain, environment, cache state, harmful
+   cases, and allowed-change control fixed. Run before/after timings separately
+   for cold and warm states. Re-run every discriminating fault from step 4 and
+   require the allowed-change control to keep passing.
+10. Call `read_file` for
+    `kask/registry/templates/verification-compression/experiment.j2` and produce
+    the result. Call `lisp_eval` for the non-compensable gate:
+    - form: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t) (eq (assoc "measurement_context_equal" check) t))`
     - env: `{ "check": <preservation block> }`
     - False means reject/revert the candidate regardless of speedup.
 11. Call `lisp_eval` for measured deltas:
@@ -175,7 +183,8 @@ measured remainder to the operator.
   authority for runtime behavior, failures, I/O, timing, and integration.
 - No `sorry`, axioms introduced for convenience, or uncompiled proof text.
 - Coverage and test counts are diagnostics, never quality targets.
-- Keep a known harmful case and an allowed-change control fixed across runs.
+- Keep a known harmful case and an allowed-change control fixed across runs;
+  either failing blocks the candidate.
 - Focused RED/GREEN runs are development evidence; do not repeat them in the
   final pipeline when the full fixed-oracle suite already executes the same
   test identities.

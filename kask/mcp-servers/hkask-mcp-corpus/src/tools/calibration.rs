@@ -1077,8 +1077,9 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("fixture source missing"))?;
         let canonical = PathBuf::from(&accepted.canonical_path);
         let body = "Chapter 1\nSubstantive analysis explains how retrieval evidence supports a decision while preserving its source identity. ".repeat(80);
+        let formatting_artifact = format!("\\uparrow {}\\q�", "\\qquad ".repeat(20));
         let source = format!(
-            "A USEFUL BOOK\nJANE AUTHOR\u{000c}{body}Thanks for reading Example Research! Subscribe for free to receive new posts and support my work. {body}"
+            "A USEFUL BOOK\nJANE AUTHOR\u{000c}OceanofPDF.com Page 160 {body}Thanks for reading Example Research! Subscribe for free to receive new posts and support my work. Subscribe now\n{formatting_artifact}\n{body}"
         );
         fs::write(&canonical, source)?;
         let digest = sha256_bytes(&fs::read(&canonical)?);
@@ -1099,6 +1100,9 @@ mod tests {
             let text = fs::read_to_string(output_dir.join(artifact))?;
             assert!(!text.contains("A USEFUL BOOK"), "{artifact}");
             assert!(!text.contains("Thanks for reading"), "{artifact}");
+            assert!(!text.contains("OceanofPDF.com"), "{artifact}");
+            assert!(!text.contains("Subscribe now"), "{artifact}");
+            assert!(!text.contains("\\qquad"), "{artifact}");
             assert!(text.contains("Substantive analysis"), "{artifact}");
         }
         let manifest: serde_json::Value =
@@ -1106,7 +1110,7 @@ mod tests {
         let report = &manifest["boilerplate_exclusion_reports"]["source-a.txt"];
         assert!(report["input_words"].as_u64().is_some());
         assert!(report["retained_words"].as_u64().is_some());
-        assert_eq!(report["exclusions"].as_array().map(Vec::len), Some(2));
+        assert_eq!(report["exclusions"].as_array().map(Vec::len), Some(5));
         assert_eq!(manifest["validation"]["boilerplate_filter_applied"], true);
         Ok(())
     }

@@ -90,8 +90,15 @@ fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     std::fs::write(
         &representations_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
-            "entity_ref_prefix": "calibration:fixture:sealed-v1"
+            "schema_version": 2,
+            "entity_ref_prefix": "calibration:fixture:sealed-v1",
+            "boilerplate_exclusion_reports": {
+                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
+            },
+            "validation": {
+                "accepted_source_count": 1,
+                "boilerplate_filter_applied": true
+            }
         }))?,
     )?;
     let manifest_path = directory.join("federated-sources.json");
@@ -149,6 +156,29 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
                 .exists()
         );
     }
+    Ok(())
+}
+
+/// expect: "A pre-filter representation manifest cannot enter federated retrieval." [P8]
+#[test]
+fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let representations_path = directory.path().join("representations-manifest.json");
+    std::fs::write(
+        &representations_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "entity_ref_prefix": "calibration:fixture:sealed-v1"
+        }))?,
+    )?;
+
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("pre-filter representation manifest unexpectedly opened"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("representations manifest"));
     Ok(())
 }
 

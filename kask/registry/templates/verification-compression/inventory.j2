@@ -9,6 +9,7 @@ contract:
     timing_observations: array
   output:
     verification_graph: object
+    measurement_context: object
     baseline_metrics: object
     coverage_gate: object
     assumptions: array
@@ -54,12 +55,20 @@ Return JSON only:
     "edges": [{"from":"", "to":"", "kind":"invokes|depends_on|verifies|detects|duplicates"}],
     "signal_keys": [{"artifact_id":"", "expectation_id":"", "falsifier_id":"", "oracle_kind":"", "failure_class":"", "provenance_tier":""}]
   },
+  "measurement_context": {
+    "toolchain":"",
+    "environment_fingerprint":"",
+    "cache_state":"",
+    "sample_count":0,
+    "source_hashes":{},
+    "oracle_hashes":{},
+    "evidence_paths":[]
+  },
   "baseline_metrics": {
     "nodes_before": 0,
     "edges_before": 0,
-    "time_before_ms": 0,
-    "timing_samples_ms": [],
-    "cold_or_warm": "separate"
+    "cold":{"time_before_ms":0,"timing_samples_ms":[]},
+    "warm":{"time_before_ms":0,"timing_samples_ms":[]}
   },
   "coverage_gate": {
     "missing_expectations": 0,
