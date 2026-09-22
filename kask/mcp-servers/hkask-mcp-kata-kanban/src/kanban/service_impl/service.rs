@@ -21,6 +21,7 @@ use serde_json::Value;
 
 use super::types::KanbanError;
 
+use crate::kanban::mermaid::{ParsedBoard, columns_from_parsed};
 use crate::kanban::{
     Board, ColumnDef, CriterionCitation, Priority, Task, TaskFilter, TaskSpec, TaskStatus,
     Verification, VerificationCriterion,
@@ -216,27 +217,26 @@ impl KanbanService {
     /// expect: "An imported board appears complete in the parsed workflow or does not appear."
     /// [P3] Motivating: Generative Space — imported work is immediately usable.
     /// [P2] Constraining: Transparent Imperfection — publication failure leaves no partial board.
-    /// pre: columns form a valid board schema and every task status names one of those columns
-    /// post: board, task payloads, and board indexes commit together; tasks keep their parsed statuses
+    /// pre: parsed contains a representable one-to-one column/status mapping
+    /// post: board, task payloads, and board indexes commit together; tasks keep their parsed columns
     pub(crate) fn board_import(
         &self,
         owner: WebID,
         name: &str,
-        columns: &[ColumnDef],
-        tasks: Vec<(TaskSpec, TaskStatus)>,
+        parsed: &ParsedBoard,
     ) -> Result<(Board, usize), KanbanError> {
-        let board = Self::build_board(owner, name, columns)?;
+        let columns = columns_from_parsed(parsed)
+            .map_err(|error| KanbanError::InvalidInput(error.to_string()))?;
+        let board = Self::build_board(owner, name, &columns)?;
         let mut records = vec![Self::board_h_mem(&board)?];
-        let task_count = tasks.len();
-        for (spec, status) in tasks {
-            if board.column_for_status(status).is_none() {
-                return Err(KanbanError::InvalidInput(format!(
-                    "imported task status {status} has no board column"
-                )));
+        let mut task_count = 0usize;
+        for (column, definition) in parsed.columns.iter().zip(&columns) {
+            for title in &column.tasks {
+                let mut task = Task::new(board.id, TaskSpec::new(title.clone()), owner);
+                task.status = definition.status;
+                records.extend(Self::task_h_mems(&task)?);
+                task_count += 1;
             }
-            let mut task = self.build_task(board.id, spec, owner)?;
-            task.status = status;
-            records.extend(Self::task_h_mems(&task)?);
         }
         self.store.insert_batch_atomic(&records).map_err(|error| {
             KanbanError::Internal(format!("atomic board import failed: {error}"))
@@ -403,27 +403,6 @@ impl KanbanService {
         Ok(())
     }
 
-    fn build_task(
-        &self,
-        board_id: BoardId,
-        spec: TaskSpec,
-        owner: WebID,
-    ) -> Result<Task, KanbanError> {
-        self.validate_goal_citations(&spec.advances)?;
-        let story_points = spec.story_points;
-        let estimated_hours = spec.estimated_hours;
-        let priority = spec.priority;
-        let labels = spec.labels.clone();
-        let phase_id = spec.phase_id;
-        let mut task = Task::new(board_id, spec, owner);
-        task.story_points = story_points;
-        task.estimated_hours = estimated_hours;
-        task.labels = labels;
-        task.priority = priority;
-        task.phase_id = phase_id;
-        Ok(task)
-    }
-
     fn task_h_mems(task: &Task) -> Result<[HMem; 2], KanbanError> {
         let value = serde_json::to_value(task)
             .map_err(|error| KanbanError::Internal(format!("serialization failed: {error}")))?;
@@ -464,7 +443,8 @@ impl KanbanService {
                 id: board_id.to_string(),
             })
         })?;
-        let task = self.build_task(board_id, spec, owner)?;
+        self.validate_goal_citations(&spec.advances)?;
+        let task = Task::new(board_id, spec, owner);
         let records = Self::task_h_mems(&task)?;
         self.store.insert_batch_atomic(&records).map_err(|error| {
             KanbanError::Internal(format!("atomic task publication failed: {error}"))

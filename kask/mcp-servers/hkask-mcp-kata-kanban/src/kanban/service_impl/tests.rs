@@ -1,6 +1,6 @@
 use super::service::KanbanService;
 use crate::VerificationCriterion;
-use crate::kanban::mermaid::{columns_from_parsed, export_board_to_mermaid, parse_mermaid_kanban};
+use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
     Board, ColumnDef, CriterionCitation, SpawnSpec, TaskFilter, TaskSpec, TaskStatus,
 };
@@ -852,21 +852,8 @@ fn export_import_round_trip_preserves_board_structure() {
     // Parse the exported markdown.
     let parsed = parse_mermaid_kanban(&markdown).expect("parse exported markdown");
 
-    let new_columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
-    let imported_tasks = parsed
-        .columns
-        .iter()
-        .zip(&new_columns)
-        .flat_map(|(column, definition)| {
-            column
-                .tasks
-                .iter()
-                .cloned()
-                .map(move |title| (TaskSpec::new(title), definition.status))
-        })
-        .collect();
     let (new_board, imported_count) = svc
-        .board_import(owner, "Imported Board", &new_columns, imported_tasks)
+        .board_import(owner, "Imported Board", &parsed)
         .expect("atomic board import");
     assert_eq!(imported_count, tasks.len());
 
@@ -976,9 +963,8 @@ fn export_import_round_trip_preserves_column_order() {
 
     // Import as a new board and verify the new board's columns are in the
     // same order.
-    let new_columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
     let (new_board, imported_count) = svc
-        .board_import(owner, "Re-imported Ordered Board", &new_columns, Vec::new())
+        .board_import(owner, "Re-imported Ordered Board", &parsed)
         .expect("atomic board import");
     assert_eq!(imported_count, 0);
     let new_order: Vec<&str> = new_board.columns.iter().map(|c| c.name.as_str()).collect();
@@ -1021,9 +1007,8 @@ fn import_empty_board() {
     // Verify the parsed columns drive the canonical aggregate import.
     let svc = KanbanService::new(make_store());
     let owner = WebID::new();
-    let columns = columns_from_parsed(&parsed).expect("parsed columns map uniquely");
     let (board, imported_count) = svc
-        .board_import(owner, "Empty Imported Board", &columns, Vec::new())
+        .board_import(owner, "Empty Imported Board", &parsed)
         .expect("empty board import");
     assert_eq!(imported_count, 0);
     assert_eq!(board.columns.len(), 1);

@@ -322,35 +322,44 @@ pub(crate) fn columns_from_parsed(
     let mut used = std::collections::HashSet::new();
     let mut assigned = Vec::with_capacity(parsed.columns.len());
     for column in &parsed.columns {
-        let status = if let Some(status) = match_column_name_to_status(&column.name) {
-            if !used.insert(status) {
-                return Err(MermaidParseError::DuplicateStatus { status });
-            }
-            status
-        } else {
-            let status = TaskStatus::STANDARD_ORDER
-                .iter()
-                .copied()
-                .find(|candidate| !used.contains(candidate))
-                .ok_or(MermaidParseError::TooManyColumns {
-                    count: parsed.columns.len(),
-                    max: TaskStatus::STANDARD_ORDER.len(),
-                })?;
-            used.insert(status);
-            status
-        };
+        let status = match_column_name_to_status(&column.name);
+        if let Some(status) = status
+            && !used.insert(status)
+        {
+            return Err(MermaidParseError::DuplicateStatus { status });
+        }
         assigned.push(status);
     }
+    for status in &mut assigned {
+        if status.is_some() {
+            continue;
+        }
+        let generated = TaskStatus::STANDARD_ORDER
+            .iter()
+            .copied()
+            .find(|candidate| !used.contains(candidate))
+            .ok_or(MermaidParseError::TooManyColumns {
+                count: parsed.columns.len(),
+                max: TaskStatus::STANDARD_ORDER.len(),
+            })?;
+        used.insert(generated);
+        *status = Some(generated);
+    }
 
-    Ok(parsed
+    parsed
         .columns
         .iter()
         .zip(assigned)
         .enumerate()
         .map(|(position, (column, status))| {
-            ColumnDef::new(column.name.clone(), status, position as u32)
+            status
+                .map(|status| ColumnDef::new(column.name.clone(), status, position as u32))
+                .ok_or(MermaidParseError::TooManyColumns {
+                    count: parsed.columns.len(),
+                    max: TaskStatus::STANDARD_ORDER.len(),
+                })
         })
-        .collect())
+        .collect()
 }
 
 /// Match a parsed mermaid column name to a [`TaskStatus`] by case-insensitive
@@ -378,7 +387,7 @@ fn match_column_name_to_status(name: &str) -> Option<TaskStatus> {
 
 #[cfg(test)]
 mod tests {
-    use super::{columns_from_parsed, parse_mermaid_kanban, slugify_task_id};
+    use super::{TaskStatus, columns_from_parsed, parse_mermaid_kanban, slugify_task_id};
 
     #[test]
     fn slugify_alphanumeric_id_keeps_content_under_t_prefix() {
@@ -420,6 +429,21 @@ mod tests {
         assert_ne!(once, twice, "slugify must not be involutive; see doc note");
         assert_eq!(once, "t_foo");
         assert_eq!(twice, "t_t_foo");
+    }
+
+    /// expect: "Explicit status names keep their status even when an unnamed column appears first."
+    /// [P3] Motivating: Generative Space — imported column identity does not depend on source order.
+    /// [P4] Constraining: Clear Boundaries — generated assignments cannot steal an explicit status.
+    /// pre: an unknown column appears before an explicitly named Backlog column
+    /// post: conversion succeeds with two distinct statuses and Backlog belongs to the named column
+    #[test]
+    fn explicit_status_is_reserved_before_assigning_unknown_columns() {
+        let markdown = "kanban\n  section Queue\n  section Backlog\n";
+        let parsed = parse_mermaid_kanban(markdown).expect("valid mermaid parses");
+        let columns = columns_from_parsed(&parsed).expect("columns map uniquely");
+        assert_eq!(columns.len(), 2);
+        assert_ne!(columns[0].status, TaskStatus::Backlog);
+        assert_eq!(columns[1].status, TaskStatus::Backlog);
     }
 
     /// expect: "Mermaid import rejects workflows that cannot map one-to-one onto TaskStatus."

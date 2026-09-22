@@ -294,6 +294,25 @@ async fn failed_import_rolls_back_before_same_key_retry() {
         .await;
     assert!(first.is_err());
     assert_eq!(board_count(&server).await, 0);
+    let raw_store = HMemStore::from_driver(driver.clone()).expect("raw h_mem store");
+    assert!(
+        raw_store
+            .query_by_entity("kanban:board")
+            .expect("board rows")
+            .is_empty()
+    );
+    assert!(
+        raw_store
+            .query_by_entity("kanban:task")
+            .expect("task rows")
+            .is_empty()
+    );
+    assert!(
+        raw_store
+            .query_by_entity_prefix("kanban:board_tasks:", 100)
+            .expect("index rows")
+            .is_empty()
+    );
 
     driver
         .execute_batch("DROP TRIGGER reject_import_index;")
@@ -320,6 +339,27 @@ async fn failed_import_rolls_back_before_same_key_retry() {
         .and_then(serde_json::Value::as_str)
         .expect("retried board has an id");
     assert_eq!(task_count(&server, board_id).await, 1);
+    assert_eq!(
+        raw_store
+            .query_by_entity("kanban:board")
+            .expect("board rows")
+            .len(),
+        1
+    );
+    assert_eq!(
+        raw_store
+            .query_by_entity("kanban:task")
+            .expect("task rows")
+            .len(),
+        1
+    );
+    assert_eq!(
+        raw_store
+            .query_by_entity_prefix("kanban:board_tasks:", 100)
+            .expect("index rows")
+            .len(),
+        1
+    );
 }
 
 /// Hammering the same key never produces a second row.

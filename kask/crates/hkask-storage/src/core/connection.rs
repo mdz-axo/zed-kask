@@ -533,7 +533,7 @@ impl Database {
                 .map_err(|_| DatabaseError::PassphraseMismatch(self.path.clone()))?;
         }
 
-        let key_for_connections = key_pragma.clone();
+        let key_for_connections = key_pragma;
         let manager = SqliteConnectionManager::file(&immutable_uri)
             .with_flags(flags)
             .with_init(move |connection| {

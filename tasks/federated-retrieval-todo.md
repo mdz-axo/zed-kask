@@ -29,5 +29,5 @@ Baseline: `6b5f19a9c8d13758167309ad04e587cf79b56817`
 
 - [x] Run mixed Curator/corpus/degradation benchmark; reject one stale oracle and replace it with a current standalone-grounded case.
 - [x] Reconcile pre/post corpus bytes, timestamps, row counts, and sidecars.
-- [ ] Run affected full crate suites, scoped `./script/clippy`, and `cargo check -p zed`.
-- [ ] Present results for operator review before Phase 2.
+- [x] Run affected full crate suites, scoped `./script/clippy`, and `cargo check -p zed`.
+- [x] Present results for operator review before Phase 2.

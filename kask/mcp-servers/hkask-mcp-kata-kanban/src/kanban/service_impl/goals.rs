@@ -16,7 +16,7 @@
 //! HMem scheme (kanban DB store):
 //!   kanban:goal → {goal_id} → JSON Goal
 
-use hkask_storage::{HMem, HMemStore};
+use hkask_storage::HMem;
 use hkask_types::WebID;
 use hkask_types::id::{GoalID, TaskId};
 
@@ -25,19 +25,6 @@ use super::types::KanbanError;
 use crate::kanban::{Goal, GoalResolution, GoalVerdict, VerificationCriterion};
 
 const GOAL_ENTITY: &str = "kanban:goal";
-
-fn goal_h_mem(goal: &Goal) -> Result<HMem, KanbanError> {
-    let ontology = hkask_types::HMemOntology {
-        dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-        dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
-        dc_source: "kanban".to_string(),
-        pko_procedure: Some(goal.id.to_string()),
-        ..Default::default()
-    };
-    let value = serde_json::to_value(goal)
-        .map_err(|error| KanbanError::Internal(format!("goal serialization failed: {error}")))?;
-    Ok(HMem::new(GOAL_ENTITY, &goal.id.to_string(), value, goal.owner).with_ontology(ontology))
-}
 
 /// Bounds on goal criteria — lifted from `goal-analysis` (`create.j2`:
 /// "2–4 observable semantic conditions"), relaxed to allow a single
@@ -95,12 +82,23 @@ impl KanbanService {
 
         // Process-family anchor: `pplan:Step` (P-Plan, soft-reused by PKO) —
         // the same term the goal responses emit via `kanban_type_to_pko`,
-        // so the goal's record and its wire surface agree. The constructor is
-        // shared with replacement writes so judge/score cannot erase it.
-        let h_mem = goal_h_mem(&goal)?;
-        self.goal_store()?
+        // so the goal's record and its wire surface agree. Later updates use
+        // HMemStore::update, which carries this metadata into the replacement.
+        let ontology = hkask_types::HMemOntology {
+            dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
+            dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
+            dc_source: "kanban".to_string(),
+            pko_procedure: Some(goal.id.to_string()),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&goal).map_err(|error| {
+            KanbanError::Internal(format!("goal serialization failed: {error}"))
+        })?;
+        let h_mem =
+            HMem::new(GOAL_ENTITY, &goal.id.to_string(), value, owner).with_ontology(ontology);
+        self.store
             .insert(&h_mem)
-            .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
+            .map_err(|error| KanbanError::Internal(format!("h_mem insert failed: {error}")))?;
 
         tracing::info!(
             target: "hkask.kanban",
@@ -120,16 +118,18 @@ impl KanbanService {
     #[must_use = "result must be used"]
     pub(crate) fn goal_get(&self, goal_id: GoalID) -> Result<Option<Goal>, KanbanError> {
         let h_mems = self
-            .goal_store()?
+            .store
             .query_by_entity_attribute(GOAL_ENTITY, &goal_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-
-        if let Some(t) = h_mems.into_iter().next() {
-            let goal = serde_json::from_value::<Goal>(t.value)
-                .map_err(|e| KanbanError::Internal(format!("deserialization failed: {e}")))?;
-            Ok(Some(goal))
-        } else {
-            Ok(None)
+            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
+        match h_mems.as_slice() {
+            [] => Ok(None),
+            [h_mem] => serde_json::from_value::<Goal>(h_mem.value.clone())
+                .map(Some)
+                .map_err(|error| KanbanError::Internal(format!("deserialization failed: {error}"))),
+            rows => Err(KanbanError::Internal(format!(
+                "goal {goal_id} has {} durable rows; expected exactly one",
+                rows.len()
+            ))),
         }
     }
 
@@ -140,9 +140,9 @@ impl KanbanService {
     #[must_use = "result must be used"]
     pub(crate) fn goal_list(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
         let h_mems = self
-            .goal_store()?
+            .store
             .query_by_entity(GOAL_ENTITY)
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
+            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
 
         let mut goals: Vec<Goal> = Vec::new();
         for t in &h_mems {
@@ -328,40 +328,53 @@ impl KanbanService {
         })
     }
 
-    /// The goal store — the same DB-backed `HMemStore` that persists
-    /// boards and tasks. Goals persist through resolution until curator-memory
-    /// acknowledgment. They live under their own entity (`kanban:goal`), so
-    /// they never collide with board or task rows.
-    fn goal_store(&self) -> Result<HMemStore, KanbanError> {
-        Ok(self.store.clone())
-    }
-
-    /// Atomically replace a goal row while preserving its ontology anchor.
-    ///
-    /// A failed replacement leaves the prior outbox row intact; successful
-    /// replacement removes any duplicate legacy rows for the same goal key.
+    /// Atomically replace the one durable row for a goal.
     fn goal_persist(&self, goal: &Goal) -> Result<(), KanbanError> {
-        let h_mem = goal_h_mem(goal)?;
-        self.goal_store()?
-            .insert_batch_replacing_key_atomic(&[h_mem], GOAL_ENTITY, &goal.id.to_string())
-            .map_err(|error| {
-                KanbanError::Internal(format!("atomic goal replacement failed: {error}"))
-            })
+        let rows = self
+            .store
+            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())
+            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
+        let row = match rows.as_slice() {
+            [row] => row,
+            [] => {
+                return Err(KanbanError::NotFound(hkask_types::NotFound {
+                    entity_type: "goal".to_string(),
+                    id: goal.id.to_string(),
+                }));
+            }
+            rows => {
+                return Err(KanbanError::Internal(format!(
+                    "goal {} has {} durable rows; expected exactly one",
+                    goal.id,
+                    rows.len()
+                )));
+            }
+        };
+        let value = serde_json::to_value(goal).map_err(|error| {
+            KanbanError::Internal(format!("goal serialization failed: {error}"))
+        })?;
+        self.store.update(&row.id, value, 1.0f64).map_err(|error| {
+            KanbanError::Internal(format!("atomic goal replacement failed: {error}"))
+        })
     }
 
-    /// Delete a goal's row — the resolution prune. A missing row (already
-    /// pruned) is success, not an error.
+    /// Delete the one durable goal row. A missing row is already acknowledged.
     fn goal_prune(&self, goal_id: GoalID) -> Result<(), KanbanError> {
-        let h_mems = self
-            .goal_store()?
+        let rows = self
+            .store
             .query_by_entity_attribute(GOAL_ENTITY, &goal_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        for h_mem in h_mems {
-            self.goal_store()?
-                .delete_by_id(&h_mem.id)
-                .map_err(|e| KanbanError::Internal(format!("h_mem delete failed: {e}")))?;
+            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
+        match rows.as_slice() {
+            [] => Ok(()),
+            [row] => self
+                .store
+                .delete_by_id(&row.id)
+                .map_err(|error| KanbanError::Internal(format!("h_mem delete failed: {error}"))),
+            rows => Err(KanbanError::Internal(format!(
+                "goal {goal_id} has {} durable rows; expected exactly one",
+                rows.len()
+            ))),
         }
-        Ok(())
     }
 }
 
@@ -499,11 +512,18 @@ mod goal_tests {
 
         svc.goal_judge(goal.id, one_criterion_verdict(), owner)?;
 
-        let after = store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
+        let after_rows = store.query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?;
+        assert_eq!(after_rows.len(), 1, "a goal has exactly one durable row");
+        let after = after_rows
             .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("updated goal has no h_mem row"))?;
+        let reloaded: Goal = serde_json::from_value(after.value.clone())?;
+        assert_eq!(
+            reloaded.verdicts.len(),
+            1,
+            "the replacement value must land"
+        );
         let after_ontology = after
             .ontology
             .as_ref()

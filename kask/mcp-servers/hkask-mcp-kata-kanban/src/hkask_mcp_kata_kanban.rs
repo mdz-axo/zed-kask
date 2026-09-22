@@ -1515,25 +1515,11 @@ impl KanbanServer {
                     let name = board_name
                         .or(parsed.name.take())
                         .unwrap_or_else(|| "Imported Board".to_string());
-                    let columns = kanban::mermaid::columns_from_parsed(&parsed)
-                        .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
-                    let column_count = columns.len();
-                    let tasks = parsed
-                        .columns
-                        .iter()
-                        .zip(&columns)
-                        .flat_map(|(column, definition)| {
-                            column
-                                .tasks
-                                .iter()
-                                .cloned()
-                                .map(move |title| (TaskSpec::new(title), definition.status))
-                        })
-                        .collect();
                     let (board, task_count) = self
                         .service
-                        .board_import(self.webid, &name, &columns, tasks)
+                        .board_import(self.webid, &name, &parsed)
                         .map_err(map_kanban_error)?;
+                    let column_count = board.columns.len();
 
                     serde_json::to_value(BoardImportResponse {
                         board_id: board.id.to_string(),
