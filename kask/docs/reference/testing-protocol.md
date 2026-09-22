@@ -215,8 +215,10 @@ The process composes five existing methods in a fixed bounded loop:
 Signal preservation is non-compensable. A candidate is rejected or reverted
 when any required expectation, falsifier, oracle kind, failure class, or
 provenance tier is lost; when a harmful case escapes; when the allowed-change
-control fails; or when the before/after measurement context differs, even if
-the candidate is much faster. Lean models the complete five-field signal key,
+control fails; or when raw before/after toolchain, environment, source, or
+oracle identities differ, even if the candidate is much faster. Acceptance
+uses deterministic comparisons of those raw fields and at least two samples
+per selected timing state, never a model-supplied context-equality flag. Lean models the complete five-field signal key,
 not an opaque ID, and proves only the declared finite graph relation under
 propositions-as-types[^lean-proofs]; it does not establish
 runtime oracle quality, fault realism, I/O behavior, or performance. Those
@@ -224,13 +226,19 @@ remain empirical obligations under fixed harmful cases and allowed-change
 controls. A Lean source containing `sorry`, an unavailable toolchain, timeout,
 unsupported proposition, or compile error is not proof.
 
-Graph compression is measured over verification artifact nodes and their
-`invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges.
-Execution acceleration is reported only from comparable observed before/after
+Graph compression distinguishes (1) verification-workflow artifact nodes and
+`invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges from
+(2) production code crate/module/function/type nodes and `calls` / `uses` /
+`depends_on` edges, each grounded at file:line. A reduced test-command graph
+is **not** a claim that production code was compressed. A no-edit pilot
+reports code-graph compression as unmeasured. Execution acceleration is
+reported only from comparable observed before/after
 timing samples with toolchain, environment fingerprint, cache state, source
 and oracle hashes, sample count, and evidence paths recorded. Declare a cold,
 warm, or both-state target before measuring. Measurements stay separate; an
-unselected state is `not_run` and earns no speedup claim. Focused RED/GREEN
+unselected state is `not_run` with empty samples and zero timings and earns no
+speedup claim even if stale numeric values are present. Calculate any speedup
+from the recorded sample arrays, never from a model-supplied mean. Focused RED/GREEN
 commands remain development evidence, but a final closeout may omit their
 duplicate invocations when the
 retained fixed-oracle suite demonstrably executes the exact same test

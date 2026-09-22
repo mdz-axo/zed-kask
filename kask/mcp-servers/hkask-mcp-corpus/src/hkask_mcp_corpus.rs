@@ -535,6 +535,7 @@ mod smoke {
                         force_ocr: false,
                         target_pages: None,
                         include_structure: None,
+                        pdf_text_order: crate::tools::document::PdfTextOrder::Layout,
                     }))
                     .await
                     .expect("relative output conversion succeeds");
@@ -880,6 +881,7 @@ mod smoke {
                 force_ocr: false,
                 target_pages: None,
                 include_structure: None,
+                pdf_text_order: crate::tools::document::PdfTextOrder::Layout,
             })
         };
 

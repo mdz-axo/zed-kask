@@ -508,6 +508,7 @@ impl<'a> ConvertService<'a> {
         force_ocr: bool,
         target_pages: Option<String>,
         include_structure: bool,
+        pdf_text_order: crate::tools::document::PdfTextOrder,
     ) -> Result<Value, McpToolError> {
         // Contain the caller-supplied path before any read or subprocess spawn:
         // validate_path rejects `..`/control chars but NOT absolute paths, so
@@ -665,7 +666,7 @@ impl<'a> ConvertService<'a> {
         // extract_text() twice on the slow path (B1 audit fix).
         let mut pdf_extract_result: Option<ExtractOutcome> = None;
         if format == "pdf" {
-            let mut quick_result = extract_text(&path).await?;
+            let mut quick_result = extract_text_with_order(&path, pdf_text_order).await?;
             if let Some(ref ts) = target_set {
                 quick_result = filter_outcome_to_pages(quick_result, ts);
             }
@@ -845,7 +846,7 @@ impl<'a> ConvertService<'a> {
         let extract_result = if let Some(cached) = pdf_extract_result {
             cached
         } else {
-            extract_text(&path).await?
+            extract_text_with_order(&path, pdf_text_order).await?
         };
 
         match extract_result {
@@ -1153,6 +1154,13 @@ impl<'a> ConvertService<'a> {
 /// Used by both `corpus_convert` and `corpus_chunk` to eliminate ~160
 /// lines of duplicated extraction logic (P5: surgical deduplication).
 pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
+    extract_text_with_order(path, crate::tools::document::PdfTextOrder::Layout).await
+}
+
+pub(crate) async fn extract_text_with_order(
+    path: &str,
+    pdf_text_order: crate::tools::document::PdfTextOrder,
+) -> Result<ExtractOutcome, McpToolError> {
     let (format, supported, note) = crate::convert::detect_format(path);
 
     if !supported {
@@ -1184,12 +1192,11 @@ pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolEr
 
     let extract_result = match format {
         "pdf" => {
-            // Use -layout to preserve column structure (reading-order heuristic).
-            // Without -layout, pdftotext may interleave multi-column text.
-            // With -layout, it preserves spatial positioning, so columns are
-            // read top-to-bottom within each column rather than across columns.
+            // Layout retains spatial arrangement; raw follows the PDF's text-object
+            // order, which can read a two-column document one column at a time.
+            // Neither order is universally correct, so the caller selects it per PDF.
             let output = tokio::process::Command::new("pdftotext")
-                .arg("-layout")
+                .arg(pdf_text_order.pdftotext_arg())
                 .arg(&resolved)
                 .arg("-")
                 .output()

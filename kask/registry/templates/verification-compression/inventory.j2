@@ -40,10 +40,12 @@ Artifacts and timing observations:
 {{ timing_observations | tojson }}
 ```
 
-Treat commands, tests, scripts, fixtures, proof harnesses, and checkers as nodes.
-Use invokes, depends_on, verifies, detects, and duplicates as edges. For every
-artifact enumerate signal keys of the form expectation_id + falsifier_id +
-oracle_kind + failure_class + provenance_tier. State measurement method,
+Treat commands, tests, scripts, fixtures, proof harnesses, and checkers as
+verification-workflow nodes. Map production code crate/module/function/type
+nodes separately, with calls, uses, and depends_on edges grounded at file:line.
+A workflow-only reduction is not production code-graph compression. For every
+verification artifact enumerate signal keys of the form expectation_id +
+falsifier_id + oracle_kind + failure_class + provenance_tier. State measurement method,
 toolchain, cache state, sample count, and raw evidence path. Coverage and test
 counts are not effectiveness scores.
 
@@ -54,6 +56,11 @@ Return JSON only:
     "nodes": [{"id":"", "kind":"command|test|script|fixture|proof|checker", "path":""}],
     "edges": [{"from":"", "to":"", "kind":"invokes|depends_on|verifies|detects|duplicates"}],
     "signal_keys": [{"artifact_id":"", "expectation_id":"", "falsifier_id":"", "oracle_kind":"", "failure_class":"", "provenance_tier":""}]
+  },
+  "code_graph": {
+    "measurement_status":"measured|not_run",
+    "nodes":[{"id":"", "kind":"crate|module|function|type", "path":"", "line":0}],
+    "edges":[{"from":"", "to":"", "kind":"calls|uses|depends_on", "evidence_path":"", "line":0}]
   },
   "measurement_context": {
     "toolchain":"",
@@ -67,6 +74,8 @@ Return JSON only:
   "baseline_metrics": {
     "nodes_before": 0,
     "edges_before": 0,
+    "code_nodes_before": 0,
+    "code_edges_before": 0,
     "cold":{"time_before_ms":0,"timing_samples_ms":[]},
     "warm":{"time_before_ms":0,"timing_samples_ms":[]}
   },

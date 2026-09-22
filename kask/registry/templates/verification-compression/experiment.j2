@@ -10,7 +10,7 @@ contract:
     targets: object
   output:
     preservation: object
-    measurement_context_check: object
+    measurement_context: object
     metrics: object
     falsification_log: array
     verdict: string
@@ -48,10 +48,16 @@ Targets:
 
 Any lost expectation, falsifier, oracle kind, failure class, provenance tier,
 failed harmful case, failed allowed-change control, changed measurement context,
-or uncompiled Lean obligation forces REVERT regardless of acceleration. Compute
-graph and time deltas only from observed integer values. Keep cold and warm
-timing as separate before/after blocks; mark an unselected timing state
-`not_run` and do not compute or claim its speedup.
+or uncompiled Lean obligation forces REVERT regardless of acceleration. Record
+raw before/after identifiers in `measurement_context`; do not insert a model-
+asserted `measurement_context_equal` verdict. `hashes_verified` starts false
+and becomes true only after the receipt and raw hashes pass a deterministic
+terminal check. Keep cold and warm timing separate; mark unselected states
+`not_run` with empty samples and zero timing, never speedup. Report workflow
+and production code graph counts separately. If the production graph was not
+measured, set code before/after counts to zero and code_graph_status to
+`not_run`; do not call a workflow-only reduction code compression. Derive
+speedup directly from the timing sample arrays, not model-supplied means.
 Corroborated means the candidate survived; never call it proven effective.
 
 Return JSON only:
@@ -65,17 +71,19 @@ Return JSON only:
     "downgraded_provenance":0,
     "failed_harmful_cases":0,
     "allowed_change_control_failures":0,
-    "lean_proof_passed":false,
-    "measurement_context_equal":false
+    "lean_proof_passed":false
   },
-  "measurement_context_check": {
-    "toolchain_equal":false,
-    "environment_equal":false,
-    "cache_state_equal":false,
-    "source_hashes_equal":false,
-    "oracle_hashes_equal":false,
-    "sample_count_before":0,
-    "sample_count_after":0,
+  "measurement_context": {
+    "timing_scope":"cold|warm|both",
+    "toolchain_before":"",
+    "toolchain_after":"",
+    "environment_before":"",
+    "environment_after":"",
+    "source_hash_before":"",
+    "source_hash_after":"",
+    "oracle_hash_before":"",
+    "oracle_hash_after":"",
+    "hashes_verified":false,
     "evidence_paths":[]
   },
   "metrics": {
@@ -83,6 +91,11 @@ Return JSON only:
     "edges_before":0,
     "nodes_after":0,
     "edges_after":0,
+    "code_graph_status":"measured|not_run",
+    "code_nodes_before":0,
+    "code_edges_before":0,
+    "code_nodes_after":0,
+    "code_edges_after":0,
     "cold":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]},
     "warm":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]}
   },

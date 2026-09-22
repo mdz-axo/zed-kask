@@ -40,6 +40,7 @@ impl CorpusServer {
             force_ocr,
             target_pages,
             include_structure,
+            pdf_text_order,
         }): Parameters<ConvertRequest>,
     ) -> Result<String, McpToolError> {
         if std::path::Path::new(&path).is_dir() {
@@ -55,7 +56,13 @@ impl CorpusServer {
                 let requested_path = path.clone();
                 let requested_pages = target_pages.clone();
                 let result = ConvertService::from_corpus(self)
-                    .convert(path, force_ocr, target_pages, include_structure.unwrap_or(false))
+                    .convert(
+                        path,
+                        force_ocr,
+                        target_pages,
+                        include_structure.unwrap_or(false),
+                        pdf_text_order,
+                    )
                     .await?;
                 let text = result
                     .get("text")
@@ -807,6 +814,7 @@ impl CorpusServer {
                     force_ocr,
                     target_pages: None,
                     include_structure: None,
+                    pdf_text_order: PdfTextOrder::Layout,
                 })))
                 .await
                 {
@@ -929,6 +937,23 @@ fn is_supported_document(path: &std::path::Path) -> bool {
 
 // ── Request structs ────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PdfTextOrder {
+    #[default]
+    Layout,
+    Raw,
+}
+
+impl PdfTextOrder {
+    pub(crate) fn pdftotext_arg(self) -> &'static str {
+        match self {
+            Self::Layout => "-layout",
+            Self::Raw => "-raw",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ConvertRequest {
     /// Path to a document file or a directory of documents to convert.
@@ -951,6 +976,10 @@ pub(crate) struct ConvertRequest {
     /// `corpus_chunk` derives its own structure via `extract_text`.
     #[serde(default)]
     pub include_structure: Option<bool>,
+    /// PDF text reading order: `layout` keeps columns side by side; `raw` follows
+    /// text-object order and can keep a two-column article's prose sequential.
+    #[serde(default)]
+    pub pdf_text_order: PdfTextOrder,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

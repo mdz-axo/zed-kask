@@ -45,6 +45,7 @@ fn request(path: &Path, output: &Path) -> ConvertRequest {
         force_ocr: false,
         target_pages: None,
         include_structure: None,
+        pdf_text_order: super::PdfTextOrder::Layout,
     }
 }
 
@@ -86,6 +87,85 @@ fn large_native_pdf(path: &Path) -> anyhow::Result<()> {
         file,
         "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
     )?;
+    Ok(())
+}
+
+/// expect: a two-column source can read one column at a time without changing every PDF's default.
+#[tokio::test]
+async fn pdf_raw_order_reads_column_source_sequentially() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("columns.pdf");
+    let mut file = std::fs::File::create(&input)?;
+    file.write_all(b"%PDF-1.4\n")?;
+    let mut offsets = Vec::new();
+    let mut stream = String::from("BT /F1 10 Tf 40 760 Td 18 TL\n");
+    for line in 0..10 {
+        stream.push_str(&format!(
+            "(Left column {} interview evidence stays with its explanation.) Tj T*\n",
+            if line == 0 { "begins" } else { "continues" }
+        ));
+    }
+    stream.push_str("ET\nBT /F1 10 Tf 325 760 Td 18 TL\n");
+    for line in 0..10 {
+        stream.push_str(&format!(
+            "(Right column {} independent coding evidence and procedure.) Tj T*\n",
+            if line == 0 { "begins" } else { "continues" }
+        ));
+    }
+    stream.push_str("ET\n");
+    for (id, body) in [
+        (1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()),
+        (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string()),
+        (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_string()),
+        (4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()),
+        (5, format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len())),
+    ] {
+        offsets.push(file.stream_position()?);
+        writeln!(file, "{id} 0 obj\n{body}\nendobj")?;
+    }
+    let xref = file.stream_position()?;
+    file.write_all(b"xref\n0 6\n0000000000 65535 f \n")?;
+    for offset in offsets {
+        writeln!(file, "{offset:010} 00000 n ")?;
+    }
+    writeln!(
+        file,
+        "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    )?;
+    drop(file);
+
+    let raw = crate::services::convert::extract_text_with_order(
+        &input.to_string_lossy(),
+        super::PdfTextOrder::Raw,
+    )
+    .await?;
+    let layout = crate::services::convert::extract_text(&input.to_string_lossy()).await?;
+    let crate::services::convert::ExtractOutcome::Success { text: raw, .. } = raw else {
+        anyhow::bail!("raw extraction must produce native text")
+    };
+    let crate::services::convert::ExtractOutcome::Success { text: layout, .. } = layout else {
+        anyhow::bail!("layout extraction must produce native text")
+    };
+    let raw_left_end = raw
+        .find("Left column continues")
+        .ok_or_else(|| anyhow::anyhow!("left-column continuation missing"))?;
+    let raw_right_start = raw
+        .find("Right column begins")
+        .ok_or_else(|| anyhow::anyhow!("right-column start missing"))?;
+    assert!(
+        raw_left_end < raw_right_start,
+        "raw order must preserve the left column before the right: {raw}"
+    );
+    let layout_right_start = layout
+        .find("Right column begins")
+        .ok_or_else(|| anyhow::anyhow!("layout right-column start missing"))?;
+    assert!(
+        layout_right_start
+            < layout
+                .find("Left column continues")
+                .ok_or_else(|| anyhow::anyhow!("layout left-column continuation missing"))?,
+        "fixture must discriminate layout from raw: {layout}"
+    );
     Ok(())
 }
 

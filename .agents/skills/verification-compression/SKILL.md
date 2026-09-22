@@ -89,8 +89,10 @@ verification code.
 
 1. Call `skill` for `kata-improvement`. Execute its direction and current-
    condition steps over the target. Measure rather than estimate:
-   - command/test/script/fixture/proof/checker nodes;
-   - `invokes`, `depends_on`, `verifies`, `detects`, and `duplicates` edges;
+   - verification-workflow command/test/script/fixture/proof/checker nodes;
+   - production code crate/module/function/type nodes in the chosen scope;
+   - `invokes`, `depends_on`, `verifies`, `detects`, `duplicates`, and
+     production `calls` / `uses` edges, with file:line evidence;
    - wall time, toolchain, cache state, environment, and sample count;
    - every signal key and its producing artifact.
 2. Call `read_file` for
@@ -143,14 +145,25 @@ verification code.
    require the allowed-change control to keep passing.
 10. Call `read_file` for
     `kask/registry/templates/verification-compression/experiment.j2` and produce
-    the result. Call `lisp_eval` for the non-compensable gate:
-    - form: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t) (eq (assoc "measurement_context_equal" check) t))`
-    - env: `{ "check": <preservation block> }`
-    - False means reject/revert the candidate regardless of speedup.
-11. Call `lisp_eval` for measured deltas:
-    - form: `(let ((gb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (ga (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cold (assoc "cold" metrics)) (warm (assoc "warm" metrics))) (list (list "graph_compression" (if (= gb 0) nil (- 1 (/ ga gb)))) (list "cold_speedup" (if (= (assoc "time_after_ms" cold) 0) nil (/ (assoc "time_before_ms" cold) (assoc "time_after_ms" cold)))) (list "warm_speedup" (if (= (assoc "time_after_ms" warm) 0) nil (/ (assoc "time_before_ms" warm) (assoc "time_after_ms" warm))))))`
-    - env: `{ "metrics": <graph metrics plus cold/warm blocks; unmeasured states carry time_after_ms=0 and status=not_run> }`
-    - A missing or `nil` speedup never satisfies a speed target. Never infer acceleration from fewer commands; use observed time.
+    the result. Validate recorded evidence paths with `terminal` (`sha256sum -c`
+    over the immutable receipt, plus raw before/after source and oracle hashes).
+    Record `context.hashes_verified=true` only after that command succeeds;
+    never let a model-supplied verdict fill it. Then call `lisp_eval` twice:
+    - Preservation: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t))`; env `{ "check": <preservation block> }`.
+    - Context and samples: `(define equal-present (lambda (a b) (and (> (length a) 0) (member a (list b))))) (define valid-measured (lambda (s) (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (> (assoc "time_before_ms" s) 0) (> (assoc "time_after_ms" s) 0)))) (define valid-not-run (lambda (s) (and (member "not_run" (list (assoc "status" s))) (= (length (assoc "timing_samples_before_ms" s)) 0) (= (length (assoc "timing_samples_after_ms" s)) 0) (= (assoc "time_before_ms" s) 0) (= (assoc "time_after_ms" s) 0)))) (and (member (assoc "timing_scope" context) (list "cold" "warm" "both")) (equal-present (assoc "toolchain_before" context) (assoc "toolchain_after" context)) (equal-present (assoc "environment_before" context) (assoc "environment_after" context)) (equal-present (assoc "source_hash_before" context) (assoc "source_hash_after" context)) (equal-present (assoc "oracle_hash_before" context) (assoc "oracle_hash_after" context)) (eq (assoc "hashes_verified" context) t) (>= (length (assoc "evidence_paths" context)) 4) (if (member (assoc "timing_scope" context) (list "cold" "both")) (valid-measured (assoc "cold" metrics)) (valid-not-run (assoc "cold" metrics))) (if (member (assoc "timing_scope" context) (list "warm" "both")) (valid-measured (assoc "warm" metrics)) (valid-not-run (assoc "warm" metrics))))`; env `{ "context": <raw before/after identities, timing_scope, terminal-verified receipt>, "metrics": <cold/warm blocks> }`.
+    - Both calls must return true. Ignore a contradictory
+      `preservation.measurement_context_equal` summary field. Any failure
+      rejects/reverts the candidate regardless of speedup.
+11. Call `lisp_eval` for measured deltas. Compute workflow-graph and code-graph
+    changes separately; a workflow-only reduction is **not** code-graph
+    compression. Compute means directly from observed samples, never a
+    model-supplied summary mean:
+    - form: `(define sum (lambda (xs) (if (is_null xs) 0 (+ (car xs) (sum (cdr xs)))))) (define measured-speedup (lambda (s) (if (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (> (sum (assoc "timing_samples_after_ms" s)) 0)) (/ (/ (sum (assoc "timing_samples_before_ms" s)) (length (assoc "timing_samples_before_ms" s))) (/ (sum (assoc "timing_samples_after_ms" s)) (length (assoc "timing_samples_after_ms" s)))) nil))) (let ((wb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (wa (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cb (+ (assoc "code_nodes_before" metrics) (assoc "code_edges_before" metrics))) (ca (+ (assoc "code_nodes_after" metrics) (assoc "code_edges_after" metrics)))) (list (list "workflow_graph_compression" (if (= wb 0) nil (- 1 (/ wa wb)))) (list "code_graph_compression" (if (= cb 0) nil (- 1 (/ ca cb)))) (list "cold_speedup" (measured-speedup (assoc "cold" metrics))) (list "warm_speedup" (measured-speedup (assoc "warm" metrics)))))`
+    - env: `{ "metrics": <measured workflow/code graph counts plus cold/warm samples; use code_nodes_before=0 and code_edges_before=0 when code graph was not measured> }`.
+    - A missing or `nil` speedup or graph measure satisfies no target in
+      that dimension. Never infer acceleration from fewer commands; use
+      observed time. A no-edit pilot may demonstrate workflow compression
+      but cannot claim production code-graph compression.
 
 ### ACT — Converge, retain, or revert
 
