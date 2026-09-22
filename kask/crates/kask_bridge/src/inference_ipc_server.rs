@@ -807,6 +807,77 @@ async fn dispatch(
         }
     }
 
+    if matches!(request.method, InferenceMethod::ToolDefinition) {
+        let Some(tool_port) = tool_port else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".into(),
+                    message: "tool definition lookup not configured on the zed side".into(),
+                },
+            };
+        };
+        let Some(server) = params.tool_server.as_deref() else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".into(),
+                    message: "tool_definition request missing tool_server".into(),
+                },
+            };
+        };
+        let Some(tool) = params.tool_name.as_deref() else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".into(),
+                    message: "tool_definition request missing tool_name".into(),
+                },
+            };
+        };
+        let qualified = format!("{server}/{tool}");
+        if !params
+            .tool_allowlist
+            .as_ref()
+            .is_some_and(|allowed| allowed.iter().any(|name| name == &qualified))
+            || !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified)
+        {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Auth".into(),
+                    message: format!(
+                        "tool definition '{qualified}' is not permitted by the card allowlist and parent grant"
+                    ),
+                },
+            };
+        }
+        let Some(info) = tool_port.get_tool_info(tool).await else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".into(),
+                    message: format!("tool definition '{qualified}' not found"),
+                },
+            };
+        };
+        if info.server_id != server || !info.input_schema.is_object() {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".into(),
+                    message: format!(
+                        "tool definition '{qualified}' has a mismatched server or invalid schema"
+                    ),
+                },
+            };
+        }
+        return InferenceOutcome::ToolDefinition {
+            definition: hkask_types::ChatToolDefinition {
+                tool_type: "function".into(),
+                function: hkask_types::ChatToolFunction {
+                    name: qualified,
+                    description: info.description,
+                    parameters: info.input_schema,
+                },
+            },
+        };
+    }
+
     // Tool dispatch requests route to the `McpRuntime` (as `ToolPort`) on the
     // zed side. The child MCP server (e.g. the swarm server's local delegate
     // loop) holds no credential — the `tool_allowlist` check below IS the
@@ -1122,6 +1193,7 @@ async fn dispatch(
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
+        | InferenceMethod::ToolDefinition
         | InferenceMethod::CreateWorktreeThread
         | InferenceMethod::Rerank => {
             tracing::error!(
@@ -1241,6 +1313,93 @@ mod tests {
         fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
             Box::pin(async { None })
         }
+    }
+
+    struct SchemaToolPort;
+    impl ToolPort for SchemaToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+            _: serde_json::Value,
+            _: hkask_types::WebID,
+        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
+            Box::pin(async { panic!("metadata lookup must not invoke a tool") })
+        }
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec!["required_argument".into()] })
+        }
+        fn get_tool_info<'a>(&'a self, name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+            Box::pin(async move {
+                (name == "required_argument").then(|| ToolInfo {
+                    name: name.to_string(),
+                    server_id: "fixture".into(),
+                    description: "Requires a query".into(),
+                    input_schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }),
+                })
+            })
+        }
+    }
+
+    /// A definition read is subject to the same card and parent grants as invocation.
+    #[tokio::test]
+    async fn tool_definition_requires_both_grants_and_returns_real_schema() {
+        let inference: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let tools: Arc<dyn ToolPort> = Arc::new(SchemaToolPort);
+        let server = format!("schema-test-{}", uuid::Uuid::new_v4());
+        let token = crate::delegation_grants::grant_for_server(
+            &server,
+            &["fixture/required_argument".into()],
+        )
+        .expect("grant");
+        let request = |allowlist: Vec<String>, grant: Option<String>| InferenceRequest {
+            id: 1,
+            method: InferenceMethod::ToolDefinition,
+            params: InferenceParams {
+                tool_server: Some("fixture".into()),
+                tool_name: Some("required_argument".into()),
+                tool_allowlist: Some(allowlist),
+                tool_grant: grant,
+                ..Default::default()
+            },
+        };
+        for (allowed, grant) in [
+            (vec!["fixture/required_argument".into()], None),
+            (vec![], Some(token.clone())),
+        ] {
+            let result = dispatch(
+                &inference,
+                None,
+                Some(&tools),
+                &make_list_models_tx(),
+                None,
+                &make_provider_credential_tx(),
+                request(allowed, grant),
+            )
+            .await;
+            assert!(matches!(result, InferenceOutcome::Error { error } if error.code == "Auth"));
+        }
+        let result = dispatch(
+            &inference,
+            None,
+            Some(&tools),
+            &make_list_models_tx(),
+            None,
+            &make_provider_credential_tx(),
+            request(vec!["fixture/required_argument".into()], Some(token)),
+        )
+        .await;
+        let InferenceOutcome::ToolDefinition { definition } = result else {
+            panic!("authorized metadata lookup must return the definition");
+        };
+        assert_eq!(definition.function.name, "fixture/required_argument");
+        assert_eq!(definition.function.description, "Requires a query");
+        assert_eq!(definition.function.parameters["required"][0], "query");
+        crate::revoke_delegation_grant(&server);
     }
 
     struct RecordingToolPort(std::sync::atomic::AtomicUsize);

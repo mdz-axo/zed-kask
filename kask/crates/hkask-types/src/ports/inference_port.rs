@@ -113,6 +113,16 @@ pub struct ModelEntry {
 /// (clear error) — the swarm delegate loop reads it, so it is not
 /// speculative generality.
 pub trait ToolDispatchPort: Send + Sync {
+    /// Discover one declared tool's actual schema through the same governed
+    /// boundary as invocation. Missing, unauthorized, or unconfigured tool
+    /// metadata is an error, not an empty parameter schema.
+    fn tool_definition<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        allowed: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>>;
+
     /// Invoke a tool on a governed MCP server via the zed process.
     ///
     /// `allowed` is the caller's declared `server/tool` allowlist (the
@@ -134,6 +144,15 @@ pub trait ToolDispatchPort: Send + Sync {
 }
 
 impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
+    fn tool_definition<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        allowed: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>> {
+        self.as_ref().tool_definition(server, tool, allowed)
+    }
+
     fn invoke_tool<'a>(
         &'a self,
         server: &'a str,

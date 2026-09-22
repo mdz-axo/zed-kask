@@ -326,12 +326,22 @@ impl AgentExecutor {
             .capabilities
             .mcp_tools
             .iter()
-            .filter_map(|qualified| {
-                qualified
-                    .split_once('/')
-                    .map(|(s, t)| (s.to_string(), t.to_string()))
+            .map(|qualified| {
+                let (server, tool) = qualified.split_once('/').ok_or_else(|| {
+                    LocalSwarmError::InvalidInput(format!(
+                        "agent '{}' declares invalid MCP tool '{qualified}' (expected server/tool)",
+                        agent.agent_id
+                    ))
+                })?;
+                if server.is_empty() || tool.is_empty() {
+                    return Err(LocalSwarmError::InvalidInput(format!(
+                        "agent '{}' declares invalid MCP tool '{qualified}' (expected server/tool)",
+                        agent.agent_id
+                    )));
+                }
+                Ok((server.to_string(), tool.to_string()))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         // The qualified allowlist travels with every dispatch so the zed-side
         // IPC server can enforce it at the dispatch boundary — a tool outside
         // the card's declared set is never minted a panel token there.
@@ -339,17 +349,28 @@ impl AgentExecutor {
             .iter()
             .map(|(s, t)| format!("{s}/{t}"))
             .collect();
-        let tool_defs: Vec<hkask_types::ChatToolDefinition> = declared_tools
-            .iter()
-            .map(|(server, tool)| hkask_types::ChatToolDefinition {
-                tool_type: "function".to_string(),
-                function: hkask_types::ChatToolFunction {
-                    name: format!("{server}/{tool}"),
-                    description: format!("Invoke `{tool}` on the `{server}` MCP server."),
-                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
-                },
-            })
-            .collect();
+        let mut tool_defs = Vec::with_capacity(declared_tools.len());
+        for (server, tool) in &declared_tools {
+            let definition = self
+                .tool_dispatch
+                .tool_definition(server, tool, &qualified_allowed)
+                .await
+                .map_err(|error| {
+                    LocalSwarmError::Unavailable(format!(
+                        "agent '{}': cannot advertise {server}/{tool}: {error}",
+                        agent.agent_id
+                    ))
+                })?;
+            if definition.function.name != format!("{server}/{tool}")
+                || !definition.function.parameters.is_object()
+            {
+                return Err(LocalSwarmError::Unavailable(format!(
+                    "agent '{}': tool definition for {server}/{tool} has invalid name or schema",
+                    agent.agent_id
+                )));
+            }
+            tool_defs.push(definition);
+        }
         // When the agent opts into reasoning, register the built-in
         // `reasoning/think` tool. It is handled locally by the executor
         // (not dispatched via IPC), so it does not need to be in the
@@ -798,9 +819,10 @@ mod tests {
             >,
         > {
             assert!(tools.is_some_and(|tools| {
-                tools
-                    .iter()
-                    .any(|tool| tool.function.name == "fixture/lookup")
+                tools.iter().any(|tool| {
+                    tool.function.name == "fixture/lookup"
+                        && tool.function.parameters["required"][0] == "query"
+                })
             }));
             let response =
                 hkask_types::InferencePort::generate(&StubInference, prompt, parameters, tools);
@@ -852,6 +874,23 @@ mod tests {
         assert_eq!(result.text, "stub");
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(inference.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_name_is_rejected_before_inference() {
+        let executor = AgentExecutor::new(Arc::new(StubInference), Arc::new(StubDispatch));
+        let invalid = LocalAgentCard {
+            agent_id: "invalid".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["unqualified".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            executor.run(&invalid, "task").await,
+            Err(LocalSwarmError::InvalidInput(_))
+        ));
     }
 
     struct AlwaysTool;
@@ -912,6 +951,41 @@ mod tests {
     struct StubDispatch;
 
     impl hkask_types::ToolDispatchPort for StubDispatch {
+        fn tool_definition<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            allowed: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            hkask_types::ChatToolDefinition,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async move {
+                let name = format!("{server}/{tool}");
+                if !allowed.contains(&name) {
+                    return Err(hkask_types::InferenceError::Auth("not allowed".into()));
+                }
+                Ok(hkask_types::ChatToolDefinition {
+                    tool_type: "function".into(),
+                    function: hkask_types::ChatToolFunction {
+                        name,
+                        description: "Fixture lookup".into(),
+                        parameters: serde_json::json!({
+                            "type": "object", "properties": {"query": {"type": "string"}},
+                            "required": ["query"]
+                        }),
+                    },
+                })
+            })
+        }
+
         fn invoke_tool<'a>(
             &'a self,
             _server: &'a str,

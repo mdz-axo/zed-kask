@@ -884,6 +884,27 @@ pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::Too
 struct UnavailableToolDispatch;
 
 impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
+    fn tool_definition<'a>(
+        &'a self,
+        _server: &'a str,
+        _tool: &'a str,
+        _allowed: &'a [String],
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::ChatToolDefinition, hkask_types::InferenceError>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "tool definition unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
+                 delegated tools require the zed process"
+            )))
+        })
+    }
+
     fn invoke_tool<'a>(
         &'a self,
         _server: &'a str,

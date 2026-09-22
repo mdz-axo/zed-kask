@@ -651,6 +651,29 @@ mod smoke_tests {
         }
         struct NoTools;
         impl hkask_types::ToolDispatchPort for NoTools {
+            fn tool_definition<'a>(
+                &'a self,
+                _: &'a str,
+                _: &'a str,
+                _: &'a [String],
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::ChatToolDefinition,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async {
+                    Err(hkask_types::InferenceError::Model(
+                        "no tools in fixture".into(),
+                    ))
+                })
+            }
+
             fn invoke_tool<'a>(
                 &'a self,
                 _: &'a str,

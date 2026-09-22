@@ -3642,6 +3642,38 @@ mod tests {
     struct NoopDispatch;
 
     impl hkask_types::ToolDispatchPort for NoopDispatch {
+        fn tool_definition<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            allowed: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            hkask_types::ChatToolDefinition,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async move {
+                let name = format!("{server}/{tool}");
+                if !allowed.contains(&name) {
+                    return Err(hkask_types::InferenceError::Auth("not allowed".into()));
+                }
+                Ok(hkask_types::ChatToolDefinition {
+                    tool_type: "function".into(),
+                    function: hkask_types::ChatToolFunction {
+                        name,
+                        description: "Fixture tool".into(),
+                        parameters: serde_json::json!({"type": "object"}),
+                    },
+                })
+            })
+        }
+
         fn invoke_tool<'a>(
             &'a self,
             _server: &'a str,

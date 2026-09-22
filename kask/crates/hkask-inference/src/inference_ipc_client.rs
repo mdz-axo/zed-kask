@@ -451,6 +451,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
             )),
+            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
+            )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
@@ -502,6 +505,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
             )),
+            InferenceOutcome::ToolDefinition { .. } => Err(EmbeddingGenerationError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
+            )),
             InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
@@ -547,6 +553,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
             )),
+            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
+            )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
@@ -588,6 +597,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
             )),
+            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
+            )),
             InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "WorktreeThread"),
             )),
@@ -608,6 +620,30 @@ impl InferenceIpcClient {
             ));
         }
         self.call_rerank(model, query, documents).await
+    }
+
+    pub async fn get_tool_definition(
+        &self,
+        server: &str,
+        tool: &str,
+        allowed: &[String],
+    ) -> Result<ChatToolDefinition, InferenceError> {
+        let method = InferenceMethod::ToolDefinition;
+        let params = InferenceParams {
+            tool_server: Some(server.to_string()),
+            tool_name: Some(tool.to_string()),
+            tool_allowlist: Some(allowed.to_vec()),
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::ToolDefinition { definition } => Ok(definition),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            other => Err(InferenceError::Connection(format!(
+                "unexpected response to tool definition request: {other:?}"
+            ))),
+        }
     }
 
     /// Invoke a governed MCP tool on the zed side via the IPC bridge.
@@ -636,6 +672,9 @@ impl InferenceIpcClient {
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::ToolResult { result } => Ok(result),
+            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
+            )),
             InferenceOutcome::Error { error } => Err(error.into()),
             InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "Result"),
@@ -693,6 +732,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "ToolResult"),
+            )),
+            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
+                unexpected_outcome_msg(&method, "ToolDefinition"),
             )),
             InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "RerankScores"),
@@ -861,6 +903,17 @@ impl InferencePort for InferenceIpcClient {
 }
 
 impl ToolDispatchPort for InferenceIpcClient {
+    fn tool_definition<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        allowed: &'a [String],
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.get_tool_definition(server, tool, allowed).await })
+    }
+
     fn invoke_tool<'a>(
         &'a self,
         server: &'a str,
@@ -1093,6 +1146,36 @@ mod tests {
             response.outcome,
             InferenceOutcome::ToolResult { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn tool_definition_roundtrip_preserves_required_arguments() {
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::ToolDefinition {
+                    definition: ChatToolDefinition {
+                        tool_type: "function".into(),
+                        function: hkask_types::ChatToolFunction {
+                            name: "fixture/lookup".into(),
+                            description: "Lookup with query".into(),
+                            parameters: serde_json::json!({
+                                "type": "object", "properties": {"query": {"type": "string"}},
+                                "required": ["query"]
+                            }),
+                        },
+                    },
+                },
+                1,
+            )
+            .into_bytes(),
+        );
+        let definition = bridge
+            .client()
+            .get_tool_definition("fixture", "lookup", &["fixture/lookup".into()])
+            .await
+            .expect("tool definition should cross the IPC boundary");
+        assert_eq!(definition.function.name, "fixture/lookup");
+        assert_eq!(definition.function.parameters["required"][0], "query");
     }
 
     #[tokio::test]

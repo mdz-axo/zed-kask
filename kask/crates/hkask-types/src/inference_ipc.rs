@@ -102,6 +102,9 @@ pub enum InferenceMethod {
     /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
     /// The result is returned as `InferenceOutcome::ToolResult`.
     ToolInvoke,
+    /// Return a governed tool's real description and input schema without
+    /// invoking it. Uses tool_server, tool_name, tool_allowlist, tool_grant.
+    ToolDefinition,
     /// Create a sibling agent thread in a new git worktree workspace. Uses
     /// `worktree_prompt`, `worktree_title`, `worktree_name`, `worktree_base_ref`
     /// from `InferenceParams`. The result is returned as
@@ -219,6 +222,10 @@ pub enum InferenceOutcome {
     ToolResult {
         #[serde(rename = "tool_result")]
         result: serde_json::Value,
+    },
+    ToolDefinition {
+        #[serde(rename = "tool_definition")]
+        definition: crate::ChatToolDefinition,
     },
     /// Worktree thread creation result from
     /// `InferenceMethod::CreateWorktreeThread`. The value is the new
