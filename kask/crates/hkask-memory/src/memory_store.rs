@@ -67,13 +67,17 @@ pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
     if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
         return (!text.is_empty()).then(|| text.to_string());
     }
-    h_mem.entity.starts_with("curator:goal:").then(|| {
+    if h_mem.entity.starts_with("curator:goal:") {
         let mut public_value = h_mem.value.clone();
         if let Some(object) = public_value.as_object_mut() {
             object.remove("_memory_calibration");
         }
-        format!("goal event {}: {}", h_mem.attribute, public_value)
-    })
+        return Some(format!("goal event {}: {}", h_mem.attribute, public_value));
+    }
+    Some(format!(
+        "{} {}: {}",
+        h_mem.entity, h_mem.attribute, h_mem.value
+    ))
 }
 
 /// Result of computing a style centroid over a prefix-scoped embedding set.

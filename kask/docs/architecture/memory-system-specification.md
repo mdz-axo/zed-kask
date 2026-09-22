@@ -237,11 +237,16 @@ enforced by:
    (`kask/crates/kask_bridge/src/memory/ingest.rs`). Goal publication orders
    the vector before the h_mem and removes that exact vector if h_mem storage
    fails, so an embedding-invisible goal row is never exposed.
-2. The regression tests `recall_context_finds_turn_by_embedding_only`,
+2. `hkask_memory::semantic_passage_for_h_mem` is the one passage-identity
+   contract used by production recall and embedding backfill. Mutable lessons
+   project their provenance-bearing `recall_text`; goal events remove the
+   private calibration receipt before reconstructing tool + JSON. Backfill
+   therefore cannot report success with a passage production recall will reject.
+3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
-   `persisted_goal_event_is_semantically_visible_by_entity_ref`, and
-   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`
-   (`kask/crates/kask_bridge/src/memory.rs`).
+   `persisted_goal_event_is_semantically_visible_by_entity_ref`,
+   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`, and
+   `backfill_embeddings_covers_knowledge_layer_and_excludes_turns`.
 
 A future `EntityRef(String)` newtype shared between `HMemStore` and
 `EmbeddingStore` would make this compile-time-enforced, but that is a

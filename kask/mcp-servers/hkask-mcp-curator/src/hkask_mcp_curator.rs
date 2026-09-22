@@ -1157,6 +1157,9 @@ impl CuratorServer {
             // are unverified observations; at 1.0 they outranked verified
             // facts in recall ranking (confidence is a ranking multiplier).
             .with_confidence(hkask_types::Confidence::new(0.5));
+            let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem).ok_or_else(|| {
+                McpToolError::internal("skill-use report has no canonical semantic passage")
+            })?;
 
             memory
                 .store(h_mem)
@@ -1164,18 +1167,9 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("skill_use_issue_reported");
 
-            // Semantic recallability — the entity_ref invariant: embed the
-            // report text under the entity so `curator_semantic_search`
-            // finds it by meaning (the contract the doc comment above
-            // advertises). Non-fatal; the degradation is surfaced below.
-            let embed_text = format!(
-                "skill-use issue: {skill} / {tool} (step {step}, origin {origin}): {error}",
-                skill = req.skill_name,
-                tool = req.tool_name,
-                step = req.step_ordinal,
-                origin = req.failure_origin.as_str(),
-                error = req.error,
-            );
+            // Semantic recallability — the same canonical passage identity
+            // writer, backfill, and production recall use. Non-fatal;
+            // degradation is surfaced below.
             let embedded = embed_for_semantic_recall(
                 self.inference_port.as_ref(),
                 memory,
@@ -1270,7 +1264,6 @@ impl CuratorServer {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
                 }
             }
-            let embed_text = memory_embed_text(&req.entity, &req.attribute, &value);
             let h_mem = hkask_storage::HMem::new(
                 &req.entity,
                 &req.attribute,
@@ -1278,6 +1271,11 @@ impl CuratorServer {
                 self.webid,
             )
             .with_confidence(hkask_types::Confidence::new(0.5));
+            let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem).ok_or_else(|| {
+                McpToolError::invalid_argument(
+                    "memory value has no canonical semantic passage; mutable state requires recall_text",
+                )
+            })?;
 
             memory
                 .store(h_mem)
@@ -1590,7 +1588,7 @@ impl CuratorServer {
     /// code status, skill-use reports) are invisible to
     /// `curator_semantic_search` until backfilled.
     #[tool(
-        description = "Backfill semantic embeddings for knowledge-layer h_mems whose entities have none (structured memories, skill-use reports, goal records). Deterministic, embeddings-table-only — no h_mem mutation. Excludes turn entities and distillation watermarks by design. dry_run lists candidates without embedding."
+        description = "Backfill missing semantic passages for knowledge-layer h_mems. Eligibility is exact (entity + canonical passage), not entity-level. Excludes turns, distillation watermarks, and goal rows; invalid goal publication is never repaired by backfill. dry_run lists candidates without embedding."
     )]
     pub async fn curator_memory_backfill_embeddings(
         &self,
@@ -1606,42 +1604,45 @@ impl CuratorServer {
                 .h_mems_by_entity_prefix("")
                 .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
 
-            // Entities that already carry at least one embedding.
-            let embedded_entities: std::collections::HashSet<String> = memory
-                .embedding_store()
-                .query_by_prefix("")
-                .map_err(|e| {
-                    map_memory_store_error(
-                        hkask_memory::MemoryStoreError::Embedding(e),
-                        "Failed to list embedded entities",
-                    )
-                })?
-                .into_iter()
-                .collect();
 
             let is_excluded = |entity: &str| {
                 entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
                     || entity.starts_with(thread_turns::RETIRED_TURN_PREFIX)
                     || entity.starts_with(distillation::WATERMARK_PREFIX)
+                    || entity.starts_with("curator:goal:")
             };
 
-            // Knowledge-layer candidates: active, not excluded, entity has
-            // no embedding. One embedding per h_mem — the turn pattern: each
-            // content unit under the entity gets its own vector, and the
-            // entity-level check keeps the pass idempotent.
-            let candidates: Vec<&hkask_storage::HMem> = active
-                .iter()
-                .filter(|h| !is_excluded(&h.entity) && !embedded_entities.contains(&h.entity))
-                .collect();
+            // Knowledge-layer candidates are passage-scoped: one successful
+            // vector under an entity never hides a failed sibling h_mem.
+            let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
+            let mut unsupported_count = 0usize;
+            for h_mem in active.iter().filter(|h_mem| !is_excluded(&h_mem.entity)) {
+                let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
+                    unsupported_count += 1;
+                    continue;
+                };
+                let already_embedded = memory
+                    .has_embedding_for_passage(&h_mem.entity, &passage)
+                    .map_err(|error| {
+                        map_memory_store_error(
+                            error,
+                            "Failed to inspect passage-level embedding coverage",
+                        )
+                    })?;
+                if !already_embedded {
+                    candidates.push((h_mem, passage));
+                }
+            }
 
             if req.dry_run.unwrap_or(false) {
                 return Ok(json!({
                     "dry_run": true,
                     "candidate_count": candidates.len(),
-                    "candidates": candidates.iter().map(|h| json!({
-                        "h_mem_id": h.id.to_string(),
-                        "entity": h.entity,
-                        "attribute": h.attribute,
+                    "unsupported_count": unsupported_count,
+                    "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
+                        "h_mem_id": h_mem.id.to_string(),
+                        "entity": h_mem.entity,
+                        "attribute": h_mem.attribute,
                     })).collect::<Vec<_>>(),
                     "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
                 }));
@@ -1651,9 +1652,7 @@ impl CuratorServer {
             let mut results = Vec::with_capacity(candidate_count);
             let mut embedded_count = 0usize;
             let mut failed_count = 0usize;
-            for h_mem in candidates {
-                let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem)
-                    .unwrap_or_else(|| memory_embed_text(&h_mem.entity, &h_mem.attribute, &h_mem.value));
+            for (h_mem, embed_text) in candidates {
                 let embedded = embed_for_semantic_recall(
                     self.inference_port.as_ref(),
                     memory,
@@ -1680,8 +1679,9 @@ impl CuratorServer {
                 "candidate_count": candidate_count,
                 "backfilled": embedded_count,
                 "failed": failed_count,
+                "unsupported_count": unsupported_count,
                 "results": results,
-                "guidance": "Embeddings backfilled under each candidate's entity (the entity_ref invariant). Failed candidates are surfaced per-entity with a warn logged — a re-run targets only entities still lacking embeddings, so the pass is idempotent."
+                "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
             }))
         })
         .await
@@ -1780,23 +1780,6 @@ pub(crate) const DEGRADED_EMBEDDING_NOTE: &str = "degraded (embedding unavailabl
 /// model behind it.
 pub(crate) fn curator_embedding_model() -> Option<String> {
     hkask_inference::model_constants::embedding_model()
-}
-
-/// The embed-text composition for inserted memories: entity + attribute +
-/// value. A bare value like "qwen3" embeds to a semantically thin vector;
-/// "zed-kask default_agent_model: qwen3" matches the natural-language
-/// questions recall actually receives. Shared by `memory_insert` and the
-/// embedding backfill tool.
-pub(crate) fn memory_embed_text(
-    entity: &str,
-    attribute: &str,
-    value: &serde_json::Value,
-) -> String {
-    let value_text = match value {
-        serde_json::Value::String(text) => text.clone(),
-        other => other.to_string(),
-    };
-    format!("{entity} {attribute}: {value_text}")
 }
 
 /// Embed `text` under `entity` so semantic recall finds the h_mem just

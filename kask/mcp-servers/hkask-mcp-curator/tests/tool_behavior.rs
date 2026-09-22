@@ -1597,6 +1597,85 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     );
 }
 
+/// Backfill is passage-scoped, not entity-scoped, and never repairs goal rows.
+#[tokio::test]
+async fn backfill_is_passage_scoped_and_excludes_goals() {
+    let (server, memory) = make_server_with_embeddings();
+    let first = hkask_storage::HMem::new(
+        "shared-knowledge",
+        "first",
+        serde_json::json!("first passage"),
+        WebID::new(),
+    );
+    let second = hkask_storage::HMem::new(
+        "shared-knowledge",
+        "second",
+        serde_json::json!("second passage"),
+        WebID::new(),
+    );
+    let goal = hkask_storage::HMem::new(
+        "curator:goal:invalid-publication",
+        "kanban_goal_score",
+        serde_json::json!({
+            "content": {"goal_id": "invalid-publication", "brier": null}
+        }),
+        WebID::new(),
+    );
+    memory.store(first.clone()).expect("seed first passage");
+    memory.store(second.clone()).expect("seed second passage");
+    memory.store(goal).expect("seed invalid goal row");
+    let first_passage =
+        hkask_memory::semantic_passage_for_h_mem(&first).expect("canonical first passage");
+    memory
+        .store_embedding(
+            "shared-knowledge",
+            &vec![1.0; test_dim()],
+            "test-model",
+            Some(&first_passage),
+        )
+        .expect("seed first embedding");
+
+    let dry = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("dry run"),
+    );
+    assert_eq!(dry["candidate_count"].as_u64(), Some(1));
+    assert_eq!(
+        dry["candidates"][0]["attribute"].as_str(),
+        Some("second"),
+        "the missing sibling passage is selected even though its entity has another vector"
+    );
+
+    let run = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("backfill"),
+    );
+    assert_eq!(run["backfilled"].as_u64(), Some(1));
+    let second_passage =
+        hkask_memory::semantic_passage_for_h_mem(&second).expect("canonical second passage");
+    assert!(
+        memory
+            .has_embedding_for_passage("shared-knowledge", &second_passage)
+            .expect("second passage coverage")
+    );
+    assert!(
+        memory
+            .all_embeddings_with_text()
+            .expect("embedding inventory")
+            .iter()
+            .all(|(entity, _vector, _passage)| entity != "curator:goal:invalid-publication"),
+        "backfill must never heal an invalid goal publication"
+    );
+}
+
 /// `curator_memory_prune` must default to turn-storage scope: aged turn
 /// rows are hard-deleted while aged knowledge-layer rows survive.
 /// `all_layers=true` is the explicit full-store opt-in. (therapy
