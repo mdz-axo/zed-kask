@@ -833,7 +833,7 @@ mod tests {
                     result.tool_calls.push(hkask_types::StructuredToolCall {
                         server: "fixture".into(),
                         tool: "lookup".into(),
-                        args: serde_json::json!({}),
+                        args: serde_json::json!({"query": "needle"}),
                         call_id: Some("lookup-1".into()),
                     });
                 }
@@ -874,6 +874,66 @@ mod tests {
         assert_eq!(result.text, "stub");
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(inference.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    struct ForgedTool(std::sync::atomic::AtomicUsize);
+    impl hkask_types::InferencePort for ForgedTool {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move {
+                let mut result = StubInference
+                    .generate("", &Default::default(), None)
+                    .await?;
+                if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    result.text.clear();
+                    result.tool_calls.push(hkask_types::StructuredToolCall {
+                        server: "other".into(),
+                        tool: "secret".into(),
+                        args: serde_json::json!({"query":"needle"}),
+                        call_id: Some("forged".into()),
+                    });
+                }
+                Ok(result)
+            })
+        }
+    }
+
+    /// A model-invented tool is not dispatched even if the card declares another tool.
+    #[tokio::test]
+    async fn forged_undeclared_tool_call_is_denied() {
+        let executor = AgentExecutor::new(
+            Arc::new(ForgedTool(std::sync::atomic::AtomicUsize::new(0))),
+            Arc::new(StubDispatch),
+        );
+        let card = LocalAgentCard {
+            agent_id: "forged-tool".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                mcp_tools: vec!["fixture/lookup".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = executor
+            .run(&card, "task")
+            .await
+            .expect("denial is returned to model");
+        assert_eq!(result.text, "stub");
+        assert_eq!(result.tool_calls[0]["ok"], false);
+        assert_eq!(
+            result.tool_calls[0]["error"],
+            "not in declared mcp_tools allowlist"
+        );
     }
 
     #[tokio::test]
@@ -921,7 +981,7 @@ mod tests {
                 result.tool_calls.push(hkask_types::StructuredToolCall {
                     server: "fixture".into(),
                     tool: "lookup".into(),
-                    args: serde_json::json!({}),
+                    args: serde_json::json!({"query": "needle"}),
                     call_id: Some("lookup".into()),
                 });
                 Ok(result)
@@ -990,8 +1050,8 @@ mod tests {
             &'a self,
             _server: &'a str,
             _tool: &'a str,
-            _args: serde_json::Value,
-            _allowlist: &'a [String],
+            args: serde_json::Value,
+            allowlist: &'a [String],
         ) -> Pin<
             Box<
                 dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
@@ -999,7 +1059,11 @@ mod tests {
                     + 'a,
             >,
         > {
-            Box::pin(async { Ok(serde_json::json!({"ok": true})) })
+            Box::pin(async move {
+                assert_eq!(args["query"], "needle");
+                assert!(allowlist.iter().any(|name| name == "fixture/lookup"));
+                Ok(serde_json::json!({"ok": true}))
+            })
         }
     }
 

@@ -521,14 +521,15 @@ executor does not silently switch to another model.
   positive retrieve/use test plus undeclared-skill rejection through
   `swarm_delegate_local`. Do not advertise runtime skill use until that test
   exercises it.
-- **Declared MCP tools receive placeholder input schemas.** The executor
-  advertises every `server/tool` with `{"type":"object","properties":{}}`
-  rather than the server's actual input schema. The zed-side dispatch still
-  enforces the qualified tool allowlist, but providers may be unable to
-  construct valid arguments for tools with required fields. To close: extend
-  the governed tool-definition port to return actual registered schemas,
-  preserve the allowlist at both declaration and invocation, and test a tool
-  with a required parameter plus rejection of an undeclared tool.
+- **Declared MCP tool schemas: wired.** The executor requests each declared
+  `server/tool` definition from the host before inference and advertises its
+  registered description and JSON Schema; invalid names, absent metadata,
+  mismatched servers and non-object schemas fail visibly instead of receiving
+  a placeholder. `InferenceMethod::ToolDefinition` checks the card allowlist
+  and parent-held grant before returning metadata, while `ToolInvoke` keeps
+  its independent dispatch gate. A required-argument definition is pinned by
+  the bridge/client/executor tests. This is a schema-delivery guarantee, not
+  a claim that every provider will call every MCP tool correctly.
 - **Round exhaustion now fails visibly.** An agent that requests tools in all
   four rounds without a final answer receives an execution error instead of
   an empty successful response. The 4-round bound still applies to reasoning
