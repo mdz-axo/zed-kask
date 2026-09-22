@@ -192,21 +192,44 @@ impl MemoryStore {
     }
 
     /// Open a SQLCipher database and construct a `MemoryStore` from a single
-    /// shared connection pool. Canonical constructor for file-backed storage.
+    /// shared connection pool. Canonical constructor for writable file-backed storage.
     pub fn open(
         db_path: &str,
         passphrase: &str,
         dim: usize,
     ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::open_or_repair(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
+    /// Open an existing SQLCipher database for sealed, read-only retrieval.
+    ///
+    /// The storage handle enforces SQLite read-only flags and skips schema,
+    /// migration, maintenance, and inventory writes. Mutating `MemoryStore`
+    /// methods therefore fail at the database boundary rather than relying on
+    /// caller discipline.
+    pub fn open_read_only(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::Database::open_read_only(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
+    fn from_database(
+        database: hkask_storage::Database,
+        db_path: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
         use hkask_storage::database::sqlite::SqliteDriver;
-        let db = hkask_storage::open_or_repair(db_path, passphrase)?;
-        let pool = db.sqlite_pool()?;
+        let pool = database.sqlite_pool()?;
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new_labeled(pool, db_path));
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))
-            .map_err(|e| hkask_storage::DatabaseError::SqlCipher(e.to_string()))?;
+            .map_err(|error| hkask_storage::DatabaseError::SqlCipher(error.to_string()))?;
         let embedding_store = EmbeddingStore::from_driver(driver, dim)
-            .map_err(|e| hkask_storage::DatabaseError::SqlCipher(e.to_string()))?;
+            .map_err(|error| hkask_storage::DatabaseError::SqlCipher(error.to_string()))?;
         Ok(Self::new(h_mem_store, embedding_store))
     }
 

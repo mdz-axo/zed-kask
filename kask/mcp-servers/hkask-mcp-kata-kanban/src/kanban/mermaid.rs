@@ -40,6 +40,10 @@ pub(crate) enum MermaidParseError {
     /// The markdown did not contain a `kanban` directive on its own line.
     #[error("not a mermaid kanban block: missing `kanban` directive")]
     MissingKanbanDirective,
+    #[error("kanban has {count} columns but at most {max} distinct task statuses are supported")]
+    TooManyColumns { count: usize, max: usize },
+    #[error("kanban columns map more than once to status {status}")]
+    DuplicateStatus { status: TaskStatus },
 }
 
 /// A task reduced to the fields the mermaid format can carry: a slugified id
@@ -300,55 +304,53 @@ fn strip_code_fence(markdown: &str) -> String {
     }
 }
 
-/// Build [`ColumnDef`]s from a parsed board, mapping each parsed column to a
-/// distinct [`TaskStatus`].
+/// Build [`ColumnDef`]s from a parsed board with a one-to-one status mapping.
 ///
-/// The mapping prefers standard status names (case-insensitive): "backlog",
-/// "ready", "in progress" / "in_progress", "review", "done". Columns whose
-/// names don't match a standard status are assigned statuses in
-/// [`TaskStatus::STANDARD_ORDER`] by position, skipping any already claimed
-/// by a name match. If all five standard statuses are claimed, non-matching
-/// columns fall back to [`TaskStatus::Backlog`].
-pub(crate) fn columns_from_parsed(parsed: &ParsedBoard) -> Vec<ColumnDef> {
-    let mut claimed: Vec<Option<TaskStatus>> = vec![None; parsed.columns.len()];
-    // First pass: match by name.
-    for (i, column) in parsed.columns.iter().enumerate() {
-        if let Some(status) = match_column_name_to_status(&column.name) {
-            // Only claim if no earlier column claimed the same status.
-            if !claimed.iter().any(|c| c == &Some(status)) {
-                claimed[i] = Some(status);
-            }
-        }
-    }
-    // Second pass: assign remaining columns to the next unclaimed standard
-    // status, in order. Collect into a fresh Vec to avoid borrowing `claimed`
-    // mutably and immutably in the same loop.
-    let mut next_standard = 0;
-    let mut assigned: Vec<TaskStatus> = Vec::with_capacity(claimed.len());
-    for claimed_status in &claimed {
-        match claimed_status {
-            Some(status) => assigned.push(*status),
-            None => {
-                let mut found = TaskStatus::Backlog;
-                while next_standard < TaskStatus::STANDARD_ORDER.len() {
-                    let candidate = TaskStatus::STANDARD_ORDER[next_standard];
-                    next_standard += 1;
-                    if !claimed.iter().any(|c| c == &Some(candidate)) {
-                        found = candidate;
-                        break;
-                    }
-                }
-                assigned.push(found);
-            }
-        }
+/// Standard status names claim their matching status. Other names receive the
+/// next unused status in [`TaskStatus::STANDARD_ORDER`]. More than five columns
+/// or two columns naming the same standard status are rejected explicitly.
+pub(crate) fn columns_from_parsed(
+    parsed: &ParsedBoard,
+) -> Result<Vec<ColumnDef>, MermaidParseError> {
+    if parsed.columns.len() > TaskStatus::STANDARD_ORDER.len() {
+        return Err(MermaidParseError::TooManyColumns {
+            count: parsed.columns.len(),
+            max: TaskStatus::STANDARD_ORDER.len(),
+        });
     }
 
-    parsed
+    let mut used = std::collections::HashSet::new();
+    let mut assigned = Vec::with_capacity(parsed.columns.len());
+    for column in &parsed.columns {
+        let status = if let Some(status) = match_column_name_to_status(&column.name) {
+            if !used.insert(status) {
+                return Err(MermaidParseError::DuplicateStatus { status });
+            }
+            status
+        } else {
+            let status = TaskStatus::STANDARD_ORDER
+                .iter()
+                .copied()
+                .find(|candidate| !used.contains(candidate))
+                .ok_or(MermaidParseError::TooManyColumns {
+                    count: parsed.columns.len(),
+                    max: TaskStatus::STANDARD_ORDER.len(),
+                })?;
+            used.insert(status);
+            status
+        };
+        assigned.push(status);
+    }
+
+    Ok(parsed
         .columns
         .iter()
+        .zip(assigned)
         .enumerate()
-        .map(|(i, column)| ColumnDef::new(column.name.clone(), assigned[i], i as u32))
-        .collect()
+        .map(|(position, (column, status))| {
+            ColumnDef::new(column.name.clone(), status, position as u32)
+        })
+        .collect())
 }
 
 /// Match a parsed mermaid column name to a [`TaskStatus`] by case-insensitive
@@ -376,7 +378,7 @@ fn match_column_name_to_status(name: &str) -> Option<TaskStatus> {
 
 #[cfg(test)]
 mod tests {
-    use super::slugify_task_id;
+    use super::{columns_from_parsed, parse_mermaid_kanban, slugify_task_id};
 
     #[test]
     fn slugify_alphanumeric_id_keeps_content_under_t_prefix() {
@@ -418,5 +420,17 @@ mod tests {
         assert_ne!(once, twice, "slugify must not be involutive; see doc note");
         assert_eq!(once, "t_foo");
         assert_eq!(twice, "t_t_foo");
+    }
+
+    /// expect: "Mermaid import rejects workflows that cannot map one-to-one onto TaskStatus."
+    /// [P3] Motivating: Generative Space — imported columns remain unambiguous workflow states.
+    /// [P4] Constraining: Clear Boundaries — no sixth column silently aliases Backlog.
+    /// pre: a mermaid board contains six sections but TaskStatus has five variants
+    /// post: column conversion returns an explicit error
+    #[test]
+    fn six_columns_are_rejected_instead_of_falling_back_to_backlog() {
+        let markdown = "kanban\n  section One\n  section Two\n  section Three\n  section Four\n  section Five\n  section Six\n";
+        let parsed = parse_mermaid_kanban(markdown).expect("valid mermaid parses");
+        assert!(columns_from_parsed(&parsed).is_err());
     }
 }

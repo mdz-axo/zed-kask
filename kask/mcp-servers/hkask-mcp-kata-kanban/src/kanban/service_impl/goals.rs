@@ -16,7 +16,7 @@
 //! HMem scheme (kanban DB store):
 //!   kanban:goal → {goal_id} → JSON Goal
 
-use hkask_storage::HMemStore;
+use hkask_storage::{HMem, HMemStore};
 use hkask_types::WebID;
 use hkask_types::id::{GoalID, TaskId};
 
@@ -25,6 +25,19 @@ use super::types::KanbanError;
 use crate::kanban::{Goal, GoalResolution, GoalVerdict, VerificationCriterion};
 
 const GOAL_ENTITY: &str = "kanban:goal";
+
+fn goal_h_mem(goal: &Goal) -> Result<HMem, KanbanError> {
+    let ontology = hkask_types::HMemOntology {
+        dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
+        dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
+        dc_source: "kanban".to_string(),
+        pko_procedure: Some(goal.id.to_string()),
+        ..Default::default()
+    };
+    let value = serde_json::to_value(goal)
+        .map_err(|error| KanbanError::Internal(format!("goal serialization failed: {error}")))?;
+    Ok(HMem::new(GOAL_ENTITY, &goal.id.to_string(), value, goal.owner).with_ontology(ontology))
+}
 
 /// Bounds on goal criteria — lifted from `goal-analysis` (`create.j2`:
 /// "2–4 observable semantic conditions"), relaxed to allow a single
@@ -82,28 +95,9 @@ impl KanbanService {
 
         // Process-family anchor: `pplan:Step` (P-Plan, soft-reused by PKO) —
         // the same term the goal responses emit via `kanban_type_to_pko`,
-        // so the goal's record and its wire surface agree. Operator decision
-        // 2026-08-30: goals anchor on the PKO family so the whole kanban
-        // graph (boards = pko:Procedure, tasks and goals = pplan:Step,
-        // verdicts = pko:StepVerification) is one linked dataset in a
-        // published ontology — family coherence over concept-exactness.
-        // The former `pko:Goal` was fabricated (PKO publishes no Goal
-        // class); the interim IAO:0000005 anchor was rejected as opaque.
-        let goal_ontology = hkask_types::HMemOntology {
-            dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
-            dc_source: "kanban".to_string(),
-            pko_procedure: Some(goal.id.to_string()),
-            ..Default::default()
-        };
-        let h_mem = hkask_storage::HMem::new(
-            GOAL_ENTITY,
-            &goal.id.to_string(),
-            serde_json::to_value(&goal)
-                .map_err(|e| KanbanError::Internal(format!("goal serialization failed: {e}")))?,
-            owner,
-        )
-        .with_ontology(goal_ontology);
+        // so the goal's record and its wire surface agree. The constructor is
+        // shared with replacement writes so judge/score cannot erase it.
+        let h_mem = goal_h_mem(&goal)?;
         self.goal_store()?
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
@@ -342,23 +336,17 @@ impl KanbanService {
         Ok(self.store.clone())
     }
 
-    /// Persist a goal to the goal store, replacing any existing row for it —
-    /// the h_mem id is fresh per insert, so a bare insert would append a
-    /// duplicate row per verdict (and `goal_get`/`goal_list` would see the
-    /// stale first row).
+    /// Atomically replace a goal row while preserving its ontology anchor.
+    ///
+    /// A failed replacement leaves the prior outbox row intact; successful
+    /// replacement removes any duplicate legacy rows for the same goal key.
     fn goal_persist(&self, goal: &Goal) -> Result<(), KanbanError> {
-        self.goal_prune(goal.id)?;
-        let h_mem = hkask_storage::HMem::new(
-            GOAL_ENTITY,
-            &goal.id.to_string(),
-            serde_json::to_value(goal)
-                .map_err(|e| KanbanError::Internal(format!("goal serialization failed: {e}")))?,
-            goal.owner,
-        );
+        let h_mem = goal_h_mem(goal)?;
         self.goal_store()?
-            .insert(&h_mem)
-            .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
-        Ok(())
+            .insert_batch_replacing_key_atomic(&[h_mem], GOAL_ENTITY, &goal.id.to_string())
+            .map_err(|error| {
+                KanbanError::Internal(format!("atomic goal replacement failed: {error}"))
+            })
     }
 
     /// Delete a goal's row — the resolution prune. A missing row (already
@@ -392,6 +380,20 @@ mod goal_tests {
         (0..n)
             .map(|i| VerificationCriterion::new(format!("criterion {i} is observable")))
             .collect()
+    }
+
+    fn one_criterion_verdict() -> GoalVerdict {
+        GoalVerdict {
+            verdict: GoalVerdictValue::Continue,
+            confidence: 0.7,
+            criterion_results: vec![CriterionJudgment {
+                index: 0,
+                passed: false,
+                note: "not yet observable".into(),
+            }],
+            reasoning: "work in progress".into(),
+            judged_at: chrono::Utc::now(),
+        }
     }
 
     #[test]
@@ -438,6 +440,77 @@ mod goal_tests {
             svc.goal_create("goal".into(), criteria(2), Some(1.5), None, owner)
                 .is_err()
         );
+    }
+
+    /// expect: "A failed goal update leaves the prior durable outbox row available for retry."
+    /// [P3] Motivating: Generative Space — goal learning survives transient storage failure.
+    /// [P2] Constraining: Transparent Imperfection — failure preserves the last durable state.
+    /// pre: one goal exists and replacement insertion is forced to fail
+    /// post: judging returns an error and the original unjudged goal remains readable
+    #[test]
+    fn goal_replacement_failure_preserves_prior_outbox_row() -> anyhow::Result<()> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver.clone())?;
+        let svc = KanbanService::new(store);
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let trigger = format!(
+            "CREATE TRIGGER reject_goal_replacement BEFORE INSERT ON hmems
+             WHEN NEW.entity = '{GOAL_ENTITY}' AND NEW.attribute = '{}'
+             BEGIN SELECT RAISE(FAIL, 'forced goal replacement failure'); END;",
+            goal.id
+        );
+        driver.execute_batch(&trigger)?;
+
+        assert!(
+            svc.goal_judge(goal.id, one_criterion_verdict(), owner)
+                .is_err()
+        );
+        let retained = svc
+            .goal_get(goal.id)?
+            .ok_or_else(|| anyhow::anyhow!("failed replacement removed the prior goal"))?;
+        assert!(retained.verdicts.is_empty());
+        assert_eq!(retained.goal_text, goal.goal_text);
+        Ok(())
+    }
+
+    /// expect: "Updating a goal preserves the ontology anchor assigned when the goal was created."
+    /// [P3] Motivating: Generative Space — goal records remain part of the published process graph.
+    /// [P8] Constraining: Semantic Grounding — replacement cannot erase the goal's ontology identity.
+    /// pre: one ontology-anchored goal exists
+    /// post: judging the goal replaces its value while retaining the identical ontology payload
+    #[test]
+    fn goal_replacement_preserves_ontology() -> anyhow::Result<()> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver)?;
+        let svc = KanbanService::new(store.clone());
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let before = store
+            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("created goal has no h_mem row"))?;
+        let before_ontology = before
+            .ontology
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("created goal has no ontology"))?
+            .to_json_string()?;
+
+        svc.goal_judge(goal.id, one_criterion_verdict(), owner)?;
+
+        let after = store
+            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("updated goal has no h_mem row"))?;
+        let after_ontology = after
+            .ontology
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("updated goal lost its ontology"))?
+            .to_json_string()?;
+        assert_eq!(after_ontology, before_ontology);
+        Ok(())
     }
 
     #[test]

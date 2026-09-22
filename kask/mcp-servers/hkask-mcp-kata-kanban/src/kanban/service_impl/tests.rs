@@ -55,6 +55,30 @@ fn board_create_rejects_empty_columns() {
     assert!(result.is_err());
 }
 
+/// expect: "A board schema represents every new task in exactly one initial column."
+/// [P3] Motivating: Generative Space — every created task is visible and movable on its board.
+/// [P4] Constraining: Clear Boundaries — column statuses identify one unambiguous workflow position.
+/// pre: a custom schema either omits Backlog or assigns Backlog to two columns
+/// post: board creation rejects both schemas without writing a board
+#[test]
+fn board_create_rejects_unrepresentable_column_sets() {
+    let svc = KanbanService::new(make_store());
+    let missing_backlog = vec![ColumnDef::new("Ready".into(), TaskStatus::Ready, 0)];
+    assert!(
+        svc.board_create(WebID::new(), "No backlog", &missing_backlog)
+            .is_err()
+    );
+
+    let duplicate_status = vec![
+        ColumnDef::new("Inbox".into(), TaskStatus::Backlog, 0),
+        ColumnDef::new("Also inbox".into(), TaskStatus::Backlog, 1),
+    ];
+    assert!(
+        svc.board_create(WebID::new(), "Duplicate", &duplicate_status)
+            .is_err()
+    );
+}
+
 // ── Board name validation (reference model R1) ──────────────────────────
 //
 // The service boundary is the single enforcement point for every caller
@@ -228,6 +252,39 @@ fn task_create_rejects_unknown_board() {
     let svc = KanbanService::new(make_store());
     let result = svc.task_create(BoardId::new(), TaskSpec::new("Test".into()), WebID::new());
     assert!(result.is_err());
+}
+
+/// expect: "Creating a task never publishes its payload without its board-membership index."
+/// [P3] Motivating: Generative Space — a task is usable only as part of its board.
+/// [P2] Constraining: Transparent Imperfection — a failed compound write leaves no hidden task.
+/// pre: a board exists and insertion of its task-index row is forced to fail
+/// post: task creation fails and neither task payload nor board index row exists
+#[test]
+fn task_create_atomic_when_index_insert_fails() -> anyhow::Result<()> {
+    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+    let store = HMemStore::from_driver(driver.clone())?;
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service.board_create(owner, "Board", &make_default_columns())?;
+    driver.execute_batch(
+        "CREATE TRIGGER reject_task_index_insert BEFORE INSERT ON hmems
+         WHEN NEW.entity LIKE 'kanban:board_tasks:%'
+         BEGIN SELECT RAISE(FAIL, 'forced task index failure'); END;",
+    )?;
+
+    assert!(
+        service
+            .task_create(board.id, TaskSpec::new("Task".into()), owner)
+            .is_err()
+    );
+    assert!(service.task_list(board.id, TaskFilter::all())?.is_empty());
+    assert!(store.query_by_entity("kanban:task")?.is_empty());
+    assert!(
+        store
+            .query_by_entity(&format!("kanban:board_tasks:{}", board.id))?
+            .is_empty()
+    );
+    Ok(())
 }
 
 #[test]
@@ -674,6 +731,60 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
         1,
         "only the board row may remain"
     );
+}
+
+/// expect: "Deleting a task removes its payload and board index together or removes neither."
+/// [P3] Motivating: Generative Space — board membership never points at missing work.
+/// [P2] Constraining: Transparent Imperfection — a failed delete preserves visible prior state.
+/// pre: one task exists and deletion of its index row is forced to fail
+/// post: task deletion fails while task payload, board index, and board all remain
+#[test]
+fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
+    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+    let store = HMemStore::from_driver(driver.clone())?;
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service.board_create(owner, "Board", &make_default_columns())?;
+    let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
+    driver.execute_batch(
+        "CREATE TRIGGER reject_task_index_delete BEFORE DELETE ON hmems
+         WHEN OLD.entity LIKE 'kanban:board_tasks:%'
+         BEGIN SELECT RAISE(FAIL, 'forced task index delete failure'); END;",
+    )?;
+
+    assert!(service.task_delete(task.id).is_err());
+    assert!(service.task_get(task.id)?.is_some());
+    assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
+    assert!(service.board_get(board.id)?.is_some());
+    assert_eq!(store.count()?, 3);
+    Ok(())
+}
+
+/// expect: "Deleting a board removes the board and every child row together or removes nothing."
+/// [P3] Motivating: Generative Space — board lifecycle owns its complete task aggregate.
+/// [P2] Constraining: Transparent Imperfection — a child failure cannot orphan or hide work.
+/// pre: one board with one task exists and deletion of the task payload is forced to fail
+/// post: board deletion fails while board, task payload, and index remain readable
+#[test]
+fn board_delete_atomic_when_child_delete_fails() -> anyhow::Result<()> {
+    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+    let store = HMemStore::from_driver(driver.clone())?;
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service.board_create(owner, "Board", &make_default_columns())?;
+    let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
+    driver.execute_batch(
+        "CREATE TRIGGER reject_board_child_delete BEFORE DELETE ON hmems
+         WHEN OLD.entity = 'kanban:task'
+         BEGIN SELECT RAISE(FAIL, 'forced board child delete failure'); END;",
+    )?;
+
+    assert!(service.board_delete(board.id).is_err());
+    assert!(service.board_get(board.id)?.is_some());
+    assert!(service.task_get(task.id)?.is_some());
+    assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
+    assert_eq!(store.count()?, 3);
+    Ok(())
 }
 
 // ── Mermaid export/import round-trip integration tests ───────────────────

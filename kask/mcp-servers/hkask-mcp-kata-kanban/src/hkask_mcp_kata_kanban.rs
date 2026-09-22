@@ -1477,10 +1477,9 @@ impl KanbanServer {
         .await
     }
 
-    /// Import mermaid kanban markdown as a new board. Parses the markdown,
-    /// creates a board with columns matching the parsed sections (mapping
-    /// section names to `TaskStatus` where possible), and re-creates each
-    /// task in its parsed column's status by walking the transition chain.
+    /// Import mermaid kanban markdown as one atomic board aggregate. The MCP
+    /// adapter parses the document; `KanbanService::board_import` publishes the
+    /// board, task payloads, and indexes together with their parsed statuses.
     /// Replay-safe via `idempotency_key`.
     ///
     /// contract: P3-svc-kanban-013
@@ -1518,60 +1517,29 @@ impl KanbanServer {
                         .unwrap_or_else(|| "Imported Board".to_string());
                     let columns = kanban::mermaid::columns_from_parsed(&parsed);
                     let column_count = columns.len();
-                    let board = self
+                    let tasks = parsed
+                        .columns
+                        .iter()
+                        .zip(&columns)
+                        .flat_map(|(column, definition)| {
+                            column
+                                .tasks
+                                .iter()
+                                .cloned()
+                                .map(move |title| (TaskSpec::new(title), definition.status))
+                        })
+                        .collect();
+                    let (board, task_count) = self
                         .service
-                        .board_create(self.webid, &name, &columns)
+                        .board_import(self.webid, &name, &columns, tasks)
                         .map_err(map_kanban_error)?;
-
-                    let mut task_count: usize = 0;
-                    for column in &parsed.columns {
-                        let target_status = board
-                            .columns
-                            .iter()
-                            .find(|c| c.name == column.name)
-                            .map(|c| c.status)
-                            .unwrap_or(TaskStatus::Backlog);
-                        for title in &column.tasks {
-                            let spec = TaskSpec::new(title.clone());
-                            let task = self
-                                .service
-                                .task_create(board.id, spec, self.webid)
-                                .map_err(map_kanban_error)?;
-                            task_count += 1;
-                            // Walk the task forward from Backlog to the target
-                            // status through valid transitions.
-                            let mut current = TaskStatus::Backlog;
-                            while current != target_status {
-                                let next = match current.next() {
-                                    Some(s) => s,
-                                    None => break,
-                                };
-                                match self.service.task_move(task.id, next, self.webid) {
-                                    Ok(moved) => {
-                                        current = moved.status;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            target: "hkask.mcp.kata_kanban",
-                                            task_id = %task.id,
-                                            target_status = %target_status,
-                                            error = %e,
-                                            "import: could not move task to target status, leaving at {current}",
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     serde_json::to_value(BoardImportResponse {
                         board_id: board.id.to_string(),
                         board_name: board.name,
                         column_count,
                         task_count,
-                        ontology: kanban_type_to_pko("kanban_board_import")
-                            .map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_board_import").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },

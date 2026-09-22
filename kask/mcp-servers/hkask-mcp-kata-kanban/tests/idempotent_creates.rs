@@ -209,6 +209,65 @@ async fn replayed_board_create_yields_one_board() {
     );
 }
 
+/// expect: "Import creates one coherent board whose tasks occupy the parsed columns, even after replay."
+/// [P3] Motivating: Generative Space — imported work is immediately usable in its intended workflow.
+/// [P2] Constraining: Transparent Imperfection — replay cannot duplicate a partially published board.
+/// pre: mermaid defines Backlog, In Progress, and Done columns and the same key is submitted twice
+/// post: one board exists; both responses name it; tasks retain their parsed statuses
+#[tokio::test]
+async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() {
+    let server = make_server();
+    let markdown = "kanban\n  section Backlog\n    Planned work\n  section In Progress\n    Active work\n  section Done\n    Finished work\n";
+
+    let first_output = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Imported flow".to_string()),
+            idempotency_key: Some("import-gesture".to_string()),
+        }))
+        .await
+        .expect("first import succeeds");
+    let first = parse(&first_output);
+    let board_id = first["board_id"]
+        .as_str()
+        .expect("import response carries board_id")
+        .to_string();
+
+    let replay_output = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Imported flow".to_string()),
+            idempotency_key: Some("import-gesture".to_string()),
+        }))
+        .await
+        .expect("replayed import succeeds");
+    let replay = parse(&replay_output);
+    assert_eq!(replay["board_id"].as_str(), Some(board_id.as_str()));
+    assert_eq!(replay["replayed"].as_bool(), Some(true));
+    assert_eq!(board_count(&server).await, 1);
+
+    let list_output = server
+        .kanban_task_list(Parameters(TaskListRequest {
+            board_id,
+            status: None,
+        }))
+        .await
+        .expect("imported task list succeeds");
+    let listed = parse(&list_output);
+    let tasks = listed["tasks"]
+        .as_array()
+        .expect("task list response carries tasks");
+    let status_for = |title: &str| {
+        tasks
+            .iter()
+            .find(|task| task["title"].as_str() == Some(title))
+            .and_then(|task| task["status"].as_str())
+    };
+    assert_eq!(status_for("Planned work"), Some("backlog"));
+    assert_eq!(status_for("Active work"), Some("in_progress"));
+    assert_eq!(status_for("Finished work"), Some("done"));
+}
+
 /// Hammering the same key never produces a second row.
 #[tokio::test]
 async fn repeated_replays_never_duplicate() {

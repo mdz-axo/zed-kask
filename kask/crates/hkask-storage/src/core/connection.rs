@@ -52,6 +52,13 @@ impl SqliteConnectionManager {
         }
     }
 
+    pub fn with_flags(self, flags: rusqlite::OpenFlags) -> Self {
+        Self {
+            inner: self.inner.with_flags(flags),
+            ..self
+        }
+    }
+
     pub fn memory() -> Self {
         Self {
             inner: r2d2_sqlite::SqliteConnectionManager::memory(),
@@ -171,13 +178,37 @@ pub enum DatabaseError {
     Inventory(String),
     #[error("Database maintenance lease unavailable for {path}: {reason}")]
     MaintenanceLease { path: String, reason: String },
+    #[error("Read-only database open failed for {path}: {reason}")]
+    ReadOnlyOpen { path: String, reason: String },
+    #[error("Operation is not available on a read-only database: {0}")]
+    ReadOnlyOperation(String),
 }
 
-/// Database handle — path, passphrase, and whether it's a new file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DatabaseAccess {
+    ReadWrite,
+    ReadOnly,
+}
+
+fn immutable_sqlite_uri(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(char::from(byte))
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    format!("file:{encoded}?mode=ro&immutable=1")
+}
+
+/// Database handle — path, passphrase, access mode, and cached pool.
 ///
-/// `open()` handles file infrastructure (directories, salt file).
-/// `sqlite_pool()` creates an r2d2 pool with SQLCipher encryption, WAL mode,
-/// and schema initialization. No dual-path — one method per responsibility.
+/// `open()` handles writable file infrastructure. `open_read_only()` requires
+/// an existing file and creates no directories, maintenance lock, inventory
+/// entry, WAL sidecar, schema, or migration. `sqlite_pool()` selects the pool
+/// initializer from the access mode.
 ///
 /// The pool is cached after first creation — subsequent calls return the
 /// same pool. This prevents the "separate in-memory database per call"
@@ -186,6 +217,7 @@ pub struct Database {
     path: String,
     passphrase: String,
     extensions: Option<String>,
+    access: DatabaseAccess,
     maintenance_lease: Option<std::sync::Arc<std::fs::File>>,
     /// Cached r2d2 pool — created on first `sqlite_pool()` call.
     pool_cache: std::sync::Mutex<Option<r2d2::Pool<SqliteConnectionManager>>>,
@@ -201,6 +233,7 @@ impl Database {
         path: &str,
         passphrase: &str,
         extensions: Option<&str>,
+        access: DatabaseAccess,
     ) -> Result<Self, DatabaseError> {
         if passphrase.is_empty() {
             return Err(DatabaseError::KeyDerivation(
@@ -213,34 +246,69 @@ impl Database {
             ));
         }
 
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                DatabaseError::SqlCipher(format!(
-                    "Failed to create database directory {}: {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        }
+        let resolved_path = match access {
+            DatabaseAccess::ReadWrite => {
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        DatabaseError::SqlCipher(format!(
+                            "Failed to create database directory {}: {}",
+                            parent.display(),
+                            e
+                        ))
+                    })?;
+                }
+                path.to_string()
+            }
+            DatabaseAccess::ReadOnly => {
+                let canonical =
+                    std::fs::canonicalize(path).map_err(|error| DatabaseError::ReadOnlyOpen {
+                        path: path.to_string(),
+                        reason: error.to_string(),
+                    })?;
+                if !canonical.is_file() {
+                    return Err(DatabaseError::ReadOnlyOpen {
+                        path: path.to_string(),
+                        reason: "path is not a regular file".to_string(),
+                    });
+                }
+                canonical
+                    .to_str()
+                    .ok_or_else(|| DatabaseError::ReadOnlyOpen {
+                        path: path.to_string(),
+                        reason: "canonical path is not UTF-8".to_string(),
+                    })?
+                    .to_string()
+            }
+        };
 
         tracing::info!(
             target: "reg.storage",
-            operation = "open",
-            path = %path,
+            operation = if access == DatabaseAccess::ReadOnly { "open_read_only" } else { "open" },
+            path = %resolved_path,
             "Database opened"
         );
 
         Ok(Self {
-            path: path.to_string(),
+            path: resolved_path,
             passphrase: passphrase.to_string(),
             extensions: extensions.map(|s| s.to_string()),
+            access,
             maintenance_lease: None,
             pool_cache: std::sync::Mutex::new(None),
         })
     }
 
     pub fn open(path: &str, passphrase: &str) -> Result<Self, DatabaseError> {
-        Self::open_impl(path, passphrase, None)
+        Self::open_impl(path, passphrase, None, DatabaseAccess::ReadWrite)
+    }
+
+    /// Open an existing SQLCipher database for sealed retrieval.
+    ///
+    /// The returned handle never creates filesystem state or runs writable
+    /// initialization. `sqlite_pool()` uses SQLite read-only flags and
+    /// `PRAGMA query_only`, so write methods fail at the storage boundary.
+    pub fn open_read_only(path: &str, passphrase: &str) -> Result<Self, DatabaseError> {
+        Self::open_impl(path, passphrase, None, DatabaseAccess::ReadOnly)
     }
 
     pub fn open_with_extensions(
@@ -248,7 +316,12 @@ impl Database {
         passphrase: &str,
         extensions: &str,
     ) -> Result<Self, DatabaseError> {
-        Self::open_impl(path, passphrase, Some(extensions))
+        Self::open_impl(
+            path,
+            passphrase,
+            Some(extensions),
+            DatabaseAccess::ReadWrite,
+        )
     }
 
     fn in_memory_impl(extensions: Option<&str>) -> Result<Self, DatabaseError> {
@@ -256,6 +329,7 @@ impl Database {
             path: String::from(":memory:"),
             passphrase: String::new(),
             extensions: extensions.map(|s| s.to_string()),
+            access: DatabaseAccess::ReadWrite,
             maintenance_lease: None,
             pool_cache: std::sync::Mutex::new(None),
         })
@@ -355,6 +429,8 @@ impl Database {
         }
         let pool = if self.path == ":memory:" {
             self.in_memory_pool()?
+        } else if self.access == DatabaseAccess::ReadOnly {
+            self.read_only_file_pool()?
         } else {
             self.file_pool()?
         };
@@ -377,6 +453,9 @@ impl Database {
     pub fn checkpoint(&self) -> Result<(), DatabaseError> {
         if self.path == ":memory:" {
             return Ok(());
+        }
+        if self.access == DatabaseAccess::ReadOnly {
+            return Err(DatabaseError::ReadOnlyOperation("checkpoint".to_string()));
         }
         let pool = self.sqlite_pool()?;
         let conn = pool
@@ -411,6 +490,86 @@ impl Database {
         if let Some(ext) = &self.extensions {
             conn.execute_batch(ext)?;
         }
+        Ok(pool)
+    }
+
+    fn configured_pool_size() -> u32 {
+        match std::env::var("HKASK_DB_POOL_SIZE") {
+            Ok(raw) => match raw.parse::<u32>() {
+                Ok(size) if size > 0 => size,
+                _ => {
+                    tracing::warn!(
+                        target: "reg.storage",
+                        value = %raw,
+                        fallback = 8,
+                        "HKASK_DB_POOL_SIZE malformed or non-positive; using default",
+                    );
+                    8
+                }
+            },
+            Err(_) => 8,
+        }
+    }
+
+    fn read_only_file_pool(&self) -> Result<r2d2::Pool<SqliteConnectionManager>, DatabaseError> {
+        let escaped = self.passphrase.replace('\'', "''");
+        let key_pragma = format!("PRAGMA key = '{escaped}';");
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+        let immutable_uri = immutable_sqlite_uri(&self.path);
+
+        {
+            let probe =
+                rusqlite::Connection::open_with_flags(&immutable_uri, flags).map_err(|error| {
+                    DatabaseError::ReadOnlyOpen {
+                        path: self.path.clone(),
+                        reason: error.to_string(),
+                    }
+                })?;
+            probe.execute_batch(&key_pragma)?;
+            probe
+                .query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+                .map_err(|_| DatabaseError::PassphraseMismatch(self.path.clone()))?;
+        }
+
+        let key_for_connections = key_pragma.clone();
+        let manager = SqliteConnectionManager::file(&immutable_uri)
+            .with_flags(flags)
+            .with_init(move |connection| {
+                init_sqlite_vec_on(connection)?;
+                connection.execute_batch(&key_for_connections)?;
+                connection.execute_batch(
+                    "PRAGMA query_only = ON;
+                     PRAGMA busy_timeout = 120000;",
+                )
+            });
+        let pool = r2d2::Pool::builder()
+            .max_size(Self::configured_pool_size())
+            .min_idle(Some(0))
+            .connection_timeout(std::time::Duration::from_secs(120))
+            .build(manager)
+            .map_err(|error| DatabaseError::ReadOnlyOpen {
+                path: self.path.clone(),
+                reason: error.to_string(),
+            })?;
+        let connection = pool.get().map_err(|error| {
+            let message = error.to_string().to_lowercase();
+            if message.contains("file is not a database") || message.contains("not a database") {
+                DatabaseError::PassphraseMismatch(self.path.clone())
+            } else {
+                DatabaseError::ReadOnlyOpen {
+                    path: self.path.clone(),
+                    reason: error.to_string(),
+                }
+            }
+        })?;
+        connection
+            .query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+            .map_err(|error| DatabaseError::ReadOnlyOpen {
+                path: self.path.clone(),
+                reason: error.to_string(),
+            })?;
         Ok(pool)
     }
 
@@ -465,23 +624,8 @@ impl Database {
                 )
             });
 
-        let pool_size = match std::env::var("HKASK_DB_POOL_SIZE") {
-            Ok(raw) => match raw.parse::<u32>() {
-                Ok(size) if size > 0 => size,
-                _ => {
-                    tracing::warn!(
-                        target: "reg.storage",
-                        value = %raw,
-                        fallback = 8,
-                        "HKASK_DB_POOL_SIZE malformed or non-positive; using default",
-                    );
-                    8
-                }
-            },
-            Err(_) => 8,
-        };
         let pool = r2d2::Pool::builder()
-            .max_size(pool_size)
+            .max_size(Self::configured_pool_size())
             // Establish connections strictly on demand: every established
             // connection pays the SQLCipher KDF (seconds-scale), so eagerly
             // opening `min_idle` connections taxes every pool build —
@@ -943,6 +1087,20 @@ mod tests {
         let count: i64 =
             connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
         assert_eq!(count, 1, "migration must be retryable after failure");
+        Ok(())
+    }
+
+    /// expect: "Read-only open never creates a missing database or its parent." [P1]
+    #[test]
+    fn read_only_open_rejects_missing_path_without_creation() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let parent = directory.path().join("absent-parent");
+        let path = parent.join("missing.db");
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 test path"))?;
+        assert!(Database::open_read_only(path_str, "test_passphrase").is_err());
+        assert!(!parent.exists());
         Ok(())
     }
 

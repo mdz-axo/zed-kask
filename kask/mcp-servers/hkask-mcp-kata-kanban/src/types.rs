@@ -692,7 +692,7 @@ pub(crate) struct BoardExportResponse {
 /// Request for `kanban_board_import` — parse mermaid kanban markdown and
 /// create a new board with tasks in the parsed columns.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BoardImportRequest {
+pub struct BoardImportRequest {
     /// Mermaid kanban markdown (the output of `kanban_board_export`).
     pub markdown: String,
     /// Optional override for the board name. When `None`, the name parsed

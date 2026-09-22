@@ -22,12 +22,18 @@
 
 pub(crate) mod bayesian; // Confidence combination via log-odds pooling
 pub mod consolidation_service; // Memory consolidator (cleanup + budget pruning)
+pub mod federated_recall; // Identity-bound read-only external passage retrieval
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;
+pub use federated_recall::{
+    ExternalPassageBatch, ExternalPassageHit, FederatedHit, FederatedRecallError,
+    FederatedSourceIdentity, FederatedSourceKind, FederatedSourceSpec, FederatedSourcesManifest,
+    RankedSourceBatch, ReadOnlyPassageSource, interleave_ranked_batches,
+};
 
 pub use memory_store::{
     DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome, semantic_passage_for_h_mem,

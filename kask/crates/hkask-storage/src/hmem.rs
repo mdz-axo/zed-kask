@@ -386,6 +386,45 @@ impl HMemStore {
         Ok(())
     }
 
+    /// Delete a set of h_mems in one transaction.
+    ///
+    /// expect: "Deleting related durable records either removes the whole set or preserves it."
+    /// [P3] Motivating: Generative Space — compound domain state stays coherent.
+    /// [P2] Constraining: Transparent Imperfection — failure preserves the last durable state.
+    /// pre: ids identify zero or more h_mem rows
+    /// post: all matching rows are deleted and their count is returned, or no row is deleted
+    pub fn delete_batch_by_id_atomic(&self, ids: &[HMemId]) -> Result<usize, HMemError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "atomic h_mem batch deletion requires a SqliteDriver",
+            ))
+        })?;
+        let mut connection = pool
+            .get()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let mut deleted = 0usize;
+        for id in ids {
+            deleted += transaction
+                .execute(
+                    "DELETE FROM hmems WHERE id = ?1",
+                    rusqlite::params![id.to_string()],
+                )
+                .map_err(|error| {
+                    HMemError::Infra(InfrastructureError::database(error.to_string()))
+                })?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        Ok(deleted)
+    }
+
     /// Query h_mems by entity.
     ///
     /// expect: "The system provides durable storage for h_mem data"

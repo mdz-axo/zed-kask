@@ -15,7 +15,7 @@ use hkask_types::Dimension;
 use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
-use hkask_types::id::{BoardId, TaskId};
+use hkask_types::id::{BoardId, HMemId, TaskId};
 use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use serde_json::Value;
 
@@ -134,6 +134,52 @@ impl KanbanService {
         Ok(trimmed)
     }
 
+    fn validate_columns(columns: &[ColumnDef]) -> Result<(), KanbanError> {
+        if columns.is_empty() {
+            return Err(KanbanError::InvalidInput(
+                "board must have at least one column".into(),
+            ));
+        }
+        let statuses = columns
+            .iter()
+            .map(|column| column.status)
+            .collect::<std::collections::HashSet<_>>();
+        if statuses.len() != columns.len() {
+            return Err(KanbanError::InvalidInput(
+                "board column statuses must be unique".into(),
+            ));
+        }
+        if !statuses.contains(&TaskStatus::Backlog) {
+            return Err(KanbanError::InvalidInput(
+                "board must contain a Backlog column for new tasks".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn build_board(owner: WebID, name: &str, columns: &[ColumnDef]) -> Result<Board, KanbanError> {
+        let name = Self::validate_board_name(name)?;
+        Self::validate_columns(columns)?;
+        Ok(Board::new(name.to_string(), owner, columns.to_vec()))
+    }
+
+    fn board_h_mem(board: &Board) -> Result<HMem, KanbanError> {
+        let value = serde_json::to_value(board)
+            .map_err(|error| KanbanError::Internal(format!("serialization failed: {error}")))?;
+        let ontology = HMemOntology {
+            dimensions: vec![Dimension::How.as_str().to_string()],
+            dc_type: hkask_bridge_ontology::pko::PROCEDURE.to_string(),
+            dc_source: "kanban".to_string(),
+            pko_procedure: Some(board.id.to_string()),
+            pko_step: None,
+            ..Default::default()
+        };
+        Ok(
+            HMem::new(BOARD_ENTITY, &board.id.to_string(), value, board.owner)
+                .with_ontology(ontology),
+        )
+    }
+
     /// Create a new kanban board.
     ///
     /// pre:  owner is a valid WebID; name is non-empty and within the cap;
@@ -146,33 +192,8 @@ impl KanbanService {
         name: &str,
         columns: &[ColumnDef],
     ) -> Result<Board, KanbanError> {
-        let name = Self::validate_board_name(name)?;
-        if columns.is_empty() {
-            return Err(KanbanError::InvalidInput(
-                "board must have at least one column".into(),
-            ));
-        }
-
-        let board = Board::new(name.to_string(), owner, columns.to_vec());
-        let value = serde_json::to_value(&board)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-
-        // Anchor the board as a PKO Procedure — the process-axis root that
-        // `query_by_pko_procedure(board_id)` reaches. A board is the procedure
-        // itself (no step), so `pko_step` is None; tasks under it carry the
-        // step identifier. Without this anchoring the board's h_mem is
-        // unreachable via the process-axis query (the `.rules` "Ontology tag
-        // field-drop trap" — the ontology blob must be set at write time).
-        let board_ontology = HMemOntology {
-            dimensions: vec![Dimension::How.as_str().to_string()],
-            dc_type: hkask_bridge_ontology::pko::PROCEDURE.to_string(),
-            dc_source: "kanban".to_string(),
-            pko_procedure: Some(board.id.to_string()),
-            pko_step: None,
-            ..Default::default()
-        };
-        let h_mem = HMem::new(BOARD_ENTITY, &board.id.to_string(), value, owner)
-            .with_ontology(board_ontology);
+        let board = Self::build_board(owner, name, columns)?;
+        let h_mem = Self::board_h_mem(&board)?;
         self.store
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
@@ -182,12 +203,53 @@ impl KanbanService {
             target: "hkask.kanban",
             operation = "board_created",
             board_id = %board.id,
-            name = %name,
+            name = %board.name,
             owner = %owner,
             "REG"
         );
 
         Ok(board)
+    }
+
+    /// Publish an imported board and all of its tasks as one aggregate.
+    ///
+    /// expect: "An imported board appears complete in the parsed workflow or does not appear."
+    /// [P3] Motivating: Generative Space — imported work is immediately usable.
+    /// [P2] Constraining: Transparent Imperfection — publication failure leaves no partial board.
+    /// pre: columns form a valid board schema and every task status names one of those columns
+    /// post: board, task payloads, and board indexes commit together; tasks keep their parsed statuses
+    pub(crate) fn board_import(
+        &self,
+        owner: WebID,
+        name: &str,
+        columns: &[ColumnDef],
+        tasks: Vec<(TaskSpec, TaskStatus)>,
+    ) -> Result<(Board, usize), KanbanError> {
+        let board = Self::build_board(owner, name, columns)?;
+        let mut records = vec![Self::board_h_mem(&board)?];
+        let task_count = tasks.len();
+        for (spec, status) in tasks {
+            if board.column_for_status(status).is_none() {
+                return Err(KanbanError::InvalidInput(format!(
+                    "imported task status {status} has no board column"
+                )));
+            }
+            let mut task = self.build_task(board.id, spec, owner)?;
+            task.status = status;
+            records.extend(Self::task_h_mems(&task)?);
+        }
+        self.store.insert_batch_atomic(&records).map_err(|error| {
+            KanbanError::Internal(format!("atomic board import failed: {error}"))
+        })?;
+        tracing::info!(
+            target: "hkask.kanban",
+            operation = "board_imported",
+            board_id = %board.id,
+            task_count,
+            owner = %owner,
+            "REG"
+        );
+        Ok((board, task_count))
     }
 
     /// The standard 5-column kanban board layout:
@@ -341,6 +403,50 @@ impl KanbanService {
         Ok(())
     }
 
+    fn build_task(
+        &self,
+        board_id: BoardId,
+        spec: TaskSpec,
+        owner: WebID,
+    ) -> Result<Task, KanbanError> {
+        self.validate_goal_citations(&spec.advances)?;
+        let story_points = spec.story_points;
+        let estimated_hours = spec.estimated_hours;
+        let priority = spec.priority;
+        let labels = spec.labels.clone();
+        let phase_id = spec.phase_id;
+        let mut task = Task::new(board_id, spec, owner);
+        task.story_points = story_points;
+        task.estimated_hours = estimated_hours;
+        task.labels = labels;
+        task.priority = priority;
+        task.phase_id = phase_id;
+        Ok(task)
+    }
+
+    fn task_h_mems(task: &Task) -> Result<[HMem; 2], KanbanError> {
+        let value = serde_json::to_value(task)
+            .map_err(|error| KanbanError::Internal(format!("serialization failed: {error}")))?;
+        let task_ontology =
+            HMemOntology::process(task.board_id.to_string(), task.id.to_string(), "kanban");
+        let task_row = HMem::new(TASK_ENTITY, &task.id.to_string(), value, task.owner)
+            .with_ontology(task_ontology);
+        let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
+        let index_ontology = HMemOntology::process(
+            task.board_id.to_string(),
+            task.id.to_string(),
+            "kanban:index",
+        );
+        let index_row = HMem::new(
+            &index_entity,
+            &task.id.to_string(),
+            Value::String(task.id.to_string()),
+            task.owner,
+        )
+        .with_ontology(index_ontology);
+        Ok([task_row, index_row])
+    }
+
     /// Create a new task on a board.
     ///
     /// pre:  board_id refers to an existing board; spec.title is non-empty; owner is valid
@@ -352,59 +458,17 @@ impl KanbanService {
         spec: TaskSpec,
         owner: WebID,
     ) -> Result<Task, KanbanError> {
-        // Verify board exists
-        let board = self.board_get(board_id)?.ok_or_else(|| {
+        self.board_get(board_id)?.ok_or_else(|| {
             KanbanError::NotFound(NotFound {
                 entity_type: "board".to_string(),
                 id: board_id.to_string(),
             })
         })?;
-        let _ = board;
-
-        self.validate_goal_citations(&spec.advances)?;
-
-        // Extract sizing fields before Task::new consumes the spec
-        let sp = spec.story_points;
-        let eh = spec.estimated_hours;
-        let pr = spec.priority;
-        let lbls = spec.labels.clone();
-        let ph = spec.phase_id;
-        let mut task = Task::new(board_id, spec, owner);
-        task.story_points = sp;
-        task.estimated_hours = eh;
-        task.labels = lbls;
-        task.priority = pr;
-        task.phase_id = ph;
-        let value = serde_json::to_value(&task)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-
-        // Persist the task — anchored as a PKO Step of the board's procedure.
-        // `query_by_pko_procedure(board_id)` reaches every task under a board.
-        let task_ontology =
-            HMemOntology::process(board_id.to_string(), task.id.to_string(), "kanban");
-        let h_mem =
-            HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner).with_ontology(task_ontology);
-        self.store
-            .insert(&h_mem)
-            .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
-
-        // Persist board→task index — a step-membership record anchoring the
-        // task under the board's procedure (same PKO anchoring as the task,
-        // distinct dc_source so the index is distinguishable from the task
-        // payload itself).
-        let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
-        let index_ontology =
-            HMemOntology::process(board_id.to_string(), task.id.to_string(), "kanban:index");
-        let index_triple = HMem::new(
-            &index_entity,
-            &task.id.to_string(),
-            Value::String(task.id.to_string()),
-            owner,
-        )
-        .with_ontology(index_ontology);
-        self.store
-            .insert(&index_triple)
-            .map_err(|e| KanbanError::Internal(format!("index h_mem insert failed: {e}")))?;
+        let task = self.build_task(board_id, spec, owner)?;
+        let records = Self::task_h_mems(&task)?;
+        self.store.insert_batch_atomic(&records).map_err(|error| {
+            KanbanError::Internal(format!("atomic task publication failed: {error}"))
+        })?;
 
         // P9: Regulation span
         tracing::info!(
@@ -727,6 +791,23 @@ impl KanbanService {
 
     // ── Lifecycle operations (P0) ─────────────────────────────────────
 
+    fn task_record_ids(&self, task: &Task) -> Result<Vec<HMemId>, KanbanError> {
+        let task_rows = self
+            .store
+            .query_by_entity_attribute(TASK_ENTITY, &task.id.to_string())
+            .map_err(|error| KanbanError::Internal(format!("task h_mem query failed: {error}")))?;
+        let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
+        let index_rows = self
+            .store
+            .query_by_entity_attribute(&index_entity, &task.id.to_string())
+            .map_err(|error| KanbanError::Internal(format!("task index query failed: {error}")))?;
+        Ok(task_rows
+            .into_iter()
+            .chain(index_rows)
+            .map(|row| row.id)
+            .collect())
+    }
+
     /// Delete a task and its board index entry.
     ///
     /// pre:  task_id is valid
@@ -735,29 +816,12 @@ impl KanbanService {
     pub(crate) fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
         let task = self.require_task(task_id)?;
 
-        // Delete the task h_mem
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        for t in &h_mems {
-            self.store
-                .delete_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("h_mem delete failed: {e}")))?;
-        }
-
-        // Delete the index h_mem
-        let index_entity = format!("{BOARD_TASKS_PREFIX}{}", task.board_id);
-        let idx_triples = self
-            .store
-            .query_by_entity_attribute(&index_entity, &task_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("index query failed: {e}")))?;
-        for t in &idx_triples {
-            self.store
-                .delete_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("index delete failed: {e}")))?;
-        }
-
+        let record_ids = self.task_record_ids(&task)?;
+        self.store
+            .delete_batch_by_id_atomic(&record_ids)
+            .map_err(|error| {
+                KanbanError::Internal(format!("atomic task deletion failed: {error}"))
+            })?;
         Ok(())
     }
 
@@ -865,45 +929,30 @@ impl KanbanService {
     /// post: board h_mem and all associated task/index h_mems are deleted from the database
     #[must_use = "result must be used"]
     pub(crate) fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
-        let board = self.board_get(board_id)?.ok_or_else(|| {
+        self.board_get(board_id)?.ok_or_else(|| {
             KanbanError::NotFound(NotFound {
                 entity_type: "board".to_string(),
                 id: board_id.to_string(),
             })
         })?;
 
-        // Delete all tasks on this board
         let tasks = self.task_list(board_id, TaskFilter::all())?;
-        let mut deleted_count = 0usize;
+        let mut record_ids = Vec::new();
         for task in &tasks {
-            match self.task_delete(task.id) {
-                Ok(()) => deleted_count += 1,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.kanban",
-                        operation = "board_delete",
-                        board_id = %board_id,
-                        task_id = %task.id,
-                        error = %e,
-                        "Failed to delete task during board deletion"
-                    );
-                }
-            }
+            record_ids.extend(self.task_record_ids(task)?);
         }
-
-        // Delete the board h_mem
-        let h_mems = self
+        let board_rows = self
             .store
             .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        for t in &h_mems {
-            self.store
-                .delete_by_id(&t.id)
-                .map_err(|e| KanbanError::Internal(format!("h_mem delete failed: {e}")))?;
-        }
-        let _ = board;
+            .map_err(|error| KanbanError::Internal(format!("board h_mem query failed: {error}")))?;
+        record_ids.extend(board_rows.into_iter().map(|row| row.id));
 
-        Ok(deleted_count)
+        self.store
+            .delete_batch_by_id_atomic(&record_ids)
+            .map_err(|error| {
+                KanbanError::Internal(format!("atomic board deletion failed: {error}"))
+            })?;
+        Ok(tasks.len())
     }
 
     // ── LLM Verification ──────────────────────────────────────────────
