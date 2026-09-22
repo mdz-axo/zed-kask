@@ -576,15 +576,13 @@ classDiagram
     class ToolPort {
         <<interface>>
         +invoke(server, tool, args, agent) ToolFuture
-        +discover_tools() ToolFuture~Vec~String~~
-        +get_tool_info(name) ToolFuture~Option~ToolInfo~~
+        +get_tool_info(server, tool) ToolFuture~Option~ToolInfo~~
     }
 
     class ToolInfo {
         +name: String
         +description: String
         +input_schema: Value
-        +server_id: String
     }
 
     class ToolPortError {
@@ -592,17 +590,18 @@ classDiagram
         +EnergyBudgetExceeded(String)
         +NotFound(NotFound)
         +Unavailable(String)
+        +Interrupted(String)
         +InvocationFailed(String)
         +is_retryable() bool
     }
 
     class McpRuntime {
         -servers: HashMap
-        -tool_registry: HashMap
         -connections: HashMap
         -governance: Option
         +with_governance(cybernetics, sink) McpRuntime
         +register_server(server)
+        +get_tool_info(server, tool) Option~ToolInfo~
     }
 
     class CallCapManager {
@@ -625,8 +624,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPortError variants L12-51, is_retryable L50-52); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
+verified_date: 2026-09-22
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L118-125, ToolPortError variants L8-38, is_retryable L49-53); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort L1455, servers map L468); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
 status: VERIFIED
 -->
 

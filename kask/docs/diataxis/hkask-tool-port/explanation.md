@@ -1,7 +1,7 @@
 ---
 title: "hkask-tool-port — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
+last_updated: 2026-09-22
 version: "2.0.0"
 status: "Active"
 domain: "Sovereignty"
@@ -26,10 +26,10 @@ worthless.
 | ------------------------------------ | -------------------------------------------------------------- |
 | Per-call gate removal rationale      | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:5-19`     |
 | `invoke` does not authorize          | `kask/crates/hkask-tool-port/src/tool_port.rs:68-83`          |
-| `invoke` metering + dispatch         | `kask/crates/hkask-mcp/src/runtime.rs:1286-1400`              |
+| `invoke` metering + dispatch         | `kask/crates/hkask-mcp/src/runtime.rs:1456-1576`              |
 | `CallMeterOutcome` branches          | `kask/crates/hkask-regulation/src/energy.rs:30-40`            |
-| Per-request allowlist gate           | `kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831` |
-| Per-agent `mcp_tools` allowlist       | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219,431-437` |
+| Per-request allowlist gate           | `kask/crates/kask_bridge/src/inference_ipc_server.rs:897-965` |
+| Per-agent `mcp_tools` allowlist       | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:331-360,590-599` |
 | Per-server credential allowlist      | `kask/crates/kask_bridge/src/mcp_servers.rs:43`                |
 | Taint gate removal rationale         | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:17-19`     |
 
@@ -39,17 +39,17 @@ Capability separation is enforced at boundaries that hold a list the caller
 cannot set:
 
 - **The per-request `tool_allowlist`** on the inference IPC `tool_invoke`
-  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`).
+  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:897-965`).
   The child MCP server declares what it may dispatch; the zed side enforces it
   before dispatch, so the gate does not depend on the child's own matching
   being correct. Fail-closed: a missing or empty allowlist is a protocol
-  violation, never an implicit grant-all (`inference_ipc_server.rs:831`).
+  violation, never an implicit grant-all (`inference_ipc_server.rs:934-957`).
   Pinned by `dispatch_tool_invoke_rejects_unallowed_tool`
-  (`inference_ipc_server.rs:1359`).
+  (`inference_ipc_server.rs:1669`).
 - **The per-agent `mcp_tools` allowlist** on each swarm agent card
-  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219`). A tool
+  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:331-360`). A tool
   call outside the declared set is refused with "not in declared mcp_tools
-  allowlist" (`agent_executor.rs:431-437`) and never dispatched.
+  allowlist" (`agent_executor.rs:590-599`) and never dispatched.
 - **The per-server MCP env/credential allowlists**
   (`kask/crates/kask_bridge/src/mcp_servers.rs:43`). A server's process receives
   only the credentials scoped to it.
@@ -73,8 +73,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-004
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-mcp/src/runtime.rs:1286-1400 (impl ToolPort for McpRuntime, charge_call_metered branch + no-governance branch); kask/crates/hkask-regulation/src/energy.rs:30-40 (CallMeterOutcome); kask/crates/hkask-mcp/src/runtime.rs:2042,2088 (pinned tests)
+verified_date: 2026-09-22
+verified_against: kask/crates/hkask-mcp/src/runtime.rs:1455-1585 (impl ToolPort for McpRuntime, charge_call_metered branch L1485-1514 + no-governance branch L1566-1574); kask/crates/hkask-regulation/src/energy.rs:30-40 (CallMeterOutcome); kask/crates/hkask-mcp/src/runtime.rs:2363,2447,2504 (metering_tests pinned tests)
 status: VERIFIED
 -->
 
@@ -82,17 +82,17 @@ One mechanism remains on the dispatch path, and it does not authorize:
 
 **The runaway-loop breaker.** One call is charged against the agent's per-tick
 ceiling. Only an exhausted ceiling refuses (`EnergyBudgetExceeded`,
-`runtime.rs:1337-1345`), and the cap resets each regulation tick. Its purpose
+`runtime.rs:1496-1513`), and the cap resets each regulation tick. Its purpose
 is to end a non-terminating tool loop and to meter usage so cost can be
 optimized over time — not to limit precisely or to authorize. It is
 deliberately **fail-open** on an agent with no registered ceiling: such an
 agent is auto-registered at `DEFAULT_RUNAWAY_CALL_CEILING` (`energy.rs:26`)
-and the wiring gap is logged (`runtime.rs:1318-1326`). The prior fail-closed
+and the wiring gap is logged (`runtime.rs:1487-1495`). The prior fail-closed
 behavior demonstrated why: the composition root seeded a ceiling only for
 some personas while the IPC dispatch used `kask-panel` and the MCP runtime
 used a different persona, so every delegated tool call was refused for a
 wiring omission that had nothing to do with authority
-(`runtime.rs:1311-1317`).
+(`runtime.rs:1476-1483`).
 
 ## Information flow control (Layer 5) is absent by decision
 
@@ -128,8 +128,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-005
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219,431-437 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
+verified_date: 2026-09-22
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:897-965 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:331-360,590-599 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
 status: VERIFIED
 -->
 

@@ -1,7 +1,7 @@
 ---
 title: "hkask-tool-port — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
+last_updated: 2026-09-22
 version: "2.0.0"
 status: "Active"
 domain: "Sovereignty"
@@ -21,21 +21,21 @@ enforced outside this crate, at the allowlist boundaries listed under
 
 | Symbol                       | Location                                                                                       |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ToolPort` trait             | `kask/crates/hkask-tool-port/src/tool_port.rs:89-115`                                         |
+| `ToolPort` trait             | `kask/crates/hkask-tool-port/src/tool_port.rs:89-116`                                         |
 | `ToolPortError` enum         | `kask/crates/hkask-tool-port/src/tool_port.rs:8-38`                                           |
 | `ToolPortError::is_retryable`| `kask/crates/hkask-tool-port/src/tool_port.rs:49-53`                                          |
 | `ToolFuture` type alias      | `kask/crates/hkask-tool-port/src/tool_port.rs:62`                                             |
-| `ToolInfo` struct            | `kask/crates/hkask-tool-port/src/tool_port.rs:118-123`                                        |
+| `ToolInfo` struct            | `kask/crates/hkask-tool-port/src/tool_port.rs:118-125`                                        |
 | Crate lib root               | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:1-23`                                     |
-| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs:1286` (`impl hkask_tool_port::ToolPort for McpRuntime`) |
-| `McpRuntime::invoke` body    | `kask/crates/hkask-mcp/src/runtime.rs:1286-1400`                                               |
-| `McpRuntime::with_governance`| `kask/crates/hkask-mcp/src/runtime.rs:432`                                                     |
+| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs:1455` (`impl hkask_tool_port::ToolPort for McpRuntime`) |
+| `McpRuntime::invoke` body    | `kask/crates/hkask-mcp/src/runtime.rs:1456-1576`                                               |
+| `McpRuntime::with_governance`| `kask/crates/hkask-mcp/src/runtime.rs:516`                                                     |
 | `CallMeterOutcome` enum      | `kask/crates/hkask-regulation/src/energy.rs:30-40`                                             |
 | `CallCapManager::charge_metered` | `kask/crates/hkask-regulation/src/energy.rs:176`                                           |
 | `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:26`                                              |
 | `CyberneticsLoop::charge_call_metered` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:662`                          |
-| Per-request `tool_allowlist` gate | `kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831`                              |
-| Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219,431-437`                    |
+| Per-request `tool_allowlist` gate | `kask/crates/kask_bridge/src/inference_ipc_server.rs:897-965`                              |
+| Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:331-360,590-599`                    |
 | Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:43` (`BuiltinMcpServer.credentials`)         |
 | `CapabilityTier::detect`     | `kask/crates/hkask-mcp-server/src/server/context.rs:91`                                        |
 
@@ -49,14 +49,12 @@ classDiagram
     class ToolPort {
         <<interface>>
         +invoke(server, tool, args, agent) ToolFuture
-        +discover_tools() ToolFuture~Vec~String~~
-        +get_tool_info(name) ToolFuture~Option~ToolInfo~~
+        +get_tool_info(server, tool) ToolFuture~Option~ToolInfo~~
     }
     class ToolInfo {
         +name: String
         +description: String
         +input_schema: Value
-        +server_id: String
     }
     class ToolPortError {
         <<enumeration>>
@@ -84,8 +82,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-006
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62,89-123; kask/crates/hkask-tool-port/src/tool_port.rs:8-53; kask/crates/hkask-mcp/src/runtime.rs:1286
+verified_date: 2026-09-22
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62,89-116,118-125; kask/crates/hkask-tool-port/src/tool_port.rs:8-53; kask/crates/hkask-mcp/src/runtime.rs:1455
 status: VERIFIED
 -->
 
@@ -99,13 +97,12 @@ object-safe and `Arc<dyn ToolPort>` works — this is why no adapter layer wraps
 | Method            | Signature                                                                                     |
 | ------------------ | --------------------------------------------------------------------------------------------- |
 | `invoke`          | `(&self, server: &str, tool: &str, args: Value, agent: WebID) -> Result<Value, ToolPortError>` |
-| `discover_tools`  | `(&self) -> Vec<String>`                                                                       |
-| `get_tool_info`   | `(&self, tool_name: &str) -> Option<ToolInfo>`                                                 |
+| `get_tool_info`   | `(&self, server: &str, tool: &str) -> Option<ToolInfo>`                                        |
 
 `agent` is the accounting identity for the call meter (`tool_port.rs:90-95`).
-`discover_tools` and `get_tool_info` take no identity at all, because tool
-schemas are public per the MCP protocol design (`tools/list` is an
-unauthenticated handshake, `tool_port.rs:107-111`).
+`get_tool_info` takes the same server identity `invoke` uses: the lookup is
+server-scoped, so tool names are unique per server, never globally
+(`tool_port.rs:107-115`).
 
 ## `ToolPortError` taxonomy
 
@@ -129,43 +126,40 @@ non-delivery, so `Interrupted` is never auto-retried at any layer.
 
 ## `ToolInfo` struct
 
-Canonical tool metadata (`tool_port.rs:118-123`). Four descriptive fields,
-nothing that decides anything:
+Canonical tool metadata (`tool_port.rs:118-125`). Three descriptive fields,
+nothing that decides anything: the server identity is the caller's `server`
+argument, not a field here.
 
 ```rust
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
-    pub server_id: String,
 }
 ```
 
-`server_id` is how the MCP runtime's tool dispatch resolves which server
-to dispatch to.
-
 ## What `invoke` does
 
-`McpRuntime::invoke` (`runtime.rs:1286-1400`) performs, in order:
+`McpRuntime::invoke` (`runtime.rs:1456-1576`) performs, in order:
 
 1. **Call metering** — when governance is wired (`with_governance`,
-   `runtime.rs:432`), charge one call against the agent's per-tick ceiling
+   `runtime.rs:516`), charge one call against the agent's per-tick ceiling
    via `CyberneticsLoop::charge_call_metered`
    (`cybernetics_loop.rs:662`), which delegates to
    `CallCapManager::charge_metered` (`energy.rs:176`). Without governance,
-   dispatch unmetered (`runtime.rs:1299-1301`).
-2. **Dispatch** — `call_tool_inner` (`runtime.rs:1349`) checks for a live
+   dispatch unmetered (`runtime.rs:1566-1574`).
+2. **Dispatch** — `call_tool_inner` (`runtime.rs:1593`) checks for a live
    connection, reconnects once if the transport closed, and issues the
    JSON-RPC call.
 3. **Span emission** — persist a `SpanKind::ToolCompleted`
    `RegulationRecord` at `CyclePhase::Act` carrying server, tool, call
    count, and success/failure status, through the wired `RegulationSink`
-   (`runtime.rs:1351-1358`), then record the outcome in the
+   (`runtime.rs:1520-1532`), then record the outcome in the
    `RegulationLedger` per-server so the `ToolReliabilitySensor` can sense
-   aggregate success rates (`runtime.rs:1360-1366`).
+   aggregate success rates (`runtime.rs:1534-1562`).
 
 There is no authorization step. The only way `invoke` returns an error
-before dispatch is `EnergyBudgetExceeded` (`runtime.rs:1337-1345`).
+before dispatch is `EnergyBudgetExceeded` (`runtime.rs:1496-1513`).
 
 ## Call metering
 
@@ -181,7 +175,7 @@ check. `CallCapManager::charge_metered` (`energy.rs:176`) returns a
 
 Fail-open on an unregistered agent is deliberate: a missing registration is a
 composition-root wiring omission, and refusing it fails live paths without
-protecting anything (`runtime.rs:1311-1317` records the incident: the
+protecting anything (`runtime.rs:1476-1495` records the incident: the
 `kask-panel` and skill execution personas were never seeded, so every IPC
 and cascade tool call died at the gate).
 
@@ -192,8 +186,8 @@ caller being checked. Three boundaries satisfy that:
 
 | Boundary                                                        | Location                                                       | Note                                        |
 | --------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
-| Per-request delegated-tool `tool_allowlist` (fail-closed on missing/empty) | `kask/crates/kask_bridge/src/inference_ipc_server.rs:813-831` `tool_invoke` dispatch | Enforced before dispatch; pinned by `dispatch_tool_invoke_rejects_unallowed_tool` (`inference_ipc_server.rs:1359`) |
-| Per-agent declared `mcp_tools` allowlist                        | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:214-219` | Restricts which tools a swarm agent may call; refusal at `agent_executor.rs:431-437` |
+| Per-request delegated-tool `tool_allowlist` (fail-closed on missing/empty) | `kask/crates/kask_bridge/src/inference_ipc_server.rs:897-965` `tool_invoke` dispatch | Enforced before dispatch; pinned by `dispatch_tool_invoke_rejects_unallowed_tool` (`inference_ipc_server.rs:1669`) |
+| Per-agent declared `mcp_tools` allowlist                        | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:331-360` | Restricts which tools a swarm agent may call; refusal at `agent_executor.rs:590-599` |
 | Per-server MCP env / credential allowlists                      | `kask/crates/kask_bridge/src/mcp_servers.rs:43`              | Scopes credentials per server (`BuiltinMcpServer.credentials`; `None` means no filtering, `Some(&[])` preferred for new servers) |
 
 There is no fourth gate. A FIDES `Source`→`Sink` information-flow check used

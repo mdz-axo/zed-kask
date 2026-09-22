@@ -525,9 +525,11 @@ executor does not silently switch to another model.
   exercises it.
 - **Declared MCP tool schemas: wired.** The executor requests each declared
   `server/tool` definition from the host before inference and advertises its
-  registered description and JSON Schema; invalid names, absent metadata,
-  mismatched servers and non-object schemas fail visibly instead of receiving
-  a placeholder. `InferenceMethod::ToolDefinition` checks the card allowlist
+  registered description and JSON Schema; invalid names, absent metadata and
+  non-object schemas fail visibly instead of receiving a placeholder. The
+  lookup is server-scoped — a same-named tool on another server can neither
+  answer the request nor shadow the declared one.
+  `InferenceMethod::ToolDefinition` checks the card allowlist
   and parent-held grant before returning metadata, while `ToolInvoke` keeps
   its independent dispatch gate. A required-argument definition is pinned by
   the bridge/client/executor tests. This is a schema-delivery guarantee, not
