@@ -64,6 +64,14 @@ pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
             .filter(|text| !text.is_empty())
             .map(ToString::to_string);
     }
+    if let Some(recall_text) = h_mem
+        .value
+        .get("recall_text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        return Some(recall_text.to_string());
+    }
     if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
         return (!text.is_empty()).then(|| text.to_string());
     }
@@ -74,10 +82,7 @@ pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
         }
         return Some(format!("goal event {}: {}", h_mem.attribute, public_value));
     }
-    Some(format!(
-        "{} {}: {}",
-        h_mem.entity, h_mem.attribute, h_mem.value
-    ))
+    None
 }
 
 /// Result of computing a style centroid over a prefix-scoped embedding set.

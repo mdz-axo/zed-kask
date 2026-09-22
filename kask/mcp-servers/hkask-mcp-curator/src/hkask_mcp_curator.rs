@@ -1135,6 +1135,14 @@ impl CuratorServer {
 
             let entity = format!("skill_use_issue:{}", req.skill_name);
             let now = chrono::Utc::now();
+            let recall_text = format!(
+                "skill-use issue: {} / {} (step {}, origin {}): {}",
+                req.skill_name,
+                req.tool_name,
+                req.step_ordinal,
+                req.failure_origin.as_str(),
+                req.error
+            );
 
             let report_value = json!({
                 "skill_name": req.skill_name,
@@ -1145,6 +1153,7 @@ impl CuratorServer {
                 "failure_type": req.failure_type,
                 "failure_origin": req.failure_origin.as_str(),
                 "reported_at": now.to_rfc3339(),
+                "recall_text": recall_text,
             });
 
             let h_mem = hkask_storage::HMem::new(
@@ -1263,6 +1272,29 @@ impl CuratorServer {
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
                 }
+            }
+            let default_recall_text = format!("{} {}: {}", req.entity, req.attribute, value);
+            if let Some(object) = value.as_object_mut() {
+                let has_supported_passage = object
+                    .get("text")
+                    .or_else(|| object.get("recall_text"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| !text.is_empty());
+                let is_mutable = object
+                    .get("mutable_state")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true);
+                if !has_supported_passage && !is_mutable {
+                    object.insert(
+                        "recall_text".to_string(),
+                        serde_json::Value::String(default_recall_text),
+                    );
+                }
+            } else if !value.is_string() {
+                value = serde_json::json!({
+                    "value": value,
+                    "recall_text": default_recall_text,
+                });
             }
             let h_mem = hkask_storage::HMem::new(
                 &req.entity,
