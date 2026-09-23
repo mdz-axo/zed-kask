@@ -517,6 +517,19 @@ impl HMemStore {
                 "required procedure root {required_entity}/{required_attribute} has {root_count} rows"
             ))));
         }
+        let anchored = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND attribute = ?2
+                 AND json_valid(ontology) AND json_extract(ontology, '$.pko_procedure') = ?3",
+                rusqlite::params![required_entity, required_attribute, procedure],
+                |row| row.get::<_, usize>(0),
+            )
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        if anchored != 1 {
+            return Err(HMemError::Infra(InfrastructureError::database(format!(
+                "required procedure root {required_entity}/{required_attribute} is not anchored to {procedure}"
+            ))));
+        }
         let mut deleted = Vec::new();
         {
             let mut statement = transaction

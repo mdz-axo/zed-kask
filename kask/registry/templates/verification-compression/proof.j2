@@ -2,6 +2,7 @@
 [inference]
 contract:
   input:
+    baseline_graph: object
     candidate: object
     signal_mapping: array
     required_signal_keys: array
@@ -22,6 +23,10 @@ thinking_budget = "full"
 
 Construct Lean 4 obligations for this finite verification graph reduction.
 
+Observed baseline graph (the sole source of required keys):
+```json
+{{ baseline_graph | tojson }}
+```
 Candidate:
 ```json
 {{ candidate | tojson }}
@@ -43,7 +48,21 @@ by the original graph is covered by the retained graph when every removed key
 maps into retained coverage. Instantiate the theorem for this
 candidate. Do not model or claim test effectiveness, I/O, timing, fault
 realism, or provenance truth; list those as empirical residual obligations.
-Use no `sorry`, new axioms, or unsafe proof escape.
+Before generating Lean, deterministically project the five fields from EVERY
+baseline `verification_graph.signal_keys` row to `required_signal_keys`;
+reject omissions, additions, duplicates and empty fields. Compare the complete
+candidate signal rows to the declared retained artifacts and the removed→retained
+mapping; every removed baseline (artifact, key) pair must map exactly once to
+an actually retained artifact carrying the identical five-field key. Reject
+extra mapping entries. Encode that same normalized set as the Lean instance,
+and emit a machine-readable serialization of its keys via Lean `#eval`;
+compare its output byte-for-byte to the normalized graph projection before
+accepting the proof. Store both projections and the comparison log in the
+receipt. Compile with `lean` or `lake build` and record command, exit status,
+version and raw output. Compile a negative control omitting one required key
+from the retained instance: it MUST fail (a vacuous theorem is not a pin).
+Use no `sorry`, new axioms, or unsafe proof escape. A compilation or negative-
+control failure is `proof_unavailable`, not a passing proof.
 
 Return JSON only:
 ```json

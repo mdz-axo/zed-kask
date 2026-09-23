@@ -856,10 +856,7 @@ fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
 /// Installed binaries without the source checkout retain the disk seed path.
 pub fn development_skills_dir() -> Option<PathBuf> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
-    source
-        .is_dir()
-        .then(|| source.canonicalize().ok())
-        .flatten()
+    source.canonicalize().ok().filter(|path| path.is_dir())
 }
 
 pub fn is_shipped_skill(name: &str) -> bool {
@@ -884,28 +881,24 @@ pub fn is_development_shipped_skill(path: &Path) -> bool {
             .is_some_and(is_shipped_skill)
 }
 
-/// Materialise the shipped kask skills onto the user's disk if missing.
-///
-/// For each shipped skill in [`shipped_skill_seed`], writes
-/// `<skills_dir>/<name>/SKILL.md` when the file does not already exist. Existing
-/// files are **never overwritten** — user edits are sovereign. A user who
-/// deletes a shipped skill will see it re-seeded on the next startup; to
-/// suppress a skill instead, edit its `disable-model-invocation` frontmatter
-/// or remove it from the catalog via the skills UI.
-///
-/// This is the sole mechanism by which a self-contained binary populates the
-/// on-disk skill catalog on a fresh install. After seeding, all discovery and
-/// editing happens against the disk copies — no compiled-in data is read at
-/// runtime, so changes take effect without recompilation or a new release.
+/// In a development checkout, link each shipped global skill directory to
+/// its authored `.agents/skills/<name>/` directory; there is one live body,
+/// not a disk-seeded copy competing with a project-local version. Preserve
+/// divergent prior global bodies outside the discoverable catalog before
+/// replacing their directories. On installations without the checkout,
+/// materialise the compiled payload on disk (core skills overwrite; ordinary
+/// user-edited skills remain intact).
 pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
     // The agent scanner and startup Settings publisher can call this together.
+    if fs.is_fake() {
+        // Independent FakeFs instances in parallel GPUI tests do not share a
+        // disk, and waiting on a process-wide lock parks the test scheduler.
+        seed_shipped_skills_from_source(fs, skills_dir, None).await;
+        return;
+    }
     static SEED_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     let _guard = SEED_LOCK.get_or_init(|| Mutex::new(())).lock().await;
-    let dev_source = if fs.is_fake() {
-        None
-    } else {
-        development_skills_dir()
-    };
+    let dev_source = development_skills_dir();
     seed_shipped_skills_from_source(fs, skills_dir, dev_source.as_deref()).await;
 }
 
@@ -2960,6 +2953,89 @@ description: A skill with no body content
             !after.contains("TAMPERED"),
             "tampered content survived re-seed — core overwrite is broken: {after}"
         );
+    }
+
+    #[gpui::test]
+    async fn development_shipped_skill_has_one_live_source(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let root = Path::new("/repo/.agents/skills");
+        let source = root.join("metacognition");
+        fs.create_dir(&source).await.expect("create authored skill");
+        fs.write(
+            &source.join(SKILL_FILE_NAME),
+            b"---\nname: metacognition\ncore: true\ndescription: Source\n---\n\nSOURCE_V1",
+        )
+        .await
+        .expect("write authored skill");
+        let global = Path::new("/skills");
+        fs.create_dir(&global.join("metacognition"))
+            .await
+            .expect("create old global");
+        fs.write(&global.join("metacognition/SKILL.md"), b"OLD_GLOBAL")
+            .await
+            .expect("write old global");
+        seed_shipped_skills_from_source(fs.as_ref(), global, Some(root)).await;
+        let global_path = global.join("metacognition");
+        assert!(
+            fs.metadata(&global_path)
+                .await
+                .expect("metadata")
+                .expect("link")
+                .is_symlink
+        );
+        assert_eq!(
+            fs.load(&global_path.join(SKILL_FILE_NAME))
+                .await
+                .expect("body"),
+            fs.load(&source.join(SKILL_FILE_NAME))
+                .await
+                .expect("source")
+        );
+        assert_eq!(
+            fs.load(Path::new("/skill-migration-archive/metacognition.md"))
+                .await
+                .expect("archive"),
+            "OLD_GLOBAL"
+        );
+        fs.write(
+            &source.join(SKILL_FILE_NAME),
+            b"---\nname: metacognition\ncore: true\ndescription: Source\n---\n\nSOURCE_V2",
+        )
+        .await
+        .expect("edit authoring source");
+        assert!(
+            fs.load(&global_path.join(SKILL_FILE_NAME))
+                .await
+                .expect("live body")
+                .contains("SOURCE_V2")
+        );
+        seed_shipped_skills_from_source(fs.as_ref(), global, Some(root)).await;
+        assert!(
+            fs.metadata(&global_path)
+                .await
+                .expect("metadata")
+                .expect("link")
+                .is_symlink
+        );
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        let loaded = load_skills_from_directory(&fs_dyn, global, SkillSource::Global).await;
+        let metacognition = loaded
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|skill| skill.name == "metacognition")
+            .count();
+        assert_eq!(metacognition, 1, "the global catalog has one linked skill");
+    }
+
+    #[test]
+    fn checkout_shipped_skills_have_one_catalog_identity() {
+        let source = development_skills_dir().expect("checkout skills");
+        assert!(is_development_shipped_skill(
+            &source.join("metacognition/SKILL.md")
+        ));
+        assert!(!is_development_shipped_skill(Path::new(
+            "/other/.agents/skills/metacognition/SKILL.md"
+        )));
     }
 
     // Template seeding writes the compiled-in .j2 templates to disk so MCP

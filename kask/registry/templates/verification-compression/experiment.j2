@@ -8,6 +8,8 @@ contract:
     before_observations: object
     after_observations: object
     targets: object
+    mode: string
+    receipt: object
   output:
     preservation: object
     measurement_context: object
@@ -24,8 +26,9 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-Evaluate one verification-compression experiment. Hold expectation contracts,
-oracle inputs, toolchain, environment, and harmful cases fixed.
+Evaluate one verification-compression experiment in {{ mode }} mode. Hold expectation
+contracts, oracle inputs, toolchain, environment, and harmful cases fixed.
+Use a trusted externally pinned receipt, not a model-generated verification flag.
 
 Baseline and candidate:
 ```json
@@ -41,22 +44,32 @@ Before and after observations:
 {{ before_observations | tojson }}
 {{ after_observations | tojson }}
 ```
-Targets:
+Targets and independently pinned receipt:
 ```json
 {{ targets | tojson }}
+{{ receipt | tojson }}
 ```
 
 Any lost expectation, falsifier, oracle kind, failure class, provenance tier,
-failed harmful case, failed allowed-change control, changed measurement context,
-or uncompiled Lean obligation forces REVERT regardless of acceleration. Record
+failed harmful case, failed allowed-change control, changed oracle/contract/toolchain/
+environment/cache context, unbound source change, or uncompiled Lean obligation
+forces REVERT regardless of acceleration. In analyze mode source hashes must
+match; in execute mode a source change is allowed only when the receipt binds
+both snapshots and their exact authorized candidate diff. Record
 raw before/after identifiers in `measurement_context`; do not insert a model-
 asserted `measurement_context_equal` verdict. `hashes_verified` starts false
 and becomes true only after the receipt and raw hashes pass a deterministic
-terminal check. Keep cold and warm timing separate; mark unselected states
+terminal check with an externally trusted digest pin. Reject zero or negative
+values in EACH measured sample, regardless of positive aggregate. The source,
+contract, oracle, graph, proof, and log paths/hashes must all be in the receipt;
+validate filesystem files, not just submitted paths. Keep cold and warm timing
+separate; mark unselected states
 `not_run` with empty samples and zero timing, never speedup. Report workflow
 and production code graph counts separately. If the production graph was not
 measured, set code before/after counts to zero and code_graph_status to
-`not_run`; do not call a workflow-only reduction code compression. Derive
+`not_run`; stale nonzero code counts block acceptance, and code compression
+remains null even when stale counts are supplied. Do not call a workflow-only
+reduction code compression. Derive
 speedup directly from the timing sample arrays, not model-supplied means.
 Corroborated means the candidate survived; never call it proven effective.
 
@@ -84,6 +97,9 @@ Return JSON only:
     "oracle_hash_before":"",
     "oracle_hash_after":"",
     "hashes_verified":false,
+    "receipt_path":"",
+    "receipt_pinned_sha256":"",
+    "candidate_diff_path":"",
     "evidence_paths":[]
   },
   "metrics": {

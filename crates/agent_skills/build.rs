@@ -4,15 +4,11 @@
 //! in this repo) and emits a static `SHIPPED_SKILL_SEED_ENTRIES: &[(&str, &str)]`
 //! array of `(name, content)` pairs, sorted by name.
 //!
-//! This payload is **seed-only**: at startup `agent_skills::seed_shipped_skills`
-//! writes each SKILL.md to the user's on-disk global skills directory
-//! (`paths::data_dir()/agents/skills/<name>/SKILL.md`) when missing. The disk
-//! copy is the single runtime source of truth — zed's discovery machinery
-//! loads skills from disk via `load_skills_from_directory`, never from this
-//! compiled payload. User edits to the on-disk files take effect immediately
-//! without recompilation; that is the architectural contract this crate
-//! honours. The compiled payload exists solely so a self-contained binary can
-//! materialise the shipped skills on a fresh install with no source tree.
+//! This payload is **seed-only**: when the authored checkout is available,
+//! `seed_shipped_skills` links the global catalog entries to those source
+//! directories, so source edits have one live body. Without the checkout it
+//! materialises the compiled payload in the global skills directory. Discovery
+//! always reads the catalog from disk, never directly from this payload.
 //!
 //! The SKILL.md files are the *interface* (frontmatter parsed for discovery);
 //! the *implementation* (YAML manifests + Jinja2 templates) is seeded to disk

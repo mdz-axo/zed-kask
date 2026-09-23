@@ -418,6 +418,114 @@ mod goal_tests {
         }
     }
 
+    /// expect: "Every successful concurrent verdict is retained in the learning history."
+    /// [P2] Motivating: Transparent Imperfection — a successful write must not hide another verdict.
+    /// pre: two judges start on the same open goal
+    /// post: both distinct verdicts survive in the durable row
+    #[test]
+    fn concurrent_goal_judges_preserve_both_verdicts() -> anyhow::Result<()> {
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let start = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let threads: Vec<_> = (0..2)
+                .map(|index| {
+                    let start = &start;
+                    let svc = &svc;
+                    scope.spawn(move || {
+                        let mut verdict = one_criterion_verdict();
+                        verdict.reasoning = format!("judge {index}");
+                        start.wait();
+                        svc.goal_judge(goal.id, verdict, owner)
+                    })
+                })
+                .collect();
+            start.wait();
+            for thread in threads {
+                thread.join().expect("judge thread panicked")?;
+            }
+            Ok(())
+        })?;
+        let retained = svc.goal_get(goal.id)?.expect("goal remains in outbox");
+        assert_eq!(retained.verdicts.len(), 2);
+        assert!(retained.verdicts.iter().any(|v| v.reasoning == "judge 0"));
+        assert!(retained.verdicts.iter().any(|v| v.reasoning == "judge 1"));
+        Ok(())
+    }
+
+    /// expect: "Two conflicting resolutions cannot both report success."
+    /// [P2] Motivating: Transparent Imperfection — the stored outcome remains retryable.
+    /// pre: opposing score requests start together
+    /// post: exactly one succeeds, and the retained outbox outcome matches it
+    #[test]
+    fn concurrent_conflicting_goal_scores_have_one_winner() -> anyhow::Result<()> {
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
+        let start = std::sync::Barrier::new(3);
+        let outcomes = std::thread::scope(|scope| {
+            let workers: Vec<_> = [true, false]
+                .into_iter()
+                .map(|achieved| {
+                    let start = &start;
+                    let svc = &svc;
+                    scope.spawn(move || {
+                        start.wait();
+                        svc.goal_score(goal.id, achieved, owner)
+                    })
+                })
+                .collect();
+            start.wait();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().expect("score thread panicked"))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        let winner = outcomes.into_iter().find_map(Result::ok).expect("winner");
+        let retained = svc
+            .goal_get(goal.id)?
+            .expect("resolved outbox row retained");
+        assert_eq!(
+            retained.resolution.as_ref().map(|r| r.achieved),
+            winner.resolution.as_ref().map(|r| r.achieved)
+        );
+        Ok(())
+    }
+
+    /// expect: "A score never erases a verdict that reported success."
+    /// [P2] Motivating: Transparent Imperfection — the learning record and resolution stay coherent.
+    /// pre: judge and score start together on one goal
+    /// post: the resolved outbox row contains every successful verdict
+    #[test]
+    fn concurrent_goal_judge_and_score_preserve_successful_verdict() -> anyhow::Result<()> {
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
+        let start = std::sync::Barrier::new(3);
+        let (judge, score) = std::thread::scope(|scope| {
+            let judge = scope.spawn(|| {
+                start.wait();
+                svc.goal_judge(goal.id, one_criterion_verdict(), owner)
+            });
+            let score = scope.spawn(|| {
+                start.wait();
+                svc.goal_score(goal.id, true, owner)
+            });
+            start.wait();
+            (
+                judge.join().expect("judge thread panicked"),
+                score.join().expect("score thread panicked"),
+            )
+        });
+        score?;
+        let retained = svc.goal_get(goal.id)?.expect("outbox row retained");
+        assert!(retained.resolution.is_some());
+        assert_eq!(retained.verdicts.len(), usize::from(judge.is_ok()));
+        Ok(())
+    }
+
     #[test]
     fn goal_create_round_trip() {
         let svc = make_service();
@@ -477,7 +585,7 @@ mod goal_tests {
         let owner = WebID::new();
         let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
         let trigger = format!(
-            "CREATE TRIGGER reject_goal_replacement BEFORE INSERT ON hmems
+            "CREATE TRIGGER reject_goal_replacement BEFORE UPDATE ON hmems
              WHEN NEW.entity = '{GOAL_ENTITY}' AND NEW.attribute = '{}'
              BEGIN SELECT RAISE(FAIL, 'forced goal replacement failure'); END;",
             goal.id

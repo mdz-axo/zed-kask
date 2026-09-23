@@ -170,3 +170,31 @@ fn guarded_publication_raced_with_procedure_delete_leaves_no_orphans() -> anyhow
     );
     Ok(())
 }
+
+/// expect: "A board whose root does not belong to its procedure cannot lose its children."
+/// [P2] Motivating: Transparent Imperfection — malformed roots fail visibly without partial deletion.
+/// pre: the board key exists but has no matching procedure anchor
+/// post: deletion fails and every row is unchanged
+#[test]
+fn procedure_delete_rejects_unanchored_or_mismatched_root_without_deleting_children()
+-> anyhow::Result<()> {
+    for root_ontology in [None, Some("another-procedure")] {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let owner = WebID::new();
+        let mut root = HMem::new("kanban:board", "board-1", serde_json::json!("board"), owner);
+        if let Some(procedure) = root_ontology {
+            root = root.with_ontology(HMemOntology::process(procedure, "root", "kanban"));
+        }
+        let child = HMem::new("kanban:task", "task-1", serde_json::json!("task"), owner)
+            .with_ontology(HMemOntology::process("board-1", "task-1", "kanban"));
+        store.insert(&root)?;
+        store.insert(&child)?;
+        let error = store
+            .delete_by_pko_procedure_if_key_exists_atomic("board-1", "kanban:board", "board-1")
+            .expect_err("root must be part of the procedure being deleted");
+        assert!(error.to_string().contains("procedure root"), "{error}");
+        assert!(store.get_by_id(&root.id)?.is_some());
+        assert!(store.get_by_id(&child.id)?.is_some());
+    }
+    Ok(())
+}

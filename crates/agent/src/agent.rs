@@ -756,17 +756,12 @@ impl NativeAgent {
         // Pre-release: no migration from legacy paths.
         let _ = fs.create_dir(&skills_dir).await;
 
-        // zed-kask: Materialise the shipped kask skills onto the user's disk
-        // if missing. The disk copy is the single runtime source of truth —
-        // the compiled seed payload exists only so a self-contained binary
-        // can populate the catalog on a fresh install. Existing files are
-        // never overwritten (user edits are sovereign). Must run before the
-        // disk load below so freshly-seeded skills appear in the catalog.
-        // Skipped on the fake filesystem used in tests so skill-count
-        // assertions aren't polluted by the shipped skills; seeding is
-        // unit-tested directly in `agent_skills`. Startup seeding in
-        // `main.rs` also writes the skills and populates the SkillIndex
-        // global so the Settings UI displays them without the agent panel.
+        // zed-kask: In development, link shipped global skills to the authored
+        // checkout, never copy a second independently editable body. Installed
+        // builds without that checkout seed the bundled skills to disk. This
+        // must complete before discovery; the Settings startup publisher uses
+        // the same serialized seeding function. FakeFs tests supply their own
+        // catalog instead.
         if !fs.is_fake() {
             seed_shipped_skills(fs.as_ref(), &skills_dir).await;
         }

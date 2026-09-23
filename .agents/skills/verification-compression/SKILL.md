@@ -123,7 +123,10 @@ verification code.
 7. Call `read_file` for
    `kask/registry/templates/verification-compression/elimination.j2` and produce
    a candidate graph plus an explicit removed→retained signal mapping.
-   No mapping means retain the artifact.
+   No mapping means retain the artifact. The candidate graph must enumerate
+   every retained artifact's full five-field signal rows, not just totals.
+   In `execute` record the approved source scope and exact candidate diff;
+   in `analyze` source snapshots must remain identical.
 
 ### CHECK — Prove graph preservation and run the experiment
 
@@ -134,23 +137,55 @@ verification code.
    artifacts. Model each `SignalKey` as the complete expectation, falsifier,
    oracle-kind, failure-class, and provenance-tier tuple; an opaque ordinal is
    insufficient. Store proof files under `target/verification-compression/<run-id>/`.
-   Run `lean` or `lake build` as the extrinsic oracle. Any `sorry`, missing
-   toolchain, timeout, unsupported proposition, or compile error is
-   `proof_unavailable`, never pass; no reduction may proceed.
+   Before Lean, reconcile the ONE observed inventory graph to the candidate,
+   mapping, and Lean input mechanically. Project each row to the five ordered
+   fields (expectation_id, falsifier_id, oracle_kind, failure_class,
+   provenance_tier), rejecting empty fields and duplicate (artifact, key) rows.
+   Required keys must be exactly the distinct baseline projection, not a
+   hand-selected subset. Candidate signal rows must be exactly the baseline
+   rows for retained artifacts. Every removed (artifact, key) row must map
+   exactly once to an actually retained row with the identical key; reject
+   extra mapping rows and uncovered keys. Use `lisp_eval` over the raw graph
+   rows (not summary counters) to check both set directions and cardinalities.
+   Serialize the reconciled five-field set in a canonical sorted file; have
+   Lean `#eval` emit its instantiated key set in the same serialization and
+   `cmp` the files. Hash both outputs in the receipt. Run `lean` or `lake build`
+   as the extrinsic oracle, capture version, command, exit code, raw output,
+   and proof-source hash. Compile a negative control with one required key
+   omitted from retained coverage; it MUST fail. Any `sorry`, convenience
+   axiom, unsafe escape, missing toolchain, timeout, unsupported proposition,
+   mismatch, failed negative control, or compile error is `proof_unavailable`;
+   no reduction may proceed. Lean alone cannot establish empirical quality.
 9. Call `skill` for `kata-improvement` and execute one bounded experiment.
    Hold the contract, oracle inputs, toolchain, environment, cache state, harmful
-   cases, and allowed-change control fixed. Run before/after timings in the
+   cases, and allowed-change control fixed. `analyze` requires identical source
+   hashes; `execute` permits differing before/after source snapshots ONLY when
+   their complete scope and computed diff match the operator-authorized change.
+   A changed source is not a changed oracle. Run before/after timings in the
    declared `timing_scope`. If both states are selected, measure them separately;
    never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4 and
    require the allowed-change control to keep passing.
 10. Call `read_file` for
     `kask/registry/templates/verification-compression/experiment.j2` and produce
-    the result. Validate recorded evidence paths with `terminal` (`sha256sum -c`
-    over the immutable receipt, plus raw before/after source and oracle hashes).
-    Record `context.hashes_verified=true` only after that command succeeds;
-    never let a model-supplied verdict fill it. Then call `lisp_eval` twice:
+    the result. Capture the exact graph, all before/after source snapshots,
+    contract, oracle, compiled proof source, and raw logs in a tab-delimited
+    receipt: `role<TAB>phase<TAB>id<TAB>sha256<TAB>absolute_canonical_path`.
+    Roles: graph, source, contract, oracle, proof, log, candidate_diff;
+    `proof` and `candidate_diff` are after-only, the others have before/after.
+    Give each source snapshot pair the same unique ID; hash the exact authorized
+    diff with `diff -u --label source/ID --label source/ID BEFORE AFTER`,
+    concatenated by byte-sorted source ID. Capture the receipt SHA-256 from a
+    trusted operator-controlled snapshot BEFORE accepting candidate output;
+    a candidate-supplied manifest and candidate-supplied pin are NOT independent
+    evidence. Run `bash kask/scripts/audit/check-verification-compression-receipt.sh
+    MODE RECEIPT TRUSTED_PIN` against immutable snapshots outside candidate write
+    access. The checker binds the pin, paths, bytes and diff; `execute` permits
+    changed source only when diff matches authorization, `analyze` does not.
+    Record `context.hashes_verified=true` only after it succeeds. A file changed
+    after checking requires re-verification; no attacker with access to both
+    trusted pin and snapshots is covered by this boundary. Then call `lisp_eval`: 
     - Preservation: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t))`; env `{ "check": <preservation block> }`.
-    - Context and samples: `(define equal-present (lambda (a b) (and (> (length a) 0) (member a (list b))))) (define valid-measured (lambda (s) (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (> (assoc "time_before_ms" s) 0) (> (assoc "time_after_ms" s) 0)))) (define valid-not-run (lambda (s) (and (member "not_run" (list (assoc "status" s))) (= (length (assoc "timing_samples_before_ms" s)) 0) (= (length (assoc "timing_samples_after_ms" s)) 0) (= (assoc "time_before_ms" s) 0) (= (assoc "time_after_ms" s) 0)))) (and (member (assoc "timing_scope" context) (list "cold" "warm" "both")) (equal-present (assoc "toolchain_before" context) (assoc "toolchain_after" context)) (equal-present (assoc "environment_before" context) (assoc "environment_after" context)) (equal-present (assoc "source_hash_before" context) (assoc "source_hash_after" context)) (equal-present (assoc "oracle_hash_before" context) (assoc "oracle_hash_after" context)) (eq (assoc "hashes_verified" context) t) (>= (length (assoc "evidence_paths" context)) 4) (if (member (assoc "timing_scope" context) (list "cold" "both")) (valid-measured (assoc "cold" metrics)) (valid-not-run (assoc "cold" metrics))) (if (member (assoc "timing_scope" context) (list "warm" "both")) (valid-measured (assoc "warm" metrics)) (valid-not-run (assoc "warm" metrics))))`; env `{ "context": <raw before/after identities, timing_scope, terminal-verified receipt>, "metrics": <cold/warm blocks> }`.
+    - Context and samples: `(define positive (lambda (xs) (if (is_null xs) t (and (> (car xs) 0) (positive (cdr xs)))))) (define same (lambda (a b) (and (> (length a) 0) (member a (list b))))) (define measured (lambda (s) (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (positive (assoc "timing_samples_before_ms" s)) (positive (assoc "timing_samples_after_ms" s)) (> (assoc "time_before_ms" s) 0) (> (assoc "time_after_ms" s) 0)))) (define idle (lambda (s) (and (member "not_run" (list (assoc "status" s))) (= (length (assoc "timing_samples_before_ms" s)) 0) (= (length (assoc "timing_samples_after_ms" s)) 0) (= (assoc "time_before_ms" s) 0) (= (assoc "time_after_ms" s) 0)))) (and (member (assoc "timing_scope" context) (list "cold" "warm" "both")) (same (assoc "toolchain_before" context) (assoc "toolchain_after" context)) (same (assoc "environment_before" context) (assoc "environment_after" context)) (same (assoc "oracle_hash_before" context) (assoc "oracle_hash_after" context)) (same (assoc "contract_hash_before" context) (assoc "contract_hash_after" context)) (or (and (member "analyze" (list (assoc "mode" context))) (same (assoc "source_hash_before" context) (assoc "source_hash_after" context))) (and (member "execute" (list (assoc "mode" context))) (eq (assoc "authorized_diff_verified" context) t))) (eq (assoc "hashes_verified" context) t) (if (member (assoc "timing_scope" context) (list "cold" "both")) (measured (assoc "cold" metrics)) (idle (assoc "cold" metrics))) (if (member (assoc "timing_scope" context) (list "warm" "both")) (measured (assoc "warm" metrics)) (idle (assoc "warm" metrics))) (or (member "measured" (list (assoc "code_graph_status" metrics))) (and (member "not_run" (list (assoc "code_graph_status" metrics))) (= (assoc "code_nodes_before" metrics) 0) (= (assoc "code_nodes_after" metrics) 0) (= (assoc "code_edges_before" metrics) 0) (= (assoc "code_edges_after" metrics) 0))))`; env `{ "context": <raw identities, mode, trusted checker result>, "metrics": <raw graph counts and cold/warm blocks> }`. `authorized_diff_verified` is set only from a successful checker run with an operator-approved diff, not from the model.
     - Both calls must return true. Ignore a contradictory
       `preservation.measurement_context_equal` summary field. Any failure
       rejects/reverts the candidate regardless of speedup.
