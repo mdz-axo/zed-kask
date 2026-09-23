@@ -45,13 +45,11 @@ pub fn is_core_skill(name: &str) -> bool {
     CORE_SKILL_NAMES.contains(&name)
 }
 
-/// Returns `true` if the given skill name is reserved — i.e. it is the name
-/// of a core skill and cannot be used by a user-authored skill. A user
-/// skill (frontmatter `core: false` or missing) whose name is reserved is
-/// refused at load time and at save time, so a hand-edited file can never
-/// usurp a core skill's identity. Legitimate core skills (frontmatter
-/// `core: true`) are exempt — they are the only skills allowed to bear a
-/// reserved name.
+/// Returns `true` if the name belongs to a shipped core skill. The skill
+/// creator refuses such names on save. A project file with that name and
+/// `core: true` is rejected at load time; one without core status may still
+/// be explicitly invoked by its project scope, but cannot win the model
+/// catalog or an unqualified slash command over the shipped core skill.
 pub fn is_reserved_skill_name(name: &str) -> bool {
     is_core_skill(name)
 }
@@ -287,9 +285,9 @@ pub struct SkillMetadata {
     pub dependencies: Vec<String>,
     /// When `true`, this skill is a core skill: always-on, re-seeded on every
     /// startup (overwriting user edits), locked against editing, and
-    /// undisableable. Core skills cannot be shadowed by project-local skills
-    /// of the same name. The `core` flag is the zed-kask mechanism for
-    /// distinguishing system-critical kask-skills from user kask-skills.
+    /// undisableable. Only global skills with a registered core name may
+    /// declare this status; project-local claims fail during loading. Core
+    /// skills cannot be shadowed by project-local skills of the same name.
     #[serde(default)]
     pub core: bool,
 }
@@ -353,6 +351,12 @@ pub fn parse_skill_frontmatter(
     source: SkillSource,
 ) -> Result<Skill> {
     let (metadata, _body, load_warnings) = parse_skill_file_content_for_loading(content)?;
+    if metadata.core && matches!(source, SkillSource::ProjectLocal { .. }) {
+        anyhow::bail!(
+            "project-local skill '{}' cannot declare `core: true`; core status is reserved for shipped global skills",
+            metadata.name
+        );
+    }
 
     let directory_path = skill_file_path
         .parent()
@@ -409,9 +413,9 @@ fn parse_skill_file_content_for_loading(
     // declaring `core: true` with a non-reserved name would
     // otherwise be treated as core (sovereign, not overwritten on seed, hidden
     // edit/delete controls) — a backdoor around the core-skill
-    // contract. `is_reserved_skill_name` already refuses a non-core skill from
-    // bearing a core *name*; this closes the symmetric case where a non-core
-    // name claims core *status*. Pinned by
+    // contract. The skill-creator UI refuses reserved names on save, and
+    // `parse_skill_frontmatter` separately rejects project-local core claims.
+    // Pinned by
     // `test_parse_refuses_core_true_on_non_reserved_name`.
     if metadata.core && !is_core_skill(&metadata.name) {
         anyhow::bail!(
@@ -1103,8 +1107,8 @@ mod tests {
     // be refused at load time. This closes the backdoor where a hand-edited
     // skill claims core status to gain sovereignty
     // (never overwritten on seed) and hidden edit/delete controls.
-    // The symmetric case (a non-core skill bearing a core *name*) is already
-    // refused by `is_reserved_skill_name`; this pins the status side.
+    // Project-local skills claiming a core name and status are rejected by
+    // `parse_skill_frontmatter`; this pins the unregistered-name side.
     #[test]
     fn test_parse_refuses_core_true_on_non_reserved_name() {
         let content = r"---
@@ -1151,6 +1155,48 @@ Body.
         )
         .expect("a core skill with `core: true` and a reserved name must parse");
         assert!(skill.core, "core flag must be preserved");
+    }
+
+    // expect: A project cannot claim system-critical core status merely by
+    // naming a reserved skill and setting `core: true` in its frontmatter.
+    // [P2] Motivating: a trusted project still cannot mint a system skill.
+    // pre: project-local SKILL.md uses a reserved name with core: true.
+    // post: loading fails visibly; the same frontmatter remains valid globally.
+    #[test]
+    fn project_skill_cannot_claim_core_status() {
+        let content =
+            "---\nname: create-skill\ndescription: Project impostor\ncore: true\n---\nBody";
+        let path = Path::new("/project/.agents/skills/create-skill/SKILL.md");
+        let result = parse_skill_frontmatter(
+            path,
+            content,
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "project".into(),
+            },
+        );
+        let message = result
+            .expect_err("project skill must not claim core status")
+            .to_string();
+        assert!(
+            message.contains("project-local"),
+            "error must name the source: {message}"
+        );
+        assert!(parse_skill_frontmatter(path, content, SkillSource::Global).is_ok());
+    }
+
+    #[test]
+    fn project_skill_with_core_name_without_core_status_remains_loadable() {
+        let skill = parse_skill_frontmatter(
+            Path::new("/project/.agents/skills/create-skill/SKILL.md"),
+            "---\nname: create-skill\ndescription: Explicitly scoped project skill\n---\nBody",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .expect("non-core project skill remains available by explicit scope");
+        assert!(!skill.core);
     }
 
     #[test]

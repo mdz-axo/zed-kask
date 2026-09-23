@@ -3583,32 +3583,15 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             // The user explicitly typed the name, so they get to invoke
             // it.
             //
-            // Inlined rather than calling `apply_skill_overrides` so
-            // we don't clone the entire skill list on every prompt
-            // (including prompts like `/help` that aren't skills at
-            // all). The resolution rule matches the override-applied
-            // view: among skills with the matching name, pick the one
-            // with the highest source precedence, so the slash command
-            // picks the same entry the model sees in its catalog.
-            // Ties (e.g. two project-local skills from different
-            // worktrees) resolve to the first in iteration order to
-            // match `apply_skill_overrides`.
+            // Resolve only the typed name, using the same core-first winner
+            // rule as the model catalog. Explicitly scoped commands above
+            // still select the source the user specified.
             if parsed_command.explicit_server_id.is_none()
                 && parsed_command.skill_scope.is_none()
                 && !project_state.skills.is_empty()
             {
                 let prompt_name = parsed_command.prompt_name;
-                let resolved = project_state
-                    .skills
-                    .iter()
-                    .filter(|skill| skill.name == prompt_name)
-                    .reduce(|best, candidate| {
-                        if candidate.source.precedence() > best.source.precedence() {
-                            candidate
-                        } else {
-                            best
-                        }
-                    });
+                let resolved = select_unqualified_skill(&project_state.skills, prompt_name);
                 if let Some(skill) = resolved {
                     let skill = skill.clone();
                     return self.0.update(cx, |agent, cx| {
@@ -4777,8 +4760,8 @@ fn combine_skills(
 /// per skill load (not per query), so the log isn't spammed by repeated
 /// catalog rebuilds.
 ///
-/// Project-local shadowing global, and global shadowing built-in, is
-/// *by design* (see [`combine_skills`] and [`apply_skill_overrides`]).
+/// Project-local shadowing non-core global is by design; core wins all
+/// collisions (see [`combine_skills`] and [`apply_skill_overrides`]).
 /// Logging it at `warn` trains operators to ignore warnings for expected
 /// behavior. `debug` keeps the information available for diagnosis
 /// without crying wolf.
@@ -4787,7 +4770,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
             Some(existing) => {
-                if skill.source.precedence() > existing.source.precedence() {
+                if candidate_overrides_skill(existing, skill) {
                     log::debug!(
                         "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
@@ -4797,7 +4780,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
                     by_name.insert(skill.name.as_str(), skill);
                 } else {
                     log::debug!(
-                        "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
+                        "Skill '{}' at '{}' conflicts with the selected skill at '{}'; the model keeps the selected skill, but both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
                         existing.skill_file_path.display(),
@@ -4811,21 +4794,38 @@ fn log_skill_conflicts(skills: &[Skill]) {
     }
 }
 
-/// Project-local skills override same-named global skills. Returns a
-/// new list with at most one entry per name. Two skills of the same
-/// source colliding (e.g. two globals or two project-locals) keep the
-/// first one to match the historical behavior.
-///
-/// Core skills are unshadowable: a project-local skill with the same
-/// name as a core skill cannot override it. This prevents a compromised
-/// project from injecting instructions that bypass the consent/trust/
-/// quality controls that core skills enforce.
-///
-/// This is the projection of `state.skills` used by everything the
-/// model interacts with: the system-prompt catalog, the `SkillTool`'s
-/// name resolver, and slash-command invocation. The autocomplete popup
-/// deliberately does *not* go through this — it shows the full list so
-/// users can see what's shadowed.
+/// One winner rule for unqualified slash invocation and the model-facing
+/// catalog. Core wins regardless of order; otherwise higher source precedence
+/// wins, and equal-precedence collisions retain the first entry.
+fn candidate_overrides_skill(current: &Skill, candidate: &Skill) -> bool {
+    if current.core != candidate.core {
+        candidate.core
+    } else {
+        candidate.source.precedence() > current.source.precedence()
+    }
+}
+
+/// Resolve only the typed name; do not clone the entire catalog on each slash
+/// command (including non-skill commands). Explicitly scoped commands select
+/// their named source instead and do not use this winner rule.
+fn select_unqualified_skill<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {
+    skills
+        .iter()
+        .filter(|skill| skill.name == name)
+        .reduce(|best, candidate| {
+            if candidate_overrides_skill(best, candidate) {
+                candidate
+            } else {
+                best
+            }
+        })
+}
+
+/// Project-local skills override same-named non-core global skills. Returns
+/// at most one entry per name; equal-priority collisions retain the first.
+/// Core skills cannot be shadowed by project-local skills in the model catalog
+/// or in unqualified slash commands. The popup retains all entries so users
+/// can explicitly select a source-qualified skill.
 fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     let mut result: Vec<Skill> = Vec::new();
     // Borrow names from the input slice so the dedup index doesn't
@@ -4835,23 +4835,7 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                // Core skills are unshadowable in BOTH directions:
-                // 1. A non-core skill can never override a core skill
-                //    already in the result, regardless of precedence.
-                // 2. A core skill arriving later must replace a non-core
-                //    skill of the same name regardless of precedence —
-                //    without this, a project-local user skill iterated
-                //    before a global core skill would win on precedence
-                //    (ProjectLocal=3 > Global=2) and silently shadow the
-                //    core skill, defeating the unshadowable guarantee.
-                if result[idx].core && !skill.core {
-                    continue;
-                }
-                if skill.core && !result[idx].core {
-                    result[idx] = skill.clone();
-                    continue;
-                }
-                if skill.source.precedence() > result[idx].source.precedence() {
+                if candidate_overrides_skill(&result[idx], skill) {
                     result[idx] = skill.clone();
                 }
             }
@@ -5386,6 +5370,45 @@ mod internal_tests {
         assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
     }
 
+    // expect: An unqualified skill slash command selects the same core skill
+    // as the model catalog, regardless of skill load order.
+    // [P2] Motivating: a project cannot shadow system-critical instructions.
+    // pre: global core and project skills share a name.
+    // post: the core skill wins; non-core ties keep the first entry.
+    #[test]
+    fn unqualified_skill_winner_matches_core_aware_catalog() {
+        let mut core = make_global_skill("create-skill", "Core instructions");
+        core.core = true;
+        let project = make_project_skill("create-skill", "Project instructions", "project");
+        for skills in [vec![core.clone(), project.clone()], vec![project, core]] {
+            let slash = select_unqualified_skill(&skills, "create-skill")
+                .expect("skill available for slash command");
+            let catalog = apply_skill_overrides(&skills);
+            assert_eq!(slash.description, "Core instructions");
+            assert_eq!(slash.skill_file_path, catalog[0].skill_file_path);
+        }
+
+        let first = make_project_skill("review", "First", "first-project");
+        let second = make_project_skill("review", "Second", "second-project");
+        let skills = [first, second];
+        assert_eq!(
+            select_unqualified_skill(&skills, "review").map(|skill| skill.description.as_str()),
+            Some("First")
+        );
+        assert_eq!(
+            select_unqualified_skill(&skills, "missing").map(|skill| skill.name.as_str()),
+            None
+        );
+
+        let mut slash_only = make_global_skill("slash-only", "Explicitly invoked");
+        slash_only.disable_model_invocation = true;
+        let skills = [slash_only];
+        assert_eq!(
+            select_unqualified_skill(&skills, "slash-only").map(|skill| skill.name.as_str()),
+            Some("slash-only")
+        );
+    }
+
     #[test]
     fn test_apply_skill_overrides_project_wins_over_global() {
         // The model-facing projection collapses the same name to a
@@ -5599,6 +5622,86 @@ mod internal_tests {
             .skip(1)
             .map(language_model::LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    // expect: Typing an unqualified core skill sends its shipped instructions,
+    // never a same-named project skill's instructions, to the model.
+    // [P2] Motivating: project content cannot masquerade as a core skill.
+    // pre: the project entry precedes the global core entry in the catalog.
+    // post: the request contains only the core envelope and the user's text.
+    #[gpui::test]
+    async fn unqualified_core_slash_invokes_global_body(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let core_dir = global_skills_dir().join("create-skill");
+        fs.create_dir(&core_dir)
+            .await
+            .expect("core skill directory");
+        fs.insert_file(
+            &core_dir.join("SKILL.md"),
+            b"---\nname: create-skill\ndescription: Canonical\ncore: true\n---\n\nCANONICAL_CORE_BODY".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            agent.update(cx, |agent, _cx| {
+                if let Some(state) = agent.projects.get_mut(&project.entity_id()) {
+                    let mut core = make_global_skill("create-skill", "Canonical");
+                    core.core = true;
+                    state.skills = Arc::new(vec![
+                        make_project_skill("create-skill", "Project override", "a"),
+                        core,
+                    ]);
+                }
+            });
+        });
+
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id, vec!["/create-skill inline request".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = model.pending_completions().pop().expect("model request");
+        let text = request_texts_after_system(&request.messages).join("\n");
+        assert!(
+            text.contains("CANONICAL_CORE_BODY"),
+            "core body missing: {text}"
+        );
+        assert!(
+            text.contains("inline request"),
+            "user input missing: {text}"
+        );
+        assert!(
+            !text.contains("Project override"),
+            "project skill selected: {text}"
+        );
+        model.send_completion_stream_text_chunk(&request, "ok");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+        prompt_task.await.expect("prompt completes");
     }
 
     #[gpui::test]

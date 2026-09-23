@@ -659,8 +659,9 @@ async fn write_skill_to_disk(
     // Reserved (core) skill names cannot be used by user-authored skills.
     // This is a defensive check — the UI (`recompute_name_error`, `is_valid`)
     // already blocks reserved names before save — but a direct caller
-    // (e.g. a future import path) must not be able to bypass it and write a
-    // file that would then be refused at load time by `parse_skill_frontmatter`.
+    // (e.g. a future import path) must not be able to bypass the creator's
+    // reserved-name policy. The loader separately rejects project files that
+    // claim core status; it permits non-core collisions for explicit scopes.
     if is_reserved_skill_name(name) {
         anyhow::bail!(
             "The name \"{name}\" is reserved for a core skill. \
