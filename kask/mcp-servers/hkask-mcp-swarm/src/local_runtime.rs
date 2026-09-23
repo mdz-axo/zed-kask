@@ -320,6 +320,15 @@ impl LocalSwarmRuntime {
         agent: &LocalAgentCard,
         task: &str,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
+        self.delegate_with_history(agent, task, &[]).await
+    }
+
+    pub(crate) async fn delegate_with_history(
+        &self,
+        agent: &LocalAgentCard,
+        task: &str,
+        history: &[hkask_types::ChatMessage],
+    ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
@@ -327,7 +336,11 @@ impl LocalSwarmRuntime {
         // Run the agent (tool loop). A failed run is a real execution
         // failure (fermi counts failed episodes the same way), so it is
         // recorded on the agent's stats before propagating.
-        let raw: RawDelegateResult = match self.executor.run(agent, &task_clean).await {
+        let raw: RawDelegateResult = match self
+            .executor
+            .run_with_history(agent, &task_clean, history)
+            .await
+        {
             Ok(raw) => raw,
             Err(error) => {
                 self.stats.record_failure(&agent.agent_id);

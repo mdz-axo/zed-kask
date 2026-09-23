@@ -311,6 +311,15 @@ impl AgentExecutor {
         agent: &LocalAgentCard,
         task_clean: &str,
     ) -> Result<RawDelegateResult, LocalSwarmError> {
+        self.run_with_history(agent, task_clean, &[]).await
+    }
+
+    pub(crate) async fn run_with_history(
+        &self,
+        agent: &LocalAgentCard,
+        task_clean: &str,
+        history: &[hkask_types::ChatMessage],
+    ) -> Result<RawDelegateResult, LocalSwarmError> {
         if !agent.capabilities.skills.is_empty() {
             return Err(LocalSwarmError::Unavailable(format!(
                 "agent '{}' declares skills, but local skill execution is not wired: \
@@ -417,10 +426,11 @@ impl AgentExecutor {
         // amplification; the per-dispatch ceiling is the credit gate.
         let params = sampling_params(agent);
         let model_override = self.model_override(agent);
-        let mut messages = vec![hkask_types::ChatMessage {
+        let mut messages = history.to_vec();
+        messages.push(hkask_types::ChatMessage {
             role: "user".to_string(),
             content: prompt,
-        }];
+        });
         let mut tool_calls_made: Vec<serde_json::Value> = Vec::new();
         let mut total_tokens: i64 = 0;
         let mut final_text = String::new();

@@ -45,7 +45,8 @@
 //! `swarm_workspace_annotate`, `swarm_workspace_list_annotations`,
 //! `swarm_workspace_list_files`, `swarm_workspace_read_file`,
 //! `swarm_workspace_write_file`.
-//! Local substrate tools (35): local execution `swarm_delegate_local`,
+//! Local substrate tools (37): local execution `swarm_delegate_local`,
+//! `swarm_delegate_in_thread_local`, `swarm_thread_local`,
 //! `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_execute_plan_local`,
 //! `swarm_evaluate_local`, `swarm_eval_suite_local`, `swarm_eval_agent_local`,
 //! `swarm_task_board`; registry `swarm_list_local_agents`,
@@ -107,6 +108,9 @@ mod sanitize;
 pub mod schema_validate;
 mod spend_gate;
 mod task_board;
+mod thread_store;
+#[cfg(test)]
+mod thread_tests;
 mod workflow;
 
 // ── Canonical tool-name list ─────────────────────────────────────────────
@@ -167,6 +171,7 @@ hkask_mcp_server::mcp_server!(
         pub local_memory: std::sync::Arc<local_knowledge::LazyLocalMemory>,
         pub agent_stats: std::sync::Arc<agent_stats::AgentStatsStore>,
         pub event_store: std::sync::Arc<LazyEventStore>,
+        pub thread_store: std::sync::Arc<thread_store::SwarmThreadStore>,
     }
 );
 
@@ -316,6 +321,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .to_string()
                 });
             let event_store = std::sync::Arc::new(LazyEventStore::lazy(events_path));
+            let thread_store = std::sync::Arc::new(thread_store::SwarmThreadStore::new(
+                hkask_types::agent_paths::resolve_under_data_dir(
+                    &hkask_types::agent_paths::mcp_server_db("swarm", "threads"),
+                )
+                .to_string_lossy()
+                .into_owned(),
+                config.memory_passphrase.clone(),
+            ));
 
             // Local swarm registry — the local replica of an ABW workspace
             // roster. A missing directory is not an error (created on first
@@ -426,6 +439,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 local_memory,
                 agent_stats,
                 event_store,
+                thread_store,
             ))
         },
         vec![CredentialRequirement::optional(
@@ -523,6 +537,10 @@ mod smoke_tests {
             local_memory,
             agent_stats,
             event_store,
+            Arc::new(crate::thread_store::SwarmThreadStore::new(
+                scratch.join("threads.db").to_string_lossy().into_owned(),
+                "test-passphrase".into(),
+            )),
         )
     }
 
@@ -956,6 +974,10 @@ mod smoke_tests {
             local_memory,
             agent_stats,
             event_store,
+            Arc::new(crate::thread_store::SwarmThreadStore::new(
+                scratch.join("threads.db").to_string_lossy().into_owned(),
+                "test-passphrase".into(),
+            )),
         );
 
         server
@@ -1016,16 +1038,16 @@ mod smoke_tests {
 // swarm_fleet_digest_local, swarm_who_answers_local, and
 // swarm_select_agent_local added 2026-09-09, completing the fermi absorption
 // — the fleet digest, the cohort query, and the measured selection) +
-// 4 knowledge + 3 a2a = 87 (the 3 local-ledger tools were
-// removed with the local budget system, operator ruling 2026-09-04).
+// 4 knowledge + 3 a2a + 2 swarm-scoped thread tools = 89 (the 3 local-ledger
+// tools were removed with the local budget system, operator ruling 2026-09-04).
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_87_registered_tools() {
+    fn tool_surface_is_exactly_89_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 87, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 89, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree by NAME — a `name =`

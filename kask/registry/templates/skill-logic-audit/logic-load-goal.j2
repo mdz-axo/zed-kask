@@ -31,7 +31,7 @@ You are a goal extractor. Your job is to locate the annotated `goal:` block in t
 
 ## Extraction Rules
 
-1. For `.j2` files, look for a Jinja2 comment of the form `{# goal: ... #}` near the top of the file.
+1. For `.j2` files, look for a Jinja2 comment of the form `{% raw %}{# goal: ... #}{% endraw %}` near the top of the file.
 2. For `manifest.yaml` files, look for a YAML comment of the form `# goal: ...` near the top of the file.
 3. If multiple goal comments exist, use the first one.
 4. Strip leading/trailing whitespace and comment markers, but preserve the exact goal text.

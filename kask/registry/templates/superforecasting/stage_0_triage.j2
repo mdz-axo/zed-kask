@@ -9,6 +9,8 @@ contract:
     goldilocks_zone: boolean
     proceed_recommendation: boolean
     rationale: string
+    resolution_criteria: string|null
+    resolution_deadline: string|null
     scenario_type: string
     time_horizon: string
 visibility: Public
@@ -51,13 +53,16 @@ Evaluate the question against these criteria:
 - Is the outcome determined by factors that can be analyzed and modeled?
 - Would additional research and decomposition likely improve accuracy?
 - Is the time horizon appropriate for meaningful analysis?
+- Is there an observable yes/no outcome with unambiguous resolution criteria and a deadline? If any is unspecified, do not invent it or recommend proceeding; ask for clarification. One realized outcome resolves the event, not the accuracy of the assigned probability (which is assessed across resolved forecasts).
 
 ## Output
 
 Respond with a JSON object containing:
 - difficulty_level: One of "clocklike", "goldilocks", or "cloudlike"
 - goldilocks_zone: boolean (true if difficulty_level is "goldilocks")
-- proceed_recommendation: boolean (recommend proceeding if in goldilocks zone)
+- proceed_recommendation: boolean (proceed only if in the goldilocks zone and the event can be resolved using supplied criteria and deadline)
+- resolution_criteria: the observable rule for yes/no resolution, or null if missing
+- resolution_deadline: the supplied event deadline, or null if missing; never infer a calendar date from `time_horizon`
 - rationale: Brief explanation of the classification decision
 - scenario_type: One of "company_update", "company_analysis", "emerging_economic", or "economic_potential". Classify the question:
   - "company_update" for quarterly earnings, product launches, or periodic company events

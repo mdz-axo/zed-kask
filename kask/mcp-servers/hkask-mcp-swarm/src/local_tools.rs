@@ -251,6 +251,113 @@ fn extract_roster_member_ids(workspace: &serde_json::Value) -> Vec<String> {
 
 #[tool_router(router = local_router, vis = "pub")]
 impl SwarmServer {
+    /// Execute one roster member with ordered prior turns as chat messages.
+    /// The standalone delegation path deliberately does not read this thread.
+    #[tool(
+        description = "Delegate to a member of a local swarm. Prior turns are sent as ordered user/assistant messages. Successful responses are committed to a separate encrypted thread database. Nonmembers are refused before inference."
+    )]
+    pub(crate) async fn swarm_delegate_in_thread_local(
+        &self,
+        parameters: Parameters<DelegateInThreadLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_delegate_in_thread_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id, agent_name and task must be non-empty".to_string(),
+                ));
+            }
+            let _guard = self.thread_store.lock().await;
+            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+            })?;
+            if !swarm.members.iter().any(|member| member == &req.agent_name) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "agent '{}' is not a member of swarm '{}'",
+                    req.agent_name, req.swarm_id
+                )));
+            }
+            let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!("local agent '{}' not found", req.agent_name))
+            })?;
+            let turns = self
+                .thread_store
+                .turns(&req.swarm_id)
+                .await
+                .map_err(map_local_swarm_error)?;
+            let history = turns
+                .iter()
+                .flat_map(|turn| {
+                    [
+                        hkask_types::ChatMessage {
+                            role: "user".into(),
+                            content: turn.task.clone(),
+                        },
+                        hkask_types::ChatMessage {
+                            role: "assistant".into(),
+                            content: turn.response.clone(),
+                        },
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let result = runtime
+                .delegate_with_history(&agent, &req.task, &history)
+                .await
+                .map_err(map_local_swarm_error)?;
+            let turn = self
+                .thread_store
+                .append(&req.swarm_id, &req.agent_name, &req.task, &result.response)
+                .await
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "swarm_id": req.swarm_id, "sequence": turn.sequence, "result": result,
+            }))
+        })
+        .await
+    }
+
+    /// Read the durable thread, including after its roster is deleted.
+    #[tool(
+        description = "Read a local swarm's ordered durable turns as {swarm_id,turns,archived}. A deleted swarm's recorded turns remain readable with archived=true."
+    )]
+    pub(crate) async fn swarm_thread_local(
+        &self,
+        parameters: Parameters<GetLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_thread_local", async {
+            let swarm_id = parameters.0.swarm_id;
+            if swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let _guard = self.thread_store.lock().await;
+            let present = self.local_swarms.get(&swarm_id).is_some();
+            let turns = self
+                .thread_store
+                .turns(&swarm_id)
+                .await
+                .map_err(map_local_swarm_error)?;
+            if !present && turns.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "local swarm '{swarm_id}' not found"
+                )));
+            }
+            Ok(serde_json::json!({
+                "swarm_id": swarm_id, "turns": turns, "archived": !present,
+            }))
+        })
+        .await
+    }
+
     /// Delegate a task to a local agent. The agent must exist in the local
     /// registry (`agents/local/curated/<id>/agent_card.json`). The task is
     /// executed via `hkask-inference`. When the

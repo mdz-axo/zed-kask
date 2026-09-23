@@ -428,6 +428,14 @@ pub struct DelegateLocalRequest {
     pub task: String,
 }
 
+/// Delegate within a local swarm's durable conversation thread.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DelegateInThreadLocalRequest {
+    pub swarm_id: String,
+    pub agent_name: String,
+    pub task: String,
+}
+
 // ── Local mode request types (v2 §15 Slice 11) ─────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
