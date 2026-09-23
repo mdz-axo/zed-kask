@@ -31,6 +31,29 @@ pub(crate) trait HarnessAdapter: Send + Sync {
     fn output_dir(&self, job_id: &str) -> PathBuf;
 }
 
+/// The shared strict read/render boundary. Harnesses retain their own root
+/// selection, template name and context; the label preserves error attribution.
+fn render_harness_template(
+    template_path: &std::path::Path,
+    label: &str,
+    context: serde_json::Map<String, serde_json::Value>,
+) -> Result<String, HostProviderError> {
+    let template = std::fs::read_to_string(template_path).map_err(|error| {
+        HostProviderError::InvalidConfig(format!(
+            "Read {label} template {}: {error}",
+            template_path.display()
+        ))
+    })?;
+    let mut environment = minijinja::Environment::new();
+    environment.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    environment
+        .render_str(&template, serde_json::Value::Object(context))
+        .map(|yaml| yaml.trim().to_string() + "\n")
+        .map_err(|error| {
+            HostProviderError::InvalidConfig(format!("Render {label} template: {error}"))
+        })
+}
+
 // ── Axolotl harness ────────────────────────────────────────────────────────
 
 /// Renders axolotl YAML configuration from canonical TrainingParams.
@@ -218,20 +241,7 @@ impl HarnessAdapter for AxolotlHarness {
         );
 
         let template_path = template_root.join("templates/training/axolotl-lora.j2");
-        let template = std::fs::read_to_string(&template_path).map_err(|error| {
-            HostProviderError::InvalidConfig(format!(
-                "Read Axolotl template {}: {error}",
-                template_path.display()
-            ))
-        })?;
-        let mut environment = minijinja::Environment::new();
-        environment.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-        environment
-            .render_str(&template, serde_json::Value::Object(context))
-            .map(|yaml| yaml.trim().to_string() + "\n")
-            .map_err(|error| {
-                HostProviderError::InvalidConfig(format!("Render Axolotl template: {error}"))
-            })
+        render_harness_template(&template_path, "Axolotl", context)
     }
 
     fn output_dir(&self, job_id: &str) -> PathBuf {
@@ -417,25 +427,54 @@ impl HarnessAdapter for LudwigHarness {
             });
 
         let template_path = template_root.join("templates/training/ludwig-lora.j2");
-        let template = std::fs::read_to_string(&template_path).map_err(|error| {
-            HostProviderError::InvalidConfig(format!(
-                "Read Ludwig template {}: {error}",
-                template_path.display()
-            ))
-        })?;
-        let mut environment = minijinja::Environment::new();
-        environment.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-        environment
-            .render_str(&template, serde_json::Value::Object(context))
-            .map(|yaml| yaml.trim().to_string() + "\n")
-            .map_err(|error| {
-                HostProviderError::InvalidConfig(format!("Render Ludwig template: {error}"))
-            })
+        render_harness_template(&template_path, "Ludwig", context)
     }
 
     fn output_dir(&self, job_id: &str) -> PathBuf {
         // Same canonical output dir as AxolotlHarness — the RunPod pod contract
         // is harness-agnostic (/workspace/outputs/{job_id}).
         PathBuf::from(format!("/workspace/outputs/{}", job_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_render_tail_preserves_strictness_output_and_harness_errors() -> std::io::Result<()> {
+        let path = std::env::temp_dir().join(format!(
+            "hkask-training-template-{}.j2",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&path, "  {{ value }}  \n")?;
+        for label in ["Axolotl", "Ludwig"] {
+            let context =
+                serde_json::Map::from_iter([("value".to_string(), serde_json::json!("rendered"))]);
+            let output = render_harness_template(&path, label, context);
+            assert_eq!(output.expect("valid template"), "rendered\n");
+        }
+
+        std::fs::write(&path, "{{ missing }}")?;
+        let invalid = render_harness_template(&path, "Ludwig", serde_json::Map::new());
+        std::fs::remove_file(&path)?;
+        let error = invalid
+            .expect_err("strict undefined variables must fail")
+            .to_string();
+        assert!(
+            error.starts_with("Invalid configuration: Render Ludwig template:"),
+            "{error}"
+        );
+
+        let missing = render_harness_template(&path, "Axolotl", serde_json::Map::new());
+        let error = missing.expect_err("missing template must fail").to_string();
+        assert!(
+            error.starts_with(&format!(
+                "Invalid configuration: Read Axolotl template {}:",
+                path.display()
+            )),
+            "{error}"
+        );
+        Ok(())
     }
 }
