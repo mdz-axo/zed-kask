@@ -189,6 +189,16 @@ impl LocalSwarmRegistry {
             .and_then(|swarms| swarms.iter().find(|s| s.swarm_id == swarm_id).cloned())
     }
 
+    /// Authoritative lookup for execution boundaries. Unlike `get`, a failed
+    /// roster reload must not authorize members from a stale cache.
+    pub fn get_checked(&self, swarm_id: &str) -> Result<Option<LocalSwarm>, LocalSwarmError> {
+        self.load()?;
+        Ok(self
+            .lock_swarms()
+            .as_ref()
+            .and_then(|swarms| swarms.iter().find(|s| s.swarm_id == swarm_id).cloned()))
+    }
+
     /// Create a new swarm with a slug id derived from `name`, optionally
     /// seeded with `members`. Returns the created swarm. Errors if `name` is
     /// empty or the directory is not writable.

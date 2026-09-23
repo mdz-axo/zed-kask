@@ -3,33 +3,92 @@ use crate::*;
 
 // Pipedream's public Reduct connector shows this exact project-read URL as an
 // API proxy target. It is not a substitute for Reduct's login-gated API spec.
+const API_ROOT: &str = "https://app.reduct.video/api/v3/";
 const PROJECT_PROBE_URL: &str = "https://app.reduct.video/api/v3/project";
 
-fn classify_project_probe_status(status: reqwest::StatusCode) -> Result<(), McpToolError> {
+fn recording_read_url(
+    project_id: &str,
+    recording_id: &str,
+    leaf: &str,
+) -> Result<String, McpToolError> {
+    for (name, id) in [("project_id", project_id), ("recording_id", recording_id)] {
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(McpToolError::invalid_argument(format!(
+                "{name} must be a Reduct ID of 1–128 ASCII letters, digits, '-' or '_'"
+            )));
+        }
+    }
+    if !matches!(leaf, "status" | "transcript.json" | "transcript.txt") {
+        return Err(McpToolError::invalid_argument(
+            "unsupported recording read; use status, transcript.json, or transcript.txt",
+        ));
+    }
+    Ok(format!(
+        "{API_ROOT}project/{project_id}/recording/{recording_id}/{leaf}"
+    ))
+}
+
+fn parse_transcript_body(body: &[u8], format: &str) -> Result<serde_json::Value, McpToolError> {
+    let content = match format {
+        "json" => serde_json::from_slice(body).map_err(|_| {
+            McpToolError::failed_precondition("Reduct returned invalid transcript JSON")
+        })?,
+        "txt" => serde_json::Value::String(
+            std::str::from_utf8(body)
+                .map_err(|_| {
+                    McpToolError::failed_precondition("Reduct returned non-UTF-8 transcript text")
+                })?
+                .to_string(),
+        ),
+        _ => {
+            return Err(McpToolError::invalid_argument(
+                "transcript format must be json or txt",
+            ));
+        }
+    };
+    Ok(serde_json::json!({"source": "reduct_cloud", "format": format, "content": content}))
+}
+
+fn classify_reduct_status(
+    status: reqwest::StatusCode,
+    operation: &str,
+) -> Result<(), McpToolError> {
     match status.as_u16() {
         200 => Ok(()),
-        401 | 403 => Err(McpToolError::permission_denied(format!(
-            "Reduct project probe returned HTTP {status}; check account API access and the documented authentication contract. No media was uploaded."
+        400 => Err(McpToolError::invalid_argument(format!(
+            "Reduct {operation} returned HTTP 400 (invalid path or schema); no cloud action was completed."
         ))),
-        404 => Err(McpToolError::not_found(
-            "Reduct project probe returned HTTP 404; the third-party endpoint may be unavailable. No cloud capability has been verified.",
-        )),
-        429 => Err(McpToolError::rate_limited(
-            "Reduct project probe was rate-limited (HTTP 429).",
-        )),
+        401 | 403 => Err(McpToolError::permission_denied(format!(
+            "Reduct {operation} returned HTTP {status}; check API key or workspace API access."
+        ))),
+        404 => Err(McpToolError::not_found(format!(
+            "Reduct {operation} returned HTTP 404; resource or endpoint not found."
+        ))),
+        429 => Err(McpToolError::rate_limited(format!(
+            "Reduct {operation} returned HTTP 429."
+        ))),
         code if (300..400).contains(&code) => Err(McpToolError::failed_precondition(format!(
-            "Reduct project probe returned HTTP {status} redirect; refusing to forward the API key."
+            "Reduct {operation} returned HTTP {status} redirect; refusing to forward the API key."
         ))),
         code if (500..600).contains(&code) => Err(McpToolError::unavailable(format!(
-            "Reduct project probe returned HTTP {status}."
+            "Reduct {operation} returned HTTP {status}."
         ))),
         _ => Err(McpToolError::failed_precondition(format!(
-            "Reduct project probe returned unexpected HTTP {status}; no cloud capability has been verified."
+            "Reduct {operation} returned unexpected HTTP {status}; no success claimed."
         ))),
     }
 }
 
-async fn project_response(key: Option<&str>, url: &str) -> Result<reqwest::Response, McpToolError> {
+async fn read_response(
+    key: Option<&str>,
+    url: &str,
+    operation: &str,
+) -> Result<reqwest::Response, McpToolError> {
     connection_status(key)?;
     let key = key.ok_or_else(|| McpToolError::permission_denied("REDUCT_API_KEY is missing"))?;
     let header = reqwest::header::HeaderValue::from_str(key).map_err(|_| {
@@ -48,16 +107,16 @@ async fn project_response(key: Option<&str>, url: &str) -> Result<reqwest::Respo
         .await
         .map_err(|error| {
             McpToolError::unavailable(format!(
-                "Reduct project probe transport failed: {}",
+                "Reduct {operation} transport failed: {}",
                 error.without_url()
             ))
         })?;
-    classify_project_probe_status(response.status())?;
+    classify_reduct_status(response.status(), operation)?;
     Ok(response)
 }
 
 async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value, McpToolError> {
-    let response = project_response(key, url).await?;
+    let response = read_response(key, url, "project read").await?;
     let status = response.status();
     // Never return or log the response body: this check establishes only that
     // the project-read request succeeded, not what projects the account owns.
@@ -68,6 +127,27 @@ async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value
         "cloud_editing": "not_available",
         "evidence": "Project-read URL is shown by Pipedream and was verified against Reduct; no editing API contract is available."
     }))
+}
+
+async fn read_bounded(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, McpToolError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        McpToolError::unavailable(format!(
+            "Reduct response read failed: {}",
+            error.without_url()
+        ))
+    })? {
+        if chunk.len() > max_bytes.saturating_sub(body.len()) {
+            return Err(McpToolError::failed_precondition(format!(
+                "Reduct response exceeds the {max_bytes}-byte limit; no partial data returned"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn parse_project_snapshot(body: &[u8], limit: usize) -> Result<serde_json::Value, McpToolError> {
@@ -124,23 +204,54 @@ async fn projects_snapshot(
             "limit must be between 1 and 100",
         ));
     }
-    let mut response = project_response(key, url).await?;
-    const MAX_BYTES: usize = 2 * 1024 * 1024;
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| {
-        McpToolError::unavailable(format!(
-            "Reduct project response read failed: {}",
-            error.without_url()
-        ))
-    })? {
-        if chunk.len() > MAX_BYTES.saturating_sub(body.len()) {
-            return Err(McpToolError::failed_precondition(
-                "Reduct project response exceeds the 2 MiB limit",
-            ));
-        }
-        body.extend_from_slice(&chunk);
-    }
+    let response = read_response(key, url, "project read").await?;
+    let body = read_bounded(response, 2 * 1024 * 1024).await?;
     parse_project_snapshot(&body, limit)
+}
+
+async fn recording_status(
+    key: Option<&str>,
+    project_id: &str,
+    recording_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = recording_read_url(project_id, recording_id, "status")?;
+    let response = read_response(key, &url, "recording status").await?;
+    let body = read_bounded(response, 512 * 1024).await?;
+    let status: serde_json::Value = serde_json::from_slice(&body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct returned invalid recording-status JSON")
+    })?;
+    Ok(serde_json::json!({"source": "reduct_cloud", "status": status}))
+}
+
+async fn recording_transcript(
+    key: Option<&str>,
+    project_id: &str,
+    recording_id: &str,
+    format: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    if !matches!(format, "json" | "txt") {
+        return Err(McpToolError::invalid_argument(
+            "transcript format must be json or txt",
+        ));
+    }
+    let url = recording_read_url(project_id, recording_id, &format!("transcript.{format}"))?;
+    let response = read_response(key, &url, "transcript read").await?;
+    let body = read_bounded(response, 8 * 1024 * 1024).await?;
+    parse_transcript_body(&body, format)
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductRecordingRequest {
+    project_id: String,
+    recording_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductTranscriptRequest {
+    project_id: String,
+    recording_id: String,
+    /// json (timing-bearing provider structure) or txt (plain text).
+    format: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -198,6 +309,45 @@ impl MediaServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Get Reduct's JSON transcription/recording status for a known project and recording ID. Read-only; no local educt fallback."
+    )]
+    pub async fn reduct_recording_status(
+        &self,
+        Parameters(ReductRecordingRequest {
+            project_id,
+            recording_id,
+        }): Parameters<ReductRecordingRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_recording_status", async {
+            recording_status(self.reduct_api_key.as_deref(), &project_id, &recording_id).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read an existing Reduct recording transcript in json or txt format (up to 8 MiB). The provider response is not re-timed or silently substituted with local educt data."
+    )]
+    pub async fn reduct_recording_transcript(
+        &self,
+        Parameters(ReductTranscriptRequest {
+            project_id,
+            recording_id,
+            format,
+        }): Parameters<ReductTranscriptRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_recording_transcript", async {
+            recording_transcript(
+                self.reduct_api_key.as_deref(),
+                &project_id,
+                &recording_id,
+                &format,
+            )
+            .await
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +377,34 @@ mod tests {
         assert!(parse_project_snapshot(br#"{"other": []}"#, 1).is_err());
         assert!(parse_project_snapshot(br#"{"project":{"p1":{}}}"#, 1).is_err());
         assert!(parse_project_snapshot(body, 0).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn documented_recording_reads_validate_ids_and_formats() -> Result<(), McpToolError> {
+        assert_eq!(
+            recording_read_url("p-id", "r_1", "status")?,
+            "https://app.reduct.video/api/v3/project/p-id/recording/r_1/status"
+        );
+        assert_eq!(
+            recording_read_url("p-id", "r_1", "transcript.json")?,
+            "https://app.reduct.video/api/v3/project/p-id/recording/r_1/transcript.json"
+        );
+        assert!(recording_read_url("../other", "r_1", "status").is_err());
+        assert!(recording_read_url("p-id", "r/2", "status").is_err());
+        assert!(recording_read_url("p-id", "r_1", "transcript.docx").is_err());
+        assert!(recording_read_url("p-id", "r_1", "unknown").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn transcript_response_keeps_format_and_does_not_fake_timings() -> Result<(), McpToolError> {
+        let json = parse_transcript_body(br#"{"wdlist":[]}"#, "json")?;
+        assert_eq!(json["source"], "reduct_cloud");
+        assert_eq!(json["content"]["wdlist"], serde_json::json!([]));
+        let txt = parse_transcript_body(b"hello", "txt")?;
+        assert_eq!(txt["content"], "hello");
+        assert!(parse_transcript_body(b"not-json", "json").is_err());
         Ok(())
     }
 
@@ -468,14 +646,15 @@ mod tests {
             (500, hkask_types::McpErrorKind::Unavailable),
             (302, hkask_types::McpErrorKind::FailedPrecondition),
         ] {
-            let error = classify_project_probe_status(
+            let error = classify_reduct_status(
                 reqwest::StatusCode::from_u16(status).expect("valid test status"),
+                "project read",
             )
             .expect_err("non-success should be visible");
             assert_eq!(error.kind, expected_kind, "HTTP {status}");
             assert!(!error.message.contains("test-secret-do-not-echo"));
         }
-        assert!(classify_project_probe_status(reqwest::StatusCode::OK).is_ok());
+        assert!(classify_reduct_status(reqwest::StatusCode::OK, "project read").is_ok());
     }
 
     #[test]

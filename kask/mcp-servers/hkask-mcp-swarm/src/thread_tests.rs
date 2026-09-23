@@ -304,3 +304,40 @@ async fn scoped_thread_is_structured_durable_isolated_and_archived()
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn malformed_roster_refuses_scoped_inference_instead_of_using_cached_members()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let recorder = Arc::new(RecordingInference::default());
+    let server = make_thread_server(dir.path(), recorder.clone());
+    server
+        .local_registry
+        .write_card(&serde_json::from_value(json!({
+            "agent_id": "a", "agent_type": "test", "description": "fixture",
+            "capabilities": {"system_prompt": "Answer tasks", "model": "fixture/model"}
+        }))?)?;
+    let swarm = server
+        .local_swarms
+        .create("protected", "", vec!["a".into()])?;
+    assert!(server.local_swarms.get(&swarm.swarm_id).is_some());
+    std::fs::write(
+        dir.path()
+            .join("swarms")
+            .join(&swarm.swarm_id)
+            .join("swarm.json"),
+        "{malformed",
+    )?;
+    assert!(
+        server
+            .swarm_delegate_in_thread_local(Parameters(DelegateInThreadLocalRequest {
+                swarm_id: swarm.swarm_id,
+                agent_name: "a".into(),
+                task: "must not run".into(),
+            }))
+            .await
+            .is_err()
+    );
+    assert_eq!(recorder.0.lock().expect("calls").len(), 0);
+    Ok(())
+}

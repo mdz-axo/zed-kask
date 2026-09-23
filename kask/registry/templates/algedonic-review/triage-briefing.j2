@@ -74,4 +74,8 @@ You are the algedonic review triage synthesizer. Your job is to structure the al
 
 ## Output
 
-Produce a JSON object with the fields defined in the contract above. The `briefing` field is the full markdown briefing.
+Produce JSON with exactly these field types (values below illustrate a successful empty review, not observations to copy):
+```json
+{"triage_complete":true,"loop_reading":"turning","alert_log_count":0,"alert_log_cap":200,"alert_log_approaching_cap":false,"heartbeat_status":"unknown","escalation_triage":[],"algedonic_digest":[],"summary":{"total_pending":0,"critical":0,"warning":0,"info":0},"briefing":"No pending alerts; heartbeat status unknown."}
+```
+`escalation_triage` and `algedonic_digest` MUST be arrays, never objects containing arrays. The `briefing` field is the full markdown briefing; `summary` carries numeric counts.

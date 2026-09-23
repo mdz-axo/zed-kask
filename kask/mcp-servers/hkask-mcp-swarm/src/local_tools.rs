@@ -272,9 +272,13 @@ impl SwarmServer {
             .lock()
             .await
             .map_err(map_local_swarm_error)?;
-        let swarm = self.local_swarms.get(swarm_id).ok_or_else(|| {
-            McpToolError::not_found(format!("local swarm '{swarm_id}' not found"))
-        })?;
+        let swarm = self
+            .local_swarms
+            .get_checked(swarm_id)
+            .map_err(map_local_swarm_error)?
+            .ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{swarm_id}' not found"))
+            })?;
         if !swarm.members.iter().any(|member| member == agent_name) {
             return Err(McpToolError::invalid_argument(format!(
                 "agent '{agent_name}' is not a member of swarm '{swarm_id}'"
@@ -372,7 +376,11 @@ impl SwarmServer {
                 .lock()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let present = self.local_swarms.get(&swarm_id).is_some();
+            let present = self
+                .local_swarms
+                .get_checked(&swarm_id)
+                .map_err(map_local_swarm_error)?
+                .is_some();
             let turns = self
                 .thread_store
                 .turns(&swarm_id)
