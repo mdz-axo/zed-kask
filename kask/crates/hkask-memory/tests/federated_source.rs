@@ -180,6 +180,20 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     Ok(())
 }
 
+/// expect: "A self-hashed partial identity cannot impersonate the current producer seal." [P8]
+#[test]
+fn bound_source_rejects_partial_schema_three_identity() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("partial producer identity was accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("run identity"));
+    Ok(())
+}
+
 /// expect: a tampered filter attestation cannot be substituted for the sealed manifest.
 #[test]
 fn bound_source_rejects_tampered_filter_attestation() -> anyhow::Result<()> {

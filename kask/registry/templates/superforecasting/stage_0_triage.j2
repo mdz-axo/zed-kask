@@ -11,8 +11,8 @@ contract:
     rationale: string
     resolution_criteria: string|null
     resolution_deadline: string|null
-    scenario_type: string
-    time_horizon: string
+    scenario_type: string|null
+    time_horizon: string|null
 visibility: Public
 ---
 [inference]
@@ -64,9 +64,9 @@ Respond with a JSON object containing:
 - resolution_criteria: the observable rule for yes/no resolution, or null if missing
 - resolution_deadline: the supplied event deadline, or null if missing; never infer a calendar date from `time_horizon`
 - rationale: Brief explanation of the classification decision
-- scenario_type: One of "company_update", "company_analysis", "emerging_economic", or "economic_potential". Classify the question:
+- scenario_type: One of "company_update", "company_analysis", "emerging_economic", or "economic_potential", or null if the question does not fit a supported scenario type. Classify the question only when the underlying event is specified:
   - "company_update" for quarterly earnings, product launches, or periodic company events
   - "company_analysis" for investment thesis construction about a specific company
   - "emerging_economic" for near-term disruption or sector-level economic shifts
   - "economic_potential" for long-term domain-level economic driver analysis
-- time_horizon: One of "tactical" (12-18 months), "strategic" (3-5 years), or "long_term" (7-10 years). Match the horizon to the question's natural resolution timeframe.
+- time_horizon: One of "tactical" (12-18 months), "strategic" (3-5 years), or "long_term" (7-10 years), or null when no bounded horizon was supplied. Never map "someday" to a finite horizon or invent a deadline.

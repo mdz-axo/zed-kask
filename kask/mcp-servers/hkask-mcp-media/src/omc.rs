@@ -155,6 +155,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "reduct_connection_status"
         | "reduct_connection_probe"
         | "reduct_projects_snapshot" => Some(PARTICIPANT),
+        "reduct_recording_status" => Some(STATE),
+        "reduct_recording_transcript" => Some(CAPTURE),
         // Generation job queue — async job tracking (OMC Task).
         "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
         | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),

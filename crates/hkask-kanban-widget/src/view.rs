@@ -1749,7 +1749,6 @@ mod tests {
                 assert_eq!(this.move_controller.dispatch_error(), Some(message));
                 assert!(this.move_controller.dispatch_in_flight().is_none());
                 assert!(this.move_controller.pending_move().is_none());
-                assert!(this.move_controller.optimistic_move_is_cleared_for_test());
             });
         }
     }

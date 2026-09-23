@@ -33,7 +33,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 1. Evaluate whether a forecasting question is worth investing significant effort in.
 2. Classify the question into "clocklike" (easy), "goldilocks" (just right), or "cloudlike" (unpredictable).
 3. Assess if there is sufficient publicly available information, if the outcome is determined by analyzable factors, if research would improve accuracy, and if the time horizon is appropriate.
-4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when the question is in the goldilocks zone **and** can later be resolved; carry the criteria and deadline unchanged into stage 7's record.
+4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. If no supported `scenario_type` or bounded `time_horizon` fits, report null and do not proceed into the scenario tree. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when the question is in the goldilocks zone **and** can later be resolved; carry the criteria and deadline unchanged into stage 7's record.
 
 ### stage_1_fermi_decompose
 

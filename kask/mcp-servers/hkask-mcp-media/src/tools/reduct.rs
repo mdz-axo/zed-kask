@@ -11,18 +11,26 @@ fn recording_read_url(
     recording_id: &str,
     leaf: &str,
 ) -> Result<String, McpToolError> {
-    for (name, id) in [("project_id", project_id), ("recording_id", recording_id)] {
-        if id.is_empty()
-            || id.len() > 128
-            || !id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        {
-            return Err(McpToolError::invalid_argument(format!(
-                "{name} must be a Reduct ID of 1–128 ASCII letters, digits, '-' or '_'"
-            )));
-        }
+    fn validate_reduct_id(name: &str, id: &str) -> Result<(), McpToolError> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(McpToolError::invalid_argument(format!(
+            "{name} must be a Reduct ID of 1–128 ASCII letters, digits, '-' or '_'"
+        )));
     }
+    Ok(())
+}
+
+fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    Ok(format!("{API_ROOT}project/{project_id}"))
+}
+
+fn recording_read_url(project_id: &str, recording_id: &str, leaf: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("recording_id", recording_id)?;
     if !matches!(leaf, "status" | "transcript.json" | "transcript.txt") {
         return Err(McpToolError::invalid_argument(
             "unsupported recording read; use status, transcript.json, or transcript.txt",
@@ -549,6 +557,33 @@ mod tests {
         );
         assert!(snapshot["provider_returned_count"].as_u64().is_some());
         assert_eq!(snapshot["cloud_editing"], "not_available");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_recording_status_from_project() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let response = read_response(Some(key.as_str()), PROJECT_PROBE_URL, "project read").await?;
+        let body = read_bounded(response, 2 * 1024 * 1024).await?;
+        let projects: serde_json::Value = serde_json::from_slice(&body)?;
+        let first_project = projects["project"].as_object().and_then(|map| map.keys().next())
+            .ok_or("provider returned no projects")?;
+        let url = project_detail_url(first_project)?;
+        let response = read_response(Some(key.as_str()), &url, "project detail").await?;
+        let body = read_bounded(response, 2 * 1024 * 1024).await?;
+        let detail: serde_json::Value = serde_json::from_slice(&body)?;
+        let recordings = detail.get("recording").and_then(serde_json::Value::as_object)
+            .ok_or("provider project detail lacks recording map")?;
+        eprintln!("Reduct project detail recording count={}", recordings.len());
+        if let Some(recording_id) = recordings.keys().next() {
+            let status = recording_status(Some(key.as_str()), first_project, recording_id).await?;
+            assert_eq!(status["source"], "reduct_cloud");
+            eprintln!("Reduct recording status response type={}", if status["status"].is_object() { "object" } else { "other" });
+        }
         Ok(())
     }
 

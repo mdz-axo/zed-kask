@@ -604,13 +604,82 @@ impl ReadOnlyPassageSource {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RunIdentity {
     schema_version: u32,
     run_id: String,
+    preseal_run_id: String,
+    accepted_sources_sha256: String,
+    run_spec_sha256: String,
+    queries_sha256: String,
     requested_embedding_model: String,
     actual_embedding_model: String,
+    policies_sha256: String,
+    retriever_sha256: String,
+    evaluator_sha256: String,
     representations_manifest_sha256: String,
+    representations: BTreeMap<String, String>,
     indexes: BTreeMap<String, String>,
+}
+
+impl RunIdentity {
+    fn validate_shape(&self, source_id: &str) -> Result<(), FederatedRecallError> {
+        for (field, digest) in [
+            ("run_id", &self.run_id),
+            ("preseal_run_id", &self.preseal_run_id),
+            ("accepted_sources_sha256", &self.accepted_sources_sha256),
+            ("run_spec_sha256", &self.run_spec_sha256),
+            ("queries_sha256", &self.queries_sha256),
+            ("policies_sha256", &self.policies_sha256),
+            ("retriever_sha256", &self.retriever_sha256),
+            ("evaluator_sha256", &self.evaluator_sha256),
+            (
+                "representations_manifest_sha256",
+                &self.representations_manifest_sha256,
+            ),
+        ] {
+            validate_digest(source_id, field, digest)?;
+        }
+        validate_digest_map(
+            source_id,
+            "representations",
+            &self.representations,
+            &["child_parent_map", "current", "fine", "parent", "reference"],
+        )?;
+        validate_digest_map(
+            source_id,
+            "indexes",
+            &self.indexes,
+            &["current", "fine", "reference"],
+        )?;
+        Ok(())
+    }
+}
+
+fn validate_digest(source_id: &str, field: &str, digest: &str) -> Result<(), FederatedRecallError> {
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(FederatedRecallError::InvalidManifest(format!(
+            "source {source_id} run identity {field} must be a SHA-256 digest"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_digest_map(
+    source_id: &str,
+    field: &str,
+    digests: &BTreeMap<String, String>,
+    expected: &[&str],
+) -> Result<(), FederatedRecallError> {
+    if digests.keys().map(String::as_str).collect::<Vec<_>>() != expected {
+        return Err(FederatedRecallError::InvalidManifest(format!(
+            "source {source_id} run identity {field} has a non-current key set"
+        )));
+    }
+    for (name, digest) in digests {
+        validate_digest(source_id, &format!("{field}.{name}"), digest)?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
