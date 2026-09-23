@@ -588,7 +588,7 @@ impl ResearchServer {
 
             let fingerprint = self.pool.provider_fingerprint();
             let cache_params = serde_json::json!({
-                "format": fmt,
+                "format": &fmt,
                 "main_content_only": main_content_only,
                 "json_prompt": json_prompt,
                 "json_schema": json_schema_str,
@@ -597,7 +597,7 @@ impl ResearchServer {
             let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
 
             let opts = ExtractOptions {
-                format: fmt,
+                format: fmt.clone(),
                 json_prompt,
                 json_schema: json_schema_inner,
                 main_content_only,
