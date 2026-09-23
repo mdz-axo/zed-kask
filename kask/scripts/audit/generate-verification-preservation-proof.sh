@@ -18,6 +18,8 @@ done
 
 if ! jq -e '
   def key: [.expectation_id,.falsifier_id,.oracle_kind,.failure_class,.provenance_tier] | @json;
+  def pair: [.artifact_id, (.signal | key)] | @json;
+  def mapping_pair: [.removed_artifact, (.signal | key)] | @json;
   def valid_signal:
     type == "object" and
     (keys == ["expectation_id","failure_class","falsifier_id","oracle_kind","provenance_tier"]) and
@@ -37,6 +39,9 @@ if ! jq -e '
   ($g.after | type == "array" and length > 0 and all(.[]; valid_entry)) and
   ($g.removed_mappings | type == "array" and all(.[]; valid_mapping)) and
   (([$g.required[] | key] | unique) | length == ($g.required | length)) and
+  (([$g.before[] | pair] | unique) | length == ($g.before | length)) and
+  (([$g.after[] | pair] | unique) | length == ($g.after | length)) and
+  (([$g.removed_mappings[] | mapping_pair] | unique) | length == ($g.removed_mappings | length)) and
   (([$g.before[].signal | key] | unique) as $before |
    ([$g.after[].signal | key] | unique) as $after |
    ([$g.required[] | key] | unique) as $required |

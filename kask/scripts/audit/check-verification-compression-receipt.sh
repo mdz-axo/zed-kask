@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Verify a trusted, externally pinned receipt against live immutable snapshots.
 set -euo pipefail
-if [[ $# -ne 3 || ( $1 != analyze && $1 != execute ) || ! $3 =~ ^[0-9a-f]{64}$ ]]; then
-  echo 'usage: checker analyze|execute RECEIPT PINNED_SHA256' >&2
+if [[ $# -ne 4 || ( $1 != analyze && $1 != execute ) || ! $3 =~ ^[0-9a-f]{64}$ ]]; then
+  echo 'usage: checker analyze|execute RECEIPT PINNED_SHA256 APPROVED_DIFF_SHA256_OR_DASH' >&2
   exit 2
 fi
-mode=$1 receipt=$2 pin=$3
+mode=$1 receipt=$2 pin=$3 approved=$4
+if [[ ( $mode == analyze && $approved != - ) || ( $mode == execute && ! $approved =~ ^[0-9a-f]{64}$ ) ]]; then
+  echo 'analyze requires approval marker -, execute requires an independent approved diff SHA-256' >&2
+  exit 2
+fi
 [[ -f $receipt && ! -L $receipt ]] || { echo 'missing or linked receipt' >&2; exit 1; }
 [[ $(sha256sum "$receipt" | cut -d ' ' -f 1) == "$pin" ]] || { echo 'receipt pin mismatch' >&2; exit 1; }
 declare -A hashes paths
@@ -61,4 +65,8 @@ while IFS= read -r id; do
   [[ $rc -le 1 ]] || { echo 'diff failed' >&2; exit 1; }
 done < <(for key in "${!hashes[@]}"; do [[ $key == source/before/* ]] && printf '%s\n' "${key#source/before/}"; done | LC_ALL=C sort)
 cmp -s "$work/diff" "${paths[candidate_diff/after/singleton]}" || { echo 'candidate diff does not match source snapshots' >&2; exit 1; }
-echo 'receipt and candidate diff verified'
+if [[ $mode == execute && $(sha256sum "$work/diff" | cut -d ' ' -f 1) != "$approved" ]]; then
+  echo 'candidate diff does not match independently approved digest' >&2
+  exit 1
+fi
+echo 'receipt, graph, proof and candidate diff verified'

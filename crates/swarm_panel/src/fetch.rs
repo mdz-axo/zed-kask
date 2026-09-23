@@ -29,6 +29,10 @@ const FETCH_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 /// does not become an unbounded background poll.
 const MAX_FETCH_RETRIES: u32 = 5;
 
+fn is_selected_local_swarm(selected: Option<&str>, local: Option<&str>) -> bool {
+    local.is_some_and(|id| selected == Some(id))
+}
+
 /// The backoff delay for the next retry, or `None` once the attempt budget is
 /// spent.
 ///
@@ -405,7 +409,15 @@ impl SwarmPanel {
                                                 _ => false,
                                             })
                                         });
-                                    if !selected_still_present {
+                                    // A local selection is owned by the local backend;
+                                    // a cloud fetch cannot invalidate it (including
+                                    // after the local roster has been deleted).
+                                    if !selected_still_present
+                                        && !is_selected_local_swarm(
+                                            this.selected_workspace.as_deref(),
+                                            this.selected_local_swarm.as_deref(),
+                                        )
+                                    {
                                         this.selected_workspace =
                                             this.entries.iter().find_map(|e| match e {
                                                 SwarmEntry::Swarm(s) if !s.id.is_empty() => {
@@ -951,6 +963,14 @@ pub(crate) fn merge_local_agents(entries: &mut Vec<SwarmEntry>, local_agents: Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_fetch_preserves_only_an_explicit_local_selection() {
+        assert!(!is_selected_local_swarm(None, None));
+        assert!(!is_selected_local_swarm(Some("cloud"), None));
+        assert!(!is_selected_local_swarm(Some("cloud"), Some("local")));
+        assert!(is_selected_local_swarm(Some("local"), Some("local")));
+    }
 
     // The panel used to fetch exactly once, in its constructor. A single MCP
     // server restart — routine when settings change, or when the inference

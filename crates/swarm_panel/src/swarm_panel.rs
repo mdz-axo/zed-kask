@@ -34,6 +34,7 @@ mod card;
 mod compose;
 mod fetch;
 mod hire;
+mod member_turns;
 pub mod panel_button;
 mod parse;
 mod swarm_ops;
@@ -568,6 +569,10 @@ pub struct SwarmPanel {
     /// The workspace (swarm) id new hires target. Defaults to the first
     /// workspace once swarms load; selectable when there are several.
     selected_workspace: Option<String>,
+    /// Local identity of the explicitly selected swarm; never infer local
+    /// ownership from a cloud workspace id or the Curator thread.
+    selected_local_swarm: Option<String>,
+    member_turns: member_turns::MemberTurnsState,
     /// Which surface is active: browse, author, compose, or steer.
     mode: PanelMode,
     /// The panel's last-used backend target — the context the Author and
@@ -719,6 +724,7 @@ impl SwarmPanel {
                 let mode = Self::current_swarm_mode(cx);
                 if this.last_swarm_mode.as_ref() != Some(&mode) {
                     this.steer.invalidate();
+                    this.member_turns.clear();
                     // The settings change is an explicit backend declaration —
                     // carry it into the panel's creation context too, and sync
                     // the open form so its toggle doesn't go stale (the
@@ -731,6 +737,9 @@ impl SwarmPanel {
                     };
                     this.sync_open_form_target();
                     this.last_swarm_mode = Some(mode);
+                    if this.mode == PanelMode::Steer {
+                        this.refresh_member_turns(cx);
+                    }
                 }
                 this.filter_entries(cx);
             });
@@ -791,6 +800,8 @@ impl SwarmPanel {
                 _subscriptions: subscriptions,
                 search_task: None,
                 selected_workspace: None,
+                selected_local_swarm: None,
+                member_turns: member_turns::MemberTurnsState::default(),
                 mode: PanelMode::Browse,
                 active_backend,
                 author,
@@ -826,7 +837,11 @@ impl SwarmPanel {
     }
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
+        let entering_steer = mode == PanelMode::Steer && self.mode != PanelMode::Steer;
         self.mode = mode;
+        if entering_steer {
+            self.refresh_member_turns(cx);
+        }
         // Entering a creation surface syncs its form target to the panel's
         // backend context (see `target_on_surface_entry`).
         self.sync_open_form_target();
@@ -1932,6 +1947,7 @@ impl Render for SwarmPanel {
                             // deserialized into Steer mode), render a
                             // placeholder — the operator can re-click Steer.
                             let has_workspace = self.selected_workspace.is_some();
+                            let member_turns = self.render_member_turns(cx);
                             let launch_button = h_flex()
                                 .w_full()
                                 .gap_2()
@@ -1956,6 +1972,7 @@ impl Render for SwarmPanel {
                             match self.steer.conversation() {
                                 Some(view) => this
                                     .child(launch_button)
+                                    .child(member_turns)
                                     // The Open Thread affordance sits above the
                                     // conversation so the operator can resume a
                                     // previous steer session at any time.
@@ -1973,6 +1990,7 @@ impl Render for SwarmPanel {
                                     .into_any_element(),
                                 None => this
                                     .child(launch_button)
+                                    .child(member_turns)
                                     .child(
                                         h_flex()
                                             .flex_1()

@@ -4,6 +4,9 @@
 //! `hkask_mcp_swarm.rs` (M2). All operate on the local registry/runtime; no
 //! ABW round-trips except `swarm_clone_to_local`/`swarm_push_to_cloud`.
 use crate::SwarmServer;
+#[cfg(test)]
+#[path = "scoped_dispatch_tests.rs"]
+mod scoped_dispatch_tests;
 use crate::abw_util::{make_swarm_slug, url_encode_segment, validate_agent_name};
 use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
 use crate::local_knowledge;
@@ -17,6 +20,7 @@ use crate::sanitize::{
     sanitize_agent_id, sanitize_workspace_payload,
 };
 use crate::spend_gate;
+use crate::thread_store::ThreadTurn;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -249,6 +253,74 @@ fn extract_roster_member_ids(workspace: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+impl SwarmServer {
+    /// Scoped dispatch returns the typed result, not a re-parsed MCP envelope.
+    /// Lock order is process gate, then OS file lock, then roster/history/inference/append.
+    pub(crate) async fn dispatch_in_thread(
+        &self,
+        swarm_id: &str,
+        agent_name: &str,
+        task: &str,
+    ) -> Result<(LocalDelegateResult, ThreadTurn), McpToolError> {
+        if swarm_id.trim().is_empty() || agent_name.trim().is_empty() || task.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "swarm_id, agent_name and task must be non-empty",
+            ));
+        }
+        let _guard = self
+            .thread_store
+            .lock()
+            .await
+            .map_err(map_local_swarm_error)?;
+        let swarm = self.local_swarms.get(swarm_id).ok_or_else(|| {
+            McpToolError::not_found(format!("local swarm '{swarm_id}' not found"))
+        })?;
+        if !swarm.members.iter().any(|member| member == agent_name) {
+            return Err(McpToolError::invalid_argument(format!(
+                "agent '{agent_name}' is not a member of swarm '{swarm_id}'"
+            )));
+        }
+        let agent = self.local_registry.get(agent_name).ok_or_else(|| {
+            McpToolError::not_found(format!("local agent '{agent_name}' not found"))
+        })?;
+        let turns = self
+            .thread_store
+            .turns(swarm_id)
+            .await
+            .map_err(map_local_swarm_error)?;
+        let history = turns
+            .iter()
+            .flat_map(|turn| {
+                [
+                    hkask_types::ChatMessage {
+                        role: "user".into(),
+                        content: turn.task.clone(),
+                    },
+                    hkask_types::ChatMessage {
+                        role: "assistant".into(),
+                        content: turn.response.clone(),
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+        let runtime = self
+            .local_runtime
+            .get_or_init()
+            .await
+            .map_err(map_local_swarm_error)?;
+        let result = runtime
+            .delegate_with_history(&agent, task, &history)
+            .await
+            .map_err(map_local_swarm_error)?;
+        let turn = self
+            .thread_store
+            .append(swarm_id, agent_name, task, &result.response)
+            .await
+            .map_err(map_local_swarm_error)?;
+        Ok((result, turn))
+    }
+}
+
 #[tool_router(router = local_router, vis = "pub")]
 impl SwarmServer {
     /// Execute one roster member with ordered prior turns as chat messages.
@@ -270,53 +342,9 @@ impl SwarmServer {
                     "swarm_id, agent_name and task must be non-empty".to_string(),
                 ));
             }
-            let _guard = self.thread_store.lock().await;
-            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-            })?;
-            if !swarm.members.iter().any(|member| member == &req.agent_name) {
-                return Err(McpToolError::invalid_argument(format!(
-                    "agent '{}' is not a member of swarm '{}'",
-                    req.agent_name, req.swarm_id
-                )));
-            }
-            let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!("local agent '{}' not found", req.agent_name))
-            })?;
-            let turns = self
-                .thread_store
-                .turns(&req.swarm_id)
-                .await
-                .map_err(map_local_swarm_error)?;
-            let history = turns
-                .iter()
-                .flat_map(|turn| {
-                    [
-                        hkask_types::ChatMessage {
-                            role: "user".into(),
-                            content: turn.task.clone(),
-                        },
-                        hkask_types::ChatMessage {
-                            role: "assistant".into(),
-                            content: turn.response.clone(),
-                        },
-                    ]
-                })
-                .collect::<Vec<_>>();
-            let runtime = self
-                .local_runtime
-                .get_or_init()
-                .await
-                .map_err(map_local_swarm_error)?;
-            let result = runtime
-                .delegate_with_history(&agent, &req.task, &history)
-                .await
-                .map_err(map_local_swarm_error)?;
-            let turn = self
-                .thread_store
-                .append(&req.swarm_id, &req.agent_name, &req.task, &result.response)
-                .await
-                .map_err(map_local_swarm_error)?;
+            let (result, turn) = self
+                .dispatch_in_thread(&req.swarm_id, &req.agent_name, &req.task)
+                .await?;
             Ok(serde_json::json!({
                 "swarm_id": req.swarm_id, "sequence": turn.sequence, "result": result,
             }))
@@ -339,7 +367,11 @@ impl SwarmServer {
                     "swarm_id must be non-empty".to_string(),
                 ));
             }
-            let _guard = self.thread_store.lock().await;
+            let _guard = self
+                .thread_store
+                .lock()
+                .await
+                .map_err(map_local_swarm_error)?;
             let present = self.local_swarms.get(&swarm_id).is_some();
             let turns = self
                 .thread_store
@@ -478,7 +510,7 @@ impl SwarmServer {
     /// Returns per-agent results plus aggregates (total tokens/latency,
     /// failed/succeeded counts).
     #[tool(
-        description = "Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Set parallel=true to run inference concurrently. Capped at MAX_FANOUT (10). No consent token — local mode."
+        description = "Dispatch N local agents and aggregate. Optional swarm_id dispatches sequentially into its ordered thread and rejects nonmembers; parallel=true with swarm_id is invalid. Unscoped parallel=true runs inference concurrently. Capped at MAX_FANOUT (10)."
     )]
     pub(crate) async fn swarm_fanout_local(
         &self,
@@ -496,6 +528,43 @@ impl SwarmServer {
                     "fanout cap is {MAX_FANOUT} agents, got {}",
                     req.delegations.len()
                 )));
+            }
+            if let Some(swarm_id) = &req.swarm_id {
+                if req.parallel {
+                    return Err(McpToolError::invalid_argument(
+                        "parallel=true is not supported with swarm_id: scoped fanout requires ordered dispatch",
+                    ));
+                }
+                let mut results = Vec::with_capacity(req.delegations.len());
+                let mut failed = 0usize;
+                let mut total_tokens = 0i64;
+                let mut total_latency_ms = 0u64;
+                for entry in &req.delegations {
+                    match self
+                        .dispatch_in_thread(swarm_id, &entry.agent_name, &entry.task)
+                        .await
+                    {
+                        Ok((result, _turn)) => {
+                            total_tokens += result.tokens_used;
+                            total_latency_ms = total_latency_ms.saturating_add(result.latency_ms);
+                            results.push(result.to_result_json(true));
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            results.push(LocalDelegateResult::error_json(
+                                &entry.agent_name,
+                                &error.to_string(),
+                            ));
+                        }
+                    }
+                }
+                return Ok(serde_json::json!({
+                    "results": results,
+                    "total_tokens": total_tokens,
+                    "total_latency_ms": total_latency_ms,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }));
             }
             let runtime = self
                 .local_runtime
@@ -650,7 +719,7 @@ impl SwarmServer {
     /// output as context to the next via `{prev_output}` substitution. Capped
     /// at `MAX_PIPELINE_STEPS` (10). No consent token — local mode.
     #[tool(
-        description = "Sequential local pipeline: run N agents in order with {prev_output} substitution. Each step's task may contain {prev_output} which is replaced with the previous step's response. Capped at 10 steps. No consent token — local mode."
+        description = "Sequential local pipeline with {prev_output} substitution. Optional swarm_id dispatches each step into its ordered thread and rejects nonmembers. Capped at 10 steps. No consent token — local mode."
     )]
     pub(crate) async fn swarm_pipeline_local(
         &self,
@@ -718,7 +787,18 @@ impl SwarmServer {
                         );
                     }
                 }
-                match runtime.delegate(&agent, &task).await {
+                let dispatched = if let Some(swarm_id) = &req.swarm_id {
+                    self.dispatch_in_thread(swarm_id, &step.agent_name, &task)
+                        .await
+                        .map(|(result, _turn)| result)
+                        .map_err(|error| error.to_string())
+                } else {
+                    runtime
+                        .delegate(&agent, &task)
+                        .await
+                        .map_err(|error| error.to_string())
+                };
+                match dispatched {
                     Ok(mut r) => {
                         self.validate_produces(&step.agent_name, &agent.produces, &r.response);
                         // Narrative response memory uses the substituted task
@@ -739,8 +819,7 @@ impl SwarmServer {
                         results.push(entry);
                     }
                     Err(e) => {
-                        let mut entry =
-                            LocalDelegateResult::error_json(&step.agent_name, &e.to_string());
+                        let mut entry = LocalDelegateResult::error_json(&step.agent_name, &e);
                         entry["step"] = serde_json::json!(i);
                         results.push(entry);
                         break; // pipeline stops on failure
@@ -922,7 +1001,7 @@ impl SwarmServer {
     /// carries upstream output records an observed delegation edge to the
     /// event store (`swarm_observed_seams_local` reads them).
     #[tool(
-        description = "Run a local agent's declared workflow_template end-to-end. Stage 1 receives the task; each later stage receives its predecessor's response verbatim. Stops at the first open slot (named in the outcome — fill it and re-run), missing agent, or failed stage; prior outcomes are kept. Records observed delegation edges to the event store for swarm_observed_seams_local. Returns the check report (slot resolution + seam notes), per-stage outcomes, and the final output. Per-agent execution stats (tokens, latency) accumulate on each agent's card via swarm_get_local_agent."
+        description = "Run a local agent's declared workflow_template end-to-end. Stage 1 receives the task; later stages receive the previous response. Optional swarm_id dispatches each stage into its ordered thread and rejects nonmembers. Stops at the first open slot, missing agent, or failed stage; prior outcomes are kept. Returns the check report, per-stage outcomes, and final output."
     )]
     pub(crate) async fn swarm_run_workflow_local(
         &self,
@@ -978,6 +1057,7 @@ impl SwarmServer {
             // delegate loop; the runner owns the flow semantics (verbatim
             // artifact, stop conditions, edge timing).
             let delegate_registry = self.local_registry.clone();
+            let swarm_id = req.swarm_id.as_deref();
             let outcomes = crate::workflow::run_workflow(
                 template,
                 &req.task,
@@ -991,6 +1071,17 @@ impl SwarmServer {
                     let task = task.to_string();
                     let registry = &delegate_registry;
                     async move {
+                        if let Some(swarm_id) = swarm_id {
+                            return self
+                                .dispatch_in_thread(swarm_id, &agent_id, &task)
+                                .await
+                                .map(|(result, _turn)| (result.response, result.reliance))
+                                .map_err(|error| {
+                                    crate::workflow::WorkflowDelegateError::Delegate(
+                                        error.to_string(),
+                                    )
+                                });
+                        }
                         let agent = registry.get(&agent_id).ok_or_else(|| {
                             crate::workflow::WorkflowDelegateError::AgentNotFound(agent_id.clone())
                         })?;
@@ -2730,10 +2821,11 @@ impl SwarmServer {
     /// closes the loop deterministically — the caller passes the plan, the
     /// tool executes it and stamps verdicts, the caller passes the results
     /// back to swarm-intelligence. Works in any context: chat, autonomous
-    /// pipeline, or API. Capped at 10 delegations (same as fanout). Each
-    /// delegation runs sequentially.
+    /// pipeline, or API. With a swarm id, only roster members run, using
+    /// prior durable turns; without an id, delegation stays standalone.
+    /// Capped at 10 delegations (same as fanout). Each runs sequentially.
     #[tool(
-        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
     )]
     pub(crate) async fn swarm_execute_plan_local(
         &self,
@@ -2806,7 +2898,18 @@ impl SwarmServer {
                     }
                     continue;
                 };
-                match runtime.delegate(&agent, &entry.task).await {
+                let dispatched = if let Some(ref sid) = swarm_id {
+                    self.dispatch_in_thread(sid, &entry.agent_name, &entry.task)
+                        .await
+                        .map(|(result, _turn)| result)
+                        .map_err(|error| error.to_string())
+                } else {
+                    runtime
+                        .delegate(&agent, &entry.task)
+                        .await
+                        .map_err(|error| error.to_string())
+                };
+                match dispatched {
                     Ok(mut r) => {
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.

@@ -27,11 +27,13 @@ receipt() {
     printf '%s\t%s\t%s\t%s\t%s\n' "$role" "$phase" "$id" "$(sha256sum "$tmp/$path" | cut -d ' ' -f 1)" "$tmp/$path" >> "$tmp/receipt"
   done
 }
-check() { bash "$checker" "$1" "$tmp/receipt" "$(sha256sum "$tmp/receipt" | cut -d ' ' -f 1)"; }
-reject() { if check "$1" > /dev/null 2>&1; then echo "accepted negative control: $2" >&2; exit 1; fi; }
+approved=$(sha256sum "$tmp/diff" | cut -d ' ' -f 1)
+check() { local authorization=${2:-$approved}; bash "$checker" "$1" "$tmp/receipt" "$(sha256sum "$tmp/receipt" | cut -d ' ' -f 1)" "$authorization"; }
+reject() { if check "$1" "${3:-$approved}" > /dev/null 2>&1; then echo "accepted negative control: $2" >&2; exit 1; fi; }
 receipt
 check execute
-reject analyze 'source changed in analyze mode'
+reject execute 'unapproved diff despite valid pinned receipt' "$(printf 'other operator-approved diff\n' | sha256sum | cut -d ' ' -f 1)"
+reject analyze 'source changed in analyze mode' '-' 
 printf 'forged proof\n' > "$tmp/proof"
 receipt
 reject execute 'proof does not derive from after graph'
@@ -55,7 +57,7 @@ printf 'log after\n' > "$tmp/log-after"
 receipt
 printf 'wrong\n' > "$tmp/diff"
 receipt
-reject execute 'unbound candidate diff'
+reject execute 'unbound candidate diff' "$(sha256sum "$tmp/diff" | cut -d ' ' -f 1)"
 diff -u --label source/x --label source/x "$tmp/before" "$tmp/after" > "$tmp/diff" || test "$?" -eq 1
 receipt
 printf 'old\n' > "$tmp/after"

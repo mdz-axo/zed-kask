@@ -3,7 +3,7 @@
 contract:
   input:
     briefing: object
-    decisions: object
+    decisions: array
     post_escalations: object|null
   output:
     report: string
@@ -37,7 +37,7 @@ You are the algedonic review verification reporter. Your job is to summarize wha
 
 ## Instructions
 
-1. `decisions` contains the actual tool invocation receipts, keyed by ID and action. A planned call list is not a receipt. Count resolved or dismissed only for successful `curator_escalation_resolve` or `curator_escalation_dismiss` responses; failed/missing responses remain unconfirmed.
+1. `decisions` is an array of actual invocation receipts `{id, tool, success, response, error}` produced by the agent *after* each MCP call. `success` must reflect the real tool response, never a planned call or an absent result. Count resolved or dismissed only for successful `curator_escalation_resolve` or `curator_escalation_dismiss` receipts; failed/missing responses remain unconfirmed.
 
 2. If no calls were executed, report "No actions taken" (or "No pending alerts" when the two channels succeeded and the backlog was empty). Do not imply that a missing operator decision was an approval or that the backlog was cleared.
 

@@ -493,6 +493,8 @@ pub struct RunWorkflowLocalRequest {
     /// The task — stage 1's input. Each later stage receives its
     /// predecessor's response verbatim (the artifact flows).
     pub task: String,
+    /// When supplied, dispatch each stage into this swarm's ordered thread.
+    pub swarm_id: Option<String>,
 }
 
 /// Report the observed delegation topology — which agents' outputs have
@@ -627,6 +629,9 @@ pub struct FanoutLocalRequest {
     /// delegations but uses more concurrent inference resources.
     #[serde(default)]
     pub parallel: bool,
+    /// When supplied, dispatch sequentially into this swarm's ordered thread.
+    /// Scoped parallel fanout is rejected.
+    pub swarm_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -898,11 +903,14 @@ pub struct FanoutAbwEntry {
 
 /// Sequential pipeline: run N local agents in order, passing each agent's
 /// output as context to the next via `{prev_output}` substitution. Each step
-/// runs via `swarm_delegate_local`. Capped at `MAX_PIPELINE_STEPS` (10).
+/// runs through the local runtime or, when scoped, the swarm thread.
+/// Capped at `MAX_PIPELINE_STEPS` (10).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PipelineLocalRequest {
     /// Pipeline steps, executed in order.
     pub steps: Vec<PipelineStep>,
+    /// When supplied, dispatch each step into this swarm's ordered thread.
+    pub swarm_id: Option<String>,
 }
 
 /// A single step in a local pipeline.
@@ -964,8 +972,8 @@ pub struct AuthorizeSessionRequest {
 // ── A2A protocol tools ───────────────────────────────────────────────────────
 
 /// Send an A2A (Agent2Agent) protocol message to a local agent. The message is
-/// wrapped in A2A types (Message → Task → Artifact) and dispatched through the
-/// existing in-process `LocalSwarmRuntime::delegate`. The response is returned
+/// wrapped in A2A types (Message → Task → Artifact) and dispatched to the
+/// optional swarm thread or standalone runtime. The response is returned
 /// as an A2A Task with the agent's output as a text Artifact. No HTTP server —
 /// the MCP tool dispatch IS the A2A transport.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -974,6 +982,9 @@ pub struct A2aSendRequest {
     pub agent_name: String,
     /// The message text to send to the agent.
     pub message: String,
+    /// Optional local swarm thread. Omitted sends remain standalone.
+    #[serde(default)]
+    pub swarm_id: Option<String>,
     /// Optional A2A context ID for grouping related tasks. If omitted, a new
     /// context is generated. Pass the same context_id across multiple
     /// `swarm_a2a_send` calls to group them in a conversation.
@@ -992,8 +1003,8 @@ pub struct A2aCardRequest {
 }
 
 /// Broadcast an A2A (Agent2Agent) protocol message to all members of a local
-/// swarm. Each member receives the message via `LocalSwarmRuntime::delegate`,
-/// and the responses are collected as an array of A2A Tasks. This is the
+/// swarm. Each member receives the ordered prior turns; successful responses
+/// are stored, then collected as an array of A2A Tasks. This is the
 /// shared-channel analog of fermi's workspace-message broadcast — agents that
 /// declare `swarm/swarm_a2a_broadcast` in their `mcp_tools` can address their
 /// entire swarm in one call, rather than calling `swarm_a2a_send` per member.
@@ -1190,7 +1201,8 @@ pub struct PlanEvaluator {
 pub struct ExecutePlanLocalRequest {
     /// The delegations to execute, in order. Capped at 10 (same as fanout).
     pub delegations: Vec<PlanDelegation>,
-    /// Optional swarm id. When set, task progress (status, attempt count,
+    /// Optional swarm id. When set, delegations require membership and share
+    /// the durable ordered thread; task progress (status, attempt count,
     /// fail count, last result) is recorded to the swarm's task board
     /// (`<swarm_dir>/<swarm_id>/task_board.json`) so the Curator's ORIENT
     /// phase can query durable task progress via `swarm_task_board`.

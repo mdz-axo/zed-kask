@@ -59,7 +59,9 @@ both snapshots and their exact authorized candidate diff. Record
 raw before/after identifiers in `measurement_context`; do not insert a model-
 asserted `measurement_context_equal` verdict. `hashes_verified` starts false
 and becomes true only after the receipt and raw hashes pass a deterministic
-terminal check with an externally trusted digest pin. Reject zero or negative
+terminal check with an externally trusted digest pin. In execute mode, independently
+operator-approved diff SHA-256 must match the snapshot-derived diff; neither a
+candidate-provided diff nor a self-generated digest is approval. Reject zero or negative
 values in EACH measured sample, regardless of positive aggregate. The source,
 contract, oracle, graph, proof, and log paths/hashes must all be in the receipt;
 validate filesystem files, not just submitted paths. Keep cold and warm timing
@@ -99,6 +101,7 @@ Return JSON only:
     "hashes_verified":false,
     "receipt_path":"",
     "receipt_pinned_sha256":"",
+    "approved_diff_sha256_or_dash":"",
     "candidate_diff_path":"",
     "evidence_paths":[]
   },

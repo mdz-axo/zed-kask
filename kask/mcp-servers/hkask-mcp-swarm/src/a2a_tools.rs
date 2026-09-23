@@ -18,14 +18,14 @@ use ::a2a::new_context_id;
 #[tool_router(router = a2a_router, vis = "pub")]
 impl SwarmServer {
     /// Send an A2A (Agent2Agent) protocol message to a local agent. Wraps the
-    /// message in A2A types (Message → Task → Artifact) and dispatches through
-    /// the existing in-process `LocalSwarmRuntime::delegate`. The response is
+    /// message in A2A types (Message → Task → Artifact). Scoped sends use the
+    /// durable thread; unscoped sends use `LocalSwarmRuntime::delegate`. The response is
     /// returned as an A2A Task with the agent's output as a text Artifact. No
     /// HTTP server — the MCP tool dispatch IS the A2A transport. Agents can
     /// communicate with each other by declaring this tool in their
     /// `capabilities.mcp_tools`.
     #[tool(
-        description = "Send an A2A (Agent2Agent) protocol message to a local agent. Wraps in A2A types (Message/Task/Artifact) and dispatches in-process. Returns an A2A Task with the agent's response as a text Artifact. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to communicate with each other."
+        description = "Send an A2A (Agent2Agent) protocol message to a local agent. Wraps in A2A types (Message/Task/Artifact) and dispatches in-process. Returns an A2A Task with the agent's response as a text Artifact. Optional swarm_id requires membership and persists a reply with prior thread turns; omitted swarm_id stays standalone. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to communicate with each other."
     )]
     pub(crate) async fn swarm_a2a_send(
         &self,
@@ -49,10 +49,16 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
-            let result = runtime
-                .delegate(&agent, &req.message)
-                .await
-                .map_err(map_local_swarm_error)?;
+            let result = if let Some(ref swarm_id) = req.swarm_id {
+                self.dispatch_in_thread(swarm_id, &req.agent_name, &req.message)
+                    .await?
+                    .0
+            } else {
+                runtime
+                    .delegate(&agent, &req.message)
+                    .await
+                    .map_err(map_local_swarm_error)?
+            };
             self.validate_produces(&req.agent_name, &agent.produces, &result.response);
             let mut task = a2a::task_from_response(
                 &result.response,
@@ -115,14 +121,14 @@ impl SwarmServer {
     }
 
     /// Broadcast an A2A message to all members of a local swarm. Each member
-    /// receives the message via `LocalSwarmRuntime::delegate`, and the
-    /// responses are collected as an array of A2A Tasks. This is the
+    /// receives prior thread turns before inference, and successful responses
+    /// are appended to that thread and collected as an array of A2A Tasks. This is the
     /// shared-channel analog of fermi's workspace-message broadcast — agents
     /// that declare `swarm/swarm_a2a_broadcast` in their `mcp_tools` can
     /// address their entire swarm in one call. Sequential dispatch (mirrors
     /// `swarm_fanout_local`'s default — one delegation at a time). Capped at `MAX_FANOUT` members.
     #[tool(
-        description = "Broadcast an A2A (Agent2Agent) protocol message to all members of a local swarm. Each member receives the message via in-process dispatch; responses are collected as an array of A2A Tasks. Sequential dispatch. Capped at MAX_FANOUT (10) members. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to address their entire swarm."
+        description = "Broadcast an A2A (Agent2Agent) protocol message to all members of a local swarm. Each member receives prior ordered thread turns via in-process dispatch; successful responses are persisted and collected as an array of A2A Tasks. Sequential dispatch. Capped at MAX_FANOUT (10) members. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to address their entire swarm."
     )]
     pub(crate) async fn swarm_a2a_broadcast(
         &self,
@@ -154,11 +160,6 @@ impl SwarmServer {
                     swarm.members.len()
                 )));
             }
-            let runtime = self
-                .local_runtime
-                .get_or_init()
-                .await
-                .map_err(map_local_swarm_error)?;
             let context_id = req.context_id.clone().unwrap_or_else(new_context_id);
             let mut tasks = Vec::new();
             let mut failed = 0usize;
@@ -178,8 +179,11 @@ impl SwarmServer {
                         continue;
                     }
                 };
-                match runtime.delegate(&agent, &req.message).await {
-                    Ok(result) => {
+                match self
+                    .dispatch_in_thread(&req.swarm_id, member_id, &req.message)
+                    .await
+                {
+                    Ok((result, _turn)) => {
                         self.validate_produces(member_id, &agent.produces, &result.response);
                         let task = a2a::task_from_response(
                             &result.response,

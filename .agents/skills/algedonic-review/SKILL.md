@@ -58,7 +58,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 ### VERIFY — Confirm backlog cleared (step 5)
 
 1. After executing any planned calls, collect their real success/error receipts and re-query `curator_escalations`. If the re-query fails, the remaining backlog is unknown; never infer clearance from a planned call or a missing response. Skip re-query when no calls were made.
-2. Render `algedonic-review/verify-cleared` with the executed call receipts (not the planned call list) and post-query response to report confirmed resolutions, dismissals, failures and what remains pending. Without decisions, report no actions taken; do not imply the operator approved a call.
+2. Render `algedonic-review/verify-cleared` with `decisions` as an array of `{id, tool, success, response, error}` built from actual MCP responses (not the planned call list), plus the post-query response. Report confirmed resolutions, dismissals, failures and what remains pending. Without decisions, report no actions taken; do not imply the operator approved a call.
 3. Never recommend clearing the in-memory log as part of this workflow; it self-evicts. If the backlog is unchanged, report that observation without claiming the review cleared it.
 
 ## Registry Templates

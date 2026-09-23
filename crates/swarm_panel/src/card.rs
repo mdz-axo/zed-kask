@@ -301,6 +301,11 @@ impl SwarmPanel {
                                     ))
                                     .on_click(cx.listener(
                                         move |this, _, window, cx| {
+                                            this.select_swarm_for_steer(
+                                                detail_id.clone(),
+                                                detail_source != AgentSource::Cloud,
+                                                cx,
+                                            );
                                             this.load_swarm_into_compose(
                                                 detail_id.clone(),
                                                 detail_name.clone(),

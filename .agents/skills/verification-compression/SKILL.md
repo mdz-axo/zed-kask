@@ -172,10 +172,15 @@ verification code.
     concatenated by byte-sorted source ID. Capture the receipt SHA-256 from a
     trusted operator-controlled snapshot BEFORE accepting candidate output;
     a candidate-supplied manifest and candidate-supplied pin are NOT independent
-    evidence. Run `bash kask/scripts/audit/check-verification-compression-receipt.sh
-    MODE RECEIPT TRUSTED_PIN` against immutable snapshots outside candidate write
-    access. The checker binds the pin, paths, bytes and diff; `execute` permits
-    changed source only when diff matches authorization, `analyze` does not.
+    evidence. In `execute`, obtain the SHA-256 of the exact proposed source diff
+    from the operator's explicit approval BEFORE applying the candidate;
+    never derive approval from the candidate, its receipt, or this agent's own
+    judgment. Run `bash kask/scripts/audit/check-verification-compression-receipt.sh
+    MODE RECEIPT TRUSTED_PIN APPROVED_DIFF_SHA256_OR_DASH` against immutable
+    snapshots outside candidate write access (`analyze` passes `-`). The checker
+    re-derives the diff from source snapshots and compares it to that
+    independent approved digest; no approval digest blocks `execute`. It also
+    checks the pinned graph, regenerates the proof and compares exact bytes.
     Record `context.hashes_verified=true` only after it succeeds. A file changed
     after checking requires re-verification; no attacker with access to both
     trusted pin and snapshots is covered by this boundary. Then call `lisp_eval`: 

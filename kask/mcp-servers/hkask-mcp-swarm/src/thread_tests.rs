@@ -212,6 +212,15 @@ async fn scoped_thread_is_structured_durable_isolated_and_archived()
     assert_eq!(thread["turns"][1]["agent_id"], "b");
     assert!(thread["turns"][0]["created_at"].is_string());
     assert_eq!(thread["archived"], false);
+    let encrypted_file = std::fs::read(dir.path().join("threads.db"))?;
+    assert!(
+        !encrypted_file.starts_with(b"SQLite format 3\0"),
+        "thread database must be SQLCipher-encrypted"
+    );
+    assert!(
+        !dir.path().join("semantic.db").exists(),
+        "thread turns must not write semantic memory"
+    );
     assert_eq!(
         content(
             &server

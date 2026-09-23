@@ -633,7 +633,7 @@ impl SwarmPanel {
                             this.fetch_all(cx);
                             // Navigate to Steer with the new swarm selected.
                             if let Some(id) = swarm_id {
-                                this.selected_workspace = Some(id.clone());
+                                this.select_swarm_for_steer(id.clone(), true, cx);
                                 // Drop any existing Steer conversation so the
                                 // next construction bakes in the new swarm.
                                 this.steer.invalidate();
@@ -801,7 +801,7 @@ impl SwarmPanel {
                         this.fetch_all(cx);
                         // Navigate to Steer with the new swarm selected.
                         if let Some(id) = workspace_id {
-                            this.selected_workspace = Some(id.clone());
+                            this.select_swarm_for_steer(id.clone(), false, cx);
                             this.steer.invalidate();
                             this.set_mode(PanelMode::Steer, window, cx);
                             // Queue the composition prompt for injection

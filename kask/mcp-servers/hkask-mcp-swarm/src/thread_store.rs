@@ -18,9 +18,13 @@ pub struct SwarmThreadStore {
     path: String,
     passphrase: String,
     database: tokio::sync::OnceCell<hkask_storage::Database>,
-    /// Hold across history read, inference, and append to prevent overlapping
-    /// delegations from committing stale or duplicate histories.
+    /// Serializes callers in this process; the file lock also serializes other processes.
     gate: tokio::sync::Mutex<()>,
+}
+
+pub struct ThreadLock<'a> {
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+    _file: std::fs::File,
 }
 
 impl SwarmThreadStore {
@@ -33,8 +37,33 @@ impl SwarmThreadStore {
         }
     }
 
-    pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.gate.lock().await
+    /// Hold across history read, inference and append, including other server processes.
+    /// The owned file keeps the OS lock alive until the guard is dropped.
+    pub async fn lock(&self) -> Result<ThreadLock<'_>, LocalSwarmError> {
+        let guard = self.gate.lock().await;
+        let path = format!("{}.lock", self.path);
+        let file = tokio::task::spawn_blocking(move || {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    LocalSwarmError::Io(format!("cannot create thread lock directory: {e}"))
+                })?;
+            }
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&path)
+                .map_err(|e| LocalSwarmError::Io(format!("cannot open thread lock: {e}")))?;
+            file.lock()
+                .map_err(|e| LocalSwarmError::Io(format!("cannot acquire thread lock: {e}")))?;
+            Ok::<_, LocalSwarmError>(file)
+        })
+        .await
+        .map_err(|e| LocalSwarmError::Io(format!("thread lock task failed: {e}")))??;
+        Ok(ThreadLock {
+            _guard: guard,
+            _file: file,
+        })
     }
 
     async fn database(&self) -> Result<&hkask_storage::Database, LocalSwarmError> {

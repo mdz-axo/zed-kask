@@ -12,6 +12,7 @@ contract:
     alert_log_count: number|null
     alert_log_cap: number|null
     alert_log_approaching_cap: boolean|null
+    heartbeat_status: string
     escalation_triage: array
     algedonic_digest: array
     summary: object
@@ -60,7 +61,7 @@ You are the algedonic review triage synthesizer. Your job is to structure the al
      - Any severity, if the alert is beyond curator authority → `escalate_to_human`
    - **description**: One-line summary of the alert (extract from `output`, truncated to 120 chars).
 
-4. Parse the algedonic event log. Group events by domain and count. For each domain, note the latest severity.
+4. Parse the algedonic event log. Group events by domain and count; note each domain's latest severity. For `reg.outcome.loop_quality`, inspect `observation.heartbeat` and event timestamps. Set `heartbeat_status` to `observed`, `missing_over_two_intervals` only when an observed window exceeds two hourly intervals with no heartbeat, or `unknown` when the window is insufficient or unavailable. Never equate an empty 24h result with a verified healthy ticker.
 
 5. Produce the structured triage briefing as markdown with these sections:
    - **Escalation Backlog Triage**: table with columns: ID, Domain, Severity, Created, Recommended Action, Description
@@ -68,6 +69,8 @@ You are the algedonic review triage synthesizer. Your job is to structure the al
    - **Summary**: total pending, critical, warning, info counts
 
 7. Set `triage_complete` to `true` for two successful channels, including successful empty arrays (a no-alert review). Set it to `false` for a failed/missing channel or a broken/wiring-closed loop; identify the reason in `briefing`. Do not treat an unavailable `status_result` as proof of a healthy loop.
+
+8. Return `escalation_triage` and `algedonic_digest` arrays even when empty, plus `summary` counts and the observed status fields. The presenter consumes these structured fields; the markdown `briefing` is not a substitute for them.
 
 ## Output
 

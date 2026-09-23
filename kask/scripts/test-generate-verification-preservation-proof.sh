@@ -45,8 +45,23 @@ if bash "$generator" "$scratch/omitted-requirement.json" "$scratch/omitted-requi
     echo "baseline signal omitted from required set was accepted" >&2
     exit 1
 fi
+jq '.before += [.before[0]]' "$scratch/graph.json" > "$scratch/duplicate-before.json"
+if bash "$generator" "$scratch/duplicate-before.json" "$scratch/duplicate-before.lean" > /dev/null 2>&1; then
+    echo "duplicate baseline artifact+signal was accepted" >&2
+    exit 1
+fi
+jq '.after += [.after[0]]' "$scratch/graph.json" > "$scratch/duplicate-after.json"
+if bash "$generator" "$scratch/duplicate-after.json" "$scratch/duplicate-after.lean" > /dev/null 2>&1; then
+    echo "duplicate retained artifact+signal was accepted" >&2
+    exit 1
+fi
+jq '.removed_mappings += [.removed_mappings[0]]' "$scratch/graph.json" > "$scratch/duplicate-mapping.json"
+if bash "$generator" "$scratch/duplicate-mapping.json" "$scratch/duplicate-mapping.lean" > /dev/null 2>&1; then
+    echo "duplicate removed-to-retained mapping was accepted" >&2
+    exit 1
+fi
 if bash "$generator" "$scratch/graph.json" "$scratch/preserves.lean" > /dev/null 2>&1; then
     echo "proof overwrite was accepted" >&2
     exit 1
 fi
-printf 'verification_proof_contract=pass positive=1 negative=7 lean=%s\n' "$lean"
+printf 'verification_proof_contract=pass positive=1 negative=10 lean=%s\n' "$lean"
