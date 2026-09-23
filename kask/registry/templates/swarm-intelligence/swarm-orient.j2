@@ -49,8 +49,8 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 `swarm_execute_plan_local` (`LocalDelegateResult`: `agent_id`, `response`,
 `model`, `tokens_used`, `latency_ms`, `tool_calls[]` and optional
 `task_success`). These are executed outcomes, not emitted intents.
-Fault attribution uses a deterministic `task_success.pass` first, then
-`tool_calls[].ok` failures when present. The terminal agent (fallback rule) is the `agent_id` of the LAST
+Fault attribution uses deterministic `task_success.pass` first, then explicit
+error entries from failed attempts and `tool_calls[].ok` failures when present. The terminal agent (fallback rule) is the `agent_id` of the LAST
 entry (the last delegation produced the terminal output the task metric
 scored).
 {% else %}
@@ -176,9 +176,9 @@ builds):
    `agent_id` of the LAST entry in `delegate_results` (the last delegation
    produced the terminal output the metric scored; the delegation order is
    the deterministic ground the plan's tie-break relies on).
-3. **Execution crash.** Else if any `delegate_results[]` entry has
-   `tool_calls[].ok = false` (a dispatch failed or was not in the declared
-   `mcp_tools` allowlist), attribute to the **earliest such agent**.
+3. **Execution failure.** Else attribute to the earliest entry with an
+   explicit `error` (failed delegation) or `tool_calls[].ok = false`.
+   A failed attempt can lack a `LocalDelegateResult` and tool trace.
 4. **Tie-break** by `delegate_results` array order (deterministic).
 
 If no `delegate_results` telemetry is present (the default in the planning

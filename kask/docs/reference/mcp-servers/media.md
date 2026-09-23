@@ -258,8 +258,9 @@ and render/export are non-destructive projections. These tools remain local
 and never fall back from a Reduct request. A separate `reduct_*` MCP group
 uses the Reduct API key entered in Settings → Kask → Data Services:
 credential-status/probe, bounded project and recording snapshots, recording
-status, and JSON/TXT transcript retrieval. Read-only project, recording-status
-and JSON/TXT-transcript calls passed explicit live tests against the provider using
+status, JSON/TXT transcript and provider-native highlight retrieval. Read-only
+project, recording-status, JSON/TXT-transcript and highlight calls passed
+explicit live tests against the provider using
 the stored key; the key and response content were not printed in those tests.
 The operator supplied the login-gated API reference's v3 examples and warnings
 in the conversation on 2026-09-23. From those exact contracts, the media server

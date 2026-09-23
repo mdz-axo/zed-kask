@@ -55,9 +55,9 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "accepted": s.regulation_health.accepted,
                 "staged": s.regulation_health.staged,
                 "blocked": s.regulation_health.blocked,
-                // Algedonic alert log cap status. When the log approaches its
-                // cap, the operator (or the algedonic-review skill) should
-                // review and clear reviewed entries before they are evicted.
+                // Alert log cap status is an observation for backlog review;
+                // the in-memory log self-evicts. This is not authorization to
+                // clear it as part of algedonic-review.
                 "alert_log_count": s.ledger_health.alert_log_count,
                 "alert_log_cap": s.ledger_health.alert_log_cap,
                 "alert_log_approaching_cap": s.ledger_health.alert_log_approaching_cap,

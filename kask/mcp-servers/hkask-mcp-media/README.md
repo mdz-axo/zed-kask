@@ -265,12 +265,14 @@ uploads to Reduct or silently falls back from a cloud request. The separate
 `reduct_connection_probe` makes a read-only project request without returning
 its body. The `reduct_projects_snapshot` / `reduct_recordings_snapshot` tools
 return bounded provider-supplied ID/title views (server-side pagination is
-unknown). `reduct_recording_status` and `reduct_recording_transcript` read the
-status and JSON/TXT transcript of an existing recording. The logged-in v3 API
+unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
+`reduct_recording_highlights` read an existing recording's status, JSON/TXT
+transcript, and provider-native bounded highlight map, respectively. The logged-in v3 API
 reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
 header, root URL, these recording paths, and the mutating calls below. A live
 OS-keychain-based test retrieved a project, project-scoped recordings, recording
-status, and JSON/TXT transcripts without logging or printing private content.
+status, JSON/TXT transcripts, and the highlight GET path without logging or
+printing private content.
 
 The same excerpt specifies `POST /project/{project_id}/recording` with JSON
 `{"title": ...}` returning a `recording` ID, and `POST .../media-import`
@@ -284,8 +286,8 @@ that the mutation **may have succeeded** and require inspection before retry.
 These three cloud mutations have fixture/contract tests but have **not** been
 run against the live workspace. They are never implicit fallbacks from educt.
 
-Reel creation/blocks/strikethroughs, highlights, redactions, publishing, media
-download and transcript correction remain **unimplemented**: the pasted API
+Reel creation/blocks/strikethroughs, highlight **writes**, redactions,
+publishing, media download and transcript correction remain **unimplemented**: the pasted API
 index listed their categories but omitted the expanded endpoint request/response
 schemas needed to send safe writes. Reduct's documented warnings apply:
 DELETE is irreversible, POST can overwrite named fields, and audio redaction

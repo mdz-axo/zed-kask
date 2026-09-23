@@ -85,8 +85,9 @@ Regulator's "model the system you control."
 (`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
 `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), `task_success` (optional
 deterministic verdict stamped by the tool when an evaluator was provided).
-The `swarm_execute_plan_local` tool returns the array directly; you
-feeds it back as `delegate_results` on the next swarm-intelligence invocation.
+`swarm_execute_plan_local` returns an object with `results`, `total_tokens`,
+`failed`, `succeeded` and `task_board`. Feed its `results` array back as
+`delegate_results`, preserving error entries for failed attempts.
 ORIENT attributes fault from `delegate_results[].task_success.pass` (highest
 fidelity, when present) and `delegate_results[].tool_calls[].ok` /
 `response` failure when observable; `fault_count` accumulates (deterministic, in

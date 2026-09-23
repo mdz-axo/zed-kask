@@ -166,8 +166,8 @@ that runs zed-kask — it has governed tool access (the MCP servers via
 loops. In steering mode, the Curator executes the plan by calling
 `swarm_execute_plan_local` with the emitted_calls as delegations (each with
 an optional deterministic evaluator), which runs all delegations, evaluates
-results, and returns the collected `LocalDelegateResult` array with
-`task_success` verdicts stamped. The Curator re-invokes swarm-intelligence
+results, and returns a `results` array of successful `LocalDelegateResult`
+entries (with evaluator verdicts) or error entries for failed attempts. The Curator re-invokes swarm-intelligence
 with `delegate_results` set to that array — closing the feedback loop without
 a new skill execution surface (the Curator's normal tool-call turn IS the
 execution).
@@ -191,8 +191,8 @@ call `swarm_execute_plan_local` with the plan, collect the returned
 
 ### The `delegate_results` contract (C5/C6 activation)
 
-`delegate_results` is an array of `swarm_execute_plan_local` results
-(`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
+`delegate_results` is the `results` array from `swarm_execute_plan_local`.
+Successful entries are `LocalDelegateResult`-shaped: `agent_id`, `response`, `model`, `tokens_used`,
 `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), and `task_success`
 (optional deterministic verdict). ORIENT attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and

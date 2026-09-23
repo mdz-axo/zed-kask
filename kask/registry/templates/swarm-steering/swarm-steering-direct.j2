@@ -105,10 +105,10 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_results` array that feeds back to swarm-intelligence:
 ```json
 {
-  "collect": "Call swarm_execute_plan_local with swarm_id and delegations. Use its results array as delegate_results. Each LocalDelegateResult has agent_id, response, model, tokens_used, latency_ms, tool_calls[], and optional task_success (stamped when an evaluator was provided).", 
+  "collect": "Call swarm_execute_plan_local with swarm_id and delegations. Use its results array as delegate_results; preserve error entries for failed attempts. Successful entries have agent_id, response, model, tokens_used, latency_ms, tool_calls[], and optional task_success (stamped when an evaluator was provided).", 
   "task_success": "The tool stamps task_success automatically when an evaluator is provided in the delegation. When the task has no oracle (open-ended), omit the evaluator and the tool leaves task_success null. NEVER use an LLM to judge task_success — the tool's provenance is always 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3).",
   "array_field": "delegate_results",
-  "shape": "LocalDelegateResult array (from swarm_execute_plan_local results)",
+  "shape": "results array of successful LocalDelegateResult entries or error entries",
   "order": "same order as delegations"
 }
 ```

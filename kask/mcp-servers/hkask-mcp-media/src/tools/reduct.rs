@@ -1266,22 +1266,12 @@ mod tests {
                 recording_transcript(Some(key.as_str()), first_project, recording_id, "txt")
                     .await?;
             assert_eq!(plain["format"], "txt");
-            let highlights_url = recording_read_url(first_project, recording_id, "highlight")?;
-            let response =
-                read_response(Some(key.as_str()), &highlights_url, "highlight read").await?;
-            let body = read_bounded(response, 2 * 1024 * 1024).await?;
-            let highlights: serde_json::Value = serde_json::from_slice(&body)?;
+            let highlights =
+                recording_highlights(Some(key.as_str()), first_project, recording_id).await?;
+            assert_eq!(highlights["source"], "reduct_cloud");
             eprintln!(
-                "Reduct highlight GET: top-level_object={}; highlight_map={}; count={}",
-                highlights.is_object(),
-                highlights
-                    .get("highlight")
-                    .is_some_and(serde_json::Value::is_object),
-                highlights
-                    .get("highlight")
-                    .and_then(serde_json::Value::as_object)
-                    .map(serde_json::Map::len)
-                    .unwrap_or(0)
+                "Reduct highlight GET count={}",
+                highlights["provider_returned_count"]
             );
             // Never print transcript words, highlight content, or project/recording IDs.
             eprintln!(
