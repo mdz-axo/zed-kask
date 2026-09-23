@@ -398,6 +398,54 @@ mod tests {
     }
 
     #[test]
+    fn adjudication_template_examples_round_trip_through_consumer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../registry/templates/docproc/adjudicate-passages.j2"),
+        )?;
+        let mut environment = minijinja::Environment::new();
+        environment.add_template("adjudicate-passages", &source)?;
+        let rendered = environment
+            .get_template("adjudicate-passages")?
+            .render(json!({
+                "row_start": 1,
+                "row_end": 3,
+                "row_count": 3,
+                "prompts_path": "prepared.jsonl",
+                "decisions_path": "adjudications.jsonl"
+            }))?;
+        let prompts = [prompt("qa-1"), prompt("qa-2"), prompt("qa-3")];
+        let mut rows = rendered
+            .lines()
+            .filter(|line| line.starts_with("{\"protocol\":\"prepared-qa-adjudication-v2\""))
+            .map(serde_json::from_str::<Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows.len(),
+            prompts.len(),
+            "template must show all three decisions"
+        );
+        for (row, prompt) in rows.iter_mut().zip(&prompts) {
+            row["prompt_id"] = json!(prompt.prompt_id);
+            row["chunk_ref"] = json!(prompt.primary().chunk_ref);
+            row["source"] = json!(prompt.primary().source);
+        }
+        let directory = fixture()?;
+        let path = write_rows(&directory, &rows)?;
+        let adjudications = read_complete_adjudications(&path, &prompts)?;
+        assert_eq!(adjudications.passage_admits(), 2);
+        assert_eq!(adjudications.passage_skips(), 1);
+        assert_eq!(adjudications.level_generates(), 3);
+        assert_eq!(adjudications.level_skips(), 3);
+        assert!(matches!(
+            adjudications.decision("qa-2").map(|decision| &decision.levels()[1]),
+            Some(ReviewedLevelDecision::Skip { reason }) if reason == "conceptual_support_absent"
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn complete_valid_v2_manifest_is_identity_bound() -> Result<(), Box<dyn std::error::Error>> {
         let directory = fixture()?;
         let prompts = [prompt("qa-1"), prompt("qa-2")];

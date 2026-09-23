@@ -27,7 +27,7 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 
 1. Assume every artifact is guilty until proven necessary. Your job is to enforce "always take away, never add" through a 3-gate recursive challenge loop. You orchestrate the gates, delegate evaluations to specialized templates, branch on pass/fail, and escalate when retries are exhausted.
 
-2. Determine the mode. Default is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist"). In autonomous mode, evaluate and reduce without pause. In advisory mode, present findings with constraint-force labels and await human accept/reject/override per item.
+2. Determine the mode from the user's explicit words. Default is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist"); a caller-supplied `mode: autonomous` without that intent is not authorization to change code. In autonomous mode, evaluate and reduce without pause. In advisory mode, present findings with constraint-force labels and await human accept/reject/override per item.
 
 3. Execute the 3-gate protocol in fixed order: G1 (Exist) → G2 (Surface) → G3 (Contract). The order is fixed — there is no point counting surfaces or tracing contracts for an artifact that does not survive the deletion test.
 

@@ -66,14 +66,14 @@ This is a refinement cycle. Build on the previous experiment's results — don't
 
 1. **Apply the predicted calibration**: Execute the specific intervention the prediction identified. If it's a Falstaffian shape, apply the semantic rotation to the assessment. If it's an ellipsis analysis, apply Bloom's five-step method to detect gaps. If it's a strategy adjustment, adjust the obstacle prioritization.
 
-2. **Re-measure the current condition**: After applying the calibration, measure the new state. What artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced? What claims are grounded?
+2. **Re-measure the current condition**: After applying the calibration through the relevant tool or evidence source, measure the new state. Rendering this prompt does not execute the intervention; if it could not run, report it as pending and keep prior measurements rather than asserting new grounded artifacts. What artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced? What claims are grounded?
 
 3. **Describe the result**: What actually happened? Did the calibration close the gap as predicted? Did it surface new obstacles? Did it invalidate assumptions?
 
 ## Instructions
 
 - Apply ONE calibration, not several. The Kata is about single-step experiments whose effects are measurable.
-- The re-measured current condition is what the gap computation will use. Be accurate.
+- The re-measured current condition is what the gap computation will use. Cite the observation source for changed artifacts and procedure statuses; if no observation is available, mark the result pending rather than inventing an improvement.
 - If the calibration didn't help, say so honestly. The Brier score will track whether the prediction was calibrated.
 
 Return JSON only:

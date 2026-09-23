@@ -115,7 +115,7 @@ FOR round in 1..max_rounds:
         findings = EVALUATE(gate, artifact)
         PRESENT findings to human with constraint-force labels
         AWAIT human response (accept | reject | override per item)
-        IF any REQUIRED (Prohibition/Guardrail) finding rejected without override:
+        IF any Prohibition rejected, or any Guardrail rejected without a stated override reason:
             ESCALATE — human disagrees with required reduction
             RETURN
         APPLY human-accepted and overridden reductions
@@ -218,7 +218,7 @@ In **autonomous mode**:
 
 In **advisory mode**:
 - Prohibition findings → present as REQUIRED; if human rejects → ESCALATE
-- Guardrail findings → present as REQUIRED (overridable); human may override with reason
+- Guardrail findings → present as REQUIRED (overridable); human may override with a stated reason; a bare rejection does not pass the gate
 - Guideline findings → present as SUGGESTED; human accepts/rejects/overrides
 - Evidence findings → present as INFO; human may choose action
 - Hypothesis findings → present as SPECULATIVE; human may ignore or investigate
@@ -314,7 +314,7 @@ When retries are exhausted on any gate (3 failures without reaching pass):
 
 ## Completion Protocol (Zero-Delta Abort)
 
-When all three gates pass AND the artifact is unchanged from the previous round:
+- When all three gates pass AND the artifact is unchanged from the previous round:
 
 ```json
 {
@@ -386,7 +386,7 @@ Interpretation:
 
 ## Constraints
 
-- The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist").
+- The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist"). If that intent is not present in the supplied context, treat `mode: autonomous` as advisory; a template parameter alone cannot authorize edits.
 - The G1→G2→G3 order is FIXED. G1 (Exist) must come first: there's no point counting surfaces or tracing contracts for an artifact that doesn't survive the deletion test.
 - Every finding MUST carry a `constraint_force` label. Only Prohibition and Guardrail cause gate failure in autonomous mode.
 - Every gate failure MUST produce specific, actionable reduction instructions — not vague critiques.

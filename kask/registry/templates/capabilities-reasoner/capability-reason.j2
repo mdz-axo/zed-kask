@@ -63,7 +63,7 @@ You are a capabilities reasoner. Determine interventions for each evaluation res
 
 ## Step 1 — Apply the Attenuation Rule
 
-For each evaluation, determine the intervention:
+For each evaluation, determine the intervention. If a required comparison is `undetermined`, carry an undetermined verdict and name the missing comparable measurement; do not grant, maintain, restrict, or mint a token from unknown status:
 
 ### FLOOR VIOLATION → EXPAND or REDESIGN
 
@@ -109,7 +109,7 @@ No action needed. Record for completeness.
 
 ## Step 2 — Emit Capability Tokens
 
-For each EXPAND or AUTHORIZE verdict, emit a capability token (AIP model):
+For each EXPAND or AUTHORIZE verdict, describe a *proposed* capability token (AIP model) only after explicit authorization. This prompt cannot sign or issue tokens; never report a placeholder as a valid grant:
 - **token_id**: unique identifier
 - **capability_name**: what capability is granted
 - **scope**: what the token allows (narrows on delegation)
@@ -117,8 +117,7 @@ For each EXPAND or AUTHORIZE verdict, emit a capability token (AIP model):
 - **max_depth**: maximum delegation depth
 - **expiry**: when the token expires
 - **context**: the context in which the token is valid
-- **signature**: ed25519 signature (placeholder — actual signing is
-  done by the OCAP layer)
+- **signature**: absent until signed by the OCAP layer; a proposed token is not authority
 
 For each RESTRICT verdict, emit a token revocation or scope narrowing:
 - **original_token_id**: which token is being narrowed
@@ -138,7 +137,7 @@ For each EXPAND verdict (widening), record the re-authorization:
 ## Output
 
 Produce a JSON object with: interventions (array of {capability_name,
-verdict (expand|restrict|block|authorize|maintain), intervention_detail,
+verdict (expand|restrict|block|authorize|maintain|undetermined), intervention_detail,
 warrant (if restrict), reauthorization (if expand), token (if grant),
 confidence}), capability_tokens (array), reauthorizations (array),
 delegate_notes.

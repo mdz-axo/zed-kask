@@ -60,9 +60,9 @@ description: "4-step Improvement Kata templates for scientific capability develo
 3. Plan your expectation: state your prediction and why (the theory you're testing).
 4. Do: define how you will execute (tool, parameter, configuration).
 5. Check: define how you will measure and what confirms or refutes your prediction.
-6. Act: decide what you will do with the result (next obstacle if correct, revised theory if wrong).
+6. Act after observing the result: compare the measured outcome to `metric_before`, the prediction, and `metrics_target`. If no post-experiment observation is available, report `pending_check` rather than an improvement. If wrong, revise the theory and re-enter step 2; if correct but below target, select the next obstacle and re-enter step 3. Stop after three experiments or on target attainment; report the remaining gap.
 7. Determine how quickly you can go and see the result.
-8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, and `when_to_check`.
+8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, `when_to_check`, and (only after observation) `metric_after`, `prediction_result`, and `next_step`. Never fill `metric_after` from a plan.
 
 ## Registry Templates
 

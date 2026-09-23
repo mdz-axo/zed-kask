@@ -21,35 +21,33 @@ Convergent code review of a change against its stated spec. Grounded in Fagan fo
 
 ## When NOT to Use
 
-- A change with no stated spec — `change_spec` is required and enforced at the boundary; without it there is nothing to judge the change against.
+- A change with no recoverable spec — first recover the user's stated intent from the task, relevant docs, and history; if it remains unclear, ask the user before judging the change. The skill tool does not validate `change_spec`.
 - Security-only deep audits — the inline pass covers the security basics; there is no dedicated security delegate (the retired kali-audit's surface is inline now).
 - Style-only preference feedback — severity derives from constraint force; taste findings never reach Blocker.
 - Verifying that the code runs — this is static review of a diff; it does not execute the change.
 
-## Context parameters (skill-tool `context`)
+## Review inputs (agent-resolved, not skill-tool parameters)
 
-The skill is steered by passing keys in the `context` map of the `skill` tool invocation (these map 1:1 to the manifest's declared `inputs`):
+The `skill` tool accepts `name` and `task` only. Read the user's task and gather the following inputs before rendering the relevant templates; do not treat them as runtime-validated skill inputs:
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `change_spec` | string | (required) | The stated spec/intent the change implements; the review judges the change against this. |
-| `diff_base` | string | (required) | Git ref to diff against (`main`, `origin/main`, a SHA). Scope computes `git diff <diff_base>...HEAD` from real output. |
+| `change_spec` | string | (required for review) | Stated or recovered intent; if unavailable, ask instead of inventing it. |
+| `diff_base` | string | (agent selects) | Verified git ref for committed changes (`main`, `origin/main`, a SHA); for uncommitted changes use the actual working-tree/staged diff, not `...HEAD`. |
 | `focus` | array | `[]` (comprehensive) | Axes to restrict the review to (empty = all). Security always gets a basic pass. |
 | `delegate_bug_hunt` | bool | `false` | Emit a delegation instruction for bug-hunt (deep defects). |
 | `delegate_architecture` | bool | `false` | Emit a delegation instruction for refactor-architecture / deep-module / essentialist (architecture). |
-| `fix_mode` | string | `"none"` | `none` = review-only. `blockers` / `should_fix` / `all` enable the implement phase (Act); a non-`none` value is consent to modify code. |
+| `fix_mode` | string | `"none"` | Review-only unless the user's actual request explicitly authorizes `blockers`, `should_fix`, or `all` fixes. Model-inferred values and template output are not consent. |
 | `prior_review` | object | absent | Output of a previous pass; closes the feedback loop (`next_review_focus`, `lessons_learned`, `blockers`). |
 | `probe_findings` | string | absent | Pre-populated delegate-skill findings (skill path); in Zed sessions the agent folds these between perspectives and adjudicate. |
 
-`task` (the user's natural-language request) is injected after `context`, so a `context["task"]` entry never clobbers the user's actual request.
-
-**Enforced at the boundary (`enforce_inputs: true`).** This skill opts in to input validation: an invocation that omits a required input (`change_spec` / `diff_base`) or passes a wrong-typed `context` value (e.g. `fix_mode` as a bool instead of a string) is rejected with a structured error *before* the process runs — instead of silently running on empty/wrong inputs. Unknown keys are warned (not rejected). See the skill tool input validation.
+`task` is the user's natural-language request, not a validated context map. There is no manifest/enforce_inputs gate. The agent must verify the spec, diff target, and explicit edit authorization itself. When any is absent or ambiguous, default to read-only review; ask for the missing spec before a spec-based verdict and ask for consent before any edit.
 
 ## Instructions
 
 ### code-review-scope
 
-1. Compute the real diff from git output (`git --no-pager diff <diff_base>...HEAD --stat` / `--name-only`, `git --no-pager log <diff_base>..HEAD --oneline`); never estimate sizes from the spec. If the diff is empty, emit `size_class` "empty" and stop.
+1. Identify the real change target first: for committed changes use a verified base and `git --no-pager diff <diff_base>...HEAD`; for staged/working-tree changes inspect those diffs too. Do not use `...HEAD` alone to review an uncommitted change. Derive size and paths from real git output; if the selected diff is empty, emit `size_class` "empty" and stop. Recover `change_spec` from the user's task/docs/history; if unavailable, ask before a spec-based verdict.
 2. Classify change size (Fagan): `trivial` (<~20, non-critical), `good` (~100), `acceptable` (~300, single logical change), `too_large` (>~1000 → request a split). Also flag files the change materially grows past ~1000 total lines.
 3. Identify critical paths touching auth, payments, data writes, concurrency, `unsafe`, FFI, secrets/credentials, external data boundaries, or anything `change_spec` names as load-bearing — these get deeper scrutiny.
 4. Build the change model (Good Regulator): `what_changed`, `intent_vs_spec` (does the diff match the stated spec? flag mismatches for the Purpose axis), `module_boundaries_crossed`, `observed_characteristics` (async, unsafe, trait objects, concurrency, FFI, macros — derived from actually reading the diff), `prior_blockers` (`prior_review.blockers` if present, else 0).
@@ -89,7 +87,7 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 
 ### code-review-implement
 
-1. This step runs ONLY when `fix_mode` is one of `blockers` / `should_fix` / `all` (gated by `step.condition`, default-deny; absence and `"none"` both skip). Map `fix_mode` to the tier: `blockers` → Blocker only; `should_fix` → Blocker + Should-fix; `all` → every actionable finding (skip pure taste/FYI with no concrete remedy).
+1. This step runs ONLY after the agent confirms the user's actual request explicitly authorized edits and resolves `fix_mode` to one of `blockers` / `should_fix` / `all`. No manifest or skill-tool condition gates this. Missing, model-inferred, or `"none"` values skip implementation. Map an authorized `fix_mode` to the tier: `blockers` → Blocker only; `should_fix` → Blocker + Should-fix; `all` → every actionable finding (skip pure taste/FYI with no concrete remedy).
 2. For each in-tier finding WITH a concrete remedy, READ the actual file first (`read_file` on `location.file`) and produce ONE surgical edit: `file`, `location`, the EXACT verbatim `old_text` (copied from the read), `new_text`, `finding_id`, and `remedy` (reuse the report's structural remedies). NEVER fabricate `old_text` — a fabricated `old_text` fails the fuzzy match and silently drops the fix.
 3. Prefer the remedy that removes moving pieces (Ousterhout/addyosmani). One finding → one surgical edit (plus its directly-required sibling, e.g., a call site the edit forces). Do NOT bundle unrelated refactors into a requested fix.
 4. Honor project conventions and the repo `.rules` (Rust/GPUI: `?` over `unwrap()`/`expect()`; never `let _ =` on fallible ops; no panicking indexing; full variable names; GPUI constraints where applicable). For other languages, follow the surrounding code's idioms.
@@ -104,7 +102,7 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 | `code-review-perspectives.j2` | Walk the diff through PERFECT-ordered axes (Purpose → Edge cases → Reliability → Form → Evidence → Clarity → Taste) intersected with the addyosmani five-axis (correctness, readability, architecture, security, performance). DETECTION only — records raw, unverdicted findings with file:line + verbatim evidence (no-fiction). Respects focus. For each enabled delegate flag, emits a delegation instruction for the agent to invoke the specialist skill between this step and adjudicate. Accepts pre-populated probe_findings for the skill path. Detection/collection separation (Sauer) — no verdicts here. |
 | `code-review-adjudicate.j2` | Turn raw observations into tiered, evidence-backed verdicts (defect COLLECTION). Applies pragmatic-semantics IS/OUGHT + epistemic mode + provenance, frames each as a falsifiable hypothesis (H0/H1 + falsifier), derives severity from constraint force (Prohibition→Blocker, Guideline→Should-fix, Preference→Nit, Informational→FYI), runs grill-me self-challenge, and enforces file:line no-fiction citation (uncited findings rejected, not dropped). Computes blocker_delta vs prior_review. Does NOT re-scan the code (Sauer detection/collection separation). |
 | `code-review-report.j2` | Produce a verdict driven by Blocker presence (not nit count): Approve / Request changes / Comment. Group findings by severity, lead with what matters, attach a NAMED structural remedy to every architectural/structural finding, rank the 3 highest-leverage top fixes, and emit coverage honesty (checked / not_checked / residual_risk — never a bare "LGTM"). Emits lessons_learned and next_review_focus for loop closure. |
-| `code-review-implement.j2` | Act phase (Fagan rework). SKIPPED when fix_mode == 'none' (the default) via step.condition — the review is review-first; setting fix_mode to a non-`none` value IS the user's consent to modify code. For each finding at/above the requested tier with a concrete remedy, produce ONE surgical edit (file, location, exact verbatim old_text read from the actual file, new_text). Reuses the report's structural remedies. Honors project conventions and .rules. Never fabricates old_text — skips findings it cannot ground. |
+| `code-review-implement.j2` | Act phase (Fagan rework). Skip by default; only render and apply fixes after verifying explicit user authorization for the requested fix tier. A model-supplied `fix_mode` is not consent. For each finding at/above the requested tier with a concrete remedy, produce ONE surgical edit (file, location, exact verbatim old_text read from the actual file, new_text). Reuses the report's structural remedies. Honors project conventions and .rules. Never fabricates old_text — skips findings it cannot ground. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `code-review/code-review-scope`) and a context object with the required variables.
 
@@ -115,7 +113,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `code-review-perspectives.j2`: DETECTION ONLY — no verdicts, severity, confidence, or falsifiers. Every raw finding cites file:line + a verbatim evidence snippet; uncited observations are dropped, not recorded. Respect `focus` (security always gets a basic pass). Delegation adds depth but does not remove the inline basics pass.
 - `code-review-adjudicate.j2`: do NOT re-scan the code; adjudicate the `raw_findings` given. Every finding carries IS/OUGHT, epistemic mode, provenance, constraint force, confidence, a falsifier, a grill-me resolution, and a verbatim citation — missing any → reject (not silently drop). Severity is derived from constraint force; a taste finding is never a Blocker; subjunctive/assessment never exceeds Should-fix; confidence < 0.60 downgrades one tier. An empty `raw_findings` list yields all-zero counts (a clean pass is valid) — do not fabricate. Corroborated ≠ confirmed; use "upheld"/"withstood".
 - `code-review-report.j2`: verdict driven by Blocker presence, not nit count. Every Blocker/Should-fix finding carries a concrete remedy AND a falsifier. Coverage honesty is mandatory (checked / not_checked / residual_risk); never a bare "LGTM". `lessons_learned` must be concrete; `next_review_focus` is empty when converged clean. Review-first — no implementation here.
-- `code-review-implement.j2`: runs ONLY when `fix_mode` ∈ {blockers, should_fix, all} (`step.condition`, default-deny; absence and `"none"` skip). Read the actual file before emitting `old_text` — never fabricate; prefer to skip than guess. One finding → one surgical edit; do not bundle unrelated refactors. Honor project conventions and `.rules`. `applied_count` reflects what the agent actually applied, not what was generated.
+- `code-review-implement.j2`: agent-gated, not manifest-gated. Run ONLY when the user explicitly authorized the selected `fix_mode` ∈ {blockers, should_fix, all}; otherwise skip, including when absent, inferred, or `"none"`. Read the actual file before emitting `old_text` — never fabricate; prefer to skip than guess. One finding → one surgical edit; do not bundle unrelated refactors. Honor project conventions and `.rules`. `applied_count` reflects what the agent actually applied, not what was generated.
 - **Convergence:** evaluate `blocker_delta` (new blockers per pass) after each full iteration. Converged when blocker_delta is zero or stable across 3 iterations. Maximum 10 iterations; escalate if not converged by then. Minimum 2 iterations before declaring convergence, guaranteeing at least one grill-me self-challenge re-pass.
-- **Modes:** comprehensive-by-default. The four lenses (adversarial, multi-perspective, refactoring, generative) are inline reasoning, not separate invocations. "Generative" is the `fix_mode`-gated implement phase; a non-`none` `fix_mode` is the caller's consent to modify code.
+- **Modes:** comprehensive-by-default. The four lenses (adversarial, multi-perspective, refactoring, generative) are inline reasoning, not separate invocations. "Generative" is the explicitly user-authorized implement phase, never enabled by the model's own `fix_mode` choice.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

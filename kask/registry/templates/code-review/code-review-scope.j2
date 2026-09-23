@@ -1,9 +1,9 @@
-{# goal: Scope the change — compute the real diff (Fagan sizing), identify critical paths, build a change model (Good Regulator), and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
+{# goal: Scope the actual committed or uncommitted change from git evidence (Fagan sizing), identify critical paths, build a change model, and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
 [inference]
 contract:
   input:
     change_spec: string
-    diff_base: string
+    diff_base: string|null
     focus: array
     prior_review: object
   output:
@@ -36,8 +36,8 @@ Do NOT judge findings in this phase — you only scope and model.
 ## Stated Spec (P1 boundary — the review judges the change against this)
 {{ change_spec }}
 
-## Diff Base
-{{ diff_base }}
+## Diff Base (committed-change ref only; verify before using)
+{{ diff_base | default('not supplied') }}
 
 ## Focus Axes (empty = comprehensive, the default)
 {{ focus | default([]) | tojson }}
@@ -64,19 +64,31 @@ No prior review — this is a first pass. Scope from scratch.
 
 ## Step 1 — Compute the real diff (do not estimate)
 
-Run real git commands (the agent executes these between template calls; in a
-pure skill invocation, the orchestrator provides the diff output):
+The agent executes git commands between template calls; the skill tool injects
+instructions, not a precomputed diff. First establish whether the user's task
+refers to commits or staged/working-tree changes. Verify a supplied ref exists
+before using it; never invent a default ref. For committed changes with a verified `diff_base` only:
 
+{% if diff_base %}
 ```
 git --no-pager diff {{ diff_base }}...HEAD --stat
 git --no-pager diff {{ diff_base }}...HEAD --name-only
 git --no-pager log {{ diff_base }}..HEAD --oneline
 git --no-pager diff {{ diff_base }}...HEAD
 ```
+{% else %}
+No committed-change base supplied: do not run `...HEAD` commands until one
+is verified. Use the staged/working-tree diffs below if those are the target.
+{% endif %}
 
-From the real `--stat` output, derive insertions/deletions and files touched.
-Do NOT guess sizes from the spec. If the diff is empty, emit size_class
-"empty", an empty critical_paths, and a note — the review stops here.
+For uncommitted changes, inspect `git --no-pager diff` and
+`git --no-pager diff --cached` (with `--stat` and the actual hunks) as
+appropriate. Do not call an uncommitted change empty because `...HEAD` is
+empty. Derive insertions/deletions and files from the selected real diff;
+never guess sizes from the spec. If the selected diff is empty, emit
+size_class "empty", empty critical_paths, and stop. Recover the stated spec
+from the user's task, relevant docs, and history; if it cannot be recovered,
+ask the user rather than inventing intent or issuing a spec-based verdict.
 
 ## Step 2 — Fagan change sizing
 

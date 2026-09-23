@@ -58,14 +58,17 @@ surface that blocker. Only an explicit operator choice may override the model.
 
 ### Phase 2 — Build the dataset
 
-3. Call `training_bridge_rollouts` (training server) with
-   mode "sft" (or "dpo" when both passed and failed rollouts exist for
-   the same tasks — preference pairs are the stronger signal). It
-   emits ChatML JSONL from the retained request/response bodies.
-   Check `skipped_no_bodies` — rollouts whose bodies were stripped
-   cannot be bridged; note the count.
-4. Call `training_ingest_dataset` with the emitted dataset path to
-   normalize and cache it. Read the format detection and sample count.
+3. Call `training_bridge_rollouts` (training server) with an `output_path`
+   and `agent_name`, selecting mode `sft` for passed-rollout ChatML JSONL
+   or `preference` for DPO JSONL (`prompt`, `chosen`, `rejected`) when
+   passed and failed rollouts from the same harness task have retained
+   bodies. `both` emits separate files; choose the dataset compatible
+   with the operator-accepted trainer (do not pass `dpo` as a bridge mode).
+   Read `sft_path`/`sft_examples` or `preference_path`/`preference_examples`;
+   stop if the selected output is empty. Check `skipped_no_bodies` —
+   stripped captures cannot be bridged; note the count.
+4. Call `training_ingest_dataset` with the selected emitted dataset path
+   to normalize and cache it. Read the format detection and sample count.
 
 ### Phase 3 — Validate and submit (the gates)
 
@@ -83,50 +86,72 @@ surface that blocker. Only an explicit operator choice may override the model.
 
 7. Poll `training_status` with the job id until completion. It reports
    pod status, GPU, recent logs, and — on completion — registers the
-   adapter from the HuggingFace manifest. Read the A/B comparison it
-   emits (train vs baseline loss).
-8. Call `training_evaluate` with the adapter id, a held-out test
-   dataset, and the method matching your evaluator semantics
-   (exact_match / contains / semantic / benchmark). Semantic requires an
-   explicit judge_model and remains LLM-judged. Evaluation routes through
-   the named model — the adapter must be deployed for
-   the evaluation to measure the adapter, not the base model. If it
-   is not deployed, say so and treat the A/B loss as the only signal.
+   adapter from the HuggingFace manifest. `ab_comparison` is available
+   only for a retrain with a previous adapter for the same skill and
+   both losses present; it compares previous vs new training loss, NOT
+   base-model vs candidate loss. Do not infer improvement if absent;
+   its `auto_promoted` field is not evidence of the evaluation gate.
+8. Prepare held-out tasks and expected answers that neither model trained
+   on. For a pass-rate comparison, run `training_evaluate` twice on the
+   SAME `test_dataset_path`, `method`, `max_examples`, and (if semantic)
+   `judge_model`: once with `model` set to the deployed baseline model,
+   once with `model` set to the deployed candidate adapter's model name.
+   Pass the corresponding `adapter_id` to label each report; this field
+   does NOT route inference — `model` does. Use exact_match / contains /
+   semantic / benchmark only with the matching ChatML or benchmark dataset;
+   semantic is LLM-judged and requires an explicit judge_model. Record
+   both `accuracy` values and per-example errors; use the Phase 1 harness
+   pass rate as diagnostic context, not as the denominator for this
+   different evaluator. Verify both model routes actually serve the intended
+   weights (returned model strings are reported, not attested). If the
+   candidate is not deployed or identity cannot be verified, do not treat
+   an evaluation of the base route as candidate evidence: no promotion.
 
 ### Phase 5 — Verdict and retrain
 
-9. Convergence gate — call `lisp_eval` with:
-   - form: `(and (eq loss_improved 1) (>= pass_rate baseline_pass_rate))`
-   - env: `{ "loss_improved": <1 if the A/B loss improved>,
-            "pass_rate": <Phase 4 eval pass rate>,
-            "baseline_pass_rate": <Phase 1 baseline> }`
-   If false, do NOT promote the adapter. Diagnose: re-run
-   `swarm_eval_agent_local` on the failure cases, curate the failing
-   exchanges into a feedback file, and re-enter Phase 3 with
-   `training_submit` passing feedback_path (retrain mode merges the
-   feedback, deduplicates by question, and increments the adapter
-   version). Bound: max 2 retrain cycles per adapter version; a third
-   failure escalates to the operator with the diagnosis — budgets are
-   real.
+9. Convergence gate — only after verifying deployment and collecting
+   comparable Phase 4 results and loss evidence, call `lisp_eval` with:
+   - form: `(and (= deployed 1) (= loss_improved 1) (>= pass_rate baseline_pass_rate))`
+   - env: `{ "deployed": <1 only if the candidate route serves the adapter>,
+            "loss_improved": <1 only for an evidenced comparable loss improvement>,
+            "pass_rate": <candidate Phase 4 accuracy>,
+            "baseline_pass_rate": <baseline Phase 4 accuracy> }`
+   A missing loss comparison (including a first-time adapter), missing
+   deployment, or missing comparable evaluation leaves promotion unverified:
+   do NOT substitute zero or Phase 1 rates, run the gate with fabricated
+   inputs, or promote. Report the missing evidence to the operator;
+   training loss alone is not a pass-rate verdict. If a measured gate
+   fails, diagnose the failures, curate the exchanges into a feedback
+   file, and re-enter Phase 3 with `training_submit` passing feedback_path
+   and skill_name (retrain mode merges feedback, deduplicates by question,
+   and increments the adapter version). Obtain operator confirmation for
+   each new submission. Bound: max 2 retrain cycles per adapter version;
+   a third failure escalates to the operator with the diagnosis.
 10. Persist the verdict — call `memory_insert` (curator server) with
     entity = the agent/skill name, attribute = "adapter_verdict",
-    value = { adapter_id, baseline_pass_rate, pass_rate, promoted },
-    and the evidence h_mem id from the eval. The training server does
-    not persist A/B verdicts itself — this step is what closes the
-    loop.
+    value = { adapter_id, baseline_pass_rate, pass_rate, promoted,
+              evaluation_method, model_routes, evidence_gaps } and a real
+    `evidence_h_mem_id` supporting the verdict. Use null pass rates when
+    unmeasured; if there is no evidence h_mem ID, report the persistence
+    blocker rather than inventing a citation. The training server does
+    not persist A/B verdicts itself.
 11. Judge the registered goal — call `kanban_goal_judge` against the
     goal's criteria with a verdict and per-criterion results from the
-    measured pass rates. When the operator confirms the outcome,
+    measured pass rates; mark unmeasured criteria as unresolved rather
+    than guessing. When the operator confirms the outcome,
     `kanban_goal_score` Brier-scores the intake prediction — the
     scored acceptance record for this adapter change.
 
 ## Constraints
 
 - Never submit with unresolved refuse-severity gate findings.
-- Never promote an adapter that did not beat its baseline on BOTH the
-  loss and the eval pass rate.
-- Budgets are real: each rollout and training job spends credits/GPU —
-  the operator confirms before Phase 3 submission.
+- Do not promote without verified deployment, comparable loss improvement
+  and a pass rate meeting the baseline on the same held-out evaluation.
+  The skill records a verdict; it does not deploy or promote an adapter.
+- Rollouts and training jobs consume provider resources; do not invent a
+  spend quota or promote on the basis of an unverified cost estimate.
+  Present the available estimate and obtain operator confirmation before
+  each Phase 3 submission.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
   with skill_name "adapter-lifecycle", the tool name, and the error;
   continue with the best available information.

@@ -85,7 +85,7 @@ Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 2. Apply the appropriate tactics: intro, apply, exact, induction, simp, rw, decide.
 3. Handle termination: structural recursion, well-founded recursion, or tail recursion.
 4. Reference Mathlib for existing lemmas and tactics.
-5. Verify the proof compiles by running `lean` or `lake build`.
+5. Verify the exact proof obligation with the generated proof in context by running `lean` or `lake build`; check exit status and diagnostics, and inspect the proof for `sorry`/`admit`/new axioms. A generated proof or compiler code action alone is not a verified theorem. If compilation fails, feed the diagnostic into refute and retry at most twice; then report the unsolved goal.
 
 ### lean-prover-refute
 
@@ -117,7 +117,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 - All templates are prompt templates with `Public` visibility.
 - The Lean type-checker is the extrinsic oracle — always run `lean` or `lake build` to verify proofs.
-- A proof with `sorry` is not a complete proof — it's a proof obligation with holes.
+- A proof with `sorry` or `admit`, or a newly assumed axiom replacing the obligation, is not a complete proof — even if Lean exits successfully. Report the exact command and result before claiming verification.
 - The Prop/Type boundary is inviolable: computational content cannot leak from Prop to Type without large elimination.
 - Termination is mandatory: every recursive function must have a termination proof.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

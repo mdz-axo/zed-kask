@@ -270,9 +270,12 @@ Knowledge Graphs book; probes beat priors).
 
 Every record carries entity_ref citations; grounding-verify consumes them
 directly. Map a record onto an elicited_capabilities entry for
-capability-evaluate as: elicited_level = floor_verdict, metric_used =
+capability-evaluate as: `elicited_level = top_score` only when the score is
+measured, `floor_verdict` remains a separate categorical field, metric_used =
 "retrieval score vs floor", evidence = retrieved_evidence, confidence =
-record confidence, elicitation_gap = record elicitation_gap.
+record confidence, elicitation_gap = record elicitation_gap. Without a score
+or a comparable numeric threshold, mark the comparison undetermined; do not
+compare `above_floor`/`floor_band`/`below_floor` as numbers or infer a ceiling.
 
 Composition contract: other skills render the probe templates directly for
 single probes (grill-me depth ladders, metacognition coverage measurement),
@@ -285,6 +288,7 @@ not these templates — the When NOT to Use contract stays intact.
 - All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
+- A floor/ceiling numeric comparison requires a measured numeric value and threshold in the same units; categorical probe verdicts are evidence, not ordered numbers. Missing or incomparable measurements yield `undetermined`, not `satisfied`.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.
 - **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 direct MCP tool call (curator_memory_recall at step 0 for persistence-grounded learning), 2 `lisp_eval` calls (for structural manifest analysis and convergence check), 5 `render_template` calls (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on failure, report on all direct MCP tool and `lisp_eval` calls. When the replica RAG probe path is used, it adds two `render_template`
 calls per probe (pass 1 and pass 2) plus direct `corpus_query` calls,

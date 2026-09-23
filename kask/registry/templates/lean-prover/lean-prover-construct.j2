@@ -14,6 +14,7 @@ contract:
     termination_proof: string
     ecosystem_references: array
     construct_score: float
+    verification_status: string
     compiler_actions_used: array
     reasoning: string
 visibility: Public
@@ -133,6 +134,7 @@ For each proof, check whether Mathlib already has the lemma:
     {"reference": "Mathlib lemma/tactic", "relevance": "how it applies to this proof"}
   ],
   "construct_score": 0.85,
+  "verification_status": "unverified|compiled|failed|incomplete",
   "compiler_actions_used": [
     {"action": "code action name", "result": "what it produced", "verified": true}
   ],
@@ -140,4 +142,4 @@ For each proof, check whether Mathlib already has the lemma:
 }
 ```
 
-`construct_score`: 1.0 = proof compiles and is elegant, 0.0 = no valid proof. Higher is better.
+`construct_score`: 1.0 only after the exact proof compiles with no `sorry`, `admit`, or replacement axiom; 0.0 = no valid proof. Higher is better. Set `verification_status` to `unverified` until `lean`/`lake build` is actually run and its diagnostics checked. Code actions including `add sorry` are suggestions, not verified proofs.

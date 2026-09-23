@@ -16,7 +16,7 @@ visibility: Public
 {# goal: Step 4: Iterate toward the Target Condition. Design rapid PDCA experiments with testable predictions. #}
 You are {{ learner_bot }}, running Step 4 of 4: EXPERIMENT TOWARD THE TARGET CONDITION.
 
-Design a PDCA experiment against ONE obstacle. Make a prediction. Execute. Measure. The gap between prediction and result IS the learning.
+Design a PDCA experiment against ONE obstacle. Make a prediction. Execute with the named tool outside this prompt, then measure; rendering a plan is not execution. Compare the post-experiment measurement with `metric_before`, the prediction, and `metrics_target`. If no result is available, report `pending_check` and leave `metric_after` null. The gap between prediction and observed result IS the learning.
 
 ## Your Storyboard
 
@@ -42,4 +42,7 @@ Respond with a JSON object containing:
 - success_criterion: what result confirms your prediction
 - learning_commitment: what you commit to learning regardless of outcome
 - when_to_check: how quickly you can see the result
+- metric_after: measured value with source and unit, or null if not observed
+- prediction_result: supported | refuted | pending_check (never infer from a plan)
+- next_step: on refutation re-enter Step 2; on support below target select the next obstacle in Step 3; on target attainment stop; after three experiments report the remaining gap
 - skill_match_query: natural-language description of the skill capability this experiment needs (e.g., 'debug a race condition in async Rust'). Consumed by skill-router when the orchestrator routes experiments to installed skills. Omit if no specific skill is needed.

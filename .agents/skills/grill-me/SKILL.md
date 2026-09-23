@@ -30,8 +30,8 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 1. Conduct a rigorous oral examination on the specified topic.
 2. Generate 2-3 questions at the current difficulty level, adhering to the question taxonomy (Recall, Mechanism, Rationale, Edge Cases, Synthesis).
 3. If mode is "calibrate", assess the user's baseline knowledge directly and precisely.
-4. If mode is "interrogate", evaluate previous answers to escalate if solid (≥80%), probe deeper if partial (40-80%), or re-probe with different angles if gaps exist (<40%).
-5. After 3 failed attempts on a question, briefly explain the correct answer and move on.
+4. If mode is "interrogate", evaluate previous answers to escalate if solid (≥80%), probe deeper if partial (≥40% and <80%), or re-probe with different angles if gaps exist (<40%). Count only answered questions; do not escalate from an empty sample.
+5. Track attempts per question across rounds. After 3 failed attempts, briefly explain the correct answer and move on; do not ask the same question again.
 6. Maintain a direct, sharp tone akin to a demanding technical interviewer, using specific challenging phrases without being mean-spirited.
 7. Give minimal hints if requested, without solving the questions for the user.
 8. Output a JSON object containing questions, evaluations, current level, and round verdict.
@@ -50,7 +50,12 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 2. Escalate to the next level (maximum 5) if the solid ratio is 0.8 or higher.
 3. Hold at the current level to probe deeper if the solid ratio is between 0.4 and 0.8.
 4. Reprobe at the current level with different angles if the solid ratio is below 0.4.
-5. Output a JSON object containing the new level, action, and a brief reason.
+5. At level 5, an otherwise escalating result is `complete` at level 5. Bound the session to five rounds total; on the fifth round, assess the answers collected even if gaps remain. Output a JSON object containing the new level, action, and a brief reason.
+
+### Feedback gate
+
+1. After each answer, pass the updated per-question attempts and answered-question solid ratio to `grill-me/grill-me-escalate` via `render_template`; consume the result when choosing the next round's level. Rendering alone is not evaluation — wait for the answer before counting it.
+2. Stop at level-5 completion or round 5, whichever comes first, and run `grill-me-assess` on actual answers. Never invent a rating for unanswered questions; report gaps as unassessed where evidence is absent.
 
 ## Registry Templates
 

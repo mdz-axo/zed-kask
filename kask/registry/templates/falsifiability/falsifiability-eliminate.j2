@@ -64,15 +64,16 @@ output "proven"; output "survived test T_n, alternatives A_j…A_k eliminated."
    - Why the observation contradicts the prediction (not merely "it's unlikely" — actual contradiction).
    - Record this in `falsification_log` so the elimination is auditable.
 
-3. **Corroborate survivors.** A hypothesis that predicted the observed outcome is corroborated — it survived a test that could have falsified it. Corroboration is not confirmation: surviving does not make the hypothesis more likely in any absolute sense, only more resilient. State which test corroborated it and which alternatives that test eliminated.
+3. **Corroborate survivors.** Only a hypothesis tested by an observation that could have falsified it and whose prediction matched is corroborated — it survived a test that could have falsified it. Corroboration is not confirmation: surviving does not make the hypothesis more likely in any absolute sense, only more resilient. State which test corroborated it and which alternatives that test eliminated.
 
 4. **Handle survived-by-default.** Hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test survive by default — they are neither eliminated nor corroborated. Record them as `survived_by_default` with the reason. The user must understand these were not tested, only that nothing could test them.
 
 5. **Compute the verdict.** One of:
-   - `one_corroborated_survivor`: exactly one hypothesis corroborated, all others eliminated — the strong-inference ideal.
-   - `multiple_corroborated`: more than one hypothesis survived the tests — the tests did not fully discriminate; more discriminating tests needed.
-   - `none_corroborated`: every hypothesis was eliminated — the question framing or hypothesis generation was wrong; restart from hypothesize.
-   - `nothing_eliminated`: no hypothesis was ruled out this cycle — either no tests were run, or all predictions matched (which corroborates all but eliminates none).
+   - `one_corroborated_survivor`: exactly one hypothesis corroborated, all others eliminated (no survived-by-default) — the strong-inference ideal.
+   - `multiple_corroborated`: at least two hypotheses were tested and corroborated, with no untested survivor.
+   - `untested_remainder`: at least one survivor was not tested (including one corroborated plus one survived-by-default); do not claim a unique winner. Report missing discriminating tests.
+   - `none_corroborated`: every hypothesis was eliminated — restart from hypothesize.
+   - `nothing_eliminated`: no hypothesis was ruled out this cycle. This takes precedence over the survivor count; no observations means no corroboration. Report whether no tests ran or tests failed to discriminate.
 
 ## Output
 
@@ -110,7 +111,7 @@ Return JSON only:
       "evidence": "observation contradicted prediction"
     }
   ],
-  "verdict": "one_corroborated_survivor|multiple_corroborated|none_corroborated|nothing_eliminated"
+  "verdict": "one_corroborated_survivor|multiple_corroborated|untested_remainder|none_corroborated|nothing_eliminated"
 }
 ```
 
@@ -119,7 +120,7 @@ Return JSON only:
 - Elimination is hard, not probabilistic. A contradicted prediction rules the hypothesis out; do not down-weight and carry it.
 - Corroborated is not confirmed. Never use "proven", "verified true", or "established." Use "survived", "withstood", "corroborated."
 - An elimination must cite the specific test, prediction, observation, and contradiction — vague eliminations are not allowed.
-- Survived-by-default hypotheses must be flagged, not silently kept. The user must know they were not tested.
+- If no tests ran, `corroborated` is empty. A mixed corroborated/default-survivor set yields `untested_remainder` (unless `nothing_eliminated` takes precedence). Survived-by-default hypotheses must be flagged, not silently kept. The user must know they were not tested.
 - If every hypothesis is eliminated, the verdict is `none_corroborated` — the framing is wrong, not the tests.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

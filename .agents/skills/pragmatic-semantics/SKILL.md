@@ -41,7 +41,7 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 2. Trace the claim back recursively through derivation steps until reaching a primary source or an unverifiable gap.
 3. Record the source, location, derivation type, transform, and confidence delta for each step in the provenance chain.
 4. Flag any gaps in the chain where sources cannot be verified.
-5. Determine the overall confidence level (high, medium, low, or unverifiable) based on the chain's completeness.
+5. Determine `chain_confidence` (0.0–1.0) from the verified chain, and its confidence level (high, medium, low, or unverifiable). Count unverified links as `unverifiable_gaps`; never apply an authority floor to a source not actually checked.
 6. Detect any conflicting sources or contradictory evidence within the provenance chain.
 7. Provide specific, actionable recommendations for verifying and strengthening the provenance chain.
 
@@ -59,10 +59,10 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 ### Convergence
 
 9. Gate — call `lisp_eval` with:
-   - form: `(and (eq (length unverifiable_gaps) 0) (>= chain_confidence 0.8))`
+   - form: `(and (= (length unverifiable_gaps) 0) (>= chain_confidence 0.8))`
    - env: `{ "unverifiable_gaps": <provenance-chain gaps that stayed unverifiable>,
              "chain_confidence": <overall confidence from semantics-provenance-trace step 5> }`
-   Bound: one re-trace — apply the verification recommendations
+   If the classification source is unknown or the conflict result was skipped, carry that status into the final report; do not claim all three analyses passed on provenance alone. Bound: one re-trace — apply the verification recommendations
    (semantics-provenance-trace step 7) and re-run the trace; gaps that
    survive the second pass are reported as unverifiable (the honest exit
    semantics-provenance-trace step 5 defines). This gate is the convergence
@@ -87,6 +87,6 @@ Template context variables (from each template's [inference] contract):
 - `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
 - `semantics-provenance-trace.j2`: Public. Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: Public. OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
-- Step 3 (conflict-resolve) is conditional — it only runs when the result of step 2's `conflicts_detected == true`. Downstream steps must use the result of step 3 (defaulting to `{}`) to handle the skipped case.
+- Conflict resolution runs only if `conflicts_detected == true`; otherwise record it as skipped, not a successful resolution. If true, require a ranked result or report the unresolved conflict; never default a missing result to `{}` and claim convergence.
 - Convergence check incorporates all three analysis steps (classification, provenance, conflict resolution), not just classification.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

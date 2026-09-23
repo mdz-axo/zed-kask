@@ -6,6 +6,7 @@ contract:
     current_level: integer
     solid_ratio: float
     total_questions: integer
+    round_number: integer
   output:
     new_level: integer
     action: string
@@ -26,19 +27,22 @@ Determine the next difficulty action for grilling on **{{ topic }}**.
 - Current level: {{ current_level }}
 - Solid answer ratio: {{ solid_ratio }}
 - Total questions answered: {{ total_questions }}
+- Round: {{ round_number }}
 
 ## Decision Rules
 
-- Solid ratio ≥ 0.8 → **escalate** to next level (max 5)
-- Solid ratio 0.4–0.8 → **hold** at current level, probe deeper
-- Solid ratio < 0.4 → **reprobe** at current level with different angles
+- Count only answered questions; if total_questions = 0, **hold** and ask for an answer before grading.
+- Solid ratio ≥ 0.8 → **escalate** to next level; at level 5 **complete** and assess.
+- Solid ratio ≥ 0.4 and < 0.8 → **hold** at current level, probe deeper.
+- Solid ratio < 0.4 → **reprobe** at current level with different angles.
+- If `round_number` is 5, **complete** before applying ratio rules. After five rounds, **complete** and assess even if the level has not advanced; do not repeat a question after its third failed attempt.
 
 ## Output
 
 ```json
 {
   "new_level": 1,
-  "action": "escalate|hold|reprobe",
+  "action": "escalate|hold|reprobe|complete",
   "reason": "brief explanation"
 }
 ```

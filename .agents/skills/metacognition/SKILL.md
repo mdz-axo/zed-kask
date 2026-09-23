@@ -63,8 +63,8 @@ prediction calibration.
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
-4. Score the prediction via Brier score.
-5. Check convergence: gap < epsilon, or stability check (iterates stabilized), or Brier calibrated.
+4. Score the prediction via Brier score only after the predicted event has a measured binary outcome; without an outcome record calibration as pending, not zero error.
+5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles and report the remaining gap and pending measurements.
 
 ## Registry Templates
 

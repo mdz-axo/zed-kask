@@ -76,7 +76,7 @@ The research hypothesis is a **declarative statement** predicting the expected o
 
 ### Step 3: Formulate Null Hypothesis (H₀)
 
-Postulates **no difference or no relationship**. This is what the statistical test evaluates.
+State the null for the chosen design. For superiority/difference/association, this is **no difference or no relationship**; for non-inferiority the null is that the intervention is inferior by at least δ, and for equivalence the null is that the difference lies outside ±δ. Without a defined δ, neither design is testable. This is what the statistical test evaluates.
 - If findings show statistical significance → **reject H₀**
 - If findings do not show significance → **fail to reject H₀**
 
@@ -123,7 +123,7 @@ Now that the objectives are specified, assess testability:
 3. **Defined comparison**: Is the comparator clear and accessible?
 4. **Statistical framework**: What test would you use? (t-test, chi-square, ANOVA, regression, etc.)
 5. **Effect size**: What magnitude of difference would be clinically meaningful?
-6. **Non-inferiority/equivalence margin (δ)**: If hypothesis_type is `non_inferiority` or `equivalence`, what is the δ margin? Without a defined δ, the hypothesis is not testable.
+6. **Non-inferiority/equivalence margin (δ)**: If hypothesis_type is `non_inferiority` or `equivalence`, what is the δ margin and its justification? Without a defined δ, set `overall_testability` to `not_testable`.
 7. **Sample size implications**: Does the hypothesis imply a feasible sample size given the objectives?
 
 ---
@@ -159,7 +159,7 @@ Respond with a single JSON object:
 ```json
 {
   "research_hypothesis": "In [population], [intervention] will [direction] [outcome] compared to [comparison].",
-  "null_hypothesis": "In [population], there is no difference in [outcome] between [intervention] and [comparison].",
+  "null_hypothesis": "Design-specific null: no difference for superiority; inferior by at least δ for non-inferiority; outside ±δ for equivalence", 
   "hypothesis_type": "difference|association|superiority|non_inferiority|equivalence|diagnostic_accuracy|prognostic",
   "directional": true,
   "testability_assessment": {
@@ -215,7 +215,7 @@ Respond with a single JSON object:
 ## Constraints
 
 - The research hypothesis MUST be a declarative statement, not a question
-- The null hypothesis MUST postulate no difference/no relationship
+- The null hypothesis MUST match the design: no difference/no relationship for difference or association; non-inferiority/equivalence use their specified δ-boundary null, never a no-difference null
 - If the PICO comparison is "none" (no comparator), acknowledge the descriptive/pre-post design limitation
 - The hypothesis should NOT be changed post hoc to fit expected data
 - Aims must be broader than objectives — if an aim reads like an objective, it's too specific
@@ -223,7 +223,7 @@ Respond with a single JSON object:
 - Secondary aims must have clear rationale — avoid "nice to know" add-ons
 - The alignment check must be honest — flag misalignments, don't paper over them
 - The feasibility recheck must acknowledge constraints introduced by specific objectives
-- **Non-inferiority/equivalence margin**: When hypothesis_type is `non_inferiority` or `equivalence`, you MUST specify a `non_inferiority_margin` (δ) in the testability_assessment. If δ is not defined, the hypothesis is not testable — flag this in testability_concerns.
+- **Non-inferiority/equivalence margin**: When hypothesis_type is `non_inferiority` or `equivalence`, you MUST specify a justified `non_inferiority_margin` (δ) in the testability_assessment. If δ is not defined, set `overall_testability` to `not_testable` and flag this in testability_concerns. Do not label an inaccessible comparator `defined_comparison: true`.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
 - Preserve the original prompt structure and formatting
 - Handle missing variables gracefully (leave as-is or use default if specified)

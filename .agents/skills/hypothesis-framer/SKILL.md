@@ -33,18 +33,21 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 7. **Formulate the null hypothesis (H₀)** postulating no difference or no relationship. Format: "In [population], there is no difference in [outcome] between [intervention] and [comparison]."
 8. **Define the primary aim** as a broad, overarching purpose directly linked to the research question, referencing PICO elements. Format: "The primary aim of this study is to [verb] [what] in [population]."
 9. **Define 2–4 primary objectives** as specific, measurable steps that accomplish the primary aim, linked to the primary outcome measure. Define secondary aims with clear rationale if applicable — avoid "fishing expeditions."
-10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility.
+10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility. Render `falsifiability/falsifiability-admit` with the formulated H₁ as `target`, the domain, and PICO/objectives as `context`; consume its admissibility result. Rendering is not a test result: if no concrete falsifying observation exists, mark the framing not testable.
 11. **Verify five-link alignment**: question→hypothesis, hypothesis→primary aim, primary aim→objectives, objectives→PICO outcome, and hypothesis→null hypothesis. Flag any misalignments honestly and propose corrections.
 12. **Recheck feasibility** in light of operational aims and objectives: sample size, methods, timeline, and resources. Identify any new concerns that emerged during aims/objectives development.
 13. **Check convergence (the gate).** Call `lisp_eval` with:
-    - form: `(and (eq misalignment_count 0) (eq (length weak_finer) 0))`
+    - form: `(and (= misalignment_count 0) (= (length weak_finer) 0) testable admissible feasible)`
     - env: `{ "misalignment_count": <five-link misalignments flagged in step 11>,
-              "weak_finer": <FINER dimensions still scoring below 7> }`
+              "weak_finer": <FINER dimensions still scoring below 7>,
+              "testable": <overall_testability is testable AND a required delta is defined>,
+              "admissible": <falsifiability-admit result.admissible is true>,
+              "feasible": <feasibility_recheck is confirmed> }`
     Bound: max 2 refinement cycles — on a failing gate, re-enter step 2
     (refine the question) with the flagged weaknesses; misalignments that
     survive the second cycle are reported honestly (step 11's
-    flag-don't-paper-over rule), and the framing ships as
-    testable-with-reservations.
+    flag-don't-paper-over rule). A remaining failed testability or admissibility
+    gate ships as `not_testable`/`blocked`, never `testable-with-reservations`.
 
 ## Registry Templates
 

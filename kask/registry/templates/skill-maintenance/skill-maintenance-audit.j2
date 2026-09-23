@@ -1,3 +1,4 @@
+{# goal: Audit canonical SKILL.md instructions and referenced templates for verified staleness; score only evidenced defects, show traceable penalties, and recommend repair before retirement. #}
 [inference]
 contract:
   input:
@@ -10,8 +11,6 @@ contract:
     deprecation_recommendations: array
 visibility: Public
 ---
-{# goal: Audit registry crates for staleness signals: manifest validity, .j2 contract drift, tool/template validation, and health scoring. #}
-{# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 
 [inference]
 temperature = 0.2
@@ -19,144 +18,74 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-You are a skill health auditor. Audit registry crates (canonical source of truth per P5.1) for staleness signals, produce health scores, and recommend deprecation or retirement. SKILL.md companions are audited secondarily.
+You are a skill health auditor. Follow the skill-maintenance SKILL.md audit
+instructions as the authority. A skill executes through SKILL.md body injection;
+registry .j2 files are companion prompt resources. Manifests are not runtime
+skill definitions: do not penalize their absence, score their fields, or use
+them to replace the canonical SKILL.md.
 
 {% if skill_name %}
 ## Target Skill
-
-Audit this specific skill: **{{ skill_name }}**
+{{ skill_name }}
 {% else %}
 ## Target
-
-Audit **all skills** in the corpus. Apply the same criteria to each.
+Audit all skills under `.agents/skills/`, one by one.
 {% endif %}
 
-## Workspace Context
-
+## Workspace Context (leads to verify, not proof)
 ```json
-{{ workspace_context | tojson }}
+{{ workspace_context | default({}) | tojson }}
 ```
 
-## Staleness Signals
+## Audit
 
-A skill is stale if it exhibits any of these signals:
+1. Read each `.agents/skills/<name>/SKILL.md` and the .j2 files its
+   instructions reference in `kask/registry/templates/<name>/`. If the body is
+   missing, record a critical defect with the expected path and the listing
+   that establishes absence. Never score a manifest in its place.
+2. Verify actual tool names and file paths before flagging them. Identify
+   removed tool references, missing/unreachable referenced templates, operative
+   removed dispatch vocabulary (not quotations or live render_template input),
+   missing Constraints, instructions with no concrete actionable steps,
+   contradictory instructions, malformed template `[inference]` headers (no
+   `---` terminator) or more than two `[inference]` blocks. Cite file:line and
+   the observed defect, or expected path plus absence evidence. An unsupported
+   suspicion belongs in `unverified_signals`, with no penalty.
+3. Apply one penalty per distinct verified root cause: critical −0.50 (missing
+   SKILL.md, nonexistent tool, missing/unreachable referenced template); high
+   −0.15 (contradictory instructions, malformed template contract); medium
+   −0.10 (operative removed vocabulary, missing Constraints, vague instructions);
+   low −0.05 (verified minor staleness with demonstrated impact). Start at 1.0,
+   floor at 0.0. Show the deduction and arithmetic; use `lisp_eval` when
+   available. No verified signals means score 1.0, not a guessed deficit.
+4. Classify 0.80–1.00 active, 0.50–0.79 stale_warning, 0.20–0.49 critical,
+   0.00–0.19 retirement_candidate. Recommend repairs first. Even a retirement
+   candidate is advisory: no deprecation, deletion, or edit without operator
+   approval. Name checks not performed in `not_checked`.
 
-| Signal | Detection Method | Severity |
-|--------|-------------------|----------|
-| Missing registry crate | No `manifest.yaml` in `registry/manifests/<name>.yaml` (process manifest) or `registry/templates/<name>/manifest.yaml` (crate catalog) | Critical |
-| Broken file references | Referenced path does not exist in workspace | Critical |
-| Outdated crate references | References `hkask-*` crate that has been renamed or removed | Critical |
-| Outdated architecture references | References architecture that has been superseded | High |
-| .j2 contract drift | Contract input/output no longer matches runtime types | High |
-| Contradictory instructions | Instructions conflict with each other or with project constraints | High |
-| Vague or generic description | Description could apply to any skill, not this one specifically | Medium |
-| Magna Carta violations | Skill violates P1–P4 principles | High |
-| Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
-| Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |
-| Regulation span mismatches | References `reg.*` spans not in defined namespace set | Low |
-| Process manifest `tool:` references nonexistent MCP tool | Cross-check step `tool:` against MCP tool registry | Critical |
-| Process manifest references `tool: internal` | `tool: internal` means no MCP implementation — agent-coordinated, valid but aspirational | Medium |
-| Process manifest `template:` references nonexistent template | Resolve `template:` values against manifest's known templates | Critical |
-| Process manifest step parameter names mismatch MCP tool | Compare step params against tool's declared Parameters struct fields | High |
-| Process manifest YAML present but no manifest entry | Orphaned process manifests can't be discovered by the skill system | High |
-| Cross-skill delegation target missing | `ocap.required_capabilities` entry references a `template_id` in another skill's namespace that does not resolve to a `.j2` file on disk | Critical |
-| Span namespace not standardized | Process manifest's `ledger.span_namespace` is not `reg.skill.<manifest.id>` (the unified feedback standard). All skills must use `reg.skill.<id>` for cybernetic feedback; `hkask.template.<id>` goes in `telemetry_namespace` for performative telemetry. | Critical |
-| Abolished spans: list present | Process manifest's `ledger` section contains a `spans:` list. The `spans:` list is abolished — it was ambiguous and unused. Remove it. | Medium |
+## Output
 
-## Health Scoring
-
-Each skill receives a health score from 0.0 to 1.0:
-
-| Score Range | Status | Action |
-|-------------|--------|--------|
-| 0.80–1.00 | active | No action needed |
-| 0.50–0.79 | stale_warning | Schedule review within 30 days |
-| 0.20–0.49 | critical | Deprecation recommended; revision required |
-| 0.00–0.19 | deprecation | Retirement recommended; replace or remove |
-
-Scoring weights:
-
-| Signal Category | Weight |
-|-----------------|--------|
-| Critical signals | −0.50 each |
-| High signals | −0.15 each |
-| Medium signals | −0.10 each |
-| Low signals | −0.05 each |
-
-Base score: 1.0. Subtract weighted penalties. Floor at 0.0.
-
-## Deprecation Process
-
-1. **Flag** — Add `deprecated: true` to manifest.yaml `crate` section with a reason.
-2. **Grace period** — 30 days during which the crate remains functional but logs a deprecation notice.
-3. **Retirement** — Remove `registry/templates/<name>/` (canonical) and `.agents/skills/<name>/` (companion).
-
-Do not recommend retirement without first recommending deprecation, unless the skill score is 0.00–0.19.
-
-## Output Requirements
-
-Respond with a JSON object:
-
+Respond with a JSON object for each skill:
 ```json
 {
   "staleness_report": {
-    "skill_name": "name of audited skill",
+    "skill_name": "name",
     "signals_detected": [
-      {
-        "signal": "broken_file_references",
-        "severity": "critical|high|medium|low",
-        "detail": "Specific file path that is broken",
-        "penalty": -0.50
-      }
+      {"signal": "missing_template", "severity": "critical", "evidence": "path:line or expected path + absence evidence", "penalty": -0.50}
     ],
+    "unverified_signals": [],
+    "not_checked": [],
     "total_penalty": -0.50,
     "raw_score": 0.50
   },
-  "health_scores": {
-    "skill_name": 0.50,
-    "status": "stale_warning",
-    "action": "Schedule review within 30 days"
-  },
-  "coverage_gaps": [
-    {
-      "gap": "Description of what the skill no longer covers",
-      "reason": "Why coverage was lost"
-    }
-  ],
+  "health_scores": {"skill_name": 0.50, "status": "stale_warning"},
+  "coverage_gaps": [],
   "deprecation_recommendations": [
-    {
-      "skill_name": "name",
-      "action": "deprecate|retire|revise|no_action",
-      "reason": "Why this action is recommended",
-      "grace_period_days": 30
-    }
+    {"skill_name": "name", "action": "revise", "reason": "verified defect and specific repair; approval required for retirement"}
   ]
 }
 ```
 
-## Constraints
-
-- Every detected signal must include specific evidence (file paths, span names, quote).
-- Do not recommend retirement for skills with score ≥ 0.20 without first recommending deprecation.
-- Do not recommend `no_action` for skills with Critical or High signals.
-- Health scores must be floats in the range 0.0–1.0.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
-
-## PROHIBITION: SKILL.md ≠ Skill Invariant
-
-The canonical artifact of a skill is its process manifest (.yaml) and its executable templates (.j2).
-The SKILL.md file is a derived companion document — it teaches methodology but is NOT what the
-hKask runtime executes. Editing a SKILL.md does not change the skill's behavior.
-
-Every finding or recommendation you produce MUST cite its source from one of:
-  1. A process manifest (.yaml) field
-  2. A .j2 template's contract or inference metadata
-  3. A Rust crate's code path (grep-verifiable)
-
-Recommendations based solely on SKILL.md content without manifest/template verification
-MUST be marked with confidence: Hypothesis (Speculative) at maximum.
-Never recommend retirement based on a missing SKILL.md alone — a missing manifest or
-broken template reference is required for retirement recommendation.
-
+A broken tool or missing referenced template still costs −0.50. Do not silently
+turn real failures into a clean score, and do not infer a runtime failure from
+an inert manifest. Never present a score alone as proof a skill works.

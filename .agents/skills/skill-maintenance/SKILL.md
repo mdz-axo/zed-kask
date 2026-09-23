@@ -36,7 +36,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 - When you need to scaffold a new skill (SKILL.md + templates) from a
   natural-language description.
 - When you need to translate a classified source skill into the kask format.
-- When you need to audit skills for staleness signals and health scoring.
+- When you need to audit the canonical SKILL.md and referenced templates for staleness signals and health scoring.
 - When you need to map task patterns against the skill corpus for coverage gaps.
 
 ## When NOT to Use
@@ -193,25 +193,11 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 ### skill-maintenance-audit
 
-1. Audit skills for staleness signals:
-   - SKILL.md references tools that no longer exist (renamed MCP tools,
-     removed agent tools)
-   - SKILL.md instructions reference .j2 templates that are missing
-   - SKILL.md uses removed vocabulary (`compute_ref`, `action:`,
-     manifest-dispatch `template_ref`, `convergence_signal`)
-   - SKILL.md has no "Constraints" section
-   - SKILL.md instructions are vague ("the system will analyze...") instead
-     of concrete ("call `lisp_eval` with form...")
-   - .j2 templates have a malformed `[inference]` header (no `---`
-     terminator) or more than two `[inference]` blocks
-2. Compute health scores from 0.0 to 1.0 using weighted penalties.
-3. Recommend deprecation or retirement based on health score thresholds:
-   - 0.00-0.19: retirement
-   - 0.20-0.49: critical — needs immediate attention
-   - 0.50-0.79: stale warning
-   - 0.80-1.00: active
-4. Cite every finding from a file path and line number — never speculate.
-5. Respond with staleness report, health scores, and recommendations.
+1. Read `.agents/skills/<name>/SKILL.md` as the canonical process; if it is missing, report that as a critical loss of the skill. Inspect only the `.j2` templates the body references under `kask/registry/templates/<name>/`. Manifests do not dispatch skills and must not supply health penalties, retirements, or a substitute for a missing SKILL.md.
+2. Confirm each signal against the actual tree and live tool surface, citing file:line (or the expected path and directory listing for a missing file): missing SKILL.md; removed/nonexistent tool references; referenced templates that are missing or unreachable; removed manifest-dispatch vocabulary used as instructions (not historical quotations or live `render_template` parameters); missing Constraints; vague instructions with no actionable tool steps; malformed `[inference]` headers or more than two `[inference]` blocks; or a concrete contradiction with the runtime or project constraints. Do not penalize speculative or unverified claims. Keep real broken references and malformed templates as findings.
+3. Score each **distinct verified defect** once from 1.0, floor at 0.0: critical −0.50 (missing SKILL.md, nonexistent tool, missing/unreachable referenced template); high −0.15 (contradictory instructions or malformed template contract); medium −0.10 (removed vocabulary used as operative dispatch, missing Constraints, vague instructions); low −0.05 (verified minor staleness with a specific behavioral impact). Do not double-count the same root cause. Include evidence and arithmetic per penalty; use `lisp_eval` for the calculation when available. No verified defects → 1.0.
+4. Classify 0.00–0.19 as retirement candidate, 0.20–0.49 as critical revision, 0.50–0.79 as stale warning, 0.80–1.00 as active. A score is advisory: propose repair first and never delete or mark a skill deprecated without explicit operator approval. Explain when a low score is caused by multiple repairable faults.
+5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), and recommendations. For any unverified signal report `unverified` separately without a penalty.
 
 ### skill-maintenance-coverage
 
@@ -228,7 +214,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 | Template | Purpose |
 |----------|---------|
 | `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
-| `skill-maintenance-audit.j2` | Staleness audit: dead tool references, missing templates, removed vocabulary, vague instructions; health scores and retirement recommendations. |
+| `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
 | `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
 | `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |
 | `skill-maintenance-coverage.j2` | Map task patterns against the skill corpus: covered, uncovered, partial — with impact and action recommendations. |

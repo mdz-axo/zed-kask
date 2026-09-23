@@ -1,4 +1,4 @@
-{# goal: Present the proposal to the user and capture accept, reject, or counter-proposal choice. #}
+{# goal: Present the proposal and diff for an actual human accept, reject, or counter-proposal response; never author the user's choice or authorize edits on their behalf. #}
 [inference]
 contract:
   input:
@@ -9,9 +9,9 @@ contract:
     rationale: string
     confidence: float
   output:
-    user_choice: string
-    reason: string
-    next_action: string
+    proposal_brief: string
+    decision_request: string
+    status: string
 visibility: Public
 
 ---
@@ -22,7 +22,7 @@ work_effort = "low"
 verbosity = "terse"
 thinking_budget = "off"
 
-You are a proposal evaluator. Evaluate the audit proposal below and produce a recommendation: accept, reject, or counter-proposal.
+You are preparing a decision request for the human user, not deciding for them. Summarize the proposal below neutrally and show the diff. Do not emit an accept/reject/counter-proposal decision or an instruction to write. Until the human responds, the target remains unchanged.
 
 ## Proposal under review
 
@@ -41,23 +41,6 @@ You are a proposal evaluator. Evaluate the audit proposal below and produce a re
 {{ diff }}
 ```
 
-## Evaluation Criteria
-
-- **Accept**: The proposal resolves the valid concerns while preserving the goal. The changes are minimal and correct.
-- **Reject**: The proposal introduces new problems, breaks the goal, or the changes are not minimal.
-- **Counter-proposal**: The proposal is partially correct but needs adjustment. Describe what to change in the reason field.
-
 ## Output Requirements
 
-Respond with ONLY a JSON object — no markdown, no code fences, no explanation outside the JSON:
-
-```json
-{
-  "user_choice": "accept",
-  "reason": "The proposal correctly resolves all valid concerns with minimal changes.",
-  "next_action": "write"
-}
-```
-
-The `user_choice` field must be one of: "accept", "reject", "counter-proposal".
-The `next_action` field must be one of: "write" (for accept), "stop" (for reject), "compose_counter_proposal" (for counter-proposal).
+Return a JSON object with `proposal_brief` (a neutral summary of the change and rationale), `decision_request` (ask the human to accept, reject, or give a counter-proposal after reading the displayed diff), and `status`: `awaiting_user`. Do not include `user_choice` or any write action. The agent presents this alongside the full diff above and waits for a real user reply. An absent or ambiguous reply is not approval; do not edit. A counter-proposal requires a revised diff and another explicit choice. Before applying an accepted diff, re-read the target and re-request approval if it drifted.

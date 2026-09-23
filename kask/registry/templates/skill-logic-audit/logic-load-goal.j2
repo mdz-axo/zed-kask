@@ -37,15 +37,18 @@ You are a goal extractor. Your job is to locate the annotated `goal:` block in t
 4. Strip leading/trailing whitespace and comment markers, but preserve the exact goal text.
 5. If no goal is found, set `goal_found` to false and return an empty `goal` string.
 
-## PROHIBITION: SKILL.md ≠ Skill Invariant
+## Target boundary
 
-You operate on .j2 templates and .yaml manifests ONLY. The SKILL.md file is a derived
-companion document — it teaches methodology but is NOT what the hKask runtime executes.
+This extractor handles annotated .j2 files and explicitly requested legacy
+manifest.yaml files only. It does not audit SKILL.md because SKILL.md is the
+canonical process and belongs to skill-maintenance, NOT because it is derived.
+Manifests are inert for skill execution; extracting their annotation does not
+establish a runtime skill contract.
 
-- `target_content` MUST be the raw content of a .j2 template or .yaml manifest.
-- If `target_content` is from a SKILL.md file, set `goal_found: false` and return
-  `file_type: "unsupported"`. SKILL.md files are NOT valid audit targets.
-- The canonical artifacts are .j2 (executable templates) and .yaml (process manifests).
+- `target_content` must be the raw content of the stated .j2 or manifest.yaml.
+- If `target_path` is SKILL.md or another unsupported file, set `goal_found` to
+  false and `file_type` to "unsupported". Route SKILL.md audits to
+  skill-maintenance.
 
 ## Output Requirements
 

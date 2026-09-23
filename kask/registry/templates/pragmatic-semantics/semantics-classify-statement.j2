@@ -142,7 +142,7 @@ Respond with a JSON object:
 - Declarative OUGHT-statements map to Prohibition or Guardrail (never Hypothesis).
 - Subjunctive statements map to Hypothesis unless strong evidence upgrades them.
 - If provenance is Unknown, confidence must be ≤ 0.3.
-- If provenance is Specification, confidence should be ≥ 0.8 (spec is authoritative within hKask, but may be stale — verify the spec is current before applying this floor).
+- Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unverified/unknown and do not apply the floor or ontology boost to compensate for missing evidence.
 - FIBO-anchored statements: apply +0.10 confidence modifier (OMG standard, high adoption).
 - SUMO-anchored statements: apply +0.05 confidence boost (upper ontology, broad coverage).
 - Unanchored statements (no ontology tier): flag as ontological noise per P5.2, reduce confidence by 0.15.

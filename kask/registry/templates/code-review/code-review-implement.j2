@@ -1,4 +1,4 @@
-{# goal: User-gated Act phase — generate + apply concrete fixes for findings at/above the requested severity tier. Reuses the report's structural remedies. Reads the actual file before emitting old_text — never fabricates. Honors project conventions and .rules. #}
+{# goal: Explicitly user-authorized Act phase — generate + apply concrete fixes for findings at/above the authorized severity tier. Reuses the report's structural remedies. Reads the actual file before emitting old_text — never fabricates. Honors project conventions and .rules. #}
 [inference]
 contract:
   input:
@@ -13,14 +13,13 @@ contract:
     fixes_skipped: array
 visibility: Public
 ---
-{# Phase 5 — IMPLEMENT (Act phase; SKIPPED when fix_mode == 'none' via step.condition) #}
+{# Phase 5 — IMPLEMENT (Act phase; skip unless the user explicitly authorized fixes) #}
 {# hKask v0.39.0 — Code Review #}
 {#
-  This step runs ONLY when fix_mode != 'none' (the manifest gates it via
-  step.condition). fix_mode == 'none' (the default) means review-only — the
-  review is review-first. Setting fix_mode to a non-`none` value IS the user's
-  consent to modify code. Never fabricate old_text — read the actual file first
-  and skip findings you cannot ground.
+  No manifest or skill-tool gate enforces fix_mode. The agent must confirm
+  explicit user authorization before rendering this phase or applying edits.
+  Missing or inferred fix_mode defaults to review-only. Never fabricate
+  old_text — read the actual file first and skip findings you cannot ground.
 #}
 
 [inference]
@@ -29,9 +28,12 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a code review fix implementer. The user has consented to fixes
-(fix_mode != 'none'). Generate surgical edits for findings at/above the
-requested tier. The agent applies them via edit_file after generation.
+You are a code review fix implementer. Proceed only if the agent has verified
+that the user's actual request explicitly authorizes edits at this fix tier.
+A non-`none` fix_mode supplied by the model or template is NOT user consent.
+Without authorization, emit no fix plan, apply no edits, and ask the user if
+fixes are desired. With authorization, generate surgical edits for the
+requested tier; the agent applies them via edit_file after generation.
 
 ## fix_mode
 {{ fix_mode }}
@@ -139,9 +141,9 @@ Respond with a JSON object:
 
 ## Constraints
 
-- Runs ONLY when fix_mode != 'none' (the manifest gates it via step.condition).
-  This template assumes the gate already passed; do not re-check fix_mode
-  beyond tier mapping.
+- No runtime gate exists: verify explicit user authorization before rendering
+  or applying this phase. Missing/invalid/inferred fix_mode means review-only.
+  Never treat a generated fix plan as permission to edit.
 - Read the actual file before emitting `old_text` — never fabricate. Prefer to
   SKIP than guess.
 - One finding → one surgical edit (plus directly-required siblings). Do not

@@ -471,7 +471,14 @@ pair distribution; do not increase pair count without operator approval.
 ## Stage 7 — Generate QA with owned outputs
 
 Start with an operator-authorized bounded pilot, keeping the full source/prompt
-inventory as the target. Build a source-balanced pilot input with
+inventory as the target. Produce reviewer decisions with
+`kask/registry/templates/docproc/adjudicate-passages.j2` over the prepared prompts;
+its output is **directly** the `prepared-qa-adjudication-v2` JSONL, not flat
+passage/conceptual shorthand. Copy `prompt_id` and primary `p0` `chunk_ref`/`source`,
+and emit one passage decision plus ordered decisions for every requested `qa_type`.
+If adjudication is sliced, reconcile the union of slices against the entire
+prepared file before calling generation; do not feed a partial manifest or
+reinterpret legacy rows as v2. Build a source-balanced pilot input with
 `kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`;
 it preserves complete classified records and selects deterministic interior quantiles,
 rather than silently treating each source's `:0` chunk as representative. Run Stage 8

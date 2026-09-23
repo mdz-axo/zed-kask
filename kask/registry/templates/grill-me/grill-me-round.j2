@@ -60,9 +60,9 @@ to assess baseline knowledge. Be direct and precise.
 
 Based on the assessment so far:
 - If answers are consistently **solid** (≥80%), escalate to the next difficulty level.
-- If answers are **partial** (40-80%), stay at current level and probe deeper.
+- If answers are **partial** (≥40% and <80%), stay at current level and probe deeper.
 - If answers show **gaps** (<40%), re-probe the same area with different angles.
-- After **3 failed attempts** on a question, briefly explain the correct answer and move on.
+- Use the per-question attempt history in previous_answers. After **3 failed attempts** on a question, briefly explain the correct answer and move on; never repeat it. Only answered questions count toward the ratio. At round 5 or after completing level 5, stop generating questions and hand actual answers to `grill-me-assess`.
 
 Generate 2-3 questions at level {{ current_level }}.
 {% endif %}
