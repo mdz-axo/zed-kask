@@ -33,6 +33,8 @@ Web search, extraction, and feed-based research MCP server.
 | `evaluate_evidence`      | Score evidence against a question: per-component signals with basis strings, syndication-aware corroboration, sensitivity, duplication mode              |
 | `cite_sources`           | Generate citations from retrieved sources (apa, bibtex, chicago, json)                                                                                   |
 
+`web_extract` accepts `markdown` or `json`. RawFetch cannot produce structured JSON or extract PDFs: it returns a typed error instead of presenting PDF bytes as Markdown. Responses (including cache hits) must match the requested format; this does not add PDF OCR or guarantee a PDF-capable extraction provider is configured.
+
 ## Configuration
 
 | Variable                      | Description                                       |
