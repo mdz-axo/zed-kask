@@ -1,7 +1,7 @@
 //! Curator tools — regulatory surface tools for the Curator agent.
 //!
-//! These tools are registered on Curator threads alongside the standard Zed
-//! Agent tools. They expose the Curator's regulatory surface:
+//! The read-only status tool joins the canonical built-in toolset on every
+//! native session. Action tools remain restricted to Curator threads:
 //! - `curator_status`: the shared read-only view of the host's metacognition
 //!   provider (native and Curator sessions use this same built-in tool)
 //! - `curator_directive`: issue directives to the cybernetics regulation loop
@@ -111,6 +111,58 @@ pub struct DeclaredDoor {
     pub trigger: String,
     pub stage: String,
     pub tools: Vec<String>,
+}
+
+fn read_regulation_acceptance_rate(snapshot: &serde_json::Value) -> Option<f64> {
+    snapshot
+        .get("regulation_acceptance_rate")
+        .and_then(|value| value.as_f64())
+        .filter(|rate| (0.0..=1.0).contains(rate))
+}
+
+#[cfg(test)]
+mod status_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn status_reads_the_providers_acceptance_rate_without_inventing_effectiveness() {
+        assert_eq!(
+            read_regulation_acceptance_rate(
+                &serde_json::json!({"regulation_acceptance_rate": 0.75})
+            ),
+            Some(0.75)
+        );
+        assert_eq!(
+            read_regulation_acceptance_rate(&serde_json::json!({"regulation_effectiveness": 0.75})),
+            None
+        );
+        assert_eq!(
+            read_regulation_acceptance_rate(
+                &serde_json::json!({"regulation_acceptance_rate": 1.5})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn status_serializes_only_the_measured_rate_name() {
+        let output = CuratorStatusOutput {
+            status: "ok".to_string(),
+            regulation_acceptance_rate: Some(0.75),
+            escalation_count: None,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: None,
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            declared_doors: Vec::new(),
+        };
+        let value = serde_json::to_value(output).expect("status output serializes");
+        assert_eq!(value["regulation_acceptance_rate"], serde_json::json!(0.75));
+        assert!(value.get("regulation_effectiveness").is_none());
+    }
 }
 
 impl AgentTool for CuratorStatusTool {
