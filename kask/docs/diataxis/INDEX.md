@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-19
+last_updated: 2026-09-23
 version: "1.4.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -80,8 +80,8 @@ The workspace membership evidence is `Cargo.toml:273-291`.
 
 Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
 `crates/media_panel` are documented here only where a zed-kask capability or
-D-seam requires it. The authoritative divergence range is D1–D70, with retired
-numbers retained and never reused (`DIVERGENCE.md:225-308`).
+D-seam requires it. The authoritative numbered divergence range is D1–D72, with retired
+numbers retained and never reused (see `DIVERGENCE.md`).
 
 ## Governing specifications
 

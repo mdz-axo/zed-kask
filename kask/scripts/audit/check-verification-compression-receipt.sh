@@ -75,9 +75,11 @@ if ! jq -e -n \
   echo 'pinned timing samples are incomplete or nonpositive' >&2
   exit 1
 fi
+source_changed=false
 : > "$work/diff"
 while IFS= read -r id; do
   before="source/before/$id" after="source/after/$id"
+  if [[ ${hashes[$before]} != "${hashes[$after]}" ]]; then source_changed=true; fi
   if [[ $mode == analyze && ${hashes[$before]} != "${hashes[$after]}" ]]; then
     echo 'analyze mode changed source' >&2; exit 1
   fi
@@ -90,10 +92,10 @@ if [[ $mode == execute && $(sha256sum "$work/diff" | cut -d ' ' -f 1) != "$appro
   echo 'candidate diff does not match independently approved digest' >&2
   exit 1
 fi
-jq -cn --arg mode "$mode" \
+jq -cn --arg mode "$mode" --argjson source_changed "$source_changed" \
   --slurpfile before "${paths[timing/before/singleton]}" \
   --slurpfile after "${paths[timing/after/singleton]}" '
-  {verified:true,mode:$mode,authorized_diff_verified:($mode=="execute"),
+  {verified:true,mode:$mode,authorized_diff_verified:($mode=="execute"),source_changed:$source_changed,
    timing:{scope:$before[0].scope,
      cold:{status:$before[0].cold.status,before_ms:$before[0].cold.samples_ms,after_ms:$after[0].cold.samples_ms},
      warm:{status:$before[0].warm.status,before_ms:$before[0].warm.samples_ms,after_ms:$after[0].warm.samples_ms}}}

@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records every deliberate seam from D1 through D70, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 12 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 12 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
@@ -20,7 +20,7 @@ mds_categories: [composition, trust, lifecycle]
   - [§2.1 — zed-kask owns (generic)](#21-zed-kask-owns-generic--inherited-from-upstream-not-modified-except-integration-seams)
   - [§2.2 — hKask keeps (unique: curator + sovereignty + tools)](#22-hkask-keeps-unique-curator--sovereignty--tools--compiled-into-zed-kask)
   - [§2.3 — MCP load set (12 on disk)](#23-mcp-load-set-12-on-disk)
-- [§3 — The Minimal Divergence Map (D1–D72)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
+- [§3 — The Minimal Divergence Map (current numbered D-seams)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
 - [§4 — (removed)](#4-removed)
 - [§5 — (removed)](#5-removed)
 - [§6 — Migration Status](#6-migration-status)
@@ -34,13 +34,13 @@ mds_categories: [composition, trust, lifecycle]
   - [§13.1 — Governing invariant (dependency direction)](#131-governing-invariant-dependency-direction)
   - [§13.2 — The complete port set](#132-the-complete-port-set-ports-and-adapters)
   - [§13.3 — Composition root (startup — DI pattern)](#133-composition-root-startup--di-pattern)
-  - [§13.4 — Consolidated divergence map (D1–D72)](#134-consolidated-divergence-map-d1d70)
+  - [§13.4 — Consolidated divergence map (current numbered D-seams)](#134-consolidated-divergence-map-current-numbered-d-seams)
 - [§14 — Repository Consolidation](#14-repository-consolidation--full-merge-into-zed-kask)
 - [References](#references)
 
 ---
 
-> **Current state (2026-09-19):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. The authoritative Zed-side seam record is [`DIVERGENCE.md`](../../../DIVERGENCE.md) § “The divergence surface (D1–D72)”; retired numbers are not active seams.
+> **Current state (2026-09-23):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
 
 ---
 
@@ -109,11 +109,12 @@ The original 16 MCP servers were pruned to 10, then the **media** server was rec
 
 ## 3. The Minimal Divergence Map (exact zed-kask touch points)
 
-`DIVERGENCE.md` is the canonical map. D1–D72 is a numbering range,
-not a claim that all 70 numbers are active. Active seams are:
+`DIVERGENCE.md` is the canonical map. Seam numbers are identifiers, not a
+continuous count of active changes. Consult the table for the latest row;
+currently the earlier active groups are:
 
 `D1–D3`, `D5–D9`, `D11–D16`, `D18`, `D20–D29`, `D31–D33`,
-`D35–D37`, `D39–D48`, `D51–D52`, and `D54–D72`. D34 has no row in the
+`D35–D37`, `D39–D48`, `D51–D52`, and later rows starting at D54 (see the table). D34 has no row in the
 current active table; the former bridge batch API is not a live seam.
 
 Retired numbers are never reused: D4 (guard layer), D10 (Kask panel), D17 and
@@ -136,7 +137,7 @@ Two shared-code mappings are especially easy to misstate:
 
 ## 4. (removed)
 
-> The implementation is current through the D1–D72 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
+> Use the numbered seam register for the current implementation. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
 
 ## 5. (removed)
 
@@ -144,7 +145,7 @@ Two shared-code mappings are especially easy to misstate:
 
 ## 6. Migration Status
 
-> The implementation is current through the D1–D72 seam register. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
+> Use the numbered seam register for the current implementation. See §3 and `DIVERGENCE.md`; retired or absent numbers are not active wiring.[^fowler-strangler]
 
 ---
 
@@ -295,7 +296,7 @@ There is no `KaskCore` singleton and no Kask panel. “Process-global Regulation
 means the editor has one shared ledger/loop graph for all managed dispatch paths;
 it does not mean MCP tools execute in-process.
 
-### 13.4 Consolidated divergence map (D1–D72)
+### 13.4 Consolidated divergence map (current numbered D-seams)
 
 Use `DIVERGENCE.md` directly for merge recovery. Its active rows and
 retired-number paragraph are the complete classification; §3 records the current
@@ -304,9 +305,9 @@ sets without duplicating their implementation prose. In particular:
 - D10 is retired because the Kask panel is deleted.
 - D25 is a shared `ChatCompletionEventMapper` mapping.
 - D34 is absent from the active table; no `generate_batch` bridge exists.
-- D35 is the child-local media path and 80-tool media server.
+- D35 is the child-local media path and 81-tool media server (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`).
 - D38, D49, D50, and D53 are folded into D37, D42, D46, and D54.
-- D72 is the latest active numbered seam.
+- The latest active numbered seam is the final row of `DIVERGENCE.md`'s table.
 
 ## 14. Repository Consolidation — full merge into zed-kask
 

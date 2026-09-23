@@ -33,7 +33,7 @@ approved=$(sha256sum "$tmp/diff" | cut -d ' ' -f 1)
 check() { local authorization=${2:-$approved}; bash "$checker" "$1" "$tmp/receipt" "$(sha256sum "$tmp/receipt" | cut -d ' ' -f 1)" "$authorization"; }
 reject() { if check "$1" "${3:-$approved}" > /dev/null 2>&1; then echo "accepted negative control: $2" >&2; exit 1; fi; }
 receipt
-check execute | jq -e '.verified == true and .timing.scope == "warm" and .timing.warm.before_ms == [200,210] and .timing.warm.after_ms == [180,190]' >/dev/null
+check execute | jq -e '.verified == true and .source_changed == true and .timing.scope == "warm" and .timing.warm.before_ms == [200,210] and .timing.warm.after_ms == [180,190]' >/dev/null
 printf '%s\n' '{"scope":"warm","cold":{"status":"not_run","samples_ms":[]},"warm":{"status":"measured","samples_ms":[-10,190]}}' > "$tmp/timing-after"
 receipt
 reject execute 'nonpositive pinned timing sample'
@@ -70,4 +70,9 @@ receipt
 printf 'old\n' > "$tmp/after"
 receipt
 reject execute 'stale diff without source change'
+: > "$tmp/diff"
+receipt
+empty_approval=$(sha256sum "$tmp/diff" | cut -d ' ' -f 1)
+check execute "$empty_approval" | jq -e '.verified == true and .authorized_diff_verified == true and .source_changed == false' >/dev/null
+check analyze '-' | jq -e '.verified == true and .source_changed == false' >/dev/null
 echo 'receipt controls passed'
