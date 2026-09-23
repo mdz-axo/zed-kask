@@ -87,8 +87,10 @@ fn parse_project_snapshot(body: &[u8], limit: usize) -> Result<serde_json::Value
                 "Reduct project response lacks the observed project map; no results returned",
             )
         })?;
-    let selected = projects
-        .iter()
+    let mut ordered: Vec<_> = projects.iter().collect();
+    ordered.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let selected = ordered
+        .into_iter()
         .take(limit)
         .map(|(id, project)| {
             let title = project
@@ -356,6 +358,24 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_projects_snapshot_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let snapshot = projects_snapshot(Some(key.as_str()), 10, PROJECT_PROBE_URL).await?;
+        assert!(
+            snapshot["returned_count"]
+                .as_u64()
+                .is_some_and(|count| count <= 10)
+        );
+        assert!(snapshot["provider_returned_count"].as_u64().is_some());
+        assert_eq!(snapshot["cloud_editing"], "not_available");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_api_reference_access_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
             return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
@@ -434,7 +454,7 @@ mod tests {
         assert!(!status.to_string().contains("fixture-secret-do-not-echo"));
         assert!(!status.to_string().contains("do-not-return"));
         assert_eq!(status["provider_connection"], "project_read_succeeded");
-        assert_eq!(status["cloud_operations"], "not_yet_available");
+        assert_eq!(status["cloud_editing"], "not_available");
         Ok(())
     }
 
@@ -465,7 +485,7 @@ mod tests {
         let encoded = status.to_string();
         assert!(!encoded.contains("test-secret-do-not-echo"));
         assert_eq!(status["provider_connection"], "not_checked");
-        assert_eq!(status["cloud_operations"], "not_yet_available");
+        assert_eq!(status["cloud_editing"], "not_available");
         Ok(())
     }
 }

@@ -257,8 +257,13 @@ into ordered Reel Keep operations; Cut operations implement strikethrough editin
 and render/export are non-destructive projections. These tools remain local;
 no Reduct media, transcript, or edit API operation is connected. The separate
 `reduct_connection_status` tool checks only that the key entered in Settings →
-Kask → Data Services reached the media MCP child. Its result explicitly marks
-provider access as not checked; it never returns the key or uploads media.
+Kask → Data Services reached the media MCP child. `reduct_connection_probe`
+reads an observed project endpoint but discards its body;
+`reduct_projects_snapshot` returns a bounded provider-supplied set of project
+IDs and titles, without claiming server-side pagination. Neither tool uploads
+media or implies cloud editing parity. The authenticated project-read probe
+returned HTTP 200 in the explicit live test; the API reference returned HTTP
+302 (login required).
 
 Transcript, layer, document-export, and rendered-Asset relationships share the
 media database. Deleting a transcript atomically removes its editable layers while

@@ -262,10 +262,16 @@ edits server-side; local re-transcription/re-alignment remains the honest capabi
 gap. The immutable source bundle remains available for audit. Local educt never
 uploads to Reduct or silently falls back from a cloud request. The separate
 `reduct_connection_status` tool reports whether `REDUCT_API_KEY` reached this
-media child, but does not contact Reduct or claim any cloud operations work yet.
+media child without contacting Reduct. `reduct_connection_probe` makes a
+read-only project request without returning its body; `reduct_projects_snapshot`
+returns at most 100 project IDs/titles from the provider's project map (no
+claim of complete pagination). The live keychain-based probe received HTTP 200
+on 2026-09-23; the API reference still redirected to login (HTTP 302).
 Enter/reset the key in Settings → Kask → Data Services (Reduct.video); the
-keychain write/delete triggers an MCP credential refresh. Reduct API contracts
-and actual cloud operations remain to be verified and implemented.
+keychain write/delete triggers an MCP credential refresh. No cloud upload,
+transcript, composition, or editing endpoint has been connected; the public API
+overview does not specify their contracts. Cloud requests never silently fall
+back to educt.
 
 ## Configuration
 

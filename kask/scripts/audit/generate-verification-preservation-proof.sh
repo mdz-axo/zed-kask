@@ -41,6 +41,7 @@ if ! jq -e '
    ([$g.after[].signal | key] | unique) as $after |
    ([$g.required[] | key] | unique) as $required |
    ($required - $before | length == 0) and
+   ($before - $required | length == 0) and
    ($before - $after | length == 0)) and
   all($g.before[]; . as $old |
     any($g.after[]; .artifact_id == $old.artifact_id and (.signal | key) == ($old.signal | key)) or

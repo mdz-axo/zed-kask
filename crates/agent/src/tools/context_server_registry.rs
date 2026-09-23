@@ -433,6 +433,19 @@ impl ContextServerRegistry {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_test_prompt(
+        &mut self,
+        server_id: ContextServerId,
+        prompt: context_server::types::Prompt,
+        cx: &mut Context<Self>,
+    ) {
+        let name: SharedString = prompt.name.clone().into();
+        self.get_or_register_server(&server_id, cx)
+            .prompts
+            .insert(name, ContextServerPrompt { server_id, prompt });
+    }
+
     pub fn server_store(&self) -> &Entity<ContextServerStore> {
         &self.server_store
     }

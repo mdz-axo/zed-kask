@@ -297,7 +297,11 @@ impl SkillIndex {
         cx: &mut App,
     ) {
         let current = cx.try_global::<Self>().cloned().unwrap_or_default();
-        if let Some(index) = current.with_startup_globals(global_skills, verified_core) {
+        let trusted_globals = global_skills
+            .into_iter()
+            .filter(|skill| !skill.core || verified_core.contains(&skill.name))
+            .collect();
+        if let Some(index) = current.with_startup_globals(trusted_globals, verified_core) {
             cx.set_global(index);
         }
     }
@@ -1527,6 +1531,8 @@ mod tests {
         let verified = verify_core_skill_contents(fake.as_ref(), &loaded).await;
         assert!(!verified.contains(*name));
         cx.update(|cx| {
+            SkillIndex::publish_verified_globals(loaded.clone(), &verified, cx);
+            assert!(cx.global::<SkillIndex>().global_skills.is_empty());
             cx.set_global(SkillIndex::from_agent(
                 vec![
                     parse_skill_frontmatter(
@@ -1585,17 +1591,31 @@ mod tests {
             SkillSource::Global,
         )
         .expect("user entry");
+        let stale_core = parse_skill_frontmatter(
+            &path,
+            &format!("---\nname: {name}\ndescription: Pre-seed core\ncore: true\n---\n"),
+            SkillSource::Global,
+        )
+        .expect("stale agent entry");
         cx.update(|cx| {
-            cx.set_global(SkillIndex::from_agent(vec![user], vec![project]));
+            cx.set_global(SkillIndex::from_agent(
+                vec![user, stale_core],
+                vec![project],
+            ));
             SkillIndex::publish_verified_globals(loaded, &verified, cx);
             let index = cx.global::<SkillIndex>();
             assert!(index.is_startup_publication());
             assert_eq!(index.project_skills.len(), 1);
-            assert!(
+            assert!(index.global_skills.iter().any(|skill| skill.name == *name
+                && skill.core
+                && skill.description != "Pre-seed core"));
+            assert_eq!(
                 index
                     .global_skills
                     .iter()
-                    .any(|skill| skill.name == *name && skill.core)
+                    .filter(|skill| skill.name == *name)
+                    .count(),
+                1
             );
             assert!(index.global_skills.iter().any(|skill| {
                 skill.name == "user-skill" && skill.description == "Newer user edit"

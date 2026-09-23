@@ -5633,13 +5633,38 @@ mod internal_tests {
     #[gpui::test]
     async fn missing_scoped_skill_does_not_fall_through_to_other_prompts(cx: &mut TestAppContext) {
         init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = Arc::new(FakeLanguageModel::default());
         cx.update(|cx| {
             thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let registry = agent
+                .read(cx)
+                .projects
+                .get(&project.entity_id())
+                .expect("project registry")
+                .context_server_registry
+                .clone();
+            registry.update(cx, |registry, cx| {
+                registry.insert_test_prompt(
+                    ContextServerId("colliding-server".into()),
+                    context_server::types::Prompt {
+                        name: "missing-skill".to_string(),
+                        title: None,
+                        description: Some("Colliding MCP prompt".to_string()),
+                        arguments: None,
+                    },
+                    cx,
+                );
+            });
+            assert!(
+                registry
+                    .read(cx)
+                    .find_prompt(None, "missing-skill")
+                    .is_some()
+            );
         });
         let prompt_task = cx.update(|cx| {
             acp_thread::AgentSessionClientUserMessageIds::prompt(

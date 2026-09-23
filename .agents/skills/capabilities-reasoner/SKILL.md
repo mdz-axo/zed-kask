@@ -176,22 +176,52 @@ Phase 2 note: when the target system is a corpus-grounded replica, elicitation
 runs through the RAG probe templates under the Replica RAG Probe Discipline
 below — probes measure retrieval above a floor, never self-report.
 
-Feedback loop closure: convergence emits `metric_stability_verdict` and
-`next_registry_focus` (consumed by next iteration's Register); Report emits
-`capability_lessons` and `verdict_signatures` (consumed by next iteration's
-Register and Evaluate).
+### Phase 6 — Converge (after the capability-report result)
+
+1. Re-elicite each registry capability under a second, explicitly named metric
+   and evaluate it against a comparable threshold for that metric. Compare
+   categorical verdicts for the same capability, definition, and target system;
+   never compare raw scores across incompatible metric units. If no second
+   measurement exists, mark metric stability `pending` rather than `1.0`.
+2. Count `registry_total` and `measured` capabilities from the current report,
+   and `comparable` and `stable` capabilities with two comparable, measured
+   categorical verdicts. Call `lisp_eval` with
+   `(if (= comparable 0) (quote pending) (/ stable comparable))`
+   and env `{ "comparable": <count>, "stable": <count> }` for
+   `verdict_stability_metric`. Call `lisp_eval` with
+   `(if (= registry_total 0) (quote pending) (/ measured registry_total))`
+   and env `{ "registry_total": <count>, "measured": <count> }` for
+   `registry_coverage_estimate`. Before either call, check
+   `0 <= stable <= comparable <= registry_total` and
+   `0 <= measured <= registry_total`; invalid counts halt with the observed
+   defect rather than produce a verdict.
+3. Only if both ratios are measured **and** `comparable = registry_total`, call
+   `lisp_eval` with
+   `(/ (+ (- 1 verdict_stability_metric) (- 1 registry_coverage_estimate)) 2)`
+   and env containing those two measured ratios. This is the `improvement_gap`;
+   emit `metric_stability_verdict: stable` and converge when it is <= 0.25.
+   If no second metric or any comparable verdict is missing, emit
+   `metric_stability_verdict: pending` and do not converge; identify the missing
+   measurement in `next_registry_focus`. If comparable verdicts flip or the
+   measured gap exceeds 0.25, emit `metric_stability_verdict: unstable` and
+   identify the specific capability or metric choice in `next_registry_focus`.
+4. Return `{metric_stability_verdict, improvement_gap, next_registry_focus}`
+   with `improvement_gap: null` while pending. Feed this result together with
+   `capability_lessons` and `verdict_signatures` from the report as the next
+   iteration's `prior_iteration` in `capability-register`. Stop after three
+   iterations; on the last iteration, report the remaining gap or pending
+   measurement without claiming convergence. No verdict is stable merely
+   because the iteration limit was reached.
 
 ## Improvement Measure
 
-**Field**: the result of step 7 (call `lisp_eval` at step 7 — sums `expand` + `restrict` + `block` counts from the result of step 6's `verdict_summary`). **Threshold**: 0.25. **Max iterations**: 3.
-
-Composite of two sub-metrics (weighted 0.5/0.5):
-1. **verdict_stability_metric** (0.0–1.0): fraction of capabilities whose verdict
-   is unchanged across ≥2 metric choices. Low stability = metric-dependent
-   verdicts (mirage [^mirage-2023]). First iteration = 1.0.
-2. **registry_coverage_estimate** (0.0–1.0): fraction of registry capabilities
-   that received an elicited measurement. Honest estimate — false precision is
-   worse than honest ignorance.
+**Signal:** measured `improvement_gap` from Phase 6. **Threshold:** <= 0.25.
+**Bound:** at most three iterations. The two sub-metrics carry equal weight:
+verdict stability across two comparable metric choices, and registry coverage
+by elicited measurements. The first iteration without a second metric is
+pending, never perfect stability. Report emits `capability_lessons` and
+`verdict_signatures`; convergence supplies `next_registry_focus` for the next
+Register phase.
 
 ## Composed Skills
 

@@ -41,6 +41,15 @@ done
 (( sources > 0 )) || { echo 'no sources' >&2; exit 1; }
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+for tool in jq cmp sha256sum; do
+  command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 69; }
+done
+jq -cS '{required,before}' "${paths[graph/before/singleton]}" > "$work/baseline"
+jq -cS '{required,before}' "${paths[graph/after/singleton]}" > "$work/candidate-baseline"
+cmp -s "$work/baseline" "$work/candidate-baseline" || { echo 'candidate graph changed the baseline signal set' >&2; exit 1; }
+generator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generate-verification-preservation-proof.sh"
+bash "$generator" "${paths[graph/after/singleton]}" "$work/derived.lean" > "$work/generator.log" || { echo 'candidate graph is not a valid preservation proof instance' >&2; exit 1; }
+cmp -s "$work/derived.lean" "${paths[proof/after/singleton]}" || { echo 'proof is not generated from candidate graph' >&2; exit 1; }
 : > "$work/diff"
 while IFS= read -r id; do
   before="source/before/$id" after="source/after/$id"
