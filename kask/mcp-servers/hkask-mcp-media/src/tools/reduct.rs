@@ -25,6 +25,12 @@ fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
     Ok(format!("{API_ROOT}project/{project_id}"))
 }
 
+fn reel_detail_url(project_id: &str, reel_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("reel_id", reel_id)?;
+    Ok(format!("{API_ROOT}project/{project_id}/reel/{reel_id}"))
+}
+
 fn recording_read_url(
     project_id: &str,
     recording_id: &str,
@@ -435,6 +441,64 @@ async fn project_titled_snapshot(
     let response = read_response(key, &url, "project detail").await?;
     let body = read_bounded(response, 2 * 1024 * 1024).await?;
     parse_project_titled_collection(&body, project_id, collection, limit)
+}
+
+fn redact_share_tokens(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.remove("share_token");
+            for child in fields.values_mut() {
+                redact_share_tokens(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_share_tokens(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_reel_detail(body: &[u8], reel_id: &str) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| McpToolError::failed_precondition("Reduct reel detail was not valid JSON"))?;
+    let reel = response
+        .get(reel_id)
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            McpToolError::failed_precondition("Reduct reel detail lacks the requested reel ID")
+        })?;
+    let title = reel
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| McpToolError::failed_precondition("Reduct reel detail lacks a title"))?;
+    let mut blocks = match reel.get("block") {
+        Some(serde_json::Value::Object(blocks)) => serde_json::Value::Object(blocks.clone()),
+        None => serde_json::Value::Null,
+        Some(_) => {
+            return Err(McpToolError::failed_precondition(
+                "Reduct reel block field has an unexpected shape",
+            ));
+        }
+    };
+    redact_share_tokens(&mut blocks);
+    Ok(serde_json::json!({
+        "source": "reduct_cloud", "reel_id": reel_id, "title": title,
+        "block_state": if blocks.is_null() { "not_present_in_provider_response" } else { "provider_map" },
+        "blocks": blocks, "share_tokens": "redacted"
+    }))
+}
+
+async fn reel_detail(
+    key: Option<&str>,
+    project_id: &str,
+    reel_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_detail_url(project_id, reel_id)?;
+    let response = read_response(key, &url, "reel detail").await?;
+    let body = read_bounded(response, 4 * 1024 * 1024).await?;
+    parse_reel_detail(&body, reel_id)
 }
 
 async fn create_recording(
@@ -992,6 +1056,25 @@ mod tests {
     }
 
     #[test]
+    fn reel_detail_keeps_blocks_but_never_exposes_share_token() -> Result<(), McpToolError> {
+        assert_eq!(
+            reel_detail_url("p1", "reel1")?,
+            "https://app.reduct.video/api/v3/project/p1/reel/reel1"
+        );
+        assert!(reel_detail_url("p1", "../other").is_err());
+        let body = br#"{"reel1":{"title":"Clip reel","share_token":"private-token","block":{"b1":{"type":"doc-range","start":1.0}}}}"#;
+        let result = parse_reel_detail(body, "reel1")?;
+        assert_eq!(result["title"], "Clip reel");
+        assert_eq!(result["blocks"]["b1"]["type"], "doc-range");
+        assert!(!result.to_string().contains("private-token"));
+        assert!(parse_reel_detail(br#"{"wrong":{"title":"X"}}"#, "reel1").is_err());
+        let empty = parse_reel_detail(br#"{"reel1":{"title":"New"}}"#, "reel1")?;
+        assert_eq!(empty["block_state"], "not_present_in_provider_response");
+        assert!(empty["blocks"].is_null());
+        Ok(())
+    }
+
+    #[test]
     fn reel_snapshot_preserves_only_id_and_title() -> Result<(), McpToolError> {
         let body = br#"{"p1":{"reels":{"reel2":{"title":"Second","share_token":"private"},"reel1":{"title":"First","blocks":{"sensitive":true}}}}}"#;
         let result = parse_project_titled_collection(body, "p1", "reels", 1)?;
@@ -1282,6 +1365,36 @@ mod tests {
                     project_titled_snapshot(Some(key.as_str()), project_id, "reels", 10).await?;
                 assert_eq!(snapshot["provider_returned_count"], reels.len());
                 assert!(snapshot["returned_count"].as_u64().is_some_and(|n| n <= 10));
+                if let Some(reel_id) = reels.keys().next() {
+                    validate_reduct_id("reel_id", reel_id)?;
+                    let url = format!("{API_ROOT}project/{project_id}/reel/{reel_id}");
+                    let response = read_response(Some(key.as_str()), &url, "reel detail").await?;
+                    let body = read_bounded(response, 2 * 1024 * 1024).await?;
+                    let detail: serde_json::Value = serde_json::from_slice(&body)?;
+                    let fields: Vec<&str> = detail
+                        .get(reel_id)
+                        .and_then(serde_json::Value::as_object)
+                        .into_iter()
+                        .flat_map(|record| record.keys().map(String::as_str))
+                        .filter(|name| {
+                            name.len() <= 32
+                                && name
+                                    .chars()
+                                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                        })
+                        .collect();
+                    let block = detail.get(reel_id).and_then(|record| record.get("block"));
+                    eprintln!(
+                        "Reduct reel detail: id-keyed={}; top-level-field-count={}; fields={fields:?}; block-map={}; block-count={}",
+                        detail.get(reel_id).is_some(),
+                        detail.as_object().map(serde_json::Map::len).unwrap_or(0),
+                        block.is_some_and(serde_json::Value::is_object),
+                        block
+                            .and_then(serde_json::Value::as_object)
+                            .map(serde_json::Map::len)
+                            .unwrap_or(0)
+                    );
+                }
                 break;
             }
         }
