@@ -194,6 +194,29 @@ async fn pdf_raw_order_rejects_non_pdf_and_directory() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// expect: requesting native PDF text order cannot claim it was applied when OCR bypasses native extraction.
+#[tokio::test]
+async fn pdf_raw_order_rejects_forced_ocr_before_output() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("native.pdf");
+    large_native_pdf(&input)?;
+    let output = dir.path().join("rejected.txt");
+    let mut request = request(&input, &output);
+    request.pdf_text_order = super::PdfTextOrder::Raw;
+    request.force_ocr = true;
+    let error = server()
+        .corpus_convert(Parameters(request))
+        .await
+        .expect_err("raw text order must not be accepted for forced OCR");
+    assert!(
+        error
+            .to_json_string()
+            .contains("OCR does not use PDF text order")
+    );
+    assert!(!output.exists());
+    Ok(())
+}
+
 /// expect: [P7] Every approved book can use normal conversion, even when PDF bytes exceed the text-input cap.
 /// pre: a contained native-text PDF larger than MAX_READ_BYTES, with Poppler installed.
 /// post: directory conversion writes its extracted text without inference or scope loss.

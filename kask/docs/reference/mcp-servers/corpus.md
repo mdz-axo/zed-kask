@@ -79,7 +79,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 
 | Tool | Inputs and defaults |
 |---|---|
-| `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`, `pdf_text_order=layout`. For a single PDF with verified column-order problems, `pdf_text_order=raw` follows the PDF's text-object order; directory and non-PDF conversions reject `raw`. |
+| `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`, `pdf_text_order=layout`. For a single PDF with verified column-order problems, `pdf_text_order=raw` follows the PDF's text-object order; directory, non-PDF and forced-OCR conversions reject `raw`. Reports include the text order only when native extraction contributed text. |
 | `corpus_is_complex` | PDF `path`; optional `target_pages`, `summary=false` |
 | `corpus_ocr` | `path`, optional `model` over the configured OCR model |
 | `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. |

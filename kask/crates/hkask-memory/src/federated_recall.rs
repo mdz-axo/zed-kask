@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
-const RUN_IDENTITY_SCHEMA_VERSION: u32 = 2;
+const RUN_IDENTITY_SCHEMA_VERSION: u32 = 3;
 const REPRESENTATIONS_SCHEMA_VERSION: u32 = 2;
 
 const CURRENT_HMEM_COLUMNS: &[&str] = &[
@@ -306,6 +306,17 @@ impl ReadOnlyPassageSource {
             "representations manifest",
             &spec.representations_manifest_path,
         )?;
+        let actual_manifest_digest = format!("{:x}", Sha256::digest(&representation_bytes));
+        if !run_identity
+            .representations_manifest_sha256
+            .eq_ignore_ascii_case(&actual_manifest_digest)
+        {
+            return Err(FederatedRecallError::DigestMismatch {
+                source_id: spec.id.clone(),
+                expected: run_identity.representations_manifest_sha256.clone(),
+                actual: actual_manifest_digest,
+            });
+        }
         let representations: RepresentationsManifest = parse_artifact(
             "representations manifest",
             &spec.representations_manifest_path,
@@ -577,6 +588,7 @@ struct RunIdentity {
     run_id: String,
     requested_embedding_model: String,
     actual_embedding_model: String,
+    representations_manifest_sha256: String,
     indexes: BTreeMap<String, String>,
 }
 

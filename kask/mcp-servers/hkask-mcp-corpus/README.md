@@ -78,9 +78,12 @@ read cap can therefore use normal conversion without forcing paid OCR of native
 pages. Single-file `corpus_convert` accepts `pdf_text_order=raw` for PDFs whose
 text-object order reads columns sequentially; `layout` remains the default.
 Choose `raw` only after comparing page order and tables on the source PDF;
-non-PDF and directory conversions reject it. The option does not repair damaged
-mathematical glyphs or authorize accepting a conversion without a source audit. Text inputs retain that cap; this does not promise a bound on Poppler's
-memory use or extracted output size. `tools/document_tests.rs` pins large native
+non-PDF, directory and forced-OCR conversions reject it. Conversion reports
+record the text order only when native extraction contributed text; OCR alone
+has no PDF text order. The option does not repair damaged mathematical glyphs
+or authorize accepting a conversion without a source audit. Text inputs retain
+the read cap; this does not promise a bound on Poppler's memory use or extracted
+output size. `tools/document_tests.rs` pins large native
 PDF conversion, oversized-text rejection and PDF symlink containment.
 
 `corpus_is_complex` performs PDF text-layer/image-inventory triage; `summary=true`

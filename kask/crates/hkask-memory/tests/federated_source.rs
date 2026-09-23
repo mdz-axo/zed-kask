@@ -75,17 +75,6 @@ fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     }
 
     let digest = sha256_file(&database_path)?;
-    let run_identity_path = directory.join("run-identity.json");
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 2,
-            "run_id": "fixture-run-id",
-            "requested_embedding_model": REQUESTED_MODEL,
-            "actual_embedding_model": ACTUAL_MODEL,
-            "indexes": {"reference": digest}
-        }))?,
-    )?;
     let representations_path = directory.join("representations-manifest.json");
     std::fs::write(
         &representations_path,
@@ -99,6 +88,19 @@ fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
                 "accepted_source_count": 1,
                 "boilerplate_filter_applied": true
             }
+        }))?,
+    )?;
+    let manifest_digest = sha256_file(&representations_path)?;
+    let run_identity_path = directory.join("run-identity.json");
+    std::fs::write(
+        &run_identity_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 3,
+            "run_id": "fixture-run-id",
+            "representations_manifest_sha256": manifest_digest,
+            "requested_embedding_model": REQUESTED_MODEL,
+            "actual_embedding_model": ACTUAL_MODEL,
+            "indexes": {"reference": digest}
         }))?,
     )?;
     let manifest_path = directory.join("federated-sources.json");
@@ -159,6 +161,26 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     Ok(())
 }
 
+/// expect: a tampered filter attestation cannot be substituted for the sealed manifest.
+#[test]
+fn bound_source_rejects_tampered_filter_attestation() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let representations_path = directory.path().join("representations-manifest.json");
+    let mut representations: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&representations_path)?)?;
+    representations["boilerplate_exclusion_reports"]["fixture.txt"]["retained_words"] =
+        serde_json::json!(2);
+    std::fs::write(&representations_path, serde_json::to_vec(&representations)?)?;
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("tampered manifest unexpectedly opened"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("digest mismatch"));
+    Ok(())
+}
+
 /// expect: "A pre-filter representation manifest cannot enter federated retrieval." [P8]
 #[test]
 fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<()> {
@@ -178,7 +200,7 @@ fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<(
         Ok(_) => anyhow::bail!("pre-filter representation manifest unexpectedly opened"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("representations manifest"));
+    assert!(error.to_string().contains("digest mismatch"));
     Ok(())
 }
 

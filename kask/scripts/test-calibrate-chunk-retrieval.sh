@@ -273,7 +273,9 @@ jq -e '
   any(.measured_costs.embedding[]; .attempted_rows > .total_rows) and
   (.measured_costs.evaluation | length) == 3
 ' "$tmp/run/comparison.json" >/dev/null
-jq -e '
+jq -e --arg manifest_sha "$(sha256sum "$tmp/run/representations/manifest.json" | cut -d' ' -f1)" '
+  (.schema_version == 3) and
+  (.representations_manifest_sha256 == $manifest_sha) and
   (.run_id | test("^[0-9a-f]{64}$")) and
   (.requested_embedding_model == "requested-test-embedding-model") and
   (.actual_embedding_model == "actual-test-embedding-model") and
@@ -281,6 +283,9 @@ jq -e '
        .representations.child_parent_map,.representations.parent,
        .indexes.reference,.indexes.current,.indexes.fine][]; test("^[0-9a-f]{64}$"))
 ' "$tmp/run/run-identity.json" >/dev/null
+jq -e --arg manifest_sha "$(sha256sum "$tmp/run/representations/manifest.json" | cut -d' ' -f1)" '
+  .schema_version == 3 and .representations_manifest_sha256 == $manifest_sha
+' "$tmp/run/run-preseal-identity.json" >/dev/null
 for policy in reference current fine; do
     [[ -s "$tmp/run/$policy.db" ]]
     [[ $(wc -l < "$tmp/run/evaluation-$policy/raw-results.jsonl") -eq 1 ]]

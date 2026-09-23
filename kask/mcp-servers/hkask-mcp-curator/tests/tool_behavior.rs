@@ -2169,17 +2169,6 @@ fn federated_source_fixture(
         }
     }
     let digest = federated_fixture_sha256(&database_path)?;
-    let run_identity_path = directory.join("run-identity.json");
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 2,
-            "run_id": "fixture-run",
-            "requested_embedding_model": "test-embedding-model",
-            "actual_embedding_model": "test-embedding-model",
-            "indexes": {"reference": digest}
-        }))?,
-    )?;
     let representations_path = directory.join("representations-manifest.json");
     std::fs::write(
         &representations_path,
@@ -2193,6 +2182,19 @@ fn federated_source_fixture(
                 "accepted_source_count": 1,
                 "boilerplate_filter_applied": true
             }
+        }))?,
+    )?;
+    let manifest_digest = federated_fixture_sha256(&representations_path)?;
+    let run_identity_path = directory.join("run-identity.json");
+    std::fs::write(
+        &run_identity_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 3,
+            "run_id": "fixture-run",
+            "representations_manifest_sha256": manifest_digest,
+            "requested_embedding_model": "test-embedding-model",
+            "actual_embedding_model": "test-embedding-model",
+            "indexes": {"reference": digest}
         }))?,
     )?;
     let manifest_path = directory.join("federated-sources.json");

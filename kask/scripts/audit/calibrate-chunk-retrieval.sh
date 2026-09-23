@@ -384,6 +384,7 @@ build_preseal_candidate() {
         --arg corpus_binary_sha256 "$(sha_file "$corpus_binary")" \
         --arg runtime_manifest_sha256 "$(sha_file "$runtime_manifest")" \
         --arg representation_cost_sha256 "$(sha_file "$representation_cost")" \
+        --arg representations_manifest_sha256 "$(sha_file "$representation_manifest")" \
         --arg reference_sha256 "$(sha_file "$reference_representation")" \
         --arg current_sha256 "$(sha_file "$current_representation")" \
         --arg fine_sha256 "$(sha_file "$fine_representation")" \
@@ -397,7 +398,8 @@ build_preseal_candidate() {
         --argjson reference_shards "$reference_shards" \
         --argjson current_shards "$current_shards" \
         --argjson fine_shards "$fine_shards" '
-      {schema_version:2,accepted_sources_sha256:$accepted_sources_sha256,
+      {schema_version:3,accepted_sources_sha256:$accepted_sources_sha256,
+       representations_manifest_sha256:$representations_manifest_sha256,
        run_spec_sha256:$run_spec_sha256,queries_sha256:$queries_sha256,
        requested_embedding_model:$requested_embedding_model,
        policies_sha256:$policies_sha256,retriever_sha256:$retriever_sha256,
@@ -800,12 +802,14 @@ jq -n --arg preseal_run_id "$preseal_run_id" \
     --arg queries_sha256 "$(sha_file "$queries")" --arg requested_embedding_model "$requested_model" \
     --arg actual_embedding_model "$actual_model" --arg policies_sha256 "$policies_sha256" \
     --arg retriever_sha256 "$retriever_sha256" --arg evaluator_sha256 "$evaluator_sha256" \
+    --arg representations_manifest_sha256 "$(sha_file "$representation_manifest")" \
     --arg reference_sha256 "$(sha_file "$reference_representation")" \
     --arg current_sha256 "$(sha_file "$current_representation")" --arg fine_sha256 "$(sha_file "$fine_representation")" \
     --arg child_parent_map_sha256 "$(sha_file "$child_parent_map")" --arg parent_sha256 "$(sha_file "$parent_representation")" \
     --arg reference_index_sha256 "$(sha_file "$reference_db")" --arg current_index_sha256 "$(sha_file "$current_db")" \
     --arg fine_index_sha256 "$(sha_file "$fine_db")" '
-  {schema_version:2,preseal_run_id:$preseal_run_id,accepted_sources_sha256:$accepted_sources_sha256,
+  {schema_version:3,preseal_run_id:$preseal_run_id,accepted_sources_sha256:$accepted_sources_sha256,
+   representations_manifest_sha256:$representations_manifest_sha256,
    run_spec_sha256:$run_spec_sha256,queries_sha256:$queries_sha256,
    requested_embedding_model:$requested_embedding_model,actual_embedding_model:$actual_embedding_model,
    policies_sha256:$policies_sha256,retriever_sha256:$retriever_sha256,evaluator_sha256:$evaluator_sha256,

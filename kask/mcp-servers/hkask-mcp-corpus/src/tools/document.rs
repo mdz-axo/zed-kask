@@ -43,13 +43,19 @@ impl CorpusServer {
             pdf_text_order,
         }): Parameters<ConvertRequest>,
     ) -> Result<String, McpToolError> {
-        if matches!(pdf_text_order, PdfTextOrder::Raw)
-            && (std::path::Path::new(&path).is_dir()
-                || crate::convert::detect_format(&path).0 != "pdf")
-        {
-            return Err(McpToolError::invalid_argument(
-                "pdf_text_order=raw requires a single PDF; convert other sources with the default layout order",
-            ));
+        if matches!(pdf_text_order, PdfTextOrder::Raw) {
+            if force_ocr {
+                return Err(McpToolError::invalid_argument(
+                    "pdf_text_order=raw cannot be combined with force_ocr: OCR does not use PDF text order",
+                ));
+            }
+            if std::path::Path::new(&path).is_dir()
+                || crate::convert::detect_format(&path).0 != "pdf"
+            {
+                return Err(McpToolError::invalid_argument(
+                    "pdf_text_order=raw requires a single PDF; convert other sources with the default layout order",
+                ));
+            }
         }
         if std::path::Path::new(&path).is_dir() {
             return self
@@ -108,7 +114,12 @@ impl CorpusServer {
                 // never an LLM-invented one. Unmapped extensions surface a
                 // note — the absence of the type is visible, not silent.
                 let mut result = result;
-                if crate::convert::detect_format(&requested_path).0 == "pdf" {
+                if crate::convert::detect_format(&requested_path).0 == "pdf"
+                    && matches!(
+                        result.get("method").and_then(serde_json::Value::as_str),
+                        Some("text_extraction" | "selective_ocr")
+                    )
+                {
                     result["pdf_text_order"] = serde_json::json!(pdf_text_order);
                 }
                 match crate::convert::dc_type_for_path(&result["path"].as_str().unwrap_or("")) {

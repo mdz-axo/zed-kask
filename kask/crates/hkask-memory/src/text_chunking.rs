@@ -461,6 +461,27 @@ fn strip_newsletter_calls_to_action(text: &str) -> (String, Vec<BoilerplateExclu
     (output, exclusions)
 }
 
+fn strip_company_template_preface(text: &str) -> (String, Vec<BoilerplateExclusion>) {
+    const START: &str = "Save as duplicate and edit to create a company";
+    const BODY: &str = "Website: As of Date: Closing Price:";
+    if !text.starts_with(START) {
+        return (text.to_string(), Vec::new());
+    }
+    let Some(end) = text.find(BODY) else {
+        return (text.to_string(), Vec::new());
+    };
+    (
+        text[end..].to_string(),
+        vec![BoilerplateExclusion {
+            reason: "template_preface",
+            boundary_unit: "byte",
+            start: 0,
+            end,
+            removed_words: text[..end].split_whitespace().count(),
+        }],
+    )
+}
+
 fn strip_pdf_distribution_watermarks(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     const MARKER: &str = "OceanofPDF.com";
 
@@ -594,6 +615,9 @@ pub fn retained_boilerplate_signals(text: &str) -> Vec<&'static str> {
             signals.push(label);
         }
     }
+    if text.starts_with("Save as duplicate and edit to create a company") {
+        signals.push("template_preface");
+    }
     if PUBLICATION_CHROME_MARKERS
         .iter()
         .any(|marker| text.contains(marker))
@@ -674,6 +698,8 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     } else {
         filter_unpaged_boilerplate(text)
     };
+    let (filtered, template_exclusions) = strip_company_template_preface(&filtered);
+    exclusions.extend(template_exclusions);
     let (filtered, promotional_exclusions) = strip_newsletter_calls_to_action(&filtered);
     exclusions.extend(promotional_exclusions);
     let (filtered, watermark_exclusions) = strip_pdf_distribution_watermarks(&filtered);
@@ -1426,6 +1452,31 @@ mod tests {
                 .any(|exclusion| exclusion.reason == "formatting_artifact")
         );
         assert!(retained_boilerplate_signals(&result.text).is_empty());
+    }
+
+    /// expect: a publication template contributes its analyst questions, not instructions or a legal preface.
+    #[test]
+    fn filter_removes_company_template_preface_but_keeps_business_questions() {
+        let input = "Save as duplicate and edit to create a company Put Name and Ticker in Title. Delete these instructions. DISCLAIMER No representation, warranty or undertaking. Website: As of Date: Closing Price: Shares Outstanding: BUSINESS Why is it able to earn a sustainable profit margin? MANAGEMENT Discuss CEO strengths and weaknesses.";
+        let result = filter_boilerplate_pages_with_report(input);
+        assert!(result.text.starts_with("Website: As of Date:"));
+        assert!(result.text.contains("sustainable profit margin"));
+        assert!(!result.text.contains("DISCLAIMER"));
+        assert!(!result.text.contains("Delete these instructions"));
+        assert!(retained_boilerplate_signals(&result.text).is_empty());
+        assert!(
+            result
+                .exclusions
+                .iter()
+                .any(|exclusion| exclusion.reason == "template_preface"
+                    && exclusion.start == 0
+                    && exclusion.end > 0)
+        );
+        let ordinary = "An analyst discussed how to write a company profile and why a business earns a profit margin. ".repeat(20);
+        assert_eq!(
+            filter_boilerplate_pages_with_report(&ordinary).text,
+            ordinary.trim()
+        );
     }
 
     /// expect: an Open Graph example and a prose mention of subscriptions are evidence, not publication controls.
