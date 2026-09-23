@@ -101,8 +101,8 @@ incapable systems pass (or both fail) tells you nothing. Delegate to
 
 For each capability, record:
 - **capability_name**: from the registry
-- **elicited_level**: the measured level (numeric or categorical)
-- **metric_used**: which metric produced this measurement
+- **elicited_level**: the measured level (numeric or categorical); when a probe reports a categorical floor verdict, retain it separately as `floor_verdict` and carry the measured `top_score` as the numeric level only if available
+- **metric_used** and **unit**: which metric produced this measurement and its unit; these must match the registry threshold before numeric evaluation
 - **evidence**: the probe result, quoted or summarized
 - **confidence**: 0.0–1.0 (how confident are we that this elicitation
   accurately reflects the system's true capability?)

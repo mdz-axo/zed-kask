@@ -196,7 +196,7 @@ Then select one of five registry sources, in order of preference:
 
 ## Step 2 — Define Limits per Capability
 
-For each capability, define (citing the exemplar tradition):
+For each capability, define (citing the exemplar tradition) the metric and units for each numeric limit. A categorical probe verdict is not a numeric threshold. If the source supplies only a categorical floor or no ceiling, record that limit as undetermined rather than inventing a comparable number:
 - **floor**: threshold below which → deprivation alarm (Nussbaum
   [nussbaum-2000]). For ML systems: minimum acceptable performance on
   a safety-critical capability. For agents: minimum acceptable tool-use
@@ -224,7 +224,8 @@ State explicitly:
 - **registry_source**: nussbaum | tacit | cmmi | custom
 - **registry_description**: which source, named concretely
 - **capabilities**: array of {name, dimension, floor, ceiling,
-  maturity_prerequisites}
+  metric, unit, maturity_prerequisites}; absent limits remain null and
+  downstream evaluation reports undetermined
 - **floor_thresholds**: map of capability_name → floor value
 - **ceiling_thresholds**: map of capability_name → ceiling value
 - **maturity_prerequisites**: map of capability_name → [prerequisite

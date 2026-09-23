@@ -30,7 +30,7 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 4. **Synthesize the PICO elements into a single structured question** using the appropriate template (intervention, diagnostic, prognostic, or etiology format). Assess PICO completeness for each element as complete, partial, or missing.
 5. **Determine the hypothesis type** — difference, association, superiority, non-inferiority, equivalence, diagnostic accuracy, or prognostic — based on the PICO structure and study design.
 6. **Formulate the research hypothesis (H₁)** as a declarative statement predicting the expected outcome. Reference PICO elements explicitly, use directional language when possible, and ensure falsifiability. Format: "In [population], [intervention] will [direction] [outcome] compared to [comparison]."
-7. **Formulate the null hypothesis (H₀)** postulating no difference or no relationship. Format: "In [population], there is no difference in [outcome] between [intervention] and [comparison]."
+7. **Formulate the null hypothesis (H₀)** for the chosen design: no difference/no relationship for superiority, difference or association; inferior by at least δ for non-inferiority; outside ±δ for equivalence. Do not use a no-difference null for margin-based designs.
 8. **Define the primary aim** as a broad, overarching purpose directly linked to the research question, referencing PICO elements. Format: "The primary aim of this study is to [verb] [what] in [population]."
 9. **Define 2–4 primary objectives** as specific, measurable steps that accomplish the primary aim, linked to the primary outcome measure. Define secondary aims with clear rationale if applicable — avoid "fishing expeditions."
 10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility. Render `falsifiability/falsifiability-admit` with the formulated H₁ as `target`, the domain, and PICO/objectives as `context`; consume its admissibility result. Rendering is not a test result: if no concrete falsifying observation exists, mark the framing not testable.
@@ -69,7 +69,7 @@ Template context variables (from each template's [inference] contract):
 
 - All templates are prompt templates with `Public` visibility
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
-- The null hypothesis must postulate no difference or no relationship
+- The null must match the design: no difference/no relationship for difference or association; a justified δ-boundary null for non-inferiority or equivalence
 - Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable
 - Aims must be broader than objectives; objectives must be measurable — "to improve understanding" is not measurable
 - Secondary aims must have clear rationale — avoid "nice to know" add-ons
