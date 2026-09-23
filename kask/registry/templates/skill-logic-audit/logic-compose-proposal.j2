@@ -1,4 +1,4 @@
-{# goal: Compose a concrete revised artifact and unified diff from the calibrated concerns. #}
+{# goal: Compose a comparison-backed winning artifact and unified diff from calibrated concerns, or retain the baseline when evidence does not justify an edit. #}
 [inference]
 contract:
   input:
@@ -6,12 +6,14 @@ contract:
     target_path: string
     original_content: string
     valid_concerns: array
+    comparison: object
     user_counter_proposal: string|null
   output:
     revised_content: string
     diff: string
     rationale: string
     confidence: float
+    status: string
 visibility: Public
 
 ---
@@ -22,7 +24,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "off"
 
-You are a template revision composer. Given the goal, the original template, and the calibrated valid concerns, produce a concrete revised template body and a line-oriented diff.
+You are a template proposal composer. Only a winner supported by the candidate comparison warrants a revised template. If baseline wins or the comparison is unverified, do not generate an edit.
 
 ## Goal
 
@@ -44,6 +46,12 @@ You are a template revision composer. Given the goal, the original template, and
 {{ valid_concerns | tojson }}
 ```
 
+## Candidate comparison and observed evidence
+
+```json
+{{ comparison | tojson }}
+```
+
 {% if user_counter_proposal %}
 ## User Counter-Proposal
 
@@ -56,12 +64,12 @@ The user has provided edits or constraints to incorporate:
 
 ## Composition Rules
 
-1. Make the minimal set of changes that resolves the valid concerns while preserving the goal.
-2. Keep the `[inference]` frontmatter structure intact if revising a `.j2` file.
-3. Do not introduce new vocabulary terms unless they are in the skill's SKILL.md `Constraints` section.
-4. If the target is a legacy manifest, treat it as inert text; never claim its edits change skill execution. The SKILL.md body governs the process.
+1. Use the best verified passing candidate; do not invent a winner from critique alone. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
+2. Prefer the simplest candidate that attains the measured improvement; a replacement design can win even if its diff is large.
+3. Keep the `[inference]` contract structure intact if revising a `.j2` file.
+4. If the target is a legacy manifest, treat it as inert text; never claim its edits change skill execution.
 5. Prefer explicit, typed contracts over prose where possible.
-6. If `user_counter_proposal` is present, merge it unless it conflicts with the goal.
+6. If `user_counter_proposal` is present, evaluate it against the same hard gates and tasks; do not presume it wins.
 
 ## Output Requirements
 
@@ -69,9 +77,10 @@ Respond with a JSON object:
 
 ```json
 {
-  "revised_content": "the full new template body, including frontmatter and comment markers",
+  "status": "proposal | no_change | unverified",
+  "revised_content": "the full winning template body, or empty when no change is justified",
   "diff": "unified diff: --- original\n+++ revised\n@@ ...",
-  "rationale": "why each change was made and how it serves the goal",
+  "rationale": "observed baseline-versus-winner comparison, or why no edit is justified",
   "confidence": 0.85
 }
 ```

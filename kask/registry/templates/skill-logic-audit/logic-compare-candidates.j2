@@ -1,0 +1,73 @@
+{# goal: Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence; reject regressions and retain the baseline when no verified improvement wins. #}
+[inference]
+contract:
+  input:
+    goal: string
+    invoking_phase: string
+    acceptance_cases: array
+    candidates: array
+    observations: array
+  output:
+    comparisons: array
+    selected_candidate: string|null
+    verdict: string
+    evidence_gaps: array
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+Compare candidates for this template step, not the surrounding SKILL.md process.
+
+## Goal and invoking phase
+
+{{ goal }}
+
+{{ invoking_phase }}
+
+## Fixed cases and expected outcomes (established before candidates)
+
+```json
+{{ acceptance_cases | tojson }}
+```
+
+## Candidates (include the unchanged baseline)
+
+```json
+{{ candidates | tojson }}
+```
+
+## Actual observations and evaluator provenance
+
+```json
+{{ observations | tojson }}
+```
+
+For every candidate, cite the observation for each case and each hard contract;
+list missing observations rather than imputing successes. Compare semantic
+outcomes with the predeclared expected behavior or independent judgments,
+including negative cases, handoff shape, regressions and cost. A template
+shape check, goal overlap or the candidate's self-assessment is NOT a task
+success oracle. The agent runs `lisp_eval` separately to reconcile the case
+IDs, counts and arithmetic with retained logs; this prompt does not execute
+that check. Lean is relevant only to a separately formalized decision rule,
+not to template quality. Do not claim an absolute optimum.
+
+Select only a candidate that passes every hard contract, improves on baseline
+on the fixed outcome measure, and has no unacceptable regression. Otherwise
+choose baseline. If behavioral runs are missing, verdict is `unverified`, not
+`improved`. Do not manufacture evaluation results.
+
+Return JSON:
+```json
+{
+  "comparisons": [{"candidate_id": "baseline", "case_results": [], "hard_gates": [], "cost": null, "evidence": []}],
+  "selected_candidate": "baseline",
+  "verdict": "improved | keep_baseline | unverified",
+  "evidence_gaps": []
+}
+```

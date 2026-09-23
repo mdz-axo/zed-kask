@@ -38,6 +38,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 - When you need to translate a classified source skill into the kask format.
 - When you need to audit the canonical SKILL.md and referenced templates for staleness signals and health scoring.
 - When you need to map task patterns against the skill corpus for coverage gaps.
+- When you need to improve a skill's actual task performance, not merely its structural health score.
 
 ## When NOT to Use
 
@@ -197,7 +198,15 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 2. Confirm each signal against the actual tree and live tool surface, citing file:line (or the expected path and directory listing for a missing file): missing SKILL.md; removed/nonexistent tool references; referenced templates that are missing or unreachable; removed manifest-dispatch vocabulary used as instructions (not historical quotations or live `render_template` parameters); missing Constraints; vague instructions with no actionable tool steps; malformed `[inference]` headers or more than two `[inference]` blocks; or a concrete contradiction with the runtime or project constraints. Do not penalize speculative or unverified claims. Keep real broken references and malformed templates as findings.
 3. Score each **distinct verified defect** once from 1.0, floor at 0.0: critical −0.50 (missing SKILL.md, nonexistent tool, missing/unreachable referenced template); high −0.15 (contradictory instructions or malformed template contract); medium −0.10 (removed vocabulary used as operative dispatch, missing Constraints, vague instructions); low −0.05 (verified minor staleness with a specific behavioral impact). Do not double-count the same root cause. Include evidence and arithmetic per penalty; use `lisp_eval` for the calculation when available. No verified defects → 1.0.
 4. Classify 0.00–0.19 as retirement candidate, 0.20–0.49 as critical revision, 0.50–0.79 as stale warning, 0.80–1.00 as active. A score is advisory: propose repair first and never delete or mark a skill deprecated without explicit operator approval. Explain when a low score is caused by multiple repairable faults.
-5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), and recommendations. For any unverified signal report `unverified` separately without a penalty.
+5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), and recommendations. For any unverified signal report `unverified` separately without a penalty. A score of 1.0 establishes only the absence of verified staleness defects, not skill effectiveness; route requests to improve behavior to `skill-maintenance-optimize`.
+
+### skill-maintenance-optimize — Plan → Do → Check → Act
+
+1. **Plan:** Read the canonical SKILL.md and referenced .j2 templates via `read_file`; obtain the operator's task/outcome and relevant historical constraints. Specify baseline behavior and a fixed, independently judged set of representative, negative, boundary and held-out tasks with expected results before revising anything. Select success, regression, safety and cost measures and a feasible run budget. `skill-maintenance-audit` and `skill-maintenance-validate` identify defects, but passing them does not establish task success. If the objective or oracle cannot be established, ask for it or return `unverified`; do not optimize to a proxy health score.
+2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, invoke `skill-logic-audit` on the template as a leaf; this skill owns SKILL.md changes and integration. Do not use a legacy manifest as the process specification.
+3. **Check:** Run baseline and candidate implementations against the **same** tasks and evaluator, using `swarm_eval_agent_local` or a governing deterministic harness when available; validate S1–S13/T1–T5 and render reachability for every finalist. Independently inspect outcome evidence and whether the evaluator could be gamed. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain logs. A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable tools are `unverified`, never wins.
+4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
+5. **Act:** Prefer a candidate only if it satisfies hard constraints, beats baseline on the predeclared outcome measure and has no unacceptable regression; otherwise keep the baseline. For new falsifiers revise the design and rerun the same held-out cases at most once, then report the observed trade-offs and remaining uncertainty. Present a full diff and measured before/after delta for operator review before material SKILL.md process changes; do not claim a working improvement without executing the capability on the target task through the revised process.
 
 ### skill-maintenance-coverage
 
@@ -215,6 +224,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 |----------|---------|
 | `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
+| `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions; retain the baseline unless a verified candidate improves the actual capability. |
 | `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
 | `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |
 | `skill-maintenance-coverage.j2` | Map task patterns against the skill corpus: covered, uncovered, partial — with impact and action recommendations. |
@@ -224,6 +234,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `skill-maintenance-audit.j2`: `skill_name`,`workspace_context`
 - `skill-maintenance-build.j2`: `skill_description`,`scope`
+- `skill-maintenance-optimize.j2`: `skill_name`,`objective`,`baseline`,`tasks`,`candidates`,`observations`
 - `skill-maintenance-coverage.j2`: `skill_catalog`,`task_patterns`
 - `skill-maintenance-translate.j2`: `source_skill`,`target_domain`
 
@@ -243,9 +254,10 @@ Template context variables (from each template's [inference] contract):
   of the same name is the live contract), `convergence_signal`,
   `input_mapping`, `on_failure`, `ordinal:`, `category:`.
 - Core skills (`core: true`) must have names in `CORE_SKILL_NAMES`.
-- Material SKILL.md process changes are self-changes and ship only
-  with a measured eval delta: a before/after `swarm_eval_agent_local`
-  run (or the governing server's deterministic harness), recorded as a
-  `memory_insert` verdict citing the evidence h_mem. An edit that
-  cannot name a measurable behavior change is a documentation edit —
-  label it as such.
+- Material SKILL.md process changes are self-changes: a before/after
+  `swarm_eval_agent_local` run (or governing deterministic harness) and a
+  `memory_insert` verdict citing its evidence h_mem are required before
+  claiming they work. If the harness or memory tool is unavailable, report
+  the change and its evidence as **unverified**, not as a measured improvement.
+  An edit that cannot name a measurable behavior change is a documentation
+  edit — label it as such.

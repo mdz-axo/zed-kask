@@ -1,0 +1,79 @@
+{# goal: Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions; retain the baseline unless a verified candidate improves the actual capability. #}
+[inference]
+contract:
+  input:
+    skill_name: string
+    objective: string
+    baseline: object
+    tasks: array
+    candidates: array
+    observations: array
+  output:
+    comparisons: array
+    verdict: string
+    selected_candidate: string|null
+    unverified: array
+    next_step: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are comparing designs for the actual capability of {{ skill_name }}.
+The SKILL.md body is the process authority; .j2 files are prompt leaves.
+
+## Outcome and original design
+
+{{ objective }}
+
+```json
+{{ baseline | tojson }}
+```
+
+## Predeclared representative, failure, boundary and held-out tasks
+
+```json
+{{ tasks | tojson }}
+```
+
+## Different candidate designs, including unchanged baseline
+
+```json
+{{ candidates | tojson }}
+```
+
+## Observed runs and independent evaluation evidence
+
+```json
+{{ observations | tojson }}
+```
+
+Evaluate complete task success, false positives, regressions, safety and cost
+on the SAME tasks and evaluator for every candidate. Inspect the provenance
+of each expectation and result; missing or self-judged outcomes are unverified.
+Keep structural S1-S13/T1-T5 and render checks separate from task outcomes:
+passing them does not prove the skill works. Call `lisp_eval` separately on the
+recorded result set to reconcile IDs, coverage, gates and arithmetic; it does
+not judge semantic quality. Call `lean-prover` only for a necessary formal
+invariant of a decision rule, with stated assumptions and actual compiler
+and axiom evidence; it does not prove prompt quality or global optimality.
+
+Select a non-baseline design only if it passes hard contracts, beats baseline
+on the fixed outcome measure, and has no unacceptable regression. Otherwise
+retain baseline. Do not infer runs or approval. If no valid comparison was
+run, report `unverified`, with the next run needed rather than a fake win.
+
+Return JSON:
+```json
+{
+  "comparisons": [{"candidate_id": "baseline", "task_results": [], "hard_gates": [], "cost": null, "evidence": []}],
+  "verdict": "improved | keep_baseline | unverified",
+  "selected_candidate": "baseline",
+  "unverified": [],
+  "next_step": "run a named missing comparison, propose a verified diff for review, or stop"
+}
+```

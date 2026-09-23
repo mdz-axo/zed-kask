@@ -41,7 +41,11 @@ and the manifest-era E-checks are abolished.
 2. Evaluate every check for the target without omissions. For S12, extract
    each pinned `lisp_eval` form and evaluate it against the interpreter's
    builtin surface with stub values — an `unbound symbol` error for a
-   non-stub symbol is a broken form.
+   non-stub symbol is a broken form. Use `lisp_eval` to reconcile the number
+   of recorded check verdicts with the 18 defined check IDs, then verify
+   their IDs against the actual S1–S13/T1–T5 list (counts alone miss
+   duplicates). If `lisp_eval` is unavailable, report that check as
+   unverified; never interpret a template's claimed verdict as a tool run.
 3. For each check, record: the check id, a pass/fail verdict, and evidence.
    Every fail cites a file path and line number — never speculate.
 4. For each fail, provide an actionable fix suggestion.

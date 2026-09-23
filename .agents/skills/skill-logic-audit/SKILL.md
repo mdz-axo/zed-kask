@@ -1,7 +1,7 @@
 ---
 name: skill-logic-audit
 core: true
-description: "Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against their stated goals. Loads the annotated goal block, generates adversarial critique, filters for soundness, composes a revised artifact with unified diff, and drives a user-review loop."
+description: "Goal- and callsite-grounded audit of .j2 templates and legacy manifests. Compares distinct candidate designs on fixed tasks before proposing an approved change; never treats a formal check as proof of prompt quality."
 ---
 
 # Skill Logic Audit
@@ -23,7 +23,7 @@ outputs must feed the phase that consumes them.
 
 - Auditing a .j2 template's logic against its stated `{# goal: ... #}` annotation
 - Auditing an explicitly requested legacy manifest.yaml's annotated text, without treating it as a live skill contract
-- Composing a revised artifact with a unified diff from calibrated concerns
+- Comparing a template's existing design with materially different alternatives before proposing a change
 - Driving a user-review loop for accept/reject/counter-proposal
 
 ## When NOT to Use
@@ -34,21 +34,28 @@ outputs must feed the phase that consumes them.
 
 ## Instructions
 
-### logic-load-goal
+### logic-load-goal — Plan
 
-Parse the annotated goal block from the target file. For .j2 files, look for `{# goal: ... #}`. For manifest.yaml files, look for `# goal: ...`. Strip comment markers, preserve exact goal text.
+1. Read the target via `read_file`; parse its `{# goal: ... #}` (.j2) or `# goal: ...` (explicitly requested legacy manifest) annotation, preserving the exact goal text. If missing, report an unauditable target; do not invent a goal.
+2. For a live .j2, read the invoking SKILL.md phase and the inputs supplied to, and outputs consumed from, the template. An annotation alone is not the objective: record any mismatch with the canonical phase. A manifest is inert; assess only its stated textual goal, never execution behavior.
+3. Before generating revisions, fix the acceptance cases: at least one representative success, one failure/negative case and, for a live template, one downstream handoff. State expected observable outputs, hard contracts (including human approval), costs to compare, and the same evaluation method for all candidates. If execution fixtures or a trustworthy evaluator are unavailable, mark behavioral comparison `unverified` rather than inventing results.
 
-### logic-critique-template
+### logic-critique-template — Do
 
-Adversarial critique of the template body against its stated goal. For each flaw, provide location, claim, anchor to goal, severity, and suggested fix.
+1. Render `logic-critique-template` with the goal, target and invoking phase/acceptance cases. Cite concrete defects against the goal AND the phase; reject style-only concerns. Use `kask/scripts/audit/skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` for shape leads, not as proof of usefulness.
+2. Render `logic-critique-critique` to discard unsupported concerns. Generate at most four **distinct** candidates: unchanged baseline, localized repair, subtraction/simplification, and a replacement structure not derived by editing the baseline. If a category is inapplicable, explain why; never force a modification. Keep SKILL.md process changes out of this audit and route them to `skill-maintenance`.
 
-### logic-critique-critique
+### logic-compare-candidates — Check → Act
 
-Review the critique for soundness — separate valid, goal-anchored concerns from spurious ones.
+1. Render `logic-compare-candidates` with the fixed cases, candidate artifacts and actual observations. Run the same cases on baseline and candidates with the available prompt/skill harness; separately check rendering, contract and handoff shape. Evaluate semantic correctness against the predeclared expected behavior or independent human judgments, **not** the candidate's own critique or a goal-overlap score. Include cost and regression cases. No runnable oracle means an unverified proposal, not a measured improvement.
+2. Call `lisp_eval` on structured case/candidate records for completeness, counts, hard-gate status and score arithmetic. Supply actual recorded outcomes; a pass from agent-supplied labels does not validate the labels. Reconcile case IDs and missing observations with the underlying logs; any missing, failed hard gate or unverified behavioral result prevents an improvement claim.
+3. If and only if a concrete decision rule needs mathematical assurance, invoke `lean-prover` for its **exact formal statement** (e.g. selection never permits an unapproved edit); inspect compilation, axioms and a negative control, then test the modeled rule's implementation. Lean does not prove that a prompt is good or globally optimal. If Lean is unavailable, label the formal claim unverified; do not mislabel a `lisp_eval` result as a proof.
+4. Select a candidate only if it clears every hard contract, improves the fixed outcome measure against the baseline, and has no unacceptable regression. Otherwise keep baseline; report evidence gaps. Re-enter candidate generation at most once for a newly discovered falsifier, using the same held-out cases; then stop and report the observed frontier, not an absolute optimum.
 
 ### logic-compose-proposal
 
-Compose a concrete revised artifact and unified diff from the calibrated concerns.
+1. If a candidate wins, render `logic-compose-proposal` with the winning artifact and comparison evidence, then provide its full diff. The change need not be minimal relative to the old wording; it must be the simplest passing candidate that attains the better measured outcome. If baseline wins or results are inconclusive, report that and leave the artifact unchanged.
+2. Recheck goal annotation, `[inference]` contract and rendering for the proposed .j2. Never claim a legacy manifest edit changes skill execution.
 
 ### logic-user-choice
 
@@ -61,15 +68,19 @@ Compose a concrete revised artifact and unified diff from the calibrated concern
 | Template | Purpose |
 |----------|---------|
 | `logic-load-goal.j2` | Parse the annotated goal: block from a .j2 or manifest.yaml file and return it as a normalized string. Verify that a goal exists and is non-empty. |
-| `logic-critique-template.j2` | Adversarial critique anchored to the extracted goal. For each flaw provide the location, claim, anchor to goal, severity, and suggested fix. |
+| `logic-critique-template.j2` | Adversarial critique of a template against its annotated goal and invoking SKILL.md phase, grounded in fixed success, failure and handoff cases; locate each material defect. |
 | `logic-critique-critique.j2` | Review a critique for soundness and goal-anchoring. Separate valid goal-anchored concerns from spurious ones. |
-| `logic-compose-proposal.j2` | Compose a concrete revised artifact and unified diff from the calibrated concerns. |
+| `logic-compare-candidates.j2` | Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence; reject regressions and retain the baseline when no verified improvement wins. |
+| `logic-compose-proposal.j2` | Compose a comparison-backed winning artifact and unified diff from calibrated concerns, or retain the baseline when evidence does not justify an edit. |
 | `logic-user-choice.j2` | Present the proposal and diff to the human; wait for an actual response before any edit. Never generate the user's choice. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-logic-audit/logic-load-goal`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `logic-load-goal.j2`: `target_path`,`target_content`
+- `logic-critique-template.j2`: `goal`,`target_path`,`target_content`,`template_type`,`invoking_phase`,`acceptance_cases`
+- `logic-compare-candidates.j2`: `goal`,`invoking_phase`,`acceptance_cases`,`candidates`,`observations`
+- `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`user_counter_proposal`
 - `logic-user-choice.j2`: `target_path`,`goal`,`proposal`,`diff`,`rationale`,`confidence` (presentation inputs only; no user decision input)
 
 ## Constraints
@@ -77,6 +88,6 @@ Template context variables (from each template's [inference] contract):
 - `logic-load-goal.j2`: Operates on .j2 templates and .yaml manifests ONLY. SKILL.md files are NOT valid audit targets.
 - `logic-critique-template.j2`: Be adversarial but grounded. Reject purely stylistic complaints that do not affect logical efficiency or correctness.
 - `logic-critique-critique.j2`: A concern is valid only if it explicitly links a concrete template defect to the goal.
-- `logic-compose-proposal.j2`: Make the minimal set of changes that resolves the valid concerns while preserving the goal.
+- `logic-compose-proposal.j2`: Propose only a comparison-backed winner; a larger redesign is allowed when the baseline and smaller candidates fail the fixed tasks.
 - `logic-user-choice.j2`: Only the human's actual response can select accept, reject, or counter-proposal. Missing/ambiguous response is no authorization; a template must not emit `user_choice` or `next_action: write` on the user's behalf. Verify the approved diff against the current target before writing.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

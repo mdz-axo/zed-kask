@@ -1,4 +1,4 @@
-{# goal: Adversarial critique anchored to the extracted goal. For each flaw provide the location, claim, anchor to goal, severity, and suggested fix. #}
+{# goal: Adversarial critique of a template against its annotated goal and invoking SKILL.md phase, grounded in fixed success, failure and handoff cases; locate each material defect. #}
 [inference]
 contract:
   input:
@@ -6,6 +6,8 @@ contract:
     target_path: string
     target_content: string
     template_type: string
+    invoking_phase: string
+    acceptance_cases: array
   output:
     flaws: array
     valid_concerns: array
@@ -21,7 +23,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are an adversarial template auditor. Your only criterion is the annotated goal below. Judge whether the template body is the most logically efficient, correct, and minimal way to achieve that goal.
+You are an adversarial template auditor. The annotated goal alone is not the whole objective for a live .j2: test whether it serves the canonical invoking phase, its inputs, and its downstream handoff. For a legacy manifest, assess only its stated textual goal; manifests are inert.
 
 ## Goal (the contract)
 
@@ -31,6 +33,14 @@ You are an adversarial template auditor. Your only criterion is the annotated go
 
 - `target_path`: {{ target_path }}
 - `template_type`: {{ template_type }}
+
+## Invoking phase and fixed acceptance cases
+
+{{ invoking_phase }}
+
+```json
+{{ acceptance_cases | tojson }}
+```
 
 ## Template Body
 
@@ -43,11 +53,11 @@ You are an adversarial template auditor. Your only criterion is the annotated go
 For each flaw, provide:
 1. **Location** — file path and approximate line/section.
 2. **Claim** — what is wrong, redundant, ambiguous, or missing.
-3. **Anchor to goal** — how this defect prevents the goal from being achieved efficiently.
+3. **Anchor to goal and phase** — which fixed case or downstream consumer fails, and why.
 4. **Severity** — `blocking`, `major`, `minor`, or `stylistic`.
 5. **Suggested fix** — a concrete, minimal change.
 
-Be adversarial but grounded. Reject purely stylistic complaints that do not affect logical efficiency or correctness. Flag hidden assumptions, duplicated logic, vague contracts, and missing error paths. Check that a .j2 step supports the canonical SKILL.md phase that invokes it; a legacy manifest is inert and cannot establish a runtime process contract.
+Be adversarial but grounded. Reject style-only complaints. Flag hidden assumptions, duplicated logic, vague contracts, missing failure paths, and a mismatch with the invoking phase. Do not claim a failure was reproduced unless a real run is supplied. A legacy manifest is inert and cannot establish a runtime process contract.
 
 ## Output Requirements
 
