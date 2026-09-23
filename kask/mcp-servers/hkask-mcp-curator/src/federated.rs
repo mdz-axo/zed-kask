@@ -79,9 +79,17 @@ pub(crate) struct FederatedSourceRegistry {
 
 impl FederatedSourceRegistry {
     pub(crate) fn unchanged(&self) -> bool {
-        self.watched
+        // A failed admission is not a validated snapshot. Retry on the next
+        // query even when the files have stopped changing; otherwise a single
+        // mid-open modification leaves an empty `unavailable` cache forever.
+        !self
+            .statuses
             .iter()
-            .all(|(path, stamp)| &FileStamp::read(path) == stamp)
+            .any(|status| status.state == FederatedSourceState::Unavailable)
+            && self
+                .watched
+                .iter()
+                .all(|(path, stamp)| &FileStamp::read(path) == stamp)
     }
 
     fn snapshot(paths: &[PathBuf]) -> Vec<(PathBuf, FileStamp)> {
@@ -240,6 +248,35 @@ impl FederatedSourceRegistry {
 pub(crate) fn default_manifest_path() -> PathBuf {
     let relative = hkask_types::agent_paths::agent_dir("curator").join("federated-sources.json");
     hkask_types::agent_paths::resolve_under_data_dir(&relative)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: "A source unavailable during admission retries after its files settle." [P8]
+    #[test]
+    fn unavailable_source_does_not_cache_a_ready_fingerprint() -> std::io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest = directory.path().join("sources.json");
+        std::fs::write(&manifest, "{}")?;
+        let registry = FederatedSourceRegistry {
+            sources: Vec::new(),
+            watched: FederatedSourceRegistry::snapshot(&[manifest]),
+            statuses: vec![FederatedSourceStatus {
+                source_id: "changing-source".to_string(),
+                source_kind: "corpus",
+                state: FederatedSourceState::Unavailable,
+                reason: Some("source identity changed during admission; retry search".to_string()),
+                result_count: 0,
+            }],
+        };
+        assert!(
+            !registry.unchanged(),
+            "a transient failure must retry without requiring another file change"
+        );
+        Ok(())
+    }
 }
 
 pub(crate) fn classify_error(error: &FederatedRecallError) -> FederatedSourceState {
