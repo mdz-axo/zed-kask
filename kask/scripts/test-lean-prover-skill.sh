@@ -23,6 +23,7 @@ theorem append_nil_demo (xs : List Nat) : xs ++ [] = xs := by
 
 theorem exists_demo : ∃ n : Nat, n = 2 := ⟨2, rfl⟩
 theorem finite_demo : 2 + 2 ≠ 5 := by decide
+example : 1 ≠ 2 := by decide
 #print axioms swap
 #print axioms append_nil_demo
 #print axioms exists_demo

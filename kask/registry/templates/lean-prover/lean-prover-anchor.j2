@@ -169,22 +169,22 @@ For the proof obligation, determine:
   "proposition_classification": {
     "universe": "Prop | Type",
     "logical_structure": "universal | existential | implication | conjunction | disjunction | negation",
-    "decidable": true,
-    "decidability_witness": "Decidable instance or proof of undecidability"
+    "decidable": null,
+    "decidability_witness": "instance observed, or unknown until checked"
   },
   "proof_structure": "high-level description of the proof shape",
   "proof_method": "term | tactic | hybrid | decide | native_decide | simp | induction",
   "decidability": "decidable | undecidable | conditionally decidable",
   "termination_strategy": "structural recursion on X | well-founded recursion on relation R | N/A (non-recursive)",
-  "anchor_score": 0.85,
+  "anchor_score": 0.0,
   "compiler_grounding": {
-    "diagnostics_interpreted": 5,
-    "type_errors_confirmed": [1, 3],
-    "termination_issues_confirmed": [2],
+    "diagnostics_interpreted": 0,
+    "type_errors_confirmed": [],
+    "termination_issues_confirmed": [],
     "diagnostics_not_yet_explained": []
   },
   "reasoning": "Step-by-step reasoning through the classification and proof strategy, citing Lean diagnostics where available"
 }
 ```
 
-`anchor_score`: 1.0 = perfectly anchored, 0.0 = no clear proof strategy. Higher is better.
+These are output-shape examples, not observed measurements. Populate counts only from supplied Lean diagnostics; `anchor_score` is advisory and never certifies a proof.

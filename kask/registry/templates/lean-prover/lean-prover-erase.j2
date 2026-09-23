@@ -93,14 +93,14 @@ carry computational content, or does it erase?
 {
   "erasure_classification": {
     "universe": "Prop | Type",
-    "erases": true,
-    "proof_relevant": false,
-    "allows_large_elimination": false
+    "erases": null,
+    "proof_relevant": null,
+    "allows_large_elimination": null
   },
   "computational_content": "description of what the proof term computes, or 'none — erases to no-op'",
   "prop_type_boundary": "clean | violation — description of any boundary crossing",
   "elimination_type": "small | large | none",
-  "erase_score": 0.9,
+  "erase_score": 0.0,
   "issues_found": [
     {"issue": "description", "severity": "critical|high|medium", "fix": "what to change"}
   ],
@@ -108,4 +108,4 @@ carry computational content, or does it erase?
 }
 ```
 
-`erase_score` is an advisory analysis score, not a Lean result. Cite the version, compilation outcome, and `#print axioms` before stating any proof-trust claim.
+JSON values illustrate shape, not verified observations. `erase_score` is an advisory analysis score, not a Lean result. Cite the version, compilation outcome, and `#print axioms` before stating any proof-trust claim.

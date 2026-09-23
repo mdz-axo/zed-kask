@@ -138,7 +138,7 @@ which Curry-Howard principle it addresses, and how much it improves the proof.
 ```json
 {
   "counterexamples": [
-    {"input": "specific input", "proposition_fails": true, "evidence": "decide/native_decide result or manual argument"}
+    {"input": "specific input", "proposition_fails": false, "evidence": "Lean command and diagnostic, if tested"}
   ],
   "failed_paths": [
     {"tactic": "induction/apply/simp/rw", "failure": "why it doesn't apply", "fix": "what would make it work"}
@@ -152,16 +152,16 @@ which Curry-Howard principle it addresses, and how much it improves the proof.
   "refinement_directives": [
     {"directive": "specific change to make", "targets": "which part of the proof", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "what to run to verify"}
   ],
-  "refute_score": 0.7,
+  "refute_score": 0.0,
   "compiler_grounding": {
-    "diagnostics_confirmed": 5,
-    "counterexamples_confirmed": 1,
+    "diagnostics_confirmed": 0,
+    "counterexamples_confirmed": 0,
     "termination_failures": 0,
-    "proof_compiles": false,
-    "sorry_warnings": 2
+    "proof_compiles": null,
+    "sorry_warnings": 0
   },
   "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite Lean diagnostics where available."
 }
 ```
 
-`refute_score`: 0.0 = no evidenced issue found, not a substitute for Lean verification. Higher = more evidenced issues. Record exit status and diagnostic for each case; missing tools or diagnostics mean `unverified`.
+The JSON values illustrate shape, not observations; populate counts only from actual runs. `refute_score`: 0.0 = no evidenced issue found, not a substitute for Lean verification. Higher = more evidenced issues. Record exit status and diagnostic for each case; missing tools or diagnostics mean `unverified`.
