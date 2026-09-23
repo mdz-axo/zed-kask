@@ -150,7 +150,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         // Generation lineage — produces/reads task records (production work).
         "gallery_record_generation" | "gallery_lineage" | "gallery_reproduce" => Some(TASK),
         // Model browser — the model/provider is a participant in the creation task.
-        "model_list" | "model_info" => Some(PARTICIPANT),
+        "model_list" | "model_info" | "reduct_connection_status" => Some(PARTICIPANT),
         // Generation job queue — async job tracking (OMC Task).
         "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
         | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),

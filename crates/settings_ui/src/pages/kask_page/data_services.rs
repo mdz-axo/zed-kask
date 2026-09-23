@@ -212,6 +212,17 @@ fn render_data_service_row(
 mod tests {
     use super::*;
 
+    #[test]
+    fn reduct_row_uses_refreshable_keychain_slot() {
+        let row = data_service_descriptors()
+            .into_iter()
+            .find(|(key, _, _, _, _)| *key == "reduct_api_key")
+            .expect("Reduct must appear on Data Services");
+        assert_eq!(row.3, "REDUCT_API_KEY");
+        assert_eq!(row.4, "kask://credentials/reduct_api_key");
+        assert!(credential_url_feeds_mcp_servers(&row.4));
+    }
+
     /// The endpoint-refresh id must identify the RunPod provider in the
     /// `LanguageModelRegistry`. [`LanguageModelRegistry::provider`] is an exact
     /// id match and returns `None` on mismatch — a drift would silently turn the

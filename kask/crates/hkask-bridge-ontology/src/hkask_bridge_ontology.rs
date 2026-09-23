@@ -100,6 +100,7 @@ pub mod fibo;
 pub mod golem;
 pub mod ml_schema;
 pub mod omc;
+pub mod ontology_graph;
 pub mod pko;
 pub mod rdf;
 pub mod schema_org;

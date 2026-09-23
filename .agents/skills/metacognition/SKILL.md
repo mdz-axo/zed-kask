@@ -48,9 +48,9 @@ prediction calibration.
 
 ### meta-predict (Kata Step 3: Make a Prediction)
 
-1. Predict which calibration will close the gap and by how much.
-2. Carry a confidence in [0,1] — how sure is the agent that this prediction is correct?
-3. The Brier score tracks whether the confidence is calibrated across cycles.
+1. Predict one calibration and an `expected_gap_reduction` in (0,1] relative to the measured starting gap. Keep the target artifacts and procedure fixed through this experiment; changing the target makes before/after gaps incomparable.
+2. `confidence` in [0,1] is the probability of this predeclared binary event: after the experiment, `gap_after <= gap_before * (1 - expected_gap_reduction)`. It is not a confidence in an unspecified improvement or the fractional reduction itself.
+3. If `gap_before` is zero or unavailable, do not make or score a gap-reduction forecast. Record the target as reached or the measurement as pending, respectively.
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
@@ -63,7 +63,7 @@ prediction calibration.
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
-4. Score the prediction via Brier score only after the predicted event has a measured binary outcome; without an outcome record calibration as pending, not zero error.
+4. With a measured `gap_before > 0` and `gap_after` against the same target, determine whether the Step 3 event occurred, then score `Brier = (confidence - outcome)^2` with outcome 1 for true and 0 for false. Use `lisp_eval` for the comparison and arithmetic; never select the event or threshold after observing the result. If either gap is unmeasured, report calibration pending, not zero error.
 5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles and report the remaining gap and pending measurements.
 
 ## Registry Templates

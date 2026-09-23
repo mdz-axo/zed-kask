@@ -494,6 +494,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "OPENROUTER_API_KEY",
             "DEEPINFRA_API_KEY",
             "HKASK_SERPAPI_API_KEY",
+            // Read by the Reduct connection-status tool and future cloud calls.
+            "REDUCT_API_KEY",
         ]),
         config_env: Some(&[
             // IPC bridge socket — required for vision/chat/embed routing
@@ -1172,6 +1174,36 @@ mod tests {
             !env_vars.contains(&"OPENROUTER_API_KEY"),
             "curator should NOT receive OPENROUTER_API_KEY"
         );
+    }
+
+    #[test]
+    fn reduct_key_reaches_only_media_child() {
+        let descriptor = crate::DATA_SERVICES
+            .iter()
+            .find(|entry| entry.credential_key == "reduct_api_key")
+            .expect("Reduct has a Data Services key entry");
+        assert!(descriptor.shows_in_ui);
+        assert_eq!(descriptor.env_var, "REDUCT_API_KEY");
+        assert_eq!(
+            crate::credential_url_for_key(descriptor.credential_key),
+            "kask://credentials/reduct_api_key"
+        );
+        let available = crate::credential_urls_for_mcp();
+        let filtered = filter_credentials_for_server("media", &available);
+        assert!(filtered.iter().any(|(name, url)| {
+            name == "REDUCT_API_KEY" && url == "kask://credentials/reduct_api_key"
+        }));
+        for server in BUILT_IN_MCP_SERVERS
+            .iter()
+            .filter(|server| server.id != "media")
+        {
+            let filtered = filter_credentials_for_server(server.id, &available);
+            assert!(
+                filtered.iter().all(|(name, _)| name != "REDUCT_API_KEY"),
+                "Reduct key leaked to {}",
+                server.id
+            );
+        }
     }
 
     // Unknown server IDs fail closed: no credentials are injected.

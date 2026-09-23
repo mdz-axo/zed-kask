@@ -455,6 +455,9 @@ mod tests {
             "hkask-bridge-ontology",
             "required tool of analysis",
             "nothing is ever untagged",
+            "ask `onto_anchor` for `relation_query`",
+            "Use only the returned typed, sourced edges",
+            "no_supported_path` is not proof",
         ] {
             assert!(
                 rendered.contains(phrase),

@@ -68,7 +68,7 @@ This is a refinement cycle. Build on the previous experiment's results — don't
 
 2. **Re-measure the current condition**: After applying the calibration through the relevant tool or evidence source, measure the new state. Rendering this prompt does not execute the intervention; if it could not run, report it as pending and keep prior measurements rather than asserting new grounded artifacts. What artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced? What claims are grounded?
 
-3. **Describe the result**: What actually happened? Did the calibration close the gap as predicted? Did it surface new obstacles? Did it invalidate assumptions?
+3. **Describe the result**: What actually happened? Did the calibration close the gap as predicted? Did it surface new obstacles? Did it invalidate assumptions? Preserve the Step 3 reduction threshold; if the before/after gaps cannot be measured against the same target, leave its binary outcome pending rather than scoring a guess.
 
 ## Instructions
 
@@ -76,26 +76,4 @@ This is a refinement cycle. Build on the previous experiment's results — don't
 - The re-measured current condition is what the gap computation will use. Cite the observation source for changed artifacts and procedure statuses; if no observation is available, mark the result pending rather than inventing an improvement.
 - If the calibration didn't help, say so honestly. The Brier score will track whether the prediction was calibrated.
 
-Return JSON only:
-```json
-{
-  "current_artifacts": {
-    "decomposition": {"exists": true, "grounded": true},
-    "assessment": {"exists": true, "grounded": true},
-    "obstacle_list": {"exists": true, "grounded": true},
-    "calibration": {"exists": true, "grounded": true},
-    "experiment_plan": {"exists": true, "grounded": false}
-  },
-  "current_procedure": {
-    "steps": [
-      {"name": "grasp_current", "status": "complete"},
-      {"name": "establish_target", "status": "complete"},
-      {"name": "predict", "status": "complete"},
-      {"name": "experiment", "status": "complete"}
-    ]
-  },
-  "applied_calibration": "applied Falstaffian shape 'subject_expansion' to the assessment",
-  "result_description": "the assessment now covers 2 additional obstacles; the obstacle list is more complete",
-  "rationale": "what changed and why"
-}
-```
+Return JSON only with `current_artifacts` (object), `current_procedure` (object), `applied_calibration` (string), `result_description` (string), and `rationale` (string). Report only observations backed by the executed intervention. If it did not run or measurements are unavailable, retain the prior artifact/procedure measurements, say `pending` in the result description, and name the missing evidence. Do not copy an example of a successful experiment as an outcome.

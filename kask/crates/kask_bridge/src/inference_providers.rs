@@ -324,6 +324,15 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://huggingface.co/settings/tokens",
         shows_in_ui: true,
     },
+    // Reduct cloud media API. The media child alone receives this secret;
+    // Data Services writes the same keychain slot used by MCP injection.
+    DataServiceDescriptor {
+        env_var: "REDUCT_API_KEY",
+        credential_key: "reduct_api_key",
+        label: "Reduct.video",
+        dashboard_url: "https://app.reduct.video/backstage/api/",
+        shows_in_ui: true,
+    },
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
     // reference-level fetches. Optional (curated static fallback when absent),

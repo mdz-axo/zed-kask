@@ -54,15 +54,15 @@ This is a refinement cycle. Did the previous prediction hold? If not, what does 
 
 1. **Which calibration to apply**: Choose one specific intervention — a Falstaffian perspective rotation (which shape?), an ellipsis analysis (which gaps to investigate?), or a strategy adjustment (which obstacle to address?). Be specific.
 
-2. **Expected gap reduction**: How much do you expect the hypotenuse (total gap) to decrease after applying this calibration? State a number in [0, 1] — the proportion of the current gap you expect to close.
+2. **Expected gap reduction**: Predeclare a threshold in (0, 1] — the proportion of the measured starting gap you expect to close. The same target artifacts and procedure must be used when measuring both gaps. If the starting gap is zero or unavailable, say the forecast is not yet scoreable instead of inventing a reduction.
 
-3. **Confidence**: How sure are you that this prediction is correct? State a number in [0, 1]. This is NOT optimism — it's your calibrated belief. The Brier score will track whether your confidence matches reality. If you're unsure, say 0.5. If you're confident, say 0.8. The score is `(confidence - actual_outcome)²` — you're penalized for both overconfidence and underconfidence.
+3. **Confidence**: State a probability in [0, 1] that the post-experiment measured gap will be at most `gap_before * (1 - expected_gap_reduction)`. This event is TRUE or FALSE, not a continuous outcome. After measuring both gaps, score `(confidence - outcome)²` where outcome is 1 or 0. Without both measurements leave the forecast unresolved; never redefine the success threshold after observing the result.
 
 ## Instructions
 
 - The prediction is a hypothesis, not a guarantee. It's what you expect to learn from the experiment.
 - Choose the calibration that addresses the single most consequential obstacle from the current condition.
-- Be honest about your confidence. The Brier score will tell you if you're systematically overconfident or underconfident across cycles.
+- Be honest about your confidence in that specific threshold event, not just in the choice of intervention. Record the threshold before the experiment.
 
 Return JSON only:
 ```json

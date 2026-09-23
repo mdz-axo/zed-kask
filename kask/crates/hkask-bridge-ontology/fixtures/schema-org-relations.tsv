@@ -1,0 +1,3 @@
+# Reviewed against https://schema.org/hasPart and https://schema.org/isPartOf on 2026-09-22 (live development pages). These are inverse-property declarations about vocabulary properties, not instance facts.
+schema:hasPart	inverse_of	schema:isPartOf	https://schema.org/hasPart
+schema:isPartOf	inverse_of	schema:hasPart	https://schema.org/isPartOf

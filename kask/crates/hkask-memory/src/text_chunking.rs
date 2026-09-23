@@ -463,7 +463,7 @@ fn strip_newsletter_calls_to_action(text: &str) -> (String, Vec<BoilerplateExclu
 
 fn strip_company_template_preface(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     const START: &str = "Save as duplicate and edit to create a company";
-    const BODY: &str = "Website: As of Date: Closing Price:";
+    const BODY: &str = "BUSINESS Use the following questions as prompts";
     if !text.starts_with(START) {
         return (text.to_string(), Vec::new());
     }
@@ -1457,9 +1457,14 @@ mod tests {
     /// expect: a publication template contributes its analyst questions, not instructions or a legal preface.
     #[test]
     fn filter_removes_company_template_preface_but_keeps_business_questions() {
-        let input = "Save as duplicate and edit to create a company Put Name and Ticker in Title. Delete these instructions. DISCLAIMER No representation, warranty or undertaking. Website: As of Date: Closing Price: Shares Outstanding: BUSINESS Why is it able to earn a sustainable profit margin? MANAGEMENT Discuss CEO strengths and weaknesses.";
+        let input = "Save as duplicate and edit to create a company Put Name and Ticker in Title. Delete these instructions. DISCLAIMER No representation, warranty or undertaking. Website: As of Date: Closing Price: Shares Outstanding: BUSINESS Use the following questions as prompts in writing the business summary: Why is it able to earn a sustainable profit margin? MANAGEMENT Discuss CEO strengths and weaknesses.";
         let result = filter_boilerplate_pages_with_report(input);
-        assert!(result.text.starts_with("Website: As of Date:"));
+        assert!(
+            result
+                .text
+                .starts_with("BUSINESS Use the following questions as prompts")
+        );
+        assert!(!result.text.contains("Website: As of Date:"));
         assert!(result.text.contains("sustainable profit margin"));
         assert!(!result.text.contains("DISCLAIMER"));
         assert!(!result.text.contains("Delete these instructions"));

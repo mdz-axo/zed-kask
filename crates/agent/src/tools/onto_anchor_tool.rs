@@ -4,7 +4,10 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
-use hkask_bridge_ontology::term_resolution::{TermResolution, resolve_term};
+use hkask_bridge_ontology::{
+    ontology_graph::{TraversalResult, graph},
+    term_resolution::{TermResolution, resolve_term},
+};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,24 +48,44 @@ pub struct OntoAnchorToolInput {
     /// "market capitalization") or a full prefixed URI
     /// (e.g. "fibo-be-le-cb:Corporation").
     term: String,
+    /// Optional relation question. Omit for the original resolution-only result.
+    #[serde(default)]
+    relation_query: Option<RelationQuery>,
 }
 
-/// Agent-tool wrapper over the shared ontology bridge output.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RelationQuery {
+    /// Destination term for a shortest directed path; omit to inspect outgoing edges.
+    #[serde(default)]
+    to: Option<String>,
+    /// Bounded hop count (1–4); defaults to 2 for a path, 1 for neighbors.
+    #[serde(default)]
+    max_hops: Option<u8>,
+}
+
+/// Existing resolution JSON stays unchanged unless a relation query is made.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct OntoAnchorToolOutput(TermResolution);
+pub struct OntoAnchorToolOutput {
+    #[serde(flatten)]
+    resolution: TermResolution,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    traversal: Option<TraversalResult>,
+}
 
 impl std::ops::Deref for OntoAnchorToolOutput {
     type Target = TermResolution;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.resolution
     }
 }
 
 impl From<TermResolution> for OntoAnchorToolOutput {
     fn from(value: TermResolution) -> Self {
-        Self(value)
+        Self {
+            resolution: value,
+            traversal: None,
+        }
     }
 }
 
@@ -108,7 +131,7 @@ impl AgentTool for OntoAnchorTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
             let input = input.recv().await.map_err(|e| {
-                OntoAnchorToolOutput(TermResolution {
+                OntoAnchorToolOutput::from(TermResolution {
                     tier: "core".to_string(),
                     term: String::new(),
                     namespace: "core".to_string(),
@@ -118,7 +141,16 @@ impl AgentTool for OntoAnchorTool {
                     note: Some(format!("failed to receive input: {e}")),
                 })
             })?;
-            Ok(resolve_term(&input.term).into())
+            let traversal = input.relation_query.map(|query| {
+                let max_hops = query
+                    .max_hops
+                    .unwrap_or(if query.to.is_some() { 2 } else { 1 });
+                graph().traverse(&input.term, query.to.as_deref(), max_hops)
+            });
+            Ok(OntoAnchorToolOutput {
+                resolution: resolve_term(&input.term),
+                traversal,
+            })
         })
     }
 }
@@ -140,6 +172,97 @@ mod tests {
             assert_eq!(serde_json::to_value(restored)?, expected, "{term}");
         }
         Ok(())
+    }
+
+    #[gpui::test]
+    async fn agent_receives_a_provenance_backed_path_and_an_honest_absence(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let found = cx
+            .update(|cx| {
+                Arc::new(OntoAnchorTool).run(
+                    ToolInput::ready(serde_json::json!({
+                        "term": "sustainable growth rate",
+                        "relation_query": {"to": "net margin", "max_hops": 2}
+                    })),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect("valid relation query");
+        let json = serde_json::to_value(found).expect("serialize path");
+        assert_eq!(json["concept"], "sustainable_growth_rate");
+        assert_eq!(json["traversal"]["status"], "path_found");
+        assert_eq!(json["traversal"]["edges"][0]["to"], "return_on_equity");
+        assert_eq!(json["traversal"]["edges"][1]["to"], "net_margin");
+        assert!(
+            json["traversal"]["edges"][1]["authority"]
+                .as_str()
+                .is_some_and(|source| source.contains("operator ruling"))
+        );
+
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let absent = cx
+            .update(|cx| {
+                Arc::new(OntoAnchorTool).run(
+                    ToolInput::ready(serde_json::json!({
+                        "term": "sustainable growth rate",
+                        "relation_query": {"to": "net margin", "max_hops": 1}
+                    })),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect("valid shallow query");
+        let json = serde_json::to_value(absent).expect("serialize absence");
+        assert_eq!(json["traversal"]["status"], "no_supported_path");
+        assert_eq!(json["traversal"]["edges"], serde_json::json!([]));
+    }
+
+    #[gpui::test]
+    async fn published_relation_and_coarse_anchor_are_not_conflated(cx: &mut gpui::TestAppContext) {
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let found = cx
+            .update(|cx| {
+                Arc::new(OntoAnchorTool).run(
+                    ToolInput::ready(serde_json::json!({
+                        "term": "schema:hasPart",
+                        "relation_query": {"to": "schema:isPartOf"}
+                    })),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect("valid published query");
+        let json = serde_json::to_value(found).expect("serialize published path");
+        assert_eq!(json["traversal"]["status"], "path_found");
+        assert_eq!(json["traversal"]["edges"][0]["relation"], "inverse_of");
+        assert_eq!(
+            json["traversal"]["edges"][0]["authority"],
+            "https://schema.org/hasPart"
+        );
+
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let coarse = cx
+            .update(|cx| {
+                Arc::new(OntoAnchorTool).run(
+                    ToolInput::ready(serde_json::json!({
+                        "term": "zephyr coefficient",
+                        "relation_query": {"to": "net margin"}
+                    })),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect("coarse query has a surfaced result");
+        let json = serde_json::to_value(coarse).expect("serialize coarse result");
+        assert_eq!(json["traversal"]["status"], "coarse_anchor");
+        assert_eq!(json["traversal"]["edges"], serde_json::json!([]));
     }
 
     #[gpui::test]

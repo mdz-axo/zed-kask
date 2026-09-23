@@ -173,6 +173,9 @@ hkask_mcp_server::mcp_server!(
         /// SerpApi credential for structured YouTube discovery and metadata.
         /// Binary media retrieval remains the separate `YtDlpRunner` concern.
         pub serpapi_key: Option<String>,
+        /// Reduct key from this child process's credential allowlist. Never
+        /// echoed in tools, logs, or error messages.
+        pub reduct_api_key: Option<String>,
     }
 );
 
@@ -465,6 +468,7 @@ impl MediaServer {
             + Self::workflows_router()
             + Self::educt_router()
             + Self::youtube_router()
+            + Self::reduct_router()
     }
 }
 
@@ -480,9 +484,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_81_registered_tools() {
+    fn tool_surface_is_exactly_82_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 81, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 82, "media registered tool surface changed; got {n}");
     }
 
     // Pins the generated TOOL_NAMES const against the live rmcp tool
@@ -669,6 +673,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 YtDlpRunner::detect(),
                 jobs::new_job_store(),
                 ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned(),
+                ctx.credentials.get("REDUCT_API_KEY").cloned(),
             ))
         },
         vec![
@@ -679,6 +684,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_SERPAPI_API_KEY",
                 "SerpApi key for YouTube search metadata",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "REDUCT_API_KEY",
+                "Reduct.video API key for cloud media (optional; local educt works without it)",
             ),
         ],
     )
@@ -1158,6 +1167,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            None,
         )
     }
 
@@ -1464,6 +1474,7 @@ mod tool_behavior_tests {
             FfmpegRunner::with_binary(fake_ffmpeg.to_string_lossy().into_owned(), scratch.clone()),
             YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         );
 
@@ -1924,6 +1935,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            None,
         );
         (server, gallery_state)
     }
@@ -1995,6 +2007,7 @@ mod tool_behavior_tests {
             video::ffmpeg::FfmpegRunner::detect(),
             ytdlp,
             jobs::new_job_store(),
+            None,
             None,
         )
     }
@@ -2420,6 +2433,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            None,
         );
         let content = content_of(
             &server
@@ -2506,6 +2520,7 @@ mod tool_behavior_tests {
             fake_successful_ffmpeg(artifacts.path())?,
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         ));
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -2641,6 +2656,7 @@ mod tool_behavior_tests {
             fake_successful_ffmpeg(artifacts.path())?,
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         );
         let error = server
@@ -3518,6 +3534,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            None,
         ));
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
@@ -3607,6 +3624,7 @@ mod tool_behavior_tests {
             fake_successful_ffmpeg(artifacts.path())?,
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         ));
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -3796,6 +3814,7 @@ mod tool_behavior_tests {
             video::ffmpeg::FfmpegRunner::detect(),
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         )
     }
@@ -5493,6 +5512,7 @@ mod gallery_lifecycle_tests {
             FfmpegRunner::detect(),
             YtDlpRunner::detect(),
             jobs::new_job_store(),
+            None,
             None,
         )
     }
