@@ -91,10 +91,10 @@ is Aborted with reason "missing_consent_token". This is the enforcement
 point for the .rules "Advertised invariants need enforcement points" trap.
 {% endif %}
 
-## Step 3 — Emit the gated MCP calls
+## Step 3 — Emit the mode-appropriate MCP calls
 
 {% if mode == "local" %}
-For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
+For each valid local move, emit the corresponding hkask-mcp-swarm local call:
 - `delegate` → in advisory mode, emit `swarm_delegate_in_thread_local`
   with `{ swarm_id, agent_name, task }`. In steering mode, emit one
   `swarm_execute_plan_local` plan with `{ swarm_id, delegations:
@@ -174,8 +174,8 @@ emitted_calls and feeds the results back. Emit a `steering_directive` object:
 ```json
 {
   "execute": "<the emitted_calls array — the plan to run>",
-  "via": "swarm_execute_plan_local" (local) | "swarm_xaman" (cloud),
-  "collect": "LocalDelegateResult array with task_success verdicts stamped — feed back as delegate_results on the next swarm-intelligence invocation",
+  "via": "{% if mode == 'local' %}swarm_execute_plan_local{% else %}swarm_xaman{% endif %}",
+  "collect": "{% if mode == 'local' %}Use the returned results array as delegate_results; task_success is stamped when an evaluator is supplied{% else %}Use Xaman Ek's actual results; do not assume LocalDelegateResult fields{% endif %}",
   "feedback": "re-invoke swarm-intelligence with delegate_results set to the collected results so ORIENT attributes fault and C6 reconfigures"
 }
 ```

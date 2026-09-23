@@ -13,8 +13,8 @@ contract:
     post_act_state: object
     variety_coverage: number
     diversity: number
-    loop_closure: number
-    convergence_metric: number
+    loop_closure: number|null
+    convergence_metric: number|null
     next_focus: string
     algedonic_signal: object|null
     lessons_learned: array
@@ -120,11 +120,14 @@ where:
   composition moves or unexecuted intents).
 - `successful_delegations` = count of those with a returned
   `LocalDelegateResult`; a tool error is a failed attempt, not a success.
-  If only a plan was emitted and no results were supplied, closure is
-  unmeasured, not zero or one. There is no local credit reconciliation.
+  If only a plan was emitted and no results were supplied, set
+  `loop_closure = null` (unmeasured), not zero or one. Set
+  `convergence_metric = null` and do not claim convergence until execution
+  results arrive. There is no local credit reconciliation.
 
-Vacuous-truth default: if `total_delegations = 0`, `loop_closure = 1.0`
-(vacuously satisfied).
+Vacuous-truth default: if the executed plan had no delegate entries,
+`loop_closure = 1.0` (vacuously satisfied). An unexecuted non-empty plan is
+not vacuously closed.
 {% else %}
 ```
 loop_closure = (reconciled_dispatches / total_dispatches)

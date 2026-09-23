@@ -5,13 +5,16 @@
 //! the Zed Agent — same coding tools, same system prompt, same model —
 //! PLUS:
 //!
-//! - **Curator tools**: `curator_status` for checking regulation health
+//! - **Shared read tool**: native and Curator sessions both use the single
+//!   `curator_status` implementation for regulation health
+//! - **Curator action tools**: directives and explicit log maintenance
 //! - **Curator context**: appended to the system prompt via `static_context`,
 //!   describing the Curator's role and current system state
 //!
 //! The background metacognition loop (sense→compare→compute→act) is spawned
 //! once, process-globally, in `crates/zed/src/main.rs` — not by this server.
-//! Every Curator thread reads from that shared loop via `CuratorStatusTool`.
+//! Every native and Curator thread reads from that shared loop via the same
+//! `CuratorStatusTool`; this overlay does not register a second status tool.
 //!
 //! This overlay design means the Curator can do everything the Zed Agent can
 //! (write code, run terminals, edit files) while also having access to the
@@ -49,10 +52,10 @@ In addition to your coding agent capabilities, you:\n\
   to record the evolution request for a developer to act on\n\
 - Escalate domain-level concerns to the user for human review\n\
 \n\
-- Clear reviewed algedonic alerts via the `curator_clear_algedonic_log` tool\n\
-  when the `curator_status` tool reports the alert log is approaching its cap.\n\
-  This frees the in-memory log before it evicts entries unread. Run the\n\
-  `algedonic-review` skill to triage the backlog first.\n\
+- Review pending escalations with `algedonic-review` when the status tool\n\
+  reports cap pressure; the in-memory log self-evicts. Do not clear it as\n\
+  an outcome of that review. Any separate log-maintenance action requires\n\
+  an explicit operator decision.\n\
 \n\
 ### Methodology\n\
 \n\
@@ -78,45 +81,58 @@ You are anchored on the following methodologies:\n\
 /// regulatory posture: regulation effectiveness, escalation count, critical
 /// alerts, memory degradation, alert log cap status.
 fn format_state_block(snapshot: &serde_json::Value) -> String {
-    let effectiveness = snapshot
-        .get("regulation_effectiveness")
+    let acceptance_rate = snapshot
+        .get("regulation_acceptance_rate")
         .and_then(|v| v.as_f64())
         .map(|v| format!("{:.0}%", v * 100.0))
         .unwrap_or_else(|| "unavailable".to_string());
-    let escalations = snapshot
-        .get("escalation_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let critical = snapshot
-        .get("critical_alerts")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let measured_count = |field| {
+        snapshot
+            .get(field)
+            .and_then(|value| value.as_u64())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unavailable".to_string())
+    };
+    let escalations = measured_count("escalation_count");
+    let critical = measured_count("critical_alerts");
     let memory_degraded = snapshot
         .get("memory")
-        .and_then(|m| m.get("degraded"))
-        .and_then(|d| d.as_bool())
-        .unwrap_or(false);
-    let alert_log_count = snapshot
-        .get("alert_log_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let alert_log_cap = snapshot
-        .get("alert_log_cap")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let alert_log_status = if alert_log_cap > 0 && alert_log_count >= alert_log_cap * 8 / 10 {
-        "approaching cap — review needed"
-    } else {
-        "nominal"
+        .and_then(|memory| memory.get("degraded"))
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let alert_log = match (
+        snapshot
+            .get("alert_log_count")
+            .and_then(|value| value.as_u64()),
+        snapshot
+            .get("alert_log_cap")
+            .and_then(|value| value.as_u64()),
+    ) {
+        (Some(count), Some(cap)) => format!("{count}/{cap}"),
+        _ => "unavailable".to_string(),
     };
+    let alert_log_status = match snapshot
+        .get("alert_log_approaching_cap")
+        .and_then(|value| value.as_bool())
+    {
+        Some(true) => "approaching cap",
+        Some(false) => "not approaching cap",
+        None => "unavailable",
+    };
+    let loop_reading = snapshot
+        .get("loop_reading")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unavailable");
 
     format!(
         "## Current System State (snapshot at session start — pull curator_status for live updates)\n\
-        - Regulation effectiveness: {effectiveness}\n\
+        - Regulation acceptance rate: {acceptance_rate}\n\
         - Escalations (current cycle): {escalations}\n\
         - Critical alerts: {critical}\n\
         - Memory degraded: {memory_degraded}\n\
-        - Alert log: {alert_log_count}/{alert_log_cap} ({alert_log_status})"
+        - Alert log: {alert_log} ({alert_log_status})\n\
+        - Loop reading: {loop_reading}"
     )
 }
 
@@ -124,7 +140,8 @@ fn format_state_block(snapshot: &serde_json::Value) -> String {
 ///
 /// Like `NativeAgentServer`, but:
 /// 1. Injects curator static context into each thread's system prompt
-/// 2. Registers the `curator_status` tool on each thread
+/// 2. Adds Curator-only action tools; `curator_status` is already registered
+///    once on every native session by `NativeAgent::new_session`.
 ///
 /// The optional `extra_static_context` is appended to
 /// `CURATOR_STATIC_CONTEXT` when the connection establishes. This is used by

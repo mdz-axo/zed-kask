@@ -2,7 +2,8 @@
 //!
 //! These tools are registered on Curator threads alongside the standard Zed
 //! Agent tools. They expose the Curator's regulatory surface:
-//! - `curator_status`: read system health (variety, regulation effectiveness, alerts)
+//! - `curator_status`: the shared read-only view of the host's metacognition
+//!   provider (native and Curator sessions use this same built-in tool)
 //! - `curator_directive`: issue directives to the cybernetics regulation loop
 //!
 //! The tools use process-global hooks (`MetacognitionProvider`,
@@ -66,15 +67,17 @@ pub struct CuratorStatusInput {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CuratorStatusOutput {
     pub status: String,
-    pub regulation_effectiveness: Option<f64>,
+    /// Observed share of regulation outcomes accepted by the loop; not a
+    /// causal effectiveness measure. Unavailable when the source has no sample.
+    pub regulation_acceptance_rate: Option<f64>,
     pub escalation_count: Option<usize>,
     pub critical_alerts: Option<usize>,
     /// Per-domain variety deficit (gap from set-point, not a raw counter).
     /// Renamed from `variety_counters` — the value is a deficit, and calling
     /// it a "counter" misled operators into reading it as variety tracked.
     pub variety_deficit: Option<Vec<(String, u64)>>,
-    /// `true` when the curator's own memory stores (episodic/semantic in
-    /// `agents/curator/curator.db`) are down or partially down — the curator is
+    /// `true` when the curator's unified memory store in
+    /// `agents/curator/curator.db` is down or partially down — the curator is
     /// running without durable memory until the self-healing re-open
     /// succeeds. `None` when the memory probe isn't wired (pre-login or
     /// upstream Zed).
@@ -85,9 +88,9 @@ pub struct CuratorStatusOutput {
     /// The configured cap for the in-memory algedonic log.
     /// `None` when the metacognition provider isn't wired.
     pub alert_log_cap: Option<usize>,
-    /// `true` when the alert log is ≥ 80% of its cap. The operator (or the
-    /// `algedonic-review` skill) should review and clear reviewed entries
-    /// before they are evicted unread. `None` when the metacognition provider
+    /// `true` when the alert log is ≥ 80% of its cap. The operator may
+    /// review the backlog before older entries self-evict; this is not an
+    /// instruction to clear the in-memory log. `None` when the provider
     /// isn't wired.
     pub alert_log_approaching_cap: Option<bool>,
     /// Trust/absence assembly verdict (Fermi `LoopView.reading`). Distinguishes
@@ -138,7 +141,7 @@ impl AgentTool for CuratorStatusTool {
         cx.background_executor().spawn(async move {
             let input = input.recv().await.map_err(|_| CuratorStatusOutput {
                 status: "error: invalid input".to_string(),
-                regulation_effectiveness: None,
+                regulation_acceptance_rate: None,
                 escalation_count: None,
                 critical_alerts: None,
                 variety_deficit: None,
@@ -158,7 +161,7 @@ impl AgentTool for CuratorStatusTool {
             let Some(provider) = provider else {
                 return Ok(CuratorStatusOutput {
                     status: "provider not wired".to_string(),
-                    regulation_effectiveness: None,
+                    regulation_acceptance_rate: None,
                     escalation_count: None,
                     critical_alerts: None,
                     variety_deficit: None,
@@ -166,14 +169,14 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
-                loop_reading: None,
-                declared_doors: Vec::new(),
+                    loop_reading: None,
+                    declared_doors: Vec::new(),
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
                 return Ok(CuratorStatusOutput {
                     status: "snapshot unavailable".to_string(),
-                    regulation_effectiveness: None,
+                    regulation_acceptance_rate: None,
                     escalation_count: None,
                     critical_alerts: None,
                     variety_deficit: None,
@@ -181,13 +184,11 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_count: None,
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
-                loop_reading: None,
-                declared_doors: Vec::new(),
+                    loop_reading: None,
+                    declared_doors: Vec::new(),
                 });
             };
-            let effectiveness = snapshot
-                .get("regulation_effectiveness")
-                .and_then(|v| v.as_f64());
+            let acceptance_rate = read_regulation_acceptance_rate(&snapshot);
             let critical = snapshot
                 .get("critical_alerts")
                 .and_then(|v| v.as_u64())
@@ -206,9 +207,8 @@ impl AgentTool for CuratorStatusTool {
                 .get("memory")
                 .and_then(|m| m.get("degraded"))
                 .and_then(|d| d.as_bool());
-            // Algedonic alert log cap status — surfaced so the operator (or
-            // the `algedonic-review` skill) can tell when the in-memory log is
-            // approaching its cap and review/clear is needed.
+            // In-memory log cap pressure prompts review of the durable
+            // escalation backlog, not an automatic log-clearing action.
             let alert_log_count = snapshot
                 .get("alert_log_count")
                 .and_then(|v| v.as_u64())
@@ -252,18 +252,17 @@ impl AgentTool for CuratorStatusTool {
             // right — surface it in `status` so a caller reading only the
             // status line (not the structured fields) still sees it.
             let status = if memory_degraded == Some(true) {
-                "ok (memory degraded — curator episodic/semantic store down, \
-                 self-healing re-open in progress)"
-                    .to_string()
+                "degraded (curator memory store down; self-healing re-open in progress)".to_string()
+            } else if loop_reading.is_none() || memory_degraded.is_none() {
+                "partial (loop or memory health not monitored)".to_string()
             } else if alert_log_approaching_cap == Some(true) {
-                "ok (algedonic log approaching cap — run algedonic-review to clear reviewed entries)"
-                    .to_string()
+                "ok (in-memory alert log approaching cap; review the durable backlog)".to_string()
             } else {
                 "ok".to_string()
             };
             Ok(CuratorStatusOutput {
                 status,
-                regulation_effectiveness: effectiveness,
+                regulation_acceptance_rate: acceptance_rate,
                 escalation_count,
                 critical_alerts: critical,
                 variety_deficit: if input.include_variety {
@@ -286,7 +285,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
     fn from(output: CuratorStatusOutput) -> Self {
         let text = format!(
             "Curator Status: {}\n\
-             Regulation Effectiveness: {}\n\
+             Regulation Acceptance Rate: {}\n\
              Escalations: {}\n\
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
@@ -296,7 +295,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Declared Doors: {}",
             output.status,
             output
-                .regulation_effectiveness
+                .regulation_acceptance_rate
                 .map(|v| format!("{:.1}%", v * 100.0))
                 .unwrap_or_else(|| "not available".to_string()),
             output

@@ -32,9 +32,12 @@ fn recording_read_url(
 ) -> Result<String, McpToolError> {
     validate_reduct_id("project_id", project_id)?;
     validate_reduct_id("recording_id", recording_id)?;
-    if !matches!(leaf, "status" | "transcript.json" | "transcript.txt") {
+    if !matches!(
+        leaf,
+        "status" | "transcript.json" | "transcript.txt" | "highlight"
+    ) {
         return Err(McpToolError::invalid_argument(
-            "unsupported recording read; use status, transcript.json, or transcript.txt",
+            "unsupported recording read; use status, transcript.json, transcript.txt, or highlight",
         ));
     }
     Ok(format!(
@@ -475,6 +478,37 @@ async fn import_media(
     parse_media_import_response(&body)
 }
 
+fn parse_highlights_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct highlight response was not valid JSON")
+    })?;
+    let highlights = response
+        .get("highlight")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            McpToolError::failed_precondition(
+                "Reduct highlight response lacks the documented highlight map",
+            )
+        })?;
+    Ok(serde_json::json!({
+        "source": "reduct_cloud",
+        "highlights": highlights,
+        "provider_returned_count": highlights.len(),
+        "pagination": "unknown"
+    }))
+}
+
+async fn recording_highlights(
+    key: Option<&str>,
+    project_id: &str,
+    recording_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = recording_read_url(project_id, recording_id, "highlight")?;
+    let response = read_response(key, &url, "highlight read").await?;
+    let body = read_bounded(response, 2 * 1024 * 1024).await?;
+    parse_highlights_response(&body)
+}
+
 async fn recording_status(
     key: Option<&str>,
     project_id: &str,
@@ -745,6 +779,22 @@ impl MediaServer {
     }
 
     #[tool(
+        description = "Read the provider's ID-keyed highlight JSON for one Reduct recording (up to 2 MiB). Keeps labels, text and timing fields as returned; does not mutate reels or create local educt layers."
+    )]
+    pub async fn reduct_recording_highlights(
+        &self,
+        Parameters(ReductRecordingRequest {
+            project_id,
+            recording_id,
+        }): Parameters<ReductRecordingRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_recording_highlights", async {
+            recording_highlights(self.reduct_api_key.as_deref(), &project_id, &recording_id).await
+        })
+        .await
+    }
+
+    #[tool(
         description = "Get Reduct's JSON transcription/recording status for a known project and recording ID. Read-only; no local educt fallback."
     )]
     pub async fn reduct_recording_status(
@@ -898,6 +948,21 @@ mod tests {
         assert!(recording_read_url("p-id", "r/2", "status").is_err());
         assert!(recording_read_url("p-id", "r_1", "transcript.docx").is_err());
         assert!(recording_read_url("p-id", "r_1", "unknown").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn highlight_read_preserves_provider_fields_and_rejects_wrong_shape() -> Result<(), McpToolError>
+    {
+        let body =
+            br#"{"highlight":{"h1":{"labels":["clip"],"start":1.25,"end":3.5,"text":"quote"}}}"#;
+        let result = parse_highlights_response(body)?;
+        assert_eq!(result["source"], "reduct_cloud");
+        assert_eq!(result["provider_returned_count"], 1);
+        assert_eq!(result["highlights"]["h1"]["labels"][0], "clip");
+        assert_eq!(result["highlights"]["h1"]["start"], 1.25);
+        assert_eq!(result["pagination"], "unknown");
+        assert!(parse_highlights_response(br#"{"recording":{}}"#).is_err());
         Ok(())
     }
 
@@ -1201,7 +1266,24 @@ mod tests {
                 recording_transcript(Some(key.as_str()), first_project, recording_id, "txt")
                     .await?;
             assert_eq!(plain["format"], "txt");
-            // Never print transcript words or project/recording IDs.
+            let highlights_url = recording_read_url(first_project, recording_id, "highlight")?;
+            let response =
+                read_response(Some(key.as_str()), &highlights_url, "highlight read").await?;
+            let body = read_bounded(response, 2 * 1024 * 1024).await?;
+            let highlights: serde_json::Value = serde_json::from_slice(&body)?;
+            eprintln!(
+                "Reduct highlight GET: top-level_object={}; highlight_map={}; count={}",
+                highlights.is_object(),
+                highlights
+                    .get("highlight")
+                    .is_some_and(serde_json::Value::is_object),
+                highlights
+                    .get("highlight")
+                    .and_then(serde_json::Value::as_object)
+                    .map(serde_json::Map::len)
+                    .unwrap_or(0)
+            );
+            // Never print transcript words, highlight content, or project/recording IDs.
             eprintln!(
                 "Reduct recording status response type={}",
                 if status["status"].is_object() {
