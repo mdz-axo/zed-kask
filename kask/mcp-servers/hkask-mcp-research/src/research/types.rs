@@ -186,7 +186,8 @@ pub struct SearchRequest {
     pub include_domains: Option<Vec<String>>,
     pub exclude_domains: Option<Vec<String>>,
     pub freshness: Option<String>,
-    /// Accepted values: `quick`, `web`, `news`, `deep`. Other values are rejected.
+    /// Accepted values: `quick`, `web` (alias `semantic`), `news`,
+    /// `deep` (alias `research`). Other values are rejected.
     pub strategy: Option<String>,
     /// Deliberate provider selection without an explicit `provider`: when
     /// `provider` is None and `intent` is set (news, academic, semantic,
