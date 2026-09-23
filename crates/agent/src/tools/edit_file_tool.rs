@@ -152,11 +152,16 @@ impl EditFileTool {
                                         }
                                     }
 
-                                    if let Some(current_session) = &mut session
-                                        && let Err(error) = current_session.process_edit(parsed.edits.as_deref(), event_stream, cx)
-                                    {
-                                        log::error!("Failed to process edit: {}", error);
-                                        return EditSessionResult::Failed { error, session };
+                                    if let Some(current_session) = &mut session {
+                                        let started = std::time::Instant::now();
+                                        let outcome = current_session.process_edit(parsed.edits.as_deref(), event_stream, cx);
+                                        if started.elapsed() >= std::time::Duration::from_millis(20) {
+                                            log::warn!("[DIAG-thread-perf] edit_file partial apply_ms={}", started.elapsed().as_millis());
+                                        }
+                                        if let Err(error) = outcome {
+                                            log::error!("Failed to process edit: {}", error);
+                                            return EditSessionResult::Failed { error, session };
+                                        }
                                     }
                                 }
                             }
@@ -185,7 +190,11 @@ impl EditFileTool {
                                     }
                                 };
 
-                                return match session.finalize_edit(full_input.edits, event_stream, cx).await {
+                                let started = std::time::Instant::now();
+                                let edit_count = full_input.edits.len();
+                                let outcome = session.finalize_edit(full_input.edits, event_stream, cx).await;
+                                log::warn!("[DIAG-thread-perf] edit_file final edits={edit_count} apply_ms={}", started.elapsed().as_millis());
+                                return match outcome {
                                     Ok(()) => EditSessionResult::Completed(session),
                                     Err(error) => {
                                         log::error!("Failed to finalize edit: {}", error);
@@ -264,13 +273,19 @@ impl AgentTool for EditFileTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
-            run_session(
-                self.process_streaming_edits(&mut input, &event_stream, cx)
-                    .await,
-                &event_stream,
-                cx,
-            )
-            .await
+            let started = std::time::Instant::now();
+            let processed = self
+                .process_streaming_edits(&mut input, &event_stream, cx)
+                .await;
+            let streamed = started.elapsed();
+            let output = run_session(processed, &event_stream, cx).await;
+            log::warn!(
+                "[DIAG-thread-perf] edit_file task stream_ms={} run_session_ms={} total_ms={}",
+                streamed.as_millis(),
+                (started.elapsed() - streamed).as_millis(),
+                started.elapsed().as_millis()
+            );
+            output
         })
     }
 
