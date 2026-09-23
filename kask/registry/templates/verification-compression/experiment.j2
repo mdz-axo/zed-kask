@@ -63,8 +63,9 @@ terminal check with an externally trusted digest pin. In execute mode, independe
 operator-approved diff SHA-256 must match the snapshot-derived diff; neither a
 candidate-provided diff nor a self-generated digest is approval. Reject zero or negative
 values in EACH measured sample, regardless of positive aggregate. The source,
-contract, oracle, graph, proof, and log paths/hashes must all be in the receipt;
-validate filesystem files, not just submitted paths. Keep cold and warm timing
+contract, oracle, graph, proof, log, and before/after timing JSON paths/hashes
+must all be in the receipt; validate filesystem files, not just submitted
+paths. Use only the checker's returned timing arrays for speedup. Keep cold and warm timing
 separate; mark unselected states
 `not_run` with empty samples and zero timing, never speedup. Report workflow
 and production code graph counts separately. If the production graph was not
@@ -103,6 +104,8 @@ Return JSON only:
     "receipt_pinned_sha256":"",
     "approved_diff_sha256_or_dash":"",
     "candidate_diff_path":"",
+    "timing_before_path":"",
+    "timing_after_path":"",
     "evidence_paths":[]
   },
   "metrics": {

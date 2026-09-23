@@ -7,11 +7,9 @@
 // This is a symmetric relationship, so for a => (b, 1), also add b => (a, 1)
 
 use std::collections::HashMap;
-use std::env;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use util::command::new_command;
 
 pub struct GitLogIndex {
@@ -110,68 +108,6 @@ pub async fn build_git_log_index(worktree_dir: &Path) -> Result<GitLogIndex> {
     }
 
     Ok(index)
-}
-
-#[allow(dead_code)]
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error:#}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn run() -> Result<()> {
-    let mut arguments = env::args_os();
-    let program_name = arguments
-        .next()
-        .and_then(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()))
-        .and_then(|name| name.into_string().ok())
-        .unwrap_or_else(|| "git_log_context".to_string());
-
-    let worktree_dir = arguments.next().ok_or_else(|| {
-        print_usage(&program_name);
-        anyhow!("missing worktree path")
-    })?;
-    let query_path = arguments.next().ok_or_else(|| {
-        print_usage(&program_name);
-        anyhow!("missing query path")
-    })?;
-    if arguments.next().is_some() {
-        print_usage(&program_name);
-        bail!("too many arguments");
-    }
-
-    let worktree_dir = PathBuf::from(worktree_dir);
-    let query_path = normalize_query_path(&worktree_dir, &PathBuf::from(query_path));
-    let index = futures::executor::block_on(build_git_log_index(&worktree_dir))?;
-
-    for (path, count) in index.get_related_with_counts(&query_path, 10) {
-        println!("{count}\t{}", path.display());
-    }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn print_usage(program_name: &str) {
-    eprintln!("Usage: {program_name} <worktree-path> <query-path>");
-}
-
-#[allow(dead_code)]
-fn normalize_query_path(worktree_dir: &Path, query_path: &Path) -> PathBuf {
-    if query_path.is_absolute() {
-        query_path
-            .strip_prefix(worktree_dir)
-            .unwrap_or(query_path)
-            .components()
-            .collect()
-    } else {
-        query_path.components().collect()
-    }
 }
 
 fn parse_git_log(log: &str) -> Vec<Vec<PathBuf>> {

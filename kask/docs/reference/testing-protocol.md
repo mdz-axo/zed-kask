@@ -244,7 +244,10 @@ is **not** a claim that production code was compressed. A no-edit pilot
 reports code-graph compression as unmeasured. Execution acceleration is
 reported only from comparable observed before/after
 timing samples with toolchain, environment fingerprint, cache state, source
-and oracle hashes, sample count, and evidence paths recorded. Declare a cold,
+and oracle hashes, sample count, and evidence paths recorded. The independently
+pinned receipt includes typed before/after timing artifacts; the checker
+validates positive sample values and returns their arrays. Acceleration uses
+those checked arrays, not model-transcribed numbers or a prose log summary. Declare a cold,
 warm, or both-state target before measuring. Measurements stay separate; an
 unselected state is `not_run` with empty samples and zero timings and earns no
 speedup claim even if stale numeric values are present. Calculate any speedup

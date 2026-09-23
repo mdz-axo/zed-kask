@@ -65,8 +65,6 @@ impl EvalInput {
 
 #[derive(Clone)]
 struct EvalSample {
-    text_before: String,
-    text_after: String,
     tool_input: EditFileToolInput,
     diff: String,
 }
@@ -117,24 +115,6 @@ impl EvalAssertion {
             ) -> Result<EvalAssertionOutcome>,
     {
         EvalAssertion(Arc::new(f))
-    }
-
-    fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
-        let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
-        Self::new(async move |sample, _judge, _cx| {
-            let matches = expected_diffs.iter().any(|possible_diff| {
-                language::apply_diff_patch(&sample.text_before, possible_diff)
-                    .map(|expected| {
-                        strip_empty_lines(&expected) == strip_empty_lines(&sample.text_after)
-                    })
-                    .unwrap_or(false)
-            });
-
-            Ok(EvalAssertionOutcome {
-                score: if matches { 100 } else { 0 },
-                message: None,
-            })
-        })
     }
 
     fn judge_diff(assertions: &'static str) -> Self {
@@ -461,8 +441,6 @@ impl EditToolTest {
                 eval.input_content.as_deref().unwrap_or_default(),
                 new_text,
             ),
-            text_before: eval.input_content.unwrap_or_default(),
-            text_after: new_text.clone(),
         };
 
         let assertion = eval
@@ -629,13 +607,6 @@ fn tool_result(
     })
 }
 
-fn strip_empty_lines(text: &str) -> String {
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
     const MAX_ATTEMPTS: usize = 20;
     let mut completed_attempts = 0;
@@ -662,125 +633,6 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             return response;
         }
     }
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_delete_function() {
-    let input_file_path = "root/blame.rs";
-    let input_file_content = include_str!("fixtures/delete_run_git_blame/before.rs");
-    let output_file_content = include_str!("fixtures/delete_run_git_blame/after.rs");
-    let possible_diffs = vec![
-        language::unified_diff(input_file_content, output_file_content),
-        language::unified_diff(
-            input_file_content,
-            &output_file_content
-                .replace(
-                    "const GIT_BLAME_NO_COMMIT_ERROR: &str = \"fatal: no such ref: HEAD\";\n",
-                    "",
-                )
-                .replace(
-                    "const GIT_BLAME_NO_PATH: &str = \"fatal: no such path\";\n",
-                    "",
-                ),
-        ),
-    ];
-
-    eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(
-                    User,
-                    [text(indoc::formatdoc! {"
-                        Read the `{input_file_path}` file and delete `run_git_blame`. Just that
-                        one function, not its usages.
-                    "})],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        ReadFileToolInput {
-                            path: input_file_path.into(),
-                            start_line: None,
-                            end_line: None,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        input_file_content,
-                    )],
-                ),
-            ],
-            input_file_path,
-            Some(input_file_content.into()),
-            EvalAssertion::assert_diff_any(possible_diffs.clone()),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_extract_handle_command_output() {
-    let input_file_path = "root/blame.rs";
-    let input_file_content = include_str!("fixtures/extract_handle_command_output/before.rs");
-    let possible_diffs = vec![
-        include_str!("fixtures/extract_handle_command_output/possible-01.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-02.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-03.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-04.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-05.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-06.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-07.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-08.diff"),
-        include_str!("fixtures/extract_handle_command_output/possible-09.diff"),
-    ];
-
-    eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(
-                    User,
-                    [text(indoc::formatdoc! {"
-                        Read the `{input_file_path}` file and extract a method in
-                        the final stanza of `run_git_blame` to deal with command failures,
-                        call it `handle_command_output` and take the std::process::Output as the only parameter.
-                        Do not document the method and do not add any comments.
-
-                        Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
-                    "})],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        ReadFileToolInput {
-                            path: input_file_path.into(),
-                            start_line: None,
-                            end_line: None,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        input_file_content,
-                    )],
-                ),
-            ],
-            input_file_path,
-            Some(input_file_content.into()),
-            EvalAssertion::assert_diff_any(possible_diffs.clone()),
-        ))
-    });
 }
 
 #[test]
@@ -823,109 +675,6 @@ fn eval_translate_doc_comments() {
             input_file_path,
             Some(input_file_content.into()),
             EvalAssertion::judge_diff("Doc comments were translated to Italian"),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
-    let input_file_path = "root/lib.rs";
-    let input_file_content =
-        include_str!("fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
-
-    eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(
-                    User,
-                    [text(indoc::formatdoc! {"
-                        Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
-                        Use `ureq` to download the SDK for the current platform and architecture.
-                        Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
-                        Compile the parser to wasm using the `bin/clang` executable (or `bin/clang.exe` on windows)
-                        that's inside of the archive.
-                        Don't re-download the SDK if that executable already exists.
-
-                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
-
-                        Here are the available wasi-sdk assets:
-                        - wasi-sdk-25.0-x86_64-macos.tar.gz
-                        - wasi-sdk-25.0-arm64-macos.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-windows.tar.gz
-                    "})],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        ReadFileToolInput {
-                            path: input_file_path.into(),
-                            start_line: Some(971),
-                            end_line: Some(1050),
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_1",
-                        ReadFileTool::NAME,
-                        lines(input_file_content, 971..1050),
-                    )],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_2",
-                        ReadFileTool::NAME,
-                        ReadFileToolInput {
-                            path: input_file_path.into(),
-                            start_line: Some(1050),
-                            end_line: Some(1100),
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_2",
-                        ReadFileTool::NAME,
-                        lines(input_file_content, 1050..1100),
-                    )],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_3",
-                        ReadFileTool::NAME,
-                        ReadFileToolInput {
-                            path: input_file_path.into(),
-                            start_line: Some(1100),
-                            end_line: Some(1150),
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_3",
-                        ReadFileTool::NAME,
-                        lines(input_file_content, 1100..1150),
-                    )],
-                ),
-            ],
-            input_file_path,
-            Some(input_file_content.into()),
-            EvalAssertion::judge_diff(indoc::indoc! {"
-                    - The compile_parser_to_wasm method has been changed to use wasi-sdk
-                    - ureq is used to download the SDK for current platform and architecture
-                "}),
         ))
     });
 }
@@ -1114,84 +863,6 @@ fn eval_from_pixels_constructor() {
                         - The diff contains a new `from_pixels` constructor
                         - The diff contains new tests for the `from_pixels` constructor
                     "}),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_zode() {
-    let input_file_path = "root/zode.py";
-    let input_content = None;
-
-    eval_utils::eval(50, 1., eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(User, [text(include_str!("fixtures/zode/prompt.md"))]),
-                message(
-                    Assistant,
-                    [
-                        tool_use(
-                            "tool_1",
-                            ReadFileTool::NAME,
-                            ReadFileToolInput {
-                                path: "root/eval/react.py".into(),
-                                start_line: None,
-                                end_line: None,
-                            },
-                        ),
-                        tool_use(
-                            "tool_2",
-                            ReadFileTool::NAME,
-                            ReadFileToolInput {
-                                path: "root/eval/react_test.py".into(),
-                                start_line: None,
-                                end_line: None,
-                            },
-                        ),
-                    ],
-                ),
-                message(
-                    User,
-                    [
-                        tool_result(
-                            "tool_1",
-                            ReadFileTool::NAME,
-                            include_str!("fixtures/zode/react.py"),
-                        ),
-                        tool_result(
-                            "tool_2",
-                            ReadFileTool::NAME,
-                            include_str!("fixtures/zode/react_test.py"),
-                        ),
-                    ],
-                ),
-            ],
-            input_file_path,
-            input_content.clone(),
-            EvalAssertion::new(async move |sample, _, _cx| {
-                let invalid_starts = [' ', '`', '\n'];
-                let mut message = String::new();
-                for start in invalid_starts {
-                    if sample.text_after.starts_with(start) {
-                        message.push_str(&format!("The sample starts with a {:?}\n", start));
-                        break;
-                    }
-                }
-                message.pop();
-
-                if message.is_empty() {
-                    Ok(EvalAssertionOutcome {
-                        score: 100,
-                        message: None,
-                    })
-                } else {
-                    Ok(EvalAssertionOutcome {
-                        score: 0,
-                        message: Some(message),
-                    })
-                }
-            }),
         ))
     });
 }

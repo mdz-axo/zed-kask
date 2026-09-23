@@ -165,8 +165,11 @@ verification code.
     the result. Capture the exact graph, all before/after source snapshots,
     contract, oracle, compiled proof source, and raw logs in a tab-delimited
     receipt: `role<TAB>phase<TAB>id<TAB>sha256<TAB>absolute_canonical_path`.
-    Roles: graph, source, contract, oracle, proof, log, candidate_diff;
+    Roles: graph, source, contract, oracle, proof, log, timing, candidate_diff;
     `proof` and `candidate_diff` are after-only, the others have before/after.
+    Each `timing` file is the trusted command runner's JSON output with a
+    selected `scope` and cold/warm `status` plus integer-millisecond
+    `samples_ms`; never synthesize durations from a narrative log.
     Give each source snapshot pair the same unique ID; hash the exact authorized
     diff with `diff -u --label source/ID --label source/ID BEFORE AFTER`,
     concatenated by byte-sorted source ID. Capture the receipt SHA-256 from a
@@ -180,8 +183,12 @@ verification code.
     snapshots outside candidate write access (`analyze` passes `-`). The checker
     re-derives the diff from source snapshots and compares it to that
     independent approved digest; no approval digest blocks `execute`. It also
-    checks the pinned graph, regenerates the proof and compares exact bytes.
-    Record `context.hashes_verified=true` only after it succeeds. A file changed
+    checks the pinned graph, regenerates the proof, and validates the pinned
+    per-sample timings. Its JSON response is the ONLY source for selected
+    timing scope and `metrics.cold|warm.timing_samples_before_ms|after_ms`;
+    never copy model-supplied arrays into the gate. Derive summary times from
+    those arrays. Record `context.hashes_verified=true` only after it succeeds.
+    A file changed
     after checking requires re-verification; no attacker with access to both
     trusted pin and snapshots is covered by this boundary. Then call `lisp_eval`: 
     - Preservation: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t))`; env `{ "check": <preservation block> }`.
