@@ -19,14 +19,6 @@ contract:
     reasoning: string
 visibility: Public
 ---
-{# hKask v0.39.0 #}
-{#
-  Editor code actions are unverified suggestions, even if they originate
-  from compiler diagnostics. `add sorry` inserts an axiom-backed hole.
-  Only checking the complete declaration in its real imports plus its
-  `#print axioms` output can justify a verified status.
-#}
-
 [inference]
 temperature = 0.3
 work_effort = "high"

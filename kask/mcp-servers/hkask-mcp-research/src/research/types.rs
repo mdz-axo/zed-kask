@@ -8,7 +8,7 @@ mod validation;
 use hkask_mcp_server::AnyJsonValue;
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::McpErrorKind;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 
 // ── Constants ──
@@ -179,6 +179,22 @@ pub struct ProviderRecommendation {
 
 // ── Request types ──
 
+// Preserve the existing string wire types and runtime errors while exposing
+// the accepted values to callers before a request reaches the tool.
+fn search_strategy_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [
+        {"type": "string", "enum": ["quick", "web", "semantic", "news", "deep", "research"]},
+        {"type": "null"}
+    ]})
+}
+
+fn duplication_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [
+        {"type": "string", "enum": ["semantic"]},
+        {"type": "null"}
+    ]})
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchRequest {
     pub query: String,
@@ -188,6 +204,7 @@ pub struct SearchRequest {
     pub freshness: Option<String>,
     /// Accepted values: `quick`, `web` (alias `semantic`), `news`,
     /// `deep` (alias `research`). Other values are rejected.
+    #[schemars(schema_with = "search_strategy_schema")]
     pub strategy: Option<String>,
     /// Deliberate provider selection without an explicit `provider`: when
     /// `provider` is None and `intent` is set (news, academic, semantic,
@@ -313,6 +330,7 @@ pub struct EvaluateEvidenceRequest {
     /// content-bearing artifact). Omitted, the deterministic shingle floor
     /// runs. Degradation (no model configured, embed failure) falls back to
     /// the floor with a surfaced reason — never silent.
+    #[schemars(schema_with = "duplication_schema")]
     pub duplication: Option<String>,
 }
 

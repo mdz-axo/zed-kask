@@ -269,7 +269,11 @@ SHA-256-verified gallery audio/video upload. Those three POST paths are pinned
 by fixtures but **not live-mutated** in the operator's workspace. Project and
 recording and reel snapshots describe provider-returned subsets, not complete
 pagination. Reel read results do not authorize writes: Reduct reel/block payload
-fields are not supplied by the excerpt.
+fields are not supplied by the excerpt. A running MCP inventory on 2026-09-23
+advertised twelve `reduct_*` tools including `reduct_reel_detail`; advertisement
+is not a new live read or write verification. Public search returned product/help
+descriptions rather than POST schemas, and the v3 reference remains browser-login
+gated without a session.
 Reduct reel/strikethrough composition, redaction, and editing remain unsupported
 because the excerpt did not include the expanded mutation schemas. See the
 media server README for the operation boundary and API caveats.

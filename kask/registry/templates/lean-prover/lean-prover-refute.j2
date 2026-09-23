@@ -17,20 +17,6 @@ contract:
     reasoning: string
 visibility: Public
 ---
-{# hKask v0.39.0 #}
-{#
-  Compiler grounding: this phase uses the Lean type-checker as the extrinsic
-  oracle. Run `lean` or `lake build` on the proof attempt to get diagnostics.
-  The type-checker's errors are ground truth — they tell you exactly where the
-  proof fails. Map each error to a Curry-Howard principle:
-    - Type mismatch → the proof term doesn't inhabit the proposition type
-    - Motive not general enough → induction principle doesn't cover the goal
-    - Unification stuck → the tactic's expected preconditions don't match
-    - Termination failure → the recursion isn't decreasing
-    - sorry warning → the proof has holes (not a complete proof)
-    - Proof irrelevance violation → Prop proof used for Type computation
-#}
-
 [inference]
 temperature = 0.4
 work_effort = "high"

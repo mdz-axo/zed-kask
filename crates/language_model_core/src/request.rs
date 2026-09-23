@@ -473,9 +473,6 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
-    /// Optional per-request output limit; overrides the OpenRouter model limit (D13).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u64>,
 }
 
 impl LanguageModelRequest {

@@ -2330,6 +2330,33 @@ mod tool_surface_tests {
         assert!(validate_extraction("markdown", Some("markdown"), Some("ordinary text")).is_ok());
     }
 
+    /// expect: unsupported strategy and duplication values are not advertised
+    /// by the actual MCP tool schemas; optional null remains accepted.
+    #[test]
+    fn registered_research_tools_constrain_optional_input_values() {
+        let tools = ResearchServer::tool_router().list_all();
+        for (name, field, values) in [
+            (
+                "web_search",
+                "strategy",
+                serde_json::json!(["quick", "web", "semantic", "news", "deep", "research"]),
+            ),
+            (
+                "evaluate_evidence",
+                "duplication",
+                serde_json::json!(["semantic"]),
+            ),
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .expect("tool registered");
+            let schema = serde_json::to_value(&tool.input_schema).expect("tool input schema");
+            assert_eq!(schema["properties"][field]["anyOf"][0]["enum"], values);
+            assert_eq!(schema["properties"][field]["anyOf"][1]["type"], "null");
+        }
+    }
+
     #[test]
     fn tool_surface_is_exactly_26_registered_tools() {
         let n = ResearchServer::tool_router().list_all().len();

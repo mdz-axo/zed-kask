@@ -277,7 +277,10 @@ OS-keychain-based test retrieved a project, project-scoped recordings, recording
 status, JSON/TXT transcripts, the highlight GET path, and an existing reel's
 ID-keyed block map without logging or printing private content. The sampled
 highlight map was empty; a live reel-detail request returned a populated block
-map. Reading block fields does not prove their POST write schema.
+map. A subsequent running-tool inventory lists all twelve `reduct_*` tools,
+including `reduct_reel_detail`; this is deployment evidence for advertisement,
+not a fresh live call or a cloud editing outcome. Reading block fields does not
+prove their POST write schema.
 
 The same excerpt specifies `POST /project/{project_id}/recording` with JSON
 `{"title": ...}` returning a `recording` ID, and `POST .../media-import`
@@ -296,8 +299,12 @@ publishing, media download and transcript correction remain **unimplemented**: t
 index listed their categories but omitted the expanded endpoint request/response
 schemas needed to send safe writes. Reduct's documented warnings apply:
 DELETE is irreversible, POST can overwrite named fields, and audio redaction
-through the API does not redact transcript text. Enter/reset the key in
-Settings → Kask → Data Services; writes/deletes refresh the media MCP child.
+through the API does not redact transcript text. A bounded public search for
+Reel/block write payloads found product/help descriptions but not expanded v3
+schemas; the official API reference still displays a browser login without a
+session. Obtain the non-secret expanded endpoint rows before implementing
+those mutations. Enter/reset the key in Settings → Kask → Data Services;
+writes/deletes refresh the media MCP child.
 
 ## Configuration
 

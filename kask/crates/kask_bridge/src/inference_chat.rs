@@ -867,7 +867,6 @@ impl LanguageModelInferencePort {
             messages: req_messages,
             tools: req_tools,
             temperature: Some(parameters.temperature),
-            max_tokens: None,
             thinking_allowed: parameters.thinking_allowed,
             // The sole emit_result tool denotes the structured-output protocol.
             // Ordinary tools are capabilities, not a requirement to act again;

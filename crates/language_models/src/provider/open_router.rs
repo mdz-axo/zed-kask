@@ -486,9 +486,6 @@ pub fn into_open_router(
     // we should revise this to use that instead.
     let is_anthropic_model = model.id().starts_with("anthropic/");
     let session_id = open_router_session_id(request.thread_id);
-    // zed-kask: D13 — preserve an explicit per-request output override before
-    // moving the messages; absent overrides use the model's advertised limit.
-    let request_max_tokens = request.max_tokens;
 
     let mut messages = Vec::new();
     let mut any_message_wants_cache = false;
@@ -624,7 +621,7 @@ pub fn into_open_router(
         session_id,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
-        max_tokens: request_max_tokens.or(max_output_tokens),
+        max_tokens: max_output_tokens,
         parallel_tool_calls: (model.supports_parallel_tool_calls() && !request.tools.is_empty())
             .then_some(false),
         usage: open_router::RequestUsage { include: true },
@@ -867,8 +864,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_per_request_max_tokens_overrides_model_default() {
-        // zed-kask: D13 — explicit per-request output limits override model metadata.
+    async fn test_model_output_limit_becomes_request_budget() {
+        // The API-derived model budget is capped at half the context window.
         let entry = open_router::ModelEntry {
             id: "z-ai/glm-5.2".into(),
             name: "Z.ai: GLM 5.2".into(),
@@ -888,25 +885,6 @@ mod tests {
         let model = &models[0];
         assert_eq!(model.max_output_tokens(), Some(524288));
 
-        // An explicit per-request override wins over the model default.
-        let request = LanguageModelRequest {
-            messages: vec![language_model::LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".to_string())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            max_tokens: Some(2048),
-            ..Default::default()
-        };
-        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
-        assert_eq!(
-            result.max_tokens,
-            Some(2048),
-            "per-request max_tokens must override the model default"
-        );
-
-        // Agent chat path (max_tokens None) falls back to the model default.
         let request = LanguageModelRequest {
             messages: vec![language_model::LanguageModelRequestMessage {
                 role: Role::User,
@@ -920,7 +898,7 @@ mod tests {
         assert_eq!(
             result.max_tokens,
             Some(524288),
-            "when max_tokens is None the model default is used as before"
+            "the capped model output budget must reach the request"
         );
     }
 
@@ -1016,7 +994,6 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1159,7 +1136,6 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1226,7 +1202,6 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

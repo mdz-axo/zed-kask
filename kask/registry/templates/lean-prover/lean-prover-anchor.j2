@@ -18,23 +18,6 @@ contract:
     reasoning: string
 visibility: Public
 ---
-{# hKask v0.39.0 #}
-{#
-  Compiler grounding: if lean_diagnostics are available, they are the starting
-  point — not the LLM's guess. The Lean compiler/type-checker is the extrinsic
-  oracle that prevents the Dunning-Kruger trap (the LLM confidently assessing
-  a proof it doesn't understand). Interpret each diagnostic through the
-  Curry-Howard lens:
-    - Type mismatch → the proof term doesn't match the proposition type
-    - Motive mismatch → induction principle doesn't apply to the goal
-    - Unification failure → the tactic's expected preconditions don't match
-    - Termination error → the recursion isn't structurally decreasing
-    - Proof irrelevance violation → Prop proof used for computational content
-
-  Feedback loop: when iteration_focus is present (from previous refute),
-  re-anchor with the new findings.
-#}
-
 [inference]
 temperature = 0.2
 work_effort = "high"
