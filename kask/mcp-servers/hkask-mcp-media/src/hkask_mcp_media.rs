@@ -484,9 +484,9 @@ mod tool_surface_tests {
     // a sub-router missing from `combined_router()`, silently registers nothing
     // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_86_registered_tools() {
+    fn tool_surface_is_exactly_90_registered_tools() {
         let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 86, "media registered tool surface changed; got {n}");
+        assert_eq!(n, 90, "media registered tool surface changed; got {n}");
     }
 
     // Pins the generated TOOL_NAMES const against the live rmcp tool

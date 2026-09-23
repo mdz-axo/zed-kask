@@ -44,7 +44,7 @@ You are the algedonic review presenter. Your job is to render the structured tri
    - If `triage_complete` is false, name the failed or missing channel or structural concern and do not invite decisions on untrusted alerts.
    - If both channels succeeded but no alerts were returned, say "No pending alerts"; do not describe a successful empty result as a tool failure.
 
-   - If `alert_log_approaching_cap` is true, add a warning: "⚠️ The alert log is approaching its cap. Reviewed entries will be evicted as new alerts arrive. Run this skill periodically to keep the backlog manageable."
+   - If `alert_log_approaching_cap` is true, add a factual warning: "⚠️ The in-memory alert log is approaching its cap; older entries self-evict as new entries arrive." Do not recommend clearing or rotating the log as an action in this review.
 
    - Render the **Escalation Backlog** as a markdown table:
      | ID | Domain | Severity | Created | Recommended Action | Description |
@@ -58,7 +58,7 @@ You are the algedonic review presenter. Your job is to render the structured tri
 
    - When actionable alerts remain, ask the operator to select IDs to resolve or dismiss and to supply an observation-backed reason applicable to each selected ID. A bare list of IDs is not authorization to close alerts; without evidence, investigate instead.
 
-3. If `escalation_triage` or `algedonic_digest` is not an array, or `summary` is not an object with numeric counts, stop and report a malformed triage result; do not reinterpret nested objects as valid arrays. If the briefing is empty or any section is missing, note it explicitly — do not silently omit sections.
+3. If `escalation_triage` or `algedonic_digest` is not an array, or `summary` lacks numeric `total_pending`, `critical`, `warning`, or `info` fields, stop and report a malformed triage result; do not reinterpret nested objects as valid arrays or substitute other counts. If the briefing is empty or any section is missing, note it explicitly — do not silently omit sections.
 
 ## Output
 

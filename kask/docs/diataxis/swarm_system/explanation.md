@@ -12,16 +12,18 @@ mds_categories: [trust, curation]
 
 The swarm system separates cloud authority, local execution, type admission,
 and result evaluation so each decision has one enforcement point. Its live MCP
-surface is 87 tools: 48 cloud tools and 39 non-cloud tools
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-754`).
+surface is 90 tools: 48 cloud tools and 42 non-cloud tools
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`, `tool_surface_tests`).
 
 ## Planner, execution, and feedback
 
 The planning skills produce and steer a delegation plan; the server executes
-that plan through local or cloud tools. Local execution returns measured output
-and optional deterministic verdicts, while the task board and event store keep
-progress and observed delegation seams available to the next planning pass
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2575-2669,2812-2899`).
+that plan through local or cloud tools. A local call with `swarm_id` first checks
+roster membership, reads the encrypted ordered member conversation, runs the
+member with its previous turns, then commits the successful turn. Without a
+swarm id, the local agent call is standalone. The task board and event store
+track progress and observed handoffs; neither is the member conversation
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`, `thread_store.rs`).
 
 ```mermaid
 flowchart TD
@@ -29,18 +31,22 @@ flowchart TD
     O --> D[Decide delegation or workflow]
     D --> A{Execution substrate}
     A -->|Cloud| C[Consent or authorized session]
-    A -->|Local| L[LocalSwarmRuntime]
+    A -->|Local scoped| T[Check roster and read ordered member turns]
+    A -->|Local standalone| L[LocalSwarmRuntime]
+    T --> L
     C --> R[Return cloud result or trust envelope]
     L --> V[Validate output and run evaluator]
-    R --> F[Feed result back to planning]
-    V --> F
+    V -->|Scoped success| J[Commit turn to swarm thread]
+    J --> F[Feed result back to planning]
+    R --> F
+    V -->|Standalone| F
     F --> S
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-030
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:606-925; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-638; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2575-2669; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2812-2899
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (dispatch_in_thread, swarm_execute_plan_local); kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (turns, append); kask/mcp-servers/hkask-mcp-swarm/src/scoped_dispatch_tests.rs (scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board)
 status: VERIFIED
 -->
 
@@ -58,10 +64,10 @@ separately derives the cloud subset from `cloud_swarm_router`
 compare both the total name set and cloud partition against the registered
 routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:751-790`).
 
-The 39-tool non-cloud complement is 32 local tools, four knowledge tools, and
+The 42-tool non-cloud complement is 35 local tools, four knowledge tools, and
 three A2A tools. `swarm_get_local_agent` supplies one-card detail and execution
 statistics; `swarm_workflow_check_local` validates a card's declared workflow
-before execution (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-795`).
+before execution (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`).
 
 ## Why port labels are registered types
 

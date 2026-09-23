@@ -67,6 +67,7 @@ You are the algedonic review triage synthesizer. Your job is to structure the al
    - **Escalation Backlog Triage**: table with columns: ID, Domain, Severity, Created, Recommended Action, Description
    - **Algedonic Event Digest**: table with columns: Domain, Event Count, Latest Severity
    - **Summary**: total pending, critical, warning, info counts
+   - Report observed cap pressure factually; this skill neither clears nor rotates the in-memory log. Do not recommend a log-maintenance action as the outcome of triage — the log self-evicts.
 
 7. Set `triage_complete` to `true` for two successful channels, including successful empty arrays (a no-alert review). Set it to `false` for a failed/missing channel or a broken/wiring-closed loop; identify the reason in `briefing`. Do not treat an unavailable `status_result` as proof of a healthy loop.
 

@@ -4,8 +4,9 @@
 //! mission, members}`. It mirrors an ABW workspace (created via
 //! `swarm_create_swarm`'s `POST /teams`) but lives on disk, costs nothing, and
 //! has no consent gate. Local delegation has no budget gate either — no
-//! local budget exists. Membership is just roster edits; agents themselves stay in
-//! `LocalAgentRegistry`.
+//! local budget exists. The registry owns the roster, while scoped delegation
+//! checks that roster and reads/writes the ordered conversation through
+//! `SwarmThreadStore`; agent cards stay in `LocalAgentRegistry`.
 //!
 //! Persistence mirrors `LocalAgentRegistry`: one JSON file per swarm under
 //! `<dir>/<swarm_id>/swarm.json`, reloaded from disk on every read so

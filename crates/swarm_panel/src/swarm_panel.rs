@@ -840,6 +840,7 @@ impl SwarmPanel {
         let entering_steer = mode == PanelMode::Steer && self.mode != PanelMode::Steer;
         self.mode = mode;
         if entering_steer {
+            self.refresh_thread_choices(cx);
             self.refresh_member_turns(cx);
         }
         // Entering a creation surface syncs its form target to the panel's

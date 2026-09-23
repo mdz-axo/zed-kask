@@ -269,7 +269,7 @@ impl SwarmServer {
         }
         let _guard = self
             .thread_store
-            .lock()
+            .lock(swarm_id)
             .await
             .map_err(map_local_swarm_error)?;
         let swarm = self
@@ -371,11 +371,6 @@ impl SwarmServer {
                     "swarm_id must be non-empty".to_string(),
                 ));
             }
-            let _guard = self
-                .thread_store
-                .lock()
-                .await
-                .map_err(map_local_swarm_error)?;
             let present = self
                 .local_swarms
                 .get_checked(&swarm_id)
@@ -407,11 +402,6 @@ impl SwarmServer {
         _parameters: Parameters<ListLocalSwarmsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_list_local_threads", async {
-            let _guard = self
-                .thread_store
-                .lock()
-                .await
-                .map_err(map_local_swarm_error)?;
             let ids = self
                 .thread_store
                 .list_thread_ids()

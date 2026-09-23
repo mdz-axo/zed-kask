@@ -15,6 +15,9 @@ use serde::Serialize;
 
 use crate::thread::{AgentMessageContent, Message};
 
+// Refuse an oversize export rather than silently truncating evidence or filling disk.
+const MAX_TRACE_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ToolTrace {
     pub(crate) run_id: String,
@@ -152,6 +155,38 @@ impl ToolTraceCapture {
     }
 }
 
+pub(crate) fn trace_directory() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_TRACE_DIR.with(|dir| dir.borrow().clone()) {
+        return path;
+    }
+    hkask_types::agent_paths::resolve_under_artifacts_dir(Path::new("agent-traces"))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_TRACE_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestTraceDirectoryGuard(Option<PathBuf>);
+
+#[cfg(test)]
+impl TestTraceDirectoryGuard {
+    pub(crate) fn scoped(path: PathBuf) -> Self {
+        Self(TEST_TRACE_DIR.with(|dir| dir.replace(Some(path))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestTraceDirectoryGuard {
+    fn drop(&mut self) {
+        TEST_TRACE_DIR.with(|dir| {
+            dir.replace(self.0.take());
+        });
+    }
+}
+
 /// Store sensitive raw arguments/results only on explicit request. Never overwrite a run.
 /// A pre-existing permissive directory is refused rather than silently disclosing contents.
 pub(crate) fn write_trace(trace: &ToolTrace, directory: &Path) -> Result<PathBuf> {
@@ -180,6 +215,10 @@ pub(crate) fn write_trace(trace: &ToolTrace, directory: &Path) -> Result<PathBuf
                 directory.display()
             );
         }
+        let bytes = serde_json::to_vec_pretty(trace)?;
+        if bytes.len() > MAX_TRACE_BYTES {
+            bail!("trace export exceeds {MAX_TRACE_BYTES} bytes; no trace was written");
+        }
         let path = directory.join(format!("{}.json", trace.run_id));
         let mut file = OpenOptions::new()
             .write(true)
@@ -187,15 +226,13 @@ pub(crate) fn write_trace(trace: &ToolTrace, directory: &Path) -> Result<PathBuf
             .mode(0o600)
             .open(&path)
             .with_context(|| format!("create trace {}", path.display()))?;
-        if let Err(error) = serde_json::to_writer_pretty(&mut file, trace) {
+        if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
             // A partial file must not masquerade as a complete trace.
             drop(file);
             std::fs::remove_file(&path)
                 .with_context(|| format!("remove incomplete trace {}", path.display()))?;
             return Err(error.into());
         }
-        file.flush()?;
-        file.sync_all()?;
         Ok(path)
     }
     #[cfg(not(unix))]
@@ -254,6 +291,52 @@ mod tests {
         assert_eq!(value["calls"][0]["outcome"], "completed");
         assert!(value["calls"][0]["elapsed_ms"].is_number());
         assert_eq!(value["final_answer"], "answer");
+        Ok(())
+    }
+
+    #[test]
+    fn private_export_round_trips_and_refuses_a_permissive_directory() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir()?;
+        let directory = root.path().join("agent-traces");
+        let trace =
+            ToolTraceCapture::new("test-session".into(), 0).finish(&[], Some("interrupted".into()));
+        let path = write_trace(&trace, &directory)?;
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        assert_eq!(saved["session_id"], "test-session");
+        assert_eq!(saved["completion_error"], "interrupted");
+        assert_eq!(saved["final_answer"], serde_json::Value::Null);
+        assert_eq!(saved["calls"], serde_json::json!([]));
+        assert_eq!(
+            std::fs::metadata(&directory)?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(
+            write_trace(&trace, &directory).is_err(),
+            "a run must never overwrite its trace"
+        );
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755))?;
+        let other = ToolTraceCapture::new("other-session".into(), 0).finish(&[], None);
+        assert!(
+            write_trace(&other, &directory).is_err(),
+            "permissive directory must fail closed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversize_export_fails_without_leaving_a_partial_file() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let directory = root.path().join("agent-traces");
+        let mut trace = ToolTraceCapture::new("large-session".into(), 0).finish(&[], None);
+        trace.final_answer = Some("x".repeat(MAX_TRACE_BYTES));
+        let error = write_trace(&trace, &directory).expect_err("oversize trace must fail");
+        assert!(error.to_string().contains("exceeds"), "{error}");
+        assert_eq!(std::fs::read_dir(&directory)?.count(), 0);
         Ok(())
     }
 }

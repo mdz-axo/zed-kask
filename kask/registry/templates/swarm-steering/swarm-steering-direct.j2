@@ -1,11 +1,10 @@
-{# goal: Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. #}
+{# goal: Turn a local swarm plan into one shared-thread swarm_execute_plan_local call, collect its LocalDelegateResult array, and feed it back to swarm-intelligence. #}
 [inference]
 contract:
   input:
     emitted_calls: array
     task: string
     swarm_id: string
-    credits_authorized: number
   output:
     steering_directive: object
     pre_flight: object
@@ -28,8 +27,7 @@ visibility: Public
 
   Anchored to PKO (the plan is a Procedure; the directive is the
   StepExecution sequence + result collection) and the Conant-Ashby Good
-  Regulator (the directive must model the swarm it steers: roster, plan,
-  credit budget).
+  Regulator (the directive must model the swarm it steers: roster and plan).
 #}
 
 [inference]
@@ -53,8 +51,6 @@ swarm-intelligence plan and feed the results back.
 {{ emitted_calls | tojson }}
 ```
 
-## Per-dispatch credit ceiling
-{{ credits_authorized }}
 
 ## Step 1 — Pre-flight checks
 
@@ -65,19 +61,9 @@ is ready:
   If any agent is missing, report `status: missing_agents` (list the missing
   agents) and stop — do not execute a partial plan.
 
-**Do NOT gate execution on the ledger balance.** Local delegation has no funding
-gate: local agents run on the operator's own substrate, so an unfunded — or
-negative — balance does not block anything. Requiring funds here would refuse a
-perfectly valid plan. Do not call `swarm_fund_local`, and do not report an
-`unfunded` status.
-
-You MAY still read `swarm_balance_local` and record it as informational context
-(it reports accumulated local spend, which may be negative). It is a cost signal,
-never a readiness condition.
-
-Record the pre-flight checks in `pre_flight` = { balance, agents_present,
-missing_agents }. `balance` is informational only; omit it (or record `null`) if
-the read fails — never substitute a zero.
+Confirm `swarm_id` resolves to a local swarm and every delegate is in its
+`members[]` roster. Record `pre_flight` = { agents_present, missing_agents }.
+Do not execute a partial plan when a member is missing.
 
 ## Step 2 — Execution sequence
 
@@ -89,18 +75,19 @@ execution_sequence is the input to that single tool call:
 ```json
 {
   "tool": "swarm/swarm_execute_plan_local",
+  "swarm_id": "<the local swarm id>",
   "delegations": [
     {
       "agent_name": "<the emitted call's agent>",
       "task": "<the task text for this delegation>",
-      "credits_authorized": "<min(the emitted call's credits_authorized, the per-dispatch ceiling)>",
+      "task_id": "<optional task board id>",
       "evaluator": { "evaluator": "contains|not_contains|regex", "spec": "<the deterministic check spec>" }
     }
   ]
 }
 ```
 
-The `evaluator` field is optional — omit it for open-ended tasks with no
+The `task_id` and `evaluator` fields are optional — omit the evaluator for open-ended tasks with no
 oracle (the tool leaves `task_success` null). When provided, the tool stamps
 `provenance: Deterministic` automatically. For a standalone single-delegation
 check, use `swarm_evaluate_local` instead.
@@ -118,7 +105,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_results` array that feeds back to swarm-intelligence:
 ```json
 {
-  "collect": "Call swarm_execute_plan_local with the delegations array. The tool returns { results: [LocalDelegateResult], total_cost, total_tokens, balance, failed, succeeded }. The results array is the delegate_results array — each entry has agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[], task_success (stamped by the tool when an evaluator was provided).",
+  "collect": "Call swarm_execute_plan_local with swarm_id and delegations. Use its results array as delegate_results. Each LocalDelegateResult has agent_id, response, model, tokens_used, latency_ms, tool_calls[], and optional task_success (stamped when an evaluator was provided).", 
   "task_success": "The tool stamps task_success automatically when an evaluator is provided in the delegation. When the task has no oracle (open-ended), omit the evaluator and the tool leaves task_success null. NEVER use an LLM to judge task_success — the tool's provenance is always 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3).",
   "array_field": "delegate_results",
   "shape": "LocalDelegateResult array (from swarm_execute_plan_local results)",
@@ -133,7 +120,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 {
   "re_invoke": "swarm-intelligence",
   "context": { "delegate_results": "<the collected array>", "steering_mode": "steering", "swarm_id": "<the swarm id>", "task": "<the task>" },
-  "purpose": "ORIENT attributes fault from delegate_results[].task_success (when stamped) and delegate_results[].tool_calls[].ok / executed_skills[].ok; fault_count accumulates; C6 reconfigures the most-blamed agent; the next plan closes the loop"
+  "purpose": "ORIENT attributes fault from delegate_results[].task_success (when stamped) and delegate_results[].tool_calls[].ok; fault_count accumulates; C6 reconfigures the most-blamed agent; the next plan closes the loop"
 }
 ```
 

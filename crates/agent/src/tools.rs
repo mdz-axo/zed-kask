@@ -267,6 +267,7 @@ tools! {
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
+    CuratorStatusTool,
     DeletePathTool,
     DiagnosticsTool,
     EditFileTool,
@@ -392,6 +393,21 @@ mod tests {
                  allowlist in assets/settings/default.json — `Thread::enabled_tools` \
                  silently drops it, so the model never sees it. Add it (true, or \
                  false for a deliberate disable)."
+            );
+        }
+    }
+
+    #[test]
+    fn curator_status_is_enabled_in_both_shipped_agent_profiles() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json must parse");
+        let profiles = &value["agent"]["profiles"];
+        for name in ["write", "ask"] {
+            assert_eq!(
+                profiles[name]["tools"]["curator_status"].as_bool(),
+                Some(true),
+                "{name} must expose the same read-only curator_status tool"
             );
         }
     }

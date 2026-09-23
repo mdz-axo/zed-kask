@@ -875,7 +875,8 @@ impl NativeAgent {
     ///
     /// This does NOT override the system prompt. Instead, it appends
     /// `curator_static_context` to the system prompt and registers the
-    /// `CuratorStatusTool` on each new thread.
+    /// Curator's action tools. The read-only `CuratorStatusTool` is shared
+    /// by all native agent sessions.
     ///
     /// The Zed Agent's coding instructions remain intact. The Curator
     /// gets all coding capabilities PLUS regulatory context and tools.
@@ -914,7 +915,11 @@ impl NativeAgent {
             )
         });
 
-        // Apply the Curator overlay: static context + curator tools.
+        // One read-only system-status tool for every native agent session.
+        // Curator-specific action tools remain behind the Curator overlay.
+        thread.update(cx, |thread, _| thread.add_tool(CuratorStatusTool));
+
+        // Apply the Curator overlay: static context + curator action tools.
         // This is NOT a system prompt override — the Zed Agent prompt stays.
         // The curator context is appended via `static_context`.
         // zed-kask: D2 — Curator agent wiring. See DIVERGENCE.md D2.
@@ -928,7 +933,6 @@ impl NativeAgent {
                 // turns would be ingested as user-perspective records and the
                 // curator would have no automatic recall.
                 thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
-                thread.add_tool(CuratorStatusTool);
                 thread.add_tool(CuratorDirectiveTool);
                 thread.add_tool(CuratorClearAlgedonicLogTool);
             });
@@ -3564,9 +3568,7 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
                     let trace = thread
                         .update(cx, |thread, _| thread.finish_on_demand_trace(error))
                         .context("No trace was active for the completed turn")?;
-                    let directory = hkask_types::agent_paths::resolve_under_artifacts_dir(
-                        std::path::Path::new("agent-traces"),
-                    );
+                    let directory = crate::tool_trace::trace_directory();
                     let path = cx
                         .background_spawn(async move {
                             crate::tool_trace::write_trace(&trace, &directory)
@@ -5871,6 +5873,110 @@ mod internal_tests {
         let trace = trace.expect("trace capture active during model request");
         assert_eq!(trace.session_id, session_id.to_string());
         drop(prompt_task);
+    }
+
+    #[gpui::test]
+    async fn traced_turn_exports_final_answer_and_normal_turn_does_not_export(
+        cx: &mut TestAppContext,
+    ) {
+        let run = async {
+            init_test(cx);
+            let temp = tempfile::tempdir()?;
+            let directory = temp.path().join("agent-traces");
+            let _override = crate::tool_trace::TestTraceDirectoryGuard::scoped(directory.clone());
+            let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            cx.run_until_parked();
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = Arc::new(FakeLanguageModel::default());
+            cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+            let prompt_task = cx.update(|cx| {
+                acp_thread::AgentSessionClientUserMessageIds::prompt(
+                    connection.as_ref(),
+                    ClientUserMessageId::new(),
+                    acp::PromptRequest::new(
+                        session_id.clone(),
+                        vec!["/trace check sustainable growth rate to net margin".into()],
+                    ),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let request = model
+                .pending_completions()
+                .pop()
+                .expect("traced model request");
+            let tool_use = language_model::LanguageModelToolUse {
+                id: "trace-tool-1".into(),
+                name: OntoAnchorTool::NAME.into(),
+                raw_input: json!({"term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}}).to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(json!({
+                    "term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}
+                })),
+                is_input_complete: true,
+                thought_signature: None,
+            };
+            model.send_completion_stream_event(
+                &request,
+                LanguageModelCompletionEvent::ToolUse(tool_use),
+            );
+            model.end_completion_stream(&request);
+            cx.run_until_parked();
+            let followup = model
+                .pending_completions()
+                .pop()
+                .expect("tool-result followup");
+            model.send_completion_stream_text_chunk(&followup, "traced answer");
+            model.end_completion_stream(&followup);
+            cx.run_until_parked();
+            prompt_task.await?;
+            let paths = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+            assert_eq!(paths.len(), 1);
+            let trace: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(paths[0].path())?)?;
+            assert_eq!(trace["final_answer"], "traced answer");
+            assert_eq!(trace["session_id"], session_id.to_string());
+            assert_eq!(trace["calls"].as_array().map(Vec::len), Some(1));
+            assert_eq!(trace["calls"][0]["name"], "onto_anchor");
+            assert_eq!(
+                trace["calls"][0]["input"]["relation_query"]["to"],
+                "net margin"
+            );
+            assert_eq!(trace["calls"][0]["outcome"], "completed");
+            assert!(trace["calls"][0]["elapsed_ms"].is_number());
+            let result: serde_json::Value = serde_json::from_str(
+                trace["calls"][0]["result_text"]
+                    .as_str()
+                    .expect("tool output text"),
+            )?;
+            assert_eq!(result["traversal"]["status"], "path_found");
+            assert_eq!(result["traversal"]["edges"][1]["to"], "net_margin");
+
+            let normal_task = cx.update(|cx| {
+                acp_thread::AgentSessionClientUserMessageIds::prompt(
+                    connection.as_ref(),
+                    ClientUserMessageId::new(),
+                    acp::PromptRequest::new(session_id, vec!["ordinary response".into()]),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let request = model
+                .pending_completions()
+                .pop()
+                .expect("ordinary model request");
+            model.send_completion_stream_text_chunk(&request, "normal answer");
+            model.end_completion_stream(&request);
+            cx.run_until_parked();
+            normal_task.await?;
+            assert_eq!(
+                std::fs::read_dir(&directory)?.count(),
+                1,
+                "ordinary turns must not create traces"
+            );
+            Ok::<(), anyhow::Error>(())
+        };
+        run.await.expect("native trace export and opt-in boundary");
     }
 
     #[gpui::test]
@@ -9171,6 +9277,25 @@ mod internal_tests {
         }
     }
 
+    /// Native sessions share the one read-only Curator status tool, while
+    /// directive issuance and log mutation stay scoped to Curator sessions.
+    #[gpui::test]
+    async fn test_native_session_reads_curator_status_without_curator_mutations(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.has_registered_tool("curator_status"));
+                assert!(!thread.has_registered_tool("curator_directive"));
+                assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
+            });
+        });
+    }
+
     /// Pin that Curator sessions register both the `curator_status` and
     /// `curator_directive` tools. The directive tool is the enforcement
     /// point for the CuratorDirective channel — without it, the
@@ -9231,8 +9356,7 @@ mod internal_tests {
                 );
                 assert!(
                     thread.has_registered_tool("curator_clear_algedonic_log"),
-                    "curator sessions must register curator_clear_algedonic_log — \
-                     without it the algedonic-review skill cannot clear reviewed alerts"
+                    "curator sessions retain the curator-only log-mutation tool"
                 );
             });
         });

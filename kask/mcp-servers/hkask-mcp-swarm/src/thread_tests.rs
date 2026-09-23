@@ -341,3 +341,26 @@ async fn malformed_roster_refuses_scoped_inference_instead_of_using_cached_membe
     assert_eq!(recorder.0.lock().expect("calls").len(), 0);
     Ok(())
 }
+
+#[tokio::test]
+async fn independent_swarms_do_not_wait_for_each_others_inference()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let store = crate::thread_store::SwarmThreadStore::new(
+        dir.path().join("threads.db").to_string_lossy().into_owned(),
+        "test-passphrase".into(),
+    );
+    let first = store.lock("first").await?;
+    let second =
+        tokio::time::timeout(std::time::Duration::from_secs(2), store.lock("second")).await??;
+    drop(second);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(30), store.lock("first"),)
+            .await
+            .is_err(),
+        "same swarm must wait for the first turn"
+    );
+    drop(first);
+    assert!(store.lock("../outside").await.is_err());
+    Ok(())
+}

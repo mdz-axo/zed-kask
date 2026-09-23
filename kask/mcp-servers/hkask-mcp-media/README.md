@@ -261,17 +261,36 @@ silently using stale source text or inventing timestamps. Reduct can re-align su
 edits server-side; local re-transcription/re-alignment remains the honest capability
 gap. The immutable source bundle remains available for audit. Local educt never
 uploads to Reduct or silently falls back from a cloud request. The separate
-`reduct_connection_status` tool reports whether `REDUCT_API_KEY` reached this
-media child without contacting Reduct. `reduct_connection_probe` makes a
-read-only project request without returning its body; `reduct_projects_snapshot`
-returns at most 100 project IDs/titles from the provider's project map (no
-claim of complete pagination). The live keychain-based probe received HTTP 200
-on 2026-09-23; the API reference still redirected to login (HTTP 302).
-Enter/reset the key in Settings → Kask → Data Services (Reduct.video); the
-keychain write/delete triggers an MCP credential refresh. No cloud upload,
-transcript, composition, or editing endpoint has been connected; the public API
-overview does not specify their contracts. Cloud requests never silently fall
-back to educt.
+`reduct_connection_status` reports key delivery without contacting Reduct;
+`reduct_connection_probe` makes a read-only project request without returning
+its body. The `reduct_projects_snapshot` / `reduct_recordings_snapshot` tools
+return bounded provider-supplied ID/title views (server-side pagination is
+unknown). `reduct_recording_status` and `reduct_recording_transcript` read the
+status and JSON/TXT transcript of an existing recording. The logged-in v3 API
+reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
+header, root URL, these recording paths, and the mutating calls below. A live
+OS-keychain-based test retrieved a project, project-scoped recordings, recording
+status, and JSON/TXT transcripts without logging or printing private content.
+
+The same excerpt specifies `POST /project/{project_id}/recording` with JSON
+`{"title": ...}` returning a `recording` ID, and `POST .../media-import`
+with JSON `{"url": ...}` returning `media_ids`. `reduct_create_recording` and
+`reduct_import_media` implement those calls, and `reduct_upload_gallery_media`
+uses the specified raw `POST .../media-upload?filename=...` contract returning
+`media_id`. Upload requires an indexed audio/video Asset with an unchanged
+SHA-256 and a nonempty regular file at most 128 MiB; the provider receives
+no arbitrary local path. POST timeouts or malformed acknowledgements state
+that the mutation **may have succeeded** and require inspection before retry.
+These three cloud mutations have fixture/contract tests but have **not** been
+run against the live workspace. They are never implicit fallbacks from educt.
+
+Reel creation/blocks/strikethroughs, highlights, redactions, publishing, media
+download and transcript correction remain **unimplemented**: the pasted API
+index listed their categories but omitted the expanded endpoint request/response
+schemas needed to send safe writes. Reduct's documented warnings apply:
+DELETE is irreversible, POST can overwrite named fields, and audio redaction
+through the API does not redact transcript text. Enter/reset the key in
+Settings → Kask → Data Services; writes/deletes refresh the media MCP child.
 
 ## Configuration
 

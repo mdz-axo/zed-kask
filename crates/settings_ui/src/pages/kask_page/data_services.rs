@@ -99,7 +99,7 @@ fn render_data_service_row(
             "Stored in the keychain under {credential_url}, or set {env_var}. \
              Key presence does not verify Reduct access; use reduct_connection_status \
              in the Media panel to check delivery to the media server. \
-             Project reads are available in Media; cloud transcript and editing operations are not yet connected."
+             Media offers project, recording and transcript reads plus explicit cloud uploads/imports. Reel editing and redaction are not connected."
         )
     } else {
         format!(

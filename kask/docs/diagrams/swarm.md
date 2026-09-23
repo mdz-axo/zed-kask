@@ -419,50 +419,38 @@ status: VERIFIED
 
 ## Swarm Steering Loop
 
-The steering loop closes the C5/C6 feedback boundary. The swarm-intelligence
-cascade plans (emits `emitted_calls`); the executor (the Kask Curator in
-steering mode, or the operator in advisory mode) runs the delegations via
-`swarm_delegate_local`, collects `LocalDelegateResult` objects, and feeds
-them back as `delegate_results` on the next swarm-intelligence invocation —
-activating C5 (fault attribution from `tool_calls[].ok`/`executed_skills[].ok`)
-and C6 (reconfigure the most-blamed agent). The `swarm-steering` skill
-codifies the execute-and-feed-back directive. Verified current.
+The Curator can execute a plan with `swarm_execute_plan_local` and feed its
+results back to swarm-intelligence. With `swarm_id`, each roster member reads
+preceding committed turns and appends its response to the encrypted member
+conversation; the task board separately records progress. Standalone calls
+without `swarm_id` do not enter the member conversation. The feedback signal
+can include deterministic `task_success` and `tool_calls`; the current
+`LocalDelegateResult` does not provide `executed_skills`.
 
 ```mermaid
 sequenceDiagram
     participant Curator as Kask Curator
     participant SI as swarm-intelligence
-    participant SS as swarm-steering
     participant Swarm as hkask-mcp-swarm
-
-    Note over Curator,Swarm: advisory mode operator executes manually; steering mode Curator executes
-    Curator->>SI: invoke with task + swarm_id + steering_mode
-    SI->>SI: 10-step PDCA cascade plans
-    SI-->>Curator: emitted_calls plan + steering_directive
-
-    alt steering mode
-        Curator->>SS: invoke with emitted_calls
-        SS-->>Curator: steering directive execution_sequence + collection_shape
-        loop each delegate emitted call
-            Curator->>Swarm: swarm_delegate_local agent task credits
-            Swarm->>Swarm: Rung 4 Binding check_bind<br/>Rung 1-2 admission already passed at authoring
-            Swarm->>Swarm: skill cascade + tool loop + ledger debit
-            Swarm-->>Curator: LocalDelegateResult agent_id response tool_calls bind_matched
-        end
-        Curator->>Curator: collect LocalDelegateResults into delegate_results array
-        Curator->>SI: re-invoke with delegate_results + steering_mode
-        Note right of SI: ORIENT attributes fault C5; fault_count accumulates; C6 reconfigures
-        SI->>SI: next PDCA iteration with real telemetry
-    else advisory mode
-        Curator-->>Curator: plan is final output; operator executes manually
-        Note over Curator: operator feeds delegate_results back on next invocation
+    participant Thread as Encrypted member conversation
+    Curator->>SI: plan for selected swarm
+    SI-->>Curator: emitted_calls
+    Curator->>Swarm: swarm_execute_plan_local with swarm_id and delegations
+    loop each roster member in order
+        Swarm->>Swarm: check membership
+        Swarm->>Thread: read prior committed turns
+        Thread-->>Swarm: ordered turns
+        Swarm->>Swarm: run member with prior turns and current task
+        Swarm->>Thread: append successful turn
     end
+    Swarm-->>Curator: delegate_results and task board status
+    Curator->>SI: re-invoke with delegate_results
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-010
-verified_date: 2026-08-28
-verified_against: .agents/skills/swarm-steering/SKILL.md; .agents/skills/swarm-intelligence/SKILL.md (L67-76, L147, L156, L184); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind L721); swarm_delegate_local registered in src/local_tools.rs
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (dispatch_in_thread, swarm_execute_plan_local); kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (turns, append); kask/mcp-servers/hkask-mcp-swarm/src/scoped_dispatch_tests.rs (scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board)
 status: VERIFIED
 -->
 

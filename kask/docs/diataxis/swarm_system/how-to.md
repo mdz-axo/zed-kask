@@ -53,50 +53,50 @@ status: VERIFIED
 4. For asynchronous workspace work, inspect `swarm_run_status`
    (`kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:926-977`).
 
-## Inspect and delegate to a local agent
+## Delegate to a local swarm member
 
-1. Use `swarm_list_local_agents` to discover cards
-   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:640-701`).
-2. Use `swarm_get_local_agent` before relying on a remembered model, prompt,
-   port, or execution statistic
-   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-747`).
-3. Call `swarm_delegate_local` with the agent name and task
-   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-337`).
-4. If the card has deterministic evaluators, read the returned task-success
-   verdict. Otherwise, call `swarm_evaluate_local`
-   (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2575-2615`).
+1. Select a local swarm and inspect its roster with `swarm_get_local_swarm`.
+2. Call `swarm_delegate_in_thread_local` with `swarm_id`, a roster member's
+   `agent_name`, and the task. Nonmembers are refused before inference. The
+   next member receives the earlier committed turns as ordered chat messages.
+3. Read the same durable conversation with `swarm_thread_local`; Steer shows
+   the selected local swarm's turns beside the Curator conversation. Use
+   `swarm_list_local_threads` to find retained history after swarm deletion.
+   A cloned swarm begins with an empty conversation.
 
-Local calls require no ABW consent token. They remain subject to the local
-runtime's declared tool and output-contract checks
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:135-150`).
+`swarm_delegate_local` is a **standalone** agent call: it accepts an agent
+name and task without a swarm and neither reads nor writes member turns.
+Local calls require no ABW consent token. Declared tool and output-contract
+checks still apply (`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs`).
 
 ## Run a declared workflow safely
 
 1. Inspect the agent with `swarm_get_local_agent`.
 2. Call `swarm_workflow_check_local`; do not start execution if the declared
    workflow is invalid (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:748-795`).
-3. Call `swarm_run_workflow_local`. It executes the declared stages and records
-   observed handoff seams (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:797-909`).
+3. Call `swarm_run_workflow_local` with `swarm_id` when its stages must
+   participate in that swarm's ordered conversation; omitting it runs a
+   standalone workflow. The tool also records observed handoff seams.
 4. Use `swarm_observed_seams_local` to compare observed handoffs with declared
    ports (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:911-1014`).
 
 ## Fan out, pipeline, or execute a plan
 
-- Use `swarm_fanout_local` for independent local tasks; `parallel` selects
-  concurrent execution (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:339-518`).
-- Use `swarm_pipeline_local` when each step consumes `{prev_output}` from the
-  preceding step (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:519-638`).
-- Use `swarm_execute_plan_local` for a prepared delegation list with optional
-  deterministic evaluators (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2616-2810`).
-- Read persistent per-swarm progress with `swarm_task_board`
-  (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2812-2846`).
+- `swarm_fanout_local`, `swarm_pipeline_local`, and `swarm_run_workflow_local`
+  use the shared conversation when `swarm_id` is supplied; without it they
+  run standalone. Scoped fanout is ordered, so `parallel: true` with
+  `swarm_id` is rejected instead of silently changing its meaning.
+- `swarm_execute_plan_local` uses the shared conversation when `swarm_id` is
+  supplied; it also records task progress on the swarm's task board.
+  Omitting `swarm_id` keeps execution standalone.
+- `swarm_task_board` reports progress and verdicts, **not** the conversation.
 
 ## Measure agent or swarm reliability
 
 Use `swarm_eval_agent_local` for repeated single-agent rollouts and
-`swarm_eval_suite_local` for multi-delegation cases. Both apply deterministic
-evaluators and bounded request sizes
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2848-3138`).
+`swarm_eval_suite_local` for multi-delegation cases. These are standalone
+evaluations, not member conversation turns. The suite's optional `swarm_id`
+selects task-board progress only; it does not admit members to the thread.
 
 ## Move agents and swarms between local and cloud
 

@@ -45,8 +45,9 @@
 //! `swarm_workspace_annotate`, `swarm_workspace_list_annotations`,
 //! `swarm_workspace_list_files`, `swarm_workspace_read_file`,
 //! `swarm_workspace_write_file`.
-//! Local substrate tools (37): local execution `swarm_delegate_local`,
+//! Local substrate tools: local execution `swarm_delegate_local`,
 //! `swarm_delegate_in_thread_local`, `swarm_thread_local`,
+//! `swarm_list_local_threads`,
 //! `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_execute_plan_local`,
 //! `swarm_evaluate_local`, `swarm_eval_suite_local`, `swarm_eval_agent_local`,
 //! `swarm_task_board`; registry `swarm_list_local_agents`,

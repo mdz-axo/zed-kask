@@ -1,8 +1,8 @@
-//! Reduct cloud credential ingress and an explicitly experimental read-only probe.
+//! Reduct cloud API tools. Local educt remains a separate implementation.
 use crate::*;
 
-// Pipedream's public Reduct connector shows this exact project-read URL as an
-// API proxy target. It is not a substitute for Reduct's login-gated API spec.
+// The operator-provided Reduct v3 API introduction pins the API root and
+// X-Auth-Key; Pipedream's public connector pins the project-read URL.
 const API_ROOT: &str = "https://app.reduct.video/api/v3/";
 const PROJECT_PROBE_URL: &str = "https://app.reduct.video/api/v3/project";
 
@@ -20,6 +20,11 @@ fn validate_reduct_id(name: &str, id: &str) -> Result<(), McpToolError> {
     Ok(())
 }
 
+fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    Ok(format!("{API_ROOT}project/{project_id}"))
+}
+
 fn recording_read_url(
     project_id: &str,
     recording_id: &str,
@@ -35,6 +40,115 @@ fn recording_read_url(
     Ok(format!(
         "{API_ROOT}project/{project_id}/recording/{recording_id}/{leaf}"
     ))
+}
+
+fn recording_create_url(project_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    Ok(format!("{API_ROOT}project/{project_id}/recording"))
+}
+
+fn media_import_url(project_id: &str, recording_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("recording_id", recording_id)?;
+    Ok(format!(
+        "{API_ROOT}project/{project_id}/recording/{recording_id}/media-import"
+    ))
+}
+
+fn media_upload_url(
+    project_id: &str,
+    recording_id: &str,
+    filename: &str,
+) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("recording_id", recording_id)?;
+    if filename.is_empty()
+        || filename.len() > 255
+        || filename
+            .chars()
+            .any(|ch| ch.is_control() || ch == '/' || ch == '\\')
+    {
+        return Err(McpToolError::invalid_argument(
+            "media upload filename must be 1–255 bytes without path separators or control characters",
+        ));
+    }
+    let mut url = reqwest::Url::parse(&format!(
+        "{API_ROOT}project/{project_id}/recording/{recording_id}/media-upload"
+    ))
+    .map_err(|_| McpToolError::internal("Reduct upload URL is malformed"))?;
+    url.query_pairs_mut().append_pair("filename", filename);
+    Ok(url.into())
+}
+
+fn validate_indexed_upload_bytes(
+    expected_hash: &str,
+    expected_len: u64,
+    bytes: &[u8],
+) -> Result<(), McpToolError> {
+    use sha2::Digest;
+    if bytes.len() as u64 != expected_len
+        || format!("{:x}", sha2::Sha256::digest(bytes)) != expected_hash
+    {
+        return Err(McpToolError::failed_precondition(
+            "Indexed media bytes changed; re-index before cloud upload",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_media_upload_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct media upload may have succeeded but returned invalid JSON; inspect before retrying")
+    })?;
+    let id = response.get("media_id").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct media upload may have succeeded but omitted media_id; inspect before retrying")
+    })?;
+    validate_reduct_id("media_id", id).map_err(|_| {
+        McpToolError::failed_precondition("Reduct media upload returned an unusable media ID")
+    })?;
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "media_id": id, "upload_state": "submitted; check recording status"}),
+    )
+}
+
+fn parse_recording_create_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct recording creation may have succeeded but returned invalid JSON; inspect before retrying")
+    })?;
+    let id = response.get("recording").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct recording creation may have succeeded but omitted recording ID; inspect before retrying")
+    })?;
+    validate_reduct_id("recording_id", id).map_err(|_| {
+        McpToolError::failed_precondition(
+            "Reduct recording creation returned an unusable ID; inspect before retrying",
+        )
+    })?;
+    Ok(serde_json::json!({"source": "reduct_cloud", "recording_id": id}))
+}
+
+fn parse_media_import_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct media import may have succeeded but returned invalid JSON; inspect before retrying")
+    })?;
+    let media_ids = response.get("media_ids").and_then(serde_json::Value::as_array).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct media import may have succeeded but omitted media_ids; inspect before retrying")
+    })?;
+    if media_ids.is_empty() {
+        return Err(McpToolError::failed_precondition(
+            "Reduct media import returned no media IDs; inspect the recording before retrying",
+        ));
+    }
+    for id in media_ids {
+        let id = id.as_str().ok_or_else(|| {
+            McpToolError::failed_precondition("Reduct media import returned an unusable media ID")
+        })?;
+        validate_reduct_id("media_id", id).map_err(|_| {
+            McpToolError::failed_precondition("Reduct media import returned an unusable media ID")
+        })?;
+    }
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "media_ids": media_ids, "import_state": "submitted; check recording status"}),
+    )
 }
 
 fn parse_transcript_body(body: &[u8], format: &str) -> Result<serde_json::Value, McpToolError> {
@@ -65,10 +179,10 @@ fn classify_reduct_status(
     match status.as_u16() {
         200 => Ok(()),
         400 => Err(McpToolError::invalid_argument(format!(
-            "Reduct {operation} returned HTTP 400 (invalid path or schema); no cloud action was completed."
+            "Reduct {operation} returned HTTP 400 (invalid path or schema); inspect provider state before retrying a mutation."
         ))),
         401 | 403 => Err(McpToolError::permission_denied(format!(
-            "Reduct {operation} returned HTTP {status}; check API key or workspace API access."
+            "Reduct {operation} returned HTTP {status}; check REDUCT_API_KEY or workspace API access."
         ))),
         404 => Err(McpToolError::not_found(format!(
             "Reduct {operation} returned HTTP 404; resource or endpoint not found."
@@ -88,11 +202,16 @@ fn classify_reduct_status(
     }
 }
 
-async fn read_response(
+fn authorized_client(
     key: Option<&str>,
-    url: &str,
-    operation: &str,
-) -> Result<reqwest::Response, McpToolError> {
+) -> Result<(reqwest::Client, reqwest::header::HeaderValue), McpToolError> {
+    authorized_client_with_timeout(key, std::time::Duration::from_secs(15))
+}
+
+fn authorized_client_with_timeout(
+    key: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<(reqwest::Client, reqwest::header::HeaderValue), McpToolError> {
     connection_status(key)?;
     let key = key.ok_or_else(|| McpToolError::permission_denied("REDUCT_API_KEY is missing"))?;
     let header = reqwest::header::HeaderValue::from_str(key).map_err(|_| {
@@ -101,9 +220,18 @@ async fn read_response(
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect_policy(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(timeout)
         .build()
         .map_err(|_| McpToolError::internal("Could not initialize Reduct HTTP client"))?;
+    Ok((client, header))
+}
+
+async fn read_response(
+    key: Option<&str>,
+    url: &str,
+    operation: &str,
+) -> Result<reqwest::Response, McpToolError> {
+    let (client, header) = authorized_client(key)?;
     let response = client
         .get(url)
         .header("x-auth-key", header)
@@ -116,6 +244,28 @@ async fn read_response(
             ))
         })?;
     classify_reduct_status(response.status(), operation)?;
+    Ok(response)
+}
+
+async fn post_json_response(
+    key: Option<&str>,
+    url: &str,
+    payload: serde_json::Value,
+    operation: &str,
+) -> Result<reqwest::Response, McpToolError> {
+    let (client, header) = authorized_client(key)?;
+    let response = client.post(url).header("x-auth-key", header).json(&payload)
+        .send().await.map_err(|error| McpToolError::unavailable(format!(
+            "Reduct {operation} transport failed: {}; request may have succeeded; inspect before retrying",
+            error.without_url()
+        )))?;
+    if !matches!(response.status().as_u16(), 200 | 201) {
+        classify_reduct_status(response.status(), operation)?;
+        return Err(McpToolError::failed_precondition(format!(
+            "Reduct {operation} returned HTTP {}; inspect before retrying",
+            response.status()
+        )));
+    }
     Ok(response)
 }
 
@@ -213,6 +363,118 @@ async fn projects_snapshot(
     parse_project_snapshot(&body, limit)
 }
 
+fn parse_recording_snapshot(
+    body: &[u8],
+    project_id: &str,
+    limit: usize,
+) -> Result<serde_json::Value, McpToolError> {
+    if !(1..=100).contains(&limit) {
+        return Err(McpToolError::invalid_argument(
+            "limit must be between 1 and 100",
+        ));
+    }
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct project detail was not valid JSON")
+    })?;
+    let recordings = response
+        .get(project_id)
+        .and_then(|project| project.get("recordings"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            McpToolError::failed_precondition(
+                "Reduct project detail lacks the observed recordings map",
+            )
+        })?;
+    let mut ordered: Vec<_> = recordings.iter().collect();
+    ordered.sort_by_key(|(id, _)| *id);
+    let selected = ordered
+        .into_iter()
+        .take(limit)
+        .map(|(id, recording)| {
+            let title = recording
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    McpToolError::failed_precondition("Reduct recording lacks a title")
+                })?;
+            Ok(serde_json::json!({"id": id, "title": title}))
+        })
+        .collect::<Result<Vec<_>, McpToolError>>()?;
+    Ok(serde_json::json!({
+        "source": "reduct_cloud", "project_id": project_id,
+        "provider_returned_count": recordings.len(), "returned_count": selected.len(),
+        "truncated": selected.len() < recordings.len(), "pagination": "unknown",
+        "recordings": selected
+    }))
+}
+
+async fn recordings_snapshot(
+    key: Option<&str>,
+    project_id: &str,
+    limit: usize,
+) -> Result<serde_json::Value, McpToolError> {
+    if !(1..=100).contains(&limit) {
+        return Err(McpToolError::invalid_argument(
+            "limit must be between 1 and 100",
+        ));
+    }
+    let url = project_detail_url(project_id)?;
+    let response = read_response(key, &url, "project detail").await?;
+    let body = read_bounded(response, 2 * 1024 * 1024).await?;
+    parse_recording_snapshot(&body, project_id, limit)
+}
+
+async fn create_recording(
+    key: Option<&str>,
+    project_id: &str,
+    title: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = recording_create_url(project_id)?;
+    if title.trim().is_empty() || title.len() > 512 || title.chars().any(char::is_control) {
+        return Err(McpToolError::invalid_argument(
+            "recording title must be nonempty, at most 512 bytes, and contain no control characters",
+        ));
+    }
+    let response = post_json_response(
+        key,
+        &url,
+        serde_json::json!({"title": title}),
+        "recording creation",
+    )
+    .await?;
+    let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
+        McpToolError::failed_precondition(format!("Reduct recording creation may have succeeded, but its acknowledgement was unreadable: {error}"))
+    })?;
+    parse_recording_create_response(&body)
+}
+
+async fn import_media(
+    key: Option<&str>,
+    project_id: &str,
+    recording_id: &str,
+    source_url: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    connection_status(key)?;
+    let url = media_import_url(project_id, recording_id)?;
+    if source_url.len() > 4096 {
+        return Err(McpToolError::invalid_argument(
+            "media import URL exceeds 4096 bytes",
+        ));
+    }
+    validate_tool_url_with_dns(source_url).await?;
+    let response = post_json_response(
+        key,
+        &url,
+        serde_json::json!({"url": source_url}),
+        "media import",
+    )
+    .await?;
+    let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
+        McpToolError::failed_precondition(format!("Reduct media import may have succeeded, but its acknowledgement was unreadable: {error}"))
+    })?;
+    parse_media_import_response(&body)
+}
+
 async fn recording_status(
     key: Option<&str>,
     project_id: &str,
@@ -265,6 +527,33 @@ struct ReductProjectsRequest {
     limit: usize,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductRecordingsRequest {
+    project_id: String,
+    limit: usize,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductCreateRecordingRequest {
+    project_id: String,
+    title: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductImportMediaRequest {
+    project_id: String,
+    recording_id: String,
+    url: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductUploadMediaRequest {
+    project_id: String,
+    recording_id: String,
+    /// Stable ID of an indexed gallery video/audio asset; never an arbitrary path.
+    gallery_asset_id: String,
+}
+
 fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolError> {
     if key.is_none_or(|key| key.trim().is_empty()) {
         return Err(McpToolError::permission_denied(
@@ -275,7 +564,7 @@ fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolErro
         "credential": "configured",
         "provider_connection": "not_checked",
         "cloud_editing": "not_available",
-        "note": "The API key reached the media MCP child; no Reduct request has been made. Project reads are available separately."
+        "note": "The API key reached the media MCP child; this call did not contact Reduct. Use the separate read or explicit ingest tools to make cloud requests."
     }))
 }
 
@@ -310,6 +599,147 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "reduct_projects_snapshot", async {
             projects_snapshot(self.reduct_api_key.as_deref(), limit, PROJECT_PROBE_URL).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "List up to limit (1–100) recording IDs and titles from an existing Reduct project. Only returns the provider-supplied subset; no pagination claim."
+    )]
+    pub async fn reduct_recordings_snapshot(
+        &self,
+        Parameters(ReductRecordingsRequest { project_id, limit }): Parameters<
+            ReductRecordingsRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_recordings_snapshot", async {
+            recordings_snapshot(self.reduct_api_key.as_deref(), &project_id, limit).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a Reduct cloud recording in an existing project (POST title). This mutates the Reduct workspace; returns the provider's recording ID. Never creates a local educt transcript."
+    )]
+    pub async fn reduct_create_recording(
+        &self,
+        Parameters(ReductCreateRecordingRequest { project_id, title }): Parameters<
+            ReductCreateRecordingRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_create_recording", async {
+            create_recording(self.reduct_api_key.as_deref(), &project_id, &title).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Submit a public URL to Reduct to import video or audio into an existing recording. This mutates the cloud workspace and causes Reduct to fetch the URL. Returns media IDs as submitted, not a completed transcription; check recording status."
+    )]
+    pub async fn reduct_import_media(
+        &self,
+        Parameters(ReductImportMediaRequest {
+            project_id,
+            recording_id,
+            url,
+        }): Parameters<ReductImportMediaRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_import_media", async {
+            import_media(
+                self.reduct_api_key.as_deref(),
+                &project_id,
+                &recording_id,
+                &url,
+            )
+            .await
+        })
+        .await
+    }
+
+    /// Upload only an indexed video/audio asset whose bytes still match its
+    /// gallery identity. A replaced file must be re-indexed before transfer.
+    async fn upload_gallery_media(
+        &self,
+        project_id: &str,
+        recording_id: &str,
+        gallery_asset_id: &str,
+    ) -> Result<serde_json::Value, McpToolError> {
+        connection_status(self.reduct_api_key.as_deref())?;
+        let gallery = self.access_gallery().map_err(map_media_error)?;
+        let asset = self
+            .gallery_store
+            .get_by_id(&gallery.gallery_id, gallery_asset_id)
+            .map_err(map_gallery_store_error)?;
+        if asset.missing || !matches!(asset.media_type.as_str(), "video" | "audio") {
+            return Err(McpToolError::failed_precondition(
+                "Reduct upload requires an available indexed video or audio asset",
+            ));
+        }
+        let original = std::path::Path::new(&asset.absolute_path);
+        let path = tokio::fs::canonicalize(original)
+            .await
+            .map_err(|_| McpToolError::not_found("Indexed media file no longer exists"))?;
+        if path != original {
+            return Err(McpToolError::failed_precondition(
+                "Indexed media path changed; re-index before cloud upload",
+            ));
+        }
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| McpToolError::not_found("Indexed media file cannot be read"))?;
+        const MAX_UPLOAD_BYTES: u64 = 128 * 1024 * 1024;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_UPLOAD_BYTES {
+            return Err(McpToolError::failed_precondition(
+                "Cloud upload accepts regular nonempty gallery media up to 128 MiB; use Reduct media-import for larger remote files",
+            ));
+        }
+        let filename = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .ok_or_else(|| McpToolError::invalid_argument("Indexed media filename is not UTF-8"))?;
+        let url = media_upload_url(project_id, recording_id, filename)?;
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|_| McpToolError::unavailable("Indexed media file could not be read"))?;
+        validate_indexed_upload_bytes(&asset.hash, metadata.len(), &bytes)?;
+        let (client, header) = authorized_client_with_timeout(
+            self.reduct_api_key.as_deref(),
+            std::time::Duration::from_secs(300),
+        )?;
+        let response = client.post(url).header("x-auth-key", header).body(bytes).send().await
+            .map_err(|error| McpToolError::unavailable(format!(
+                "Reduct media upload transport failed: {}; upload may have succeeded; inspect before retrying",
+                error.without_url()
+            )))?;
+        if !matches!(response.status().as_u16(), 200 | 201) {
+            classify_reduct_status(response.status(), "media upload")?;
+            return Err(McpToolError::failed_precondition(format!(
+                "Reduct media upload returned HTTP {}; inspect before retrying",
+                response.status()
+            )));
+        }
+        let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
+            McpToolError::failed_precondition(format!(
+                "Reduct upload may have succeeded, but its acknowledgement was unreadable: {error}"
+            ))
+        })?;
+        parse_media_upload_response(&body)
+    }
+
+    #[tool(
+        description = "Upload an indexed gallery video/audio asset (up to 128 MiB) to an existing Reduct recording. Mutates the cloud workspace, verifies file hash before transfer, and reports submission rather than completed transcription. Never uploads an arbitrary filesystem path."
+    )]
+    pub async fn reduct_upload_gallery_media(
+        &self,
+        Parameters(ReductUploadMediaRequest {
+            project_id,
+            recording_id,
+            gallery_asset_id,
+        }): Parameters<ReductUploadMediaRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_upload_gallery_media", async {
+            self.upload_gallery_media(&project_id, &recording_id, &gallery_asset_id)
+                .await
         })
         .await
     }
@@ -358,11 +788,6 @@ impl MediaServer {
 mod tests {
     use super::*;
 
-    fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
-        validate_reduct_id("project_id", project_id)?;
-        Ok(format!("{API_ROOT}project/{project_id}"))
-    }
-
     #[test]
     fn missing_key_is_permission_denied_not_local_fallback() {
         let error = connection_status(None).expect_err("missing key must be visible");
@@ -386,6 +811,71 @@ mod tests {
         assert!(parse_project_snapshot(br#"{"other": []}"#, 1).is_err());
         assert!(parse_project_snapshot(br#"{"project":{"p1":{}}}"#, 1).is_err());
         assert!(parse_project_snapshot(body, 0).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn changed_gallery_bytes_are_refused_before_upload() -> Result<(), McpToolError> {
+        use sha2::Digest;
+        let hash = format!("{:x}", sha2::Sha256::digest(b"original"));
+        validate_indexed_upload_bytes(&hash, 8, b"original")?;
+        assert!(validate_indexed_upload_bytes(&hash, 8, b"modified").is_err());
+        assert!(validate_indexed_upload_bytes(&hash, 7, b"original").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn documented_binary_upload_contract_encodes_filename_and_requires_media_id()
+    -> Result<(), McpToolError> {
+        assert_eq!(
+            media_upload_url("p1", "r2", "meeting clip.mp4")?,
+            "https://app.reduct.video/api/v3/project/p1/recording/r2/media-upload?filename=meeting+clip.mp4"
+        );
+        assert!(media_upload_url("p1", "r2", "").is_err());
+        let uploaded = parse_media_upload_response(br#"{"media_id":"m1"}"#)?;
+        assert_eq!(uploaded["media_id"], "m1");
+        assert_eq!(
+            uploaded["upload_state"],
+            "submitted; check recording status"
+        );
+        assert!(parse_media_upload_response(br#"{}"#).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn documented_mutation_contracts_validate_ids_and_acknowledgements() -> Result<(), McpToolError>
+    {
+        assert_eq!(
+            recording_create_url("p1")?,
+            "https://app.reduct.video/api/v3/project/p1/recording"
+        );
+        assert_eq!(
+            media_import_url("p1", "r2")?,
+            "https://app.reduct.video/api/v3/project/p1/recording/r2/media-import"
+        );
+        assert!(media_import_url("p1", "../private").is_err());
+        let created = parse_recording_create_response(br#"{"recording":"r2"}"#)?;
+        assert_eq!(created["recording_id"], "r2");
+        let imported = parse_media_import_response(br#"{"media_ids":["m1","m2"]}"#)?;
+        assert_eq!(imported["media_ids"][0], "m1");
+        assert!(parse_recording_create_response(br#"{"recording":{}}"#).is_err());
+        assert!(parse_media_import_response(br#"{"media_ids":"m1"}"#).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn recording_snapshot_projects_ids_and_titles_from_project_detail() -> Result<(), McpToolError>
+    {
+        let body = br#"{"p1":{"recordings":{"r2":{"title":"Second","member":["secret"]},"r1":{"title":"First","description":"private"}}}}"#;
+        let result = parse_recording_snapshot(body, "p1", 1)?;
+        assert_eq!(result["provider_returned_count"], 2);
+        assert_eq!(result["recordings"][0]["id"], "r1");
+        assert_eq!(result["recordings"][0]["title"], "First");
+        assert_eq!(result["truncated"], true);
+        assert!(!result.to_string().contains("secret"));
+        assert!(!result.to_string().contains("private"));
+        assert!(parse_recording_snapshot(body, "unknown", 1).is_err());
+        assert!(parse_recording_snapshot(br#"{"p1":{"recordings":{"r1":{}}}}"#, "p1", 1).is_err());
         Ok(())
     }
 
@@ -414,6 +904,61 @@ mod tests {
         let txt = parse_transcript_body(b"hello", "txt")?;
         assert_eq!(txt["content"], "hello");
         assert!(parse_transcript_body(b"not-json", "json").is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recording_post_sends_documented_json_with_key_only_in_header()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut request = String::new();
+            let mut buffer = [0_u8; 4096];
+            while !request.contains("\"title\":\"Fixture\"") {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other(
+                        "incomplete or oversized test request",
+                    ));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+            let body = r#"{"recording":"r_fixture"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+            Ok(request)
+        });
+        let url = format!("http://{address}/project/p_fixture/recording");
+        let response = post_json_response(
+            Some("fixture-key"),
+            &url,
+            serde_json::json!({"title":"Fixture"}),
+            "recording creation",
+        )
+        .await?;
+        let body = read_bounded(response, 64 * 1024).await?;
+        assert_eq!(
+            parse_recording_create_response(&body)?["recording_id"],
+            "r_fixture"
+        );
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("test server panicked"))??;
+        assert!(request.starts_with("POST /project/p_fixture/recording HTTP/1.1"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        assert!(request.contains("\"title\":\"Fixture\""));
+        assert!(!request.contains("fixture-key\"}"));
         Ok(())
     }
 
@@ -579,6 +1124,12 @@ mod tests {
         let response = read_response(Some(key.as_str()), &url, "project detail").await?;
         let body = read_bounded(response, 2 * 1024 * 1024).await?;
         let detail: serde_json::Value = serde_json::from_slice(&body)?;
+        let snapshot = parse_recording_snapshot(&body, first_project, 5)?;
+        assert!(
+            snapshot["returned_count"]
+                .as_u64()
+                .is_some_and(|count| count <= 5)
+        );
         eprintln!(
             "Reduct project detail top-level map size={}; keyed_by_requested_project_id={}",
             detail.as_object().map(serde_json::Map::len).unwrap_or(0),
@@ -593,14 +1144,59 @@ mod tests {
                 );
             }
         }
-        let recordings = detail
-            .get("recording")
-            .and_then(serde_json::Value::as_object)
-            .ok_or("provider project detail lacks recording map")?;
-        eprintln!("Reduct project detail recording count={}", recordings.len());
-        if let Some(recording_id) = recordings.keys().next() {
+        let project = detail
+            .get(first_project)
+            .ok_or("provider project detail omitted requested ID")?;
+        let fields: Vec<&str> = project
+            .as_object()
+            .into_iter()
+            .flat_map(|object| object.keys().map(String::as_str))
+            .filter(|name| {
+                name.len() <= 32
+                    && name
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+            .collect();
+        eprintln!(
+            "Reduct project detail nested object={}; recording_map={}; field names (not values)={fields:?}",
+            project.is_object(),
+            project.get("recording").is_some()
+        );
+        let recordings = project
+            .get("recordings")
+            .ok_or("project detail lacks recordings field")?;
+        eprintln!(
+            "Reduct project detail recordings: array={}; object={}; count={}",
+            recordings.is_array(),
+            recordings.is_object(),
+            recordings
+                .as_array()
+                .map(Vec::len)
+                .or_else(|| recordings.as_object().map(serde_json::Map::len))
+                .unwrap_or(0)
+        );
+        if let Some((recording_id, entry)) = recordings
+            .as_object()
+            .and_then(|entries| entries.iter().next())
+        {
+            eprintln!(
+                "Reduct first recording entry object={}; has_title={}",
+                entry.is_object(),
+                entry.get("title").is_some()
+            );
             let status = recording_status(Some(key.as_str()), first_project, recording_id).await?;
             assert_eq!(status["source"], "reduct_cloud");
+            let transcript =
+                recording_transcript(Some(key.as_str()), first_project, recording_id, "json")
+                    .await?;
+            assert_eq!(transcript["source"], "reduct_cloud");
+            assert_eq!(transcript["format"], "json");
+            let plain =
+                recording_transcript(Some(key.as_str()), first_project, recording_id, "txt")
+                    .await?;
+            assert_eq!(plain["format"], "txt");
+            // Never print transcript words or project/recording IDs.
             eprintln!(
                 "Reduct recording status response type={}",
                 if status["status"].is_object() {

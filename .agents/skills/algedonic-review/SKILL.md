@@ -42,7 +42,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ### PRESENT — Render triage report (step 3)
 
-1. Before rendering `algedonic-review/present-triage`, inspect the triage JSON: `escalation_triage` and `algedonic_digest` must be arrays and `summary` an object with numeric counts. A malformed shape is a failed handoff, not a no-alert result; stop and report it. Only then render the conversational summary with markdown tables.
+1. Before rendering `algedonic-review/present-triage`, inspect the triage JSON: `escalation_triage` and `algedonic_digest` must be arrays and `summary` must contain numeric `total_pending`, `critical`, `warning`, and `info` counts. A malformed shape is a failed handoff, not a no-alert result; stop and report it. Only then render the conversational summary with markdown tables.
 2. The summary opens with the observed loop reading and alert log cap status (or explicitly unavailable status), then the escalation backlog table and algedonic event digest. A successful empty backlog is presented as no pending alerts.
 3. Each escalation entry includes: ID, domain, severity, created_at, recommended action, and a one-line description.
 4. The presentation closes with a prompt for the operator to act on each alert.

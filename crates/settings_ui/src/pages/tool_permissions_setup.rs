@@ -1407,6 +1407,9 @@ mod tests {
             // Interactive prompt: always asks the user via prompt_for_decision,
             // so it has no settings-driven permission rules.
             "ask_user",
+            // Read-only view of the single in-process metacognition provider;
+            // no directive or log-mutation authority follows from visibility.
+            "curator_status",
             "diagnostics",
             "find_path",
             "find_references",

@@ -18,12 +18,9 @@ pub struct SwarmThreadStore {
     path: String,
     passphrase: String,
     database: tokio::sync::OnceCell<hkask_storage::Database>,
-    /// Serializes callers in this process; the file lock also serializes other processes.
-    gate: tokio::sync::Mutex<()>,
 }
 
-pub struct ThreadLock<'a> {
-    _guard: tokio::sync::MutexGuard<'a, ()>,
+pub struct ThreadLock {
     _file: std::fs::File,
 }
 
@@ -33,15 +30,18 @@ impl SwarmThreadStore {
             path,
             passphrase,
             database: tokio::sync::OnceCell::new(),
-            gate: tokio::sync::Mutex::new(()),
         }
     }
 
-    /// Hold across history read, inference and append, including other server processes.
-    /// The owned file keeps the OS lock alive until the guard is dropped.
-    pub async fn lock(&self) -> Result<ThreadLock<'_>, LocalSwarmError> {
-        let guard = self.gate.lock().await;
-        let path = format!("{}.lock", self.path);
+    /// Hold across history read, inference and append for one swarm, including
+    /// other server processes. Independent swarms need not wait for inference.
+    pub async fn lock(&self, swarm_id: &str) -> Result<ThreadLock, LocalSwarmError> {
+        if crate::sanitize::sanitize_agent_id(swarm_id).as_deref() != Some(swarm_id) {
+            return Err(LocalSwarmError::InvalidInput(
+                "invalid swarm id for thread lock".into(),
+            ));
+        }
+        let path = format!("{}.{}.lock", self.path, swarm_id);
         let file = tokio::task::spawn_blocking(move || {
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
@@ -60,10 +60,7 @@ impl SwarmThreadStore {
         })
         .await
         .map_err(|e| LocalSwarmError::Io(format!("thread lock task failed: {e}")))??;
-        Ok(ThreadLock {
-            _guard: guard,
-            _file: file,
-        })
+        Ok(ThreadLock { _file: file })
     }
 
     async fn database(&self) -> Result<&hkask_storage::Database, LocalSwarmError> {

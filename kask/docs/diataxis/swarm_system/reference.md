@@ -8,12 +8,11 @@ domain: "Swarm"
 mds_categories: [domain, composition, trust]
 ---
 
-# Swarm Systems — Reference: The 87-Tool Surface and Components
+# Swarm Systems — Reference: Tools and Components
 
-`hkask-mcp-swarm` registers exactly 87 tools: 48 cloud tools and 39 non-cloud
-tools. The server pins the live count and name-set equality, and separately
-pins the cloud partition
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-790`). The build
+`hkask-mcp-swarm` registers 90 tools: 48 cloud and 42 non-cloud (35 local,
+4 knowledge, 3 A2A). The server pins the live count, name-set equality,
+and cloud partition (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`). The build
 script derives both lists from `swarm_*` function signatures and router
 annotations (`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`).
 
@@ -30,13 +29,14 @@ classDiagram
         +local_memory: LazyLocalMemory
         +agent_stats: AgentStatsStore
         +event_store: LazyEventStore
+        +thread_store: SwarmThreadStore
         +combined_router()
     }
     class CloudRouter {
         +48 tools
     }
     class LocalRouter {
-        +32 tools
+        +35 tools
     }
     class KnowledgeRouter {
         +4 tools
@@ -52,8 +52,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-020
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:157-179; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-790; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138; kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229; kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_tests); kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (local_router); kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs (knowledge_router); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs (a2a_router)
 status: VERIFIED
 -->
 
@@ -70,25 +70,24 @@ All 48 are defined in
 | Apps | `swarm_list_apps`, `swarm_get_app`, `swarm_create_app`, `swarm_create_app_direct`, `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`, `swarm_get_app_schema`, `swarm_fork_workspace_to_app` |
 | Workspace actions and files | `swarm_workspace_list_actions`, `swarm_workspace_pending_actions`, `swarm_workspace_mutate_document`, `swarm_workspace_fork_state`, `swarm_workspace_accept_action`, `swarm_workspace_reject_action`, `swarm_workspace_annotate`, `swarm_workspace_list_annotations`, `swarm_workspace_list_files`, `swarm_workspace_read_file`, `swarm_workspace_write_file` |
 
-## Non-cloud tools — 39
+## Non-cloud tools — 42
 
-### Local tools — 32
+### Local tools — 35
 
-All 32 are defined in
-`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138`:
+Defined in `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`:
 
 | Group | Tools |
 | --- | --- |
-| Delegation and workflow | `swarm_delegate_local`, `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_execute_plan_local` |
+| Delegation and workflow | `swarm_delegate_local` (standalone), `swarm_delegate_in_thread_local` (member), `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_execute_plan_local`, `swarm_thread_local`, `swarm_list_local_threads` |
 | Fleet and evaluation | `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local`, `swarm_evaluate_local`, `swarm_task_board`, `swarm_eval_suite_local`, `swarm_eval_agent_local` |
 | Agent registry | `swarm_list_local_agents`, `swarm_get_local_agent`, `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_ai_assist` |
 | Local swarms and synchronization | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_update_local_swarm`, `swarm_clone_local_swarm`, `swarm_push_local_swarm`, `swarm_pull_swarm_to_local` |
 
 `swarm_get_local_agent` returns the full local card and measured execution
-statistics (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:702-747`).
-`swarm_workflow_check_local` validates the card's declared workflow before
-`swarm_run_workflow_local` executes it
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:748-909`).
+statistics. `swarm_workflow_check_local` validates a declared workflow before
+execution. A provided `swarm_id` binds supported dispatches to roster
+membership and the ordered encrypted member conversation; without it they
+remain standalone. The eval suite's `swarm_id` only selects the task board.
 
 ### Knowledge tools — 4
 
