@@ -11,10 +11,10 @@
 #![allow(unused_crate_dependencies)]
 //! hkask-mcp-curator — Curator MCP server library.
 //!
-//! Exposes the Curator's regulatory surface as MCP tools:
-//! system health, escalation management, Regulation observability,
-//! semantic memory search, memory recall, spec drift detection,
-//! and algedonic event history.
+//! Exposes escalation management, Regulation history, memory search,
+//! and per-store liveness as MCP tools. Live metacognition health belongs
+//! to the single built-in `curator_status` AgentTool; do not mirror it
+//! in this child process or reconstruct its reading from event history.
 
 pub(crate) mod distillation;
 pub(crate) mod federated;

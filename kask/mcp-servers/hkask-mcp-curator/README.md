@@ -1,6 +1,6 @@
 # hkask-mcp-curator — Curator MCP Server
 
-MCP server exposing Curator tools: system health, escalation management, Regulation observability, semantic and federated memory search, memory recall, and algedonic event history.
+MCP server exposing escalation management, Regulation history, memory search and per-store liveness (`curator_ping`). Live regulation health (`loop_reading`, alert-log cap and acceptance rate) comes from the **one** built-in `curator_status` AgentTool over the host's metacognition provider, not from a second MCP implementation or an inferred event-history snapshot.
 
 **Version:** v0.40.0 | **Crate:** `hkask-mcp-curator`
 

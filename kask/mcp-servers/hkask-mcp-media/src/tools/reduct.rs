@@ -1178,6 +1178,61 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_reel_metadata_shape() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for read-only inspection".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let response = read_response(Some(key.as_str()), PROJECT_PROBE_URL, "project list").await?;
+        let body = read_bounded(response, 2 * 1024 * 1024).await?;
+        let projects: serde_json::Value = serde_json::from_slice(&body)?;
+        let ids = projects
+            .get("project")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("project list missing project map")?;
+        let mut inspected = 0;
+        let mut observed = false;
+        for project_id in ids.keys().take(12) {
+            let response = read_response(
+                Some(key.as_str()),
+                &project_detail_url(project_id)?,
+                "project detail",
+            )
+            .await?;
+            let body = read_bounded(response, 2 * 1024 * 1024).await?;
+            let detail: serde_json::Value = serde_json::from_slice(&body)?;
+            inspected += 1;
+            if let Some(reels) = detail
+                .get(project_id)
+                .and_then(|p| p.get("reels"))
+                .and_then(serde_json::Value::as_object)
+            {
+                observed = true;
+                let first = reels.values().next();
+                let fields: Vec<&str> = first
+                    .and_then(serde_json::Value::as_object)
+                    .into_iter()
+                    .flat_map(|record| record.keys().map(String::as_str))
+                    .filter(|name| {
+                        name.len() <= 32
+                            && name
+                                .chars()
+                                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                    })
+                    .collect();
+                eprintln!(
+                    "Reduct reel metadata: count={}; first-field-names={fields:?}",
+                    reels.len()
+                );
+                break;
+            }
+        }
+        eprintln!("Reduct reel metadata observed={observed} in first {inspected} project details");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_recording_status_from_project() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
             return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
@@ -1217,6 +1272,17 @@ mod tests {
         let project = detail
             .get(first_project)
             .ok_or("provider project detail omitted requested ID")?;
+        eprintln!(
+            "Reduct project detail reels: present={}; count={}",
+            project
+                .get("reels")
+                .is_some_and(serde_json::Value::is_object),
+            project
+                .get("reels")
+                .and_then(serde_json::Value::as_object)
+                .map(serde_json::Map::len)
+                .unwrap_or(0)
+        );
         let fields: Vec<&str> = project
             .as_object()
             .into_iter()
