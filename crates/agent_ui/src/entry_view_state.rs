@@ -275,10 +275,7 @@ impl EntryViewState {
                 tool.materialized = true;
                 true
             }
-            Some(Entry::UserMessage { loaded, .. }) if !*loaded => {
-                *loaded = true;
-                true
-            }
+            Some(Entry::UserMessage { loaded: false, .. }) => true,
             _ => false,
         };
         if deferred {
@@ -331,10 +328,12 @@ impl EntryViewState {
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 if let Some(Entry::UserMessage { editor, loaded }) = self.entries.get_mut(index) {
                     if hydrate_user {
+                        let was_loaded = *loaded;
                         *loaded = true;
-                        if !editor.focus_handle(cx).is_focused(window) {
-                            // Only update if we are not editing. Cancelling an edit
-                            // restores the current thread content.
+                        if !was_loaded || !editor.focus_handle(cx).is_focused(window) {
+                            // A deferred editor has no content to preserve even if it
+                            // was focused before its row rendered. Once loaded, keep
+                            // user edits intact until editing is cancelled.
                             let chunks = message.chunks.clone();
                             editor.update(cx, |editor, cx| {
                                 editor.set_message(chunks, window, cx);
@@ -825,7 +824,7 @@ mod tests {
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::{AppContext as _, Focusable as _, TestAppContext};
     use parking_lot::RwLock;
 
     use crate::entry_view_state::{Entry, EntryViewState};
@@ -907,6 +906,11 @@ mod tests {
         for editor in &editors {
             assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "");
         }
+        cx.update(|window, cx| {
+            let focus = editors[0].read(cx).focus_handle(cx);
+            focus.focus(window, cx);
+            assert!(focus.is_focused(window));
+        });
 
         view_state.update_in(cx, |state, window, cx| {
             state.materialize_entry(0, &thread, window, cx);

@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — How-to: Compose and Steer a Swarm"
 audience: [operators, developers]
-last_updated: 2026-09-16
+last_updated: 2026-09-23
 version: "2.1.0"
 status: "Active"
 domain: "Swarm"
@@ -10,8 +10,8 @@ mds_categories: [composition]
 
 # Swarm Systems — How-to: Compose and Steer a Swarm
 
-These procedures use the current 87-tool surface: 48 cloud tools and 39
-non-cloud tools (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-754`).
+These procedures use the current 90-tool surface: 48 cloud tools and 42
+non-cloud tools (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1029-1052`).
 
 ## Choose the execution path
 

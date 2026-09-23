@@ -162,8 +162,14 @@ impl WebExtractProvider for RawFetchProvider {
     async fn extract(
         &self,
         url: &str,
-        _opts: &ExtractOptions,
+        opts: &ExtractOptions,
     ) -> Result<ExtractedContent, WebError> {
+        if opts.format == "json" {
+            return Err(WebError::ProviderError(
+                "RawFetch cannot produce structured JSON; a structured extraction provider is required"
+                    .to_string(),
+            ));
+        }
         // SSRF validation is at the pool boundary (extract_with_fallback) for
         // the initial URL, and at this transport for every redirect hop and
         // every connect-time DNS resolution — see `raw_fetch_http_client`.
@@ -177,6 +183,21 @@ impl WebExtractProvider for RawFetchProvider {
         // Report where the content actually came from: with a permitted
         // (validated) redirect, the final URL is the truthful provenance.
         let final_url = resp.url().clone();
+        let pdf_content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|mime| mime.eq_ignore_ascii_case("application/pdf"))
+            });
+        if status.is_success() && pdf_content_type {
+            return Err(WebError::ProviderError(
+                "RawFetch cannot extract PDF content; use a PDF extraction provider".to_string(),
+            ));
+        }
         let body = resp
             .text()
             .await
@@ -186,6 +207,11 @@ impl WebExtractProvider for RawFetchProvider {
                 "RawFetch error {status}: {}",
                 hkask_inference::openai_compat::sanitize_error_body(&body)
             )));
+        }
+        if body.starts_with("%PDF-") {
+            return Err(WebError::ProviderError(
+                "RawFetch cannot extract PDF content; use a PDF extraction provider".to_string(),
+            ));
         }
         Ok(ExtractedContent {
             url: final_url.to_string(),
@@ -352,6 +378,40 @@ mod tests {
             )
             .into_bytes(),
         )
+    }
+
+    /// expect: "A JSON extraction request must not succeed with Markdown or binary data."
+    #[tokio::test]
+    async fn raw_fetch_rejects_structured_json_request() {
+        let (url, hits) = http_fixture(content_response("<p>not JSON</p>")).await;
+        let provider = RawFetchProvider::new().expect("provider");
+        let mut opts = extract_options();
+        opts.format = "json".to_string();
+        let error = provider
+            .extract(&url, &opts)
+            .await
+            .expect_err("JSON unsupported");
+        assert!(error.to_string().contains("cannot produce structured JSON"));
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// expect: "A PDF is never returned as a successful Markdown extraction."
+    #[tokio::test]
+    async fn raw_fetch_rejects_pdf_by_content_type_or_magic() {
+        let (url, _) = http_fixture(Arc::new(b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".to_vec())).await;
+        let provider = RawFetchProvider::new().expect("provider");
+        let error = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect_err("PDF unsupported");
+        assert!(error.to_string().contains("cannot extract PDF content"));
+
+        let (url, _) = http_fixture(content_response("%PDF-1.6\nbinary data")).await;
+        let error = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect_err("PDF magic unsupported");
+        assert!(error.to_string().contains("cannot extract PDF content"));
     }
 
     /// expect: "A redirect must not carry my fetch into loopback services." [P4]

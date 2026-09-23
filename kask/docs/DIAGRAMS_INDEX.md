@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
+last_updated: 2026-09-23
 version: "2.3.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -55,8 +55,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-COND-002` | [`diataxis/hkask-condenser/how-to.md`](./diataxis/hkask-condenser/how-to.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-004` | [`diataxis/hkask-condenser/explanation.md`](./diataxis/hkask-condenser/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-19 | VERIFIED |
-| `DIAG-DIA-SWARM-006` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-19 | VERIFIED |
+| `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-23 | VERIFIED |
+| `DIAG-DIA-SWARM-006` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-23 | VERIFIED |
 | `DIAG-DIA-SWARM-007` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-008` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
 | `DIAG-DIA-SWARM-009` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-08-28 | VERIFIED |
@@ -100,7 +100,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RF-004` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-004A` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-005` | [`reference/mcp-servers/scenarios.md`](./reference/mcp-servers/scenarios.md) | 2026-09-16 | VERIFIED |
-| `DIAG-RF-006` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-09-16 | VERIFIED |
+| `DIAG-RF-006` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-09-23 | VERIFIED |
 | `DIAG-RF-PM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-PM-PIPELINE-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RF-SWARM-001` | [`reference/mcp-servers/swarm.md`](./reference/mcp-servers/swarm.md) | 2026-09-16 | VERIFIED |

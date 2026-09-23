@@ -609,7 +609,16 @@ impl ResearchServer {
             if run_id.is_none()
                 && let Some(cached) = self.cache.get(&ckey).await
             {
-                return Ok(cached);
+                if validate_extraction(
+                    &fmt,
+                    cached.get("format").and_then(serde_json::Value::as_str),
+                    cached.get("content").and_then(serde_json::Value::as_str),
+                )
+                .is_ok()
+                {
+                    return Ok(cached);
+                }
+                tracing::warn!(target: "hkask.web", "Ignoring cached extraction that violates the requested format");
             }
 
             let extracted = self
@@ -617,6 +626,11 @@ impl ResearchServer {
                 .extract(&url, &opts)
                 .await
                 .map_err(McpToolError::from)?;
+            validate_extraction(
+                &fmt,
+                Some(&extracted.format),
+                Some(&extracted.content),
+            )?;
             let extract_output = ExtractOutput {
                 url: extracted.url,
                 format: extracted.format,
@@ -2052,6 +2066,32 @@ impl ResearchServer {
     }
 }
 
+/// Never present binary or a downgraded provider response as a successful extraction.
+fn validate_extraction(
+    requested_format: &str,
+    actual_format: Option<&str>,
+    content: Option<&str>,
+) -> Result<(), McpToolError> {
+    let content = content.ok_or_else(|| McpToolError::internal("Extraction has no content"))?;
+    if content.starts_with("%PDF-") {
+        return Err(McpToolError::internal(
+            "Provider returned raw PDF bytes; use a PDF extraction provider",
+        ));
+    }
+    if actual_format != Some(requested_format) {
+        return Err(McpToolError::internal(format!(
+            "Provider returned {:?} instead of requested {requested_format} extraction",
+            actual_format
+        )));
+    }
+    if requested_format == "json" && serde_json::from_str::<serde_json::Value>(content).is_err() {
+        return Err(McpToolError::internal(
+            "Provider returned invalid JSON for structured extraction",
+        ));
+    }
+    Ok(())
+}
+
 // ── evaluate_evidence output helpers ──
 
 /// The SEPIO:0000440 (has-supporting-evidence) note in the duplicate-aware
@@ -2278,7 +2318,17 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
 // `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
 #[cfg(test)]
 mod tool_surface_tests {
-    use super::ResearchServer;
+    use super::{ResearchServer, validate_extraction};
+
+    /// expect: "A JSON request cannot succeed with Markdown, raw PDF, or invalid JSON."
+    #[test]
+    fn extraction_contract_rejects_wrong_format_and_binary() {
+        assert!(validate_extraction("json", Some("markdown"), Some("some text")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("%PDF-1.6 raw bytes")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("not JSON")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("{\"title\":\"ok\"}")).is_ok());
+        assert!(validate_extraction("markdown", Some("markdown"), Some("ordinary text")).is_ok());
+    }
 
     #[test]
     fn tool_surface_is_exactly_26_registered_tools() {
