@@ -271,7 +271,6 @@ pub fn into_open_ai_response(
         reasoning_effort,
         speed,
         compact_at_tokens,
-        max_tokens: _,
     } = request;
 
     let service_tier = service_tier_for(speed);
@@ -1834,7 +1833,6 @@ mod tests {
             reasoning_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2020,7 +2018,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2122,7 +2119,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2207,7 +2203,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2274,7 +2269,6 @@ mod tests {
             reasoning_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2320,7 +2314,6 @@ mod tests {
                 reasoning_effort: None,
                 speed,
                 compact_at_tokens: None,
-                max_tokens: None,
             };
 
             let response = into_open_ai_response(
@@ -2372,7 +2365,6 @@ mod tests {
                 reasoning_effort: None,
                 speed,
                 compact_at_tokens: None,
-                max_tokens: None,
             };
 
             let chat = into_open_ai(
@@ -2418,7 +2410,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let chat = into_open_ai(
@@ -2458,7 +2449,6 @@ mod tests {
             reasoning_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2499,7 +2489,6 @@ mod tests {
             reasoning_effort: Some("none".into()),
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2552,7 +2541,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2644,7 +2632,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2734,7 +2721,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -4038,7 +4024,6 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         let result = into_open_ai(
