@@ -28,17 +28,34 @@ fn sha256_file(path: &std::path::Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn sorted_fixture_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut result = serde_json::Map::new();
+            let mut keys: Vec<_> = object.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = object.get(key) {
+                    result.insert(key.clone(), sorted_fixture_json(value));
+                }
+            }
+            serde_json::Value::Object(result)
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(sorted_fixture_json).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 fn reseal_fixture_identity(identity: &mut serde_json::Value) -> anyhow::Result<()> {
-    let index = identity["indexes"]["reference"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing reference digest"))?;
-    let representations = identity["representations_manifest_sha256"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing representation digest"))?;
-    let canonical = format!(
-        "{{\"actual_embedding_model\":\"{ACTUAL_MODEL}\",\"indexes\":{{\"reference\":\"{index}\"}},\"representations_manifest_sha256\":\"{representations}\",\"requested_embedding_model\":\"{REQUESTED_MODEL}\",\"schema_version\":3}}\n"
-    );
-    identity["run_id"] = serde_json::json!(format!("{:x}", Sha256::digest(canonical.as_bytes())));
+    identity
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("run identity must be an object"))?
+        .remove("run_id");
+    let mut canonical = serde_json::to_vec(&sorted_fixture_json(identity))?;
+    canonical.push(b'\n');
+    identity["run_id"] = serde_json::json!(format!("{:x}", Sha256::digest(&canonical)));
     Ok(())
 }
 
@@ -108,10 +125,24 @@ fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     let run_identity_path = directory.join("run-identity.json");
     let mut identity = serde_json::json!({
         "schema_version": 3,
-        "representations_manifest_sha256": manifest_digest,
+        "preseal_run_id": "a".repeat(64),
+        "accepted_sources_sha256": "b".repeat(64),
+        "run_spec_sha256": "c".repeat(64),
+        "queries_sha256": "d".repeat(64),
         "requested_embedding_model": REQUESTED_MODEL,
         "actual_embedding_model": ACTUAL_MODEL,
-        "indexes": {"reference": digest}
+        "policies_sha256": "e".repeat(64),
+        "retriever_sha256": "f".repeat(64),
+        "evaluator_sha256": "0".repeat(64),
+        "representations_manifest_sha256": manifest_digest,
+        "representations": {
+            "reference": "1".repeat(64),
+            "current": "2".repeat(64),
+            "fine": "3".repeat(64),
+            "child_parent_map": "4".repeat(64),
+            "parent": "5".repeat(64)
+        },
+        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
     });
     reseal_fixture_identity(&mut identity)?;
     std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
@@ -185,6 +216,15 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
 fn bound_source_rejects_partial_schema_three_identity() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
+    let run_identity_path = directory.path().join("run-identity.json");
+    let mut identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
+    identity
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("run identity must be an object"))?
+        .remove("preseal_run_id");
+    reseal_fixture_identity(&mut identity)?;
+    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
     let manifest = FederatedSourcesManifest::load(&manifest_path)?;
     let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
         Ok(_) => anyhow::bail!("partial producer identity was accepted"),

@@ -128,6 +128,26 @@ impl SwarmThreadStore {
             .map_err(|e| LocalSwarmError::Database(format!("thread row: {e}")))
     }
 
+    /// Discover conversations even when their swarm roster has been deleted.
+    pub async fn list_thread_ids(&self) -> Result<Vec<(String, i64)>, LocalSwarmError> {
+        let pool = self
+            .database()
+            .await?
+            .sqlite_pool()
+            .map_err(|e| LocalSwarmError::Database(format!("thread DB pool: {e}")))?;
+        let driver = hkask_storage::SqliteDriver::new(pool);
+        let rows = driver
+            .query(
+                "SELECT swarm_id, COUNT(*) FROM swarm_thread_turns GROUP BY swarm_id ORDER BY swarm_id",
+                &[],
+            )
+            .map_err(|e| LocalSwarmError::Database(format!("thread list: {e}")))?;
+        rows.iter()
+            .map(|row| Ok((row.get_str(0)?.to_owned(), row.get_int(1)?)))
+            .collect::<Result<Vec<_>, hkask_storage::database::types::DbError>>()
+            .map_err(|e| LocalSwarmError::Database(format!("thread list row: {e}")))
+    }
+
     pub async fn append(
         &self,
         swarm_id: &str,

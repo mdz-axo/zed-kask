@@ -2127,12 +2127,31 @@ fn federated_fixture_sha256(path: &std::path::Path) -> Result<String, Box<dyn st
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn federated_fixture_run_id(index_digest: &str, representations_digest: &str) -> String {
+fn sorted_federated_fixture(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut result = serde_json::Map::new();
+            let mut keys: Vec<_> = object.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = object.get(key) {
+                    result.insert(key.clone(), sorted_federated_fixture(value));
+                }
+            }
+            serde_json::Value::Object(result)
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(sorted_federated_fixture).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn federated_fixture_run_id(identity: &serde_json::Value) -> Result<String, Box<dyn std::error::Error>> {
     use sha2::Digest as _;
-    let canonical = format!(
-        "{{\"actual_embedding_model\":\"test-embedding-model\",\"indexes\":{{\"reference\":\"{index_digest}\"}},\"representations_manifest_sha256\":\"{representations_digest}\",\"requested_embedding_model\":\"test-embedding-model\",\"schema_version\":3}}\n"
-    );
-    format!("{:x}", sha2::Sha256::digest(canonical.as_bytes()))
+    let mut canonical = serde_json::to_vec(&sorted_federated_fixture(identity))?;
+    canonical.push(b'\n');
+    Ok(format!("{:x}", sha2::Sha256::digest(&canonical)))
 }
 
 fn federated_source_fixture(
@@ -2194,15 +2213,26 @@ fn federated_source_fixture(
     )?;
     let manifest_digest = federated_fixture_sha256(&representations_path)?;
     let run_identity_path = directory.join("run-identity.json");
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 3,
-            "run_id": federated_fixture_run_id(&digest, &manifest_digest),
-            "representations_manifest_sha256": manifest_digest,
-            "requested_embedding_model": "test-embedding-model",
-            "actual_embedding_model": "test-embedding-model",
-            "indexes": {"reference": digest}
+    let mut identity = serde_json::json!({
+        "schema_version": 3,
+        "preseal_run_id": "a".repeat(64),
+        "accepted_sources_sha256": "b".repeat(64),
+        "run_spec_sha256": "c".repeat(64),
+        "queries_sha256": "d".repeat(64),
+        "requested_embedding_model": "test-embedding-model",
+        "actual_embedding_model": "test-embedding-model",
+        "policies_sha256": "e".repeat(64),
+        "retriever_sha256": "f".repeat(64),
+        "evaluator_sha256": "0".repeat(64),
+        "representations_manifest_sha256": manifest_digest,
+        "representations": {
+            "reference": "1".repeat(64),
+            "current": "2".repeat(64),
+            "fine": "3".repeat(64),
+            "child_parent_map": "4".repeat(64),
+            "parent": "5".repeat(64)
+        },
+        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat}
         }))?,
     )?;
     let manifest_path = directory.join("federated-sources.json");

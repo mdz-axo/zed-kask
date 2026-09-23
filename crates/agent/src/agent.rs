@@ -3520,6 +3520,69 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
                     agent.send_compact_command(client_user_message_id, session_id, cx)
                 });
             }
+            if parsed_command.is_unqualified(TRACE_COMMAND_NAME) {
+                let Some(thread) = self.thread(&session_id, cx) else {
+                    return Task::ready(Err(anyhow!("Trace session not found")));
+                };
+                let Some(acp_thread) = self
+                    .0
+                    .read(cx)
+                    .sessions
+                    .get(&session_id)
+                    .map(|session| session.acp_thread.clone())
+                else {
+                    return Task::ready(Err(anyhow!("Trace session was released")));
+                };
+                let mut blocks = params.prompt;
+                if let Some(acp::ContentBlock::Text(first)) = blocks.first_mut() {
+                    let text = strip_slash_command_prefix(&first.text);
+                    if text.trim().is_empty() {
+                        blocks.remove(0);
+                    } else {
+                        first.text = text;
+                    }
+                }
+                if blocks.is_empty() {
+                    return Task::ready(Err(anyhow!("/trace requires a prompt or attachment")));
+                }
+                let path_style = project_state.project.read(cx).path_style(cx);
+                let task = self.run_turn(session_id, cx, {
+                    let thread = thread.clone();
+                    move |_thread, cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.start_on_demand_trace()?;
+                            let content = blocks.into_iter().map(|block| {
+                                UserMessageContent::from_content_block(block, path_style)
+                            });
+                            thread.send(client_user_message_id, content, cx)
+                        })?
+                    }
+                });
+                return cx.spawn(async move |cx| {
+                    let result = task.await;
+                    let error = result.as_ref().err().map(ToString::to_string);
+                    let trace = thread
+                        .update(cx, |thread, _| thread.finish_on_demand_trace(error))?
+                        .context("No trace was active for the completed turn")?;
+                    let directory = hkask_types::agent_paths::resolve_under_artifacts_dir(
+                        std::path::Path::new("agent-traces"),
+                    );
+                    let path = cx
+                        .background_spawn(async move {
+                            crate::tool_trace::write_trace(&trace, &directory)
+                        })
+                        .await
+                        .context("On-demand trace export failed")?;
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.push_assistant_content_block(
+                            format!("On-demand tool trace saved to {}", path.display()).into(),
+                            false,
+                            cx,
+                        );
+                    })?;
+                    result
+                });
+            }
 
             // Skill scope qualifiers (`/:<name>` and
             // `/<worktree>:<name>`) use a colon separator that can't

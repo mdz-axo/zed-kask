@@ -1038,16 +1038,16 @@ mod smoke_tests {
 // swarm_fleet_digest_local, swarm_who_answers_local, and
 // swarm_select_agent_local added 2026-09-09, completing the fermi absorption
 // — the fleet digest, the cohort query, and the measured selection) +
-// 4 knowledge + 3 a2a + 2 swarm-scoped thread tools = 89 (the 3 local-ledger
+// 4 knowledge + 3 a2a + 3 swarm-scoped thread tools = 90 (the 3 local-ledger
 // tools were removed with the local budget system, operator ruling 2026-09-04).
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
 
     #[test]
-    fn tool_surface_is_exactly_89_registered_tools() {
+    fn tool_surface_is_exactly_90_registered_tools() {
         let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 89, "swarm registered tool surface changed; got {n}");
+        assert_eq!(n, 90, "swarm registered tool surface changed; got {n}");
     }
 
     // The generated const and the live router must agree by NAME — a `name =`

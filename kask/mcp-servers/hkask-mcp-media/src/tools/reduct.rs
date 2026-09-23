@@ -579,6 +579,20 @@ mod tests {
         let response = read_response(Some(key.as_str()), &url, "project detail").await?;
         let body = read_bounded(response, 2 * 1024 * 1024).await?;
         let detail: serde_json::Value = serde_json::from_slice(&body)?;
+        eprintln!(
+            "Reduct project detail top-level map size={}; keyed_by_requested_project_id={}",
+            detail.as_object().map(serde_json::Map::len).unwrap_or(0),
+            detail.get(first_project).is_some()
+        );
+        for field in ["recording", "project", "data", "recordings"] {
+            if let Some(value) = detail.get(field) {
+                eprintln!(
+                    "Reduct detail field={field}; object={}; count={}",
+                    value.is_object(),
+                    value.as_object().map(serde_json::Map::len).unwrap_or(0)
+                );
+            }
+        }
         let recordings = detail
             .get("recording")
             .and_then(serde_json::Value::as_object)

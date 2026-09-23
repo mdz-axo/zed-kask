@@ -398,6 +398,41 @@ impl SwarmServer {
         .await
     }
 
+    /// List durable member conversations, including those retained after swarm deletion.
+    #[tool(
+        description = "List recorded local swarm conversations with swarm_id, turn_count and archived status. Includes deleted swarms so their history can be reopened in Steer. Read-only."
+    )]
+    pub(crate) async fn swarm_list_local_threads(
+        &self,
+        _parameters: Parameters<ListLocalSwarmsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_list_local_threads", async {
+            let _guard = self
+                .thread_store
+                .lock()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let ids = self
+                .thread_store
+                .list_thread_ids()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let mut threads = Vec::with_capacity(ids.len());
+            for (swarm_id, turn_count) in ids {
+                let archived = self
+                    .local_swarms
+                    .get_checked(&swarm_id)
+                    .map_err(map_local_swarm_error)?
+                    .is_none();
+                threads.push(serde_json::json!({
+                    "swarm_id": swarm_id, "turn_count": turn_count, "archived": archived,
+                }));
+            }
+            Ok(serde_json::json!({ "threads": threads }))
+        })
+        .await
+    }
+
     /// Delegate a task to a local agent. The agent must exist in the local
     /// registry (`agents/local/curated/<id>/agent_card.json`). The task is
     /// executed via `hkask-inference`. When the
