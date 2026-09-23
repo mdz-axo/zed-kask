@@ -8,7 +8,7 @@ mod validation;
 use hkask_mcp_server::AnyJsonValue;
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::McpErrorKind;
-use schemars::{JsonSchema, json_schema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // ── Constants ──
@@ -179,22 +179,6 @@ pub struct ProviderRecommendation {
 
 // ── Request types ──
 
-// Keep the wire fields as strings so direct callers retain the existing
-// case-insensitive parser and its typed invalid-argument errors.
-fn search_strategy_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    json_schema!({"anyOf": [
-        {"type": "string", "enum": ["quick", "web", "semantic", "news", "deep", "research"]},
-        {"type": "null"}
-    ]})
-}
-
-fn duplication_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    json_schema!({"anyOf": [
-        {"type": "string", "enum": ["semantic"]},
-        {"type": "null"}
-    ]})
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchRequest {
     pub query: String,
@@ -204,7 +188,6 @@ pub struct SearchRequest {
     pub freshness: Option<String>,
     /// Accepted values: `quick`, `web` (alias `semantic`), `news`,
     /// `deep` (alias `research`). Other values are rejected.
-    #[schemars(schema_with = "search_strategy_schema")]
     pub strategy: Option<String>,
     /// Deliberate provider selection without an explicit `provider`: when
     /// `provider` is None and `intent` is set (news, academic, semantic,
@@ -330,7 +313,6 @@ pub struct EvaluateEvidenceRequest {
     /// content-bearing artifact). Omitted, the deterministic shingle floor
     /// runs. Degradation (no model configured, embed failure) falls back to
     /// the floor with a surfaced reason — never silent.
-    #[schemars(schema_with = "duplication_schema")]
     pub duplication: Option<String>,
 }
 
@@ -765,33 +747,6 @@ pub(crate) struct PingOutput {
     pub status: String,
     pub version: String,
     pub providers: Vec<ProviderHealthEntry>,
-}
-
-#[cfg(test)]
-mod request_schema_tests {
-    use super::{EvaluateEvidenceRequest, SearchRequest};
-
-    #[test]
-    fn constrained_tool_fields_advertise_the_runtime_values() {
-        let search = serde_json::to_value(schemars::schema_for!(SearchRequest))
-            .expect("search request schema");
-        assert_eq!(
-            search["properties"]["strategy"]["anyOf"][0]["enum"],
-            serde_json::json!(["quick", "web", "semantic", "news", "deep", "research"])
-        );
-        assert_eq!(search["properties"]["strategy"]["anyOf"][1]["type"], "null");
-
-        let evidence = serde_json::to_value(schemars::schema_for!(EvaluateEvidenceRequest))
-            .expect("evidence request schema");
-        assert_eq!(
-            evidence["properties"]["duplication"]["anyOf"][0]["enum"],
-            serde_json::json!(["semantic"])
-        );
-        assert_eq!(
-            evidence["properties"]["duplication"]["anyOf"][1]["type"],
-            "null"
-        );
-    }
 }
 
 // ── Capability context ──
