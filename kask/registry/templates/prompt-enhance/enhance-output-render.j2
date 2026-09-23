@@ -28,11 +28,7 @@ contract:
     mutations_deferred:
       type: array
       description: Hypothesis-tier findings deferred for user verification
-    schema_defects:
-      type: array
-      description: Defects from the step 3 deterministic schema check (empty if passed)
-    convergence_metric:
-      type: number
+
   output:
     delivered_output:
       type: string
@@ -71,7 +67,7 @@ visibility: Public
 
 {# Summary line #}
 {%- set summary_line -%}
-type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }} convergence={{ convergence_metric }}
+type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }}
 {%- endset -%}
 
 {# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order)
@@ -117,8 +113,6 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {%- set deferred_text = "_None._" -%}
 {%- endif -%}
 
-{# Schema defects (from step 3 deterministic check) #}
-{%- set defects_text = (schema_defects | join(", ")) if schema_defects and (schema_defects | length) > 0 else "_None._" -%}
 
 {# ── Assemble the change log ── #}
 {%- set change_log_md -%}
@@ -142,9 +136,7 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 
 {{ deferred_text }}
 
-### Schema defects (step 3 deterministic check)
 
-{{ defects_text }}
 {%- endset -%}
 
 {# ── Assemble the delivered output per output_format ── #}
@@ -169,7 +161,6 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
     "grill_verdict": {{ grill_verdict | tojson }},
     "grill_ratings": {{ grill_ratings_text | tojson }},
     "mutations_applied": {{ mutations_applied | map(attribute="mutation") | list | tojson }},
-    "deferred_findings": {{ mutations_deferred | map(attribute="finding") | list | tojson }},
-    "schema_defects": {{ schema_defects | tojson }}
+    "deferred_findings": {{ mutations_deferred | map(attribute="finding") | list | tojson }}
   }
 }

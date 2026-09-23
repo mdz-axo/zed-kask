@@ -15,7 +15,10 @@ contract:
       type: array
     acceptance_criteria:
       type: array
-      description: Criteria from Phase 3 the prompt should satisfy
+      description: Criteria from the rewrite stage the prompt should satisfy
+    checkability_map:
+      type: array
+      description: Candidate checks from classification, including assumptions
     round:
       type: integer
       description: Grill round (1 at medium; 1-3 escalating at high)
@@ -79,11 +82,15 @@ Cross-check the prompt against each `acceptance_criteria` item from Phase 3. Eac
 
 For each item in `proxy_eval_set`, mentally simulate: would this enhanced prompt produce a good response on this input? If not, that's a finding. Be specific about what would go wrong.
 
+## Checkability challenge
+
+Compare `checkability_map` with the enhanced prompt. For each proposed oracle, ask whether it establishes the intended claim under stated assumptions, whether it is known to exist, and whether the prompt clearly distinguishes a planned check from an executed one. Lean proves a stated proposition, not its correspondence to user intent; `lisp_eval` calculates over supplied inputs, not their provenance. Flag invented support and any unrun check represented as verified. For `judgment` or `none`, do not demand a formal proof.
+
 ## Verdict Logic
 
-- **pass** — all areas Solid, all acceptance criteria met, proxy eval set handled well. Proceed to output (or to Phase 5 if high tier).
-- **rewrite_needed** — one or more Partial/Gap findings that Phase 3 can address. Send back to Phase 3 with `findings` as `grill_feedback`. Max 2 rewrites.
-- **fail** — fundamental flaw that rewrite cannot fix. Escalate to user with explanation.
+- **pass** — all areas Solid, all acceptance criteria met, proxy eval set handled well. Proceed to output.
+- **rewrite_needed** — one or more Partial/Gap findings; report the gaps in the change log, but do not silently re-enter the single-pass rewrite.
+- **fail** — fundamental flaw; report the reason and do not present the enhanced prompt as verified.
 
 ## Anti-Self-Confirmation Check
 
@@ -102,6 +109,7 @@ Re-scan the enhanced prompt for unresolved template placeholders (`<UPPERCASE_NA
   "effort_tier": {{ effort_tier | tojson }},
   "proxy_eval_set": {{ proxy_eval_set | tojson }},
   "acceptance_criteria": {{ acceptance_criteria | tojson }},
+  "checkability_map": {{ checkability_map | tojson }},
   "round": {{ round | tojson }}
 }
 ```

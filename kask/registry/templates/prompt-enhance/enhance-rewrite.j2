@@ -13,7 +13,10 @@ contract:
       enum: [low, medium, high]
     risks:
       type: array
-      description: Type-specific risks surfaced by Phase 1
+      description: Type-specific risks surfaced by classification
+    checkability_map:
+      type: array
+      description: Classification-stage obligations and candidate checks (empty when none apply)
     task:
       type: string
       description: The user's task description (injected per .rules skill-cascade-context rule)
@@ -71,6 +74,10 @@ Apply type-specific moves. The `prompt_type` selects the focus:
 | `agent-task` | tool-use contracts, failure modes, context budget, bounded loops, termination criteria, progress signals | unbounded tool loops |
 | `meta` | self-reference safety, eval harness, convergence criteria, critic decoupling, mutation discipline, Pareto awareness | self-confirming loop |
 
+## Checkability discipline
+
+Use `checkability_map` to assign each consequential obligation a check that establishes that specific claim: supported `lisp_eval` expressions for finite computations/structural invariants; Lean 4 for a formalized general property; execution/tests for empirical behavior; evidence-based judgment for interpretation. State the assumptions and input provenance needed for the check. A proof of a formal statement does not establish that it captures the user's intent; a computed answer does not establish trustworthy inputs. Do not invent tool support or insert a generic proof requirement. If no runnable check applies, say what evidence or human decision is needed. Mark all proposed checks as **not run** unless actually executed in this task; enhancing a prompt alone does not execute its future checks.
+
 ## Mutation Discipline
 
 - Each finding → at most one mutation. Don't bundle.
@@ -81,7 +88,7 @@ Apply type-specific moves. The `prompt_type` selects the focus:
 
 ## Output Discipline
 
-The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to a model. It must be self-contained — no references to "the audit" or "Phase 2". A user who sees only the output should understand what the prompt does.
+The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to a model. It must be self-contained — no references to "the audit" or "Phase 2". A user who sees only the output should understand what the prompt does. Include check instructions only where they serve the original task; the absence of a suitable deterministic check is not a defect in creative or interpretive prompts.
 
 ## Context
 ```json
@@ -90,6 +97,7 @@ The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to
   "prompt_type": {{ prompt_type | tojson }},
   "effort_tier": {{ effort_tier | tojson }},
   "risks": {{ risks | tojson }},
+  "checkability_map": {{ checkability_map | tojson }},
   "task": {{ task | tojson }}
 }
 ```
