@@ -186,6 +186,7 @@ pub struct SearchRequest {
     pub include_domains: Option<Vec<String>>,
     pub exclude_domains: Option<Vec<String>>,
     pub freshness: Option<String>,
+    /// Accepted values: `quick`, `web`, `news`, `deep`. Other values are rejected.
     pub strategy: Option<String>,
     /// Deliberate provider selection without an explicit `provider`: when
     /// `provider` is None and `intent` is set (news, academic, semantic,
@@ -225,6 +226,8 @@ pub struct FindSimilarRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExtractRequest {
     pub url: String,
+    /// Accepted values: `markdown` or `json`. PDF bytes are not text extraction;
+    /// an unsupported PDF must surface as an error, not successful Markdown.
     pub format: Option<String>,
     pub json_prompt: Option<String>,
     /// Optional JSON Schema describing the structured output to extract.
