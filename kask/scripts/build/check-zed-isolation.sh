@@ -51,7 +51,12 @@ fi
 # zed-kask: the auto_update, auto_update_helper, and auto_update_ui
 # crates are deleted (D7). App self-update is handled by the terminal-based
 # update-zed-kask.sh script. The assertions above pin that the crates stay
-# deleted; also reject reintroduced initialization in the surviving host.
+# deleted; also reject reintroduced initialization or a simulated updater
+# that could falsely claim an update was installed in the surviving host.
+assert_absent "$repo_root/crates/title_bar/src/update_version.rs"
+assert_no_match "$repo_root/crates/title_bar/src/title_bar.rs" \
+    'SimulateUpdateAvailable|Restart to update Zed|update_version' \
+    "title bar presents a simulated upstream Zed update"
 assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_update_ui::init' \
     "zed-kask initializes upstream Zed's updater"
 

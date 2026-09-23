@@ -224,6 +224,52 @@ impl EntryViewState {
         self.entries.get(index)
     }
 
+    /// Create the focusable row for saved history without constructing
+    /// offscreen terminal and diff views. Other entry types still initialize
+    /// normally because thread-wide search depends on their editors.
+    pub fn initialize_entry(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(
+            thread.read(cx).entries().get(index),
+            Some(AgentThreadEntry::ToolCall(_))
+        ) {
+            self.set_entry(
+                index,
+                Entry::ToolCall(ToolCallEntry {
+                    content: HashMap::default(),
+                    focus_handle: cx.focus_handle(),
+                    materialized: false,
+                }),
+            );
+        } else {
+            self.sync_entry(index, thread, window, cx);
+        }
+    }
+
+    pub fn is_deferred_tool_call(&self, index: usize) -> bool {
+        matches!(self.entries.get(index), Some(Entry::ToolCall(tool)) if !tool.materialized)
+    }
+
+    pub fn materialize_entry(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(Entry::ToolCall(tool)) = self.entries.get_mut(index)
+            && !tool.materialized
+        {
+            tool.materialized = true;
+            self.sync_entry(index, thread, window, cx);
+        }
+    }
+
     pub fn sync_entry(
         &mut self,
         index: usize,
@@ -282,6 +328,9 @@ impl EntryViewState {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                if self.is_deferred_tool_call(index) {
+                    return;
+                }
                 let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
@@ -294,6 +343,7 @@ impl EntryViewState {
                         Entry::ToolCall(ToolCallEntry {
                             content: HashMap::default(),
                             focus_handle: cx.focus_handle(),
+                            materialized: true,
                         }),
                     );
                     let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
@@ -528,6 +578,7 @@ impl AssistantMessageEntry {
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
     focus_handle: FocusHandle,
+    materialized: bool,
 }
 
 #[derive(Debug)]
@@ -796,7 +847,21 @@ mod tests {
         });
 
         view_state.update_in(cx, |view_state, window, cx| {
-            view_state.sync_entry(0, &thread, window, cx)
+            view_state.initialize_entry(0, &thread, window, cx)
+        });
+        view_state.read_with(cx, |state, cx| {
+            let entry = state.entry(0).expect("historical entry shell exists");
+            assert!(entry.focus_handle(cx).is_some());
+            assert!(
+                !entry.has_content(),
+                "offscreen diff editor is not constructed"
+            );
+        });
+        // An offscreen tool update must not eagerly construct its view either.
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry(0, &thread, window, cx);
+            assert!(!view_state.entry(0).expect("entry exists").has_content());
+            view_state.materialize_entry(0, &thread, window, cx);
         });
 
         let diff = thread.read_with(cx, |thread, _| {

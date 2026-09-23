@@ -1380,9 +1380,15 @@ impl ConversationView {
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         list_state.set_follow_mode(gpui::FollowMode::Tail);
 
+        let is_root_thread = thread.read(cx).parent_session_id().is_none();
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
-                view_state.sync_entry(ix, &thread, window, cx);
+                if is_root_thread {
+                    view_state.initialize_entry(ix, &thread, window, cx);
+                } else {
+                    // Subagent cards can render entries outside the list processor.
+                    view_state.sync_entry(ix, &thread, window, cx);
+                }
             }
             list_state.splice_focusable(
                 0..0,

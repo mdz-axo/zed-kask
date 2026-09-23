@@ -6211,6 +6211,11 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
+                if this.entry_view_state.read(cx).is_deferred_tool_call(index) {
+                    this.entry_view_state.update(cx, |state, cx| {
+                        state.materialize_entry(index, &this.thread, window, cx);
+                    });
+                }
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
