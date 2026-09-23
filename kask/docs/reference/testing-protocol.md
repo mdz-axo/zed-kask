@@ -219,8 +219,10 @@ control fails. Toolchain, environment, contract and oracle identities remain
 fixed. In `analyze` mode the source remains fixed; in `execute` mode source
 changes are allowed only when before/after snapshots and the exact proposed
 diff reconcile under the externally pinned receipt **and** a separately
-operator-approved diff SHA-256. The candidate or agent cannot authorize its
-own proposed diff; missing approval blocks execute. At least two
+operator-approved diff SHA-256. The checker derives `source_changed` from
+those pinned snapshots; a verified empty diff cannot earn code-graph
+compression. The candidate or agent cannot authorize its own proposed diff;
+missing approval blocks execute. At least two
 positive samples are required per selected timing state. No model-supplied
 context-equality flag is authority. The generator at
 `kask/scripts/audit/generate-verification-preservation-proof.sh` derives a

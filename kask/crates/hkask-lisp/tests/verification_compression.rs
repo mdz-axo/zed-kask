@@ -51,6 +51,7 @@ fn context(mode: &str, changed_source: bool, approved: bool) -> Value {
         "contract_hash_after": "fixed-contract",
         "source_hash_before": "source-before",
         "source_hash_after": if changed_source { "source-after" } else { "source-before" },
+        "source_changed": changed_source,
         "authorized_diff_verified": approved,
         "hashes_verified": true
     })
@@ -96,6 +97,22 @@ fn pinned_forms_admit_approved_edit_with_fixed_oracle() -> Result<(), Box<dyn st
     assert_eq!(
         evaluate(delta, environment)?["code_graph_compression"],
         json!(0.25)
+    );
+    Ok(())
+}
+
+/// expect: "A verified empty diff cannot earn code-graph compression." [P8]
+#[test]
+fn pinned_forms_reject_approved_but_unchanged_source() -> Result<(), Box<dyn std::error::Error>> {
+    let check = form_after("- Context and samples: `")?;
+    let delta = delta_form()?;
+    let mut untrusted_report = context("execute", false, true);
+    untrusted_report["source_hash_after"] = json!("invented-different-hash");
+    let environment = json!({"context":untrusted_report,"metrics":metrics(10, 5, [180, 200])});
+    assert_eq!(evaluate(check, environment.clone())?, json!(false));
+    assert_eq!(
+        evaluate(delta, environment)?["code_graph_compression"],
+        Value::Null
     );
     Ok(())
 }

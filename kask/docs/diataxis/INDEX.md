@@ -80,8 +80,8 @@ The workspace membership evidence is `Cargo.toml:273-291`.
 
 Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
 `crates/media_panel` are documented here only where a zed-kask capability or
-D-seam requires it. The authoritative numbered divergence range is D1–D72, with retired
-numbers retained and never reused (see `DIVERGENCE.md`).
+D-seam requires it. The authoritative numbered and retired divergence seams are maintained in
+`DIVERGENCE.md`; retired numbers are never reused.
 
 ## Governing specifications
 

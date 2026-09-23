@@ -65,7 +65,8 @@ candidate-provided diff nor a self-generated digest is approval. Reject zero or 
 values in EACH measured sample, regardless of positive aggregate. The source,
 contract, oracle, graph, proof, log, and before/after timing JSON paths/hashes
 must all be in the receipt; validate filesystem files, not just submitted
-paths. Use only the checker's returned timing arrays for speedup. Keep cold and warm timing
+paths. Use only the checker's returned `source_changed` value and timing
+arrays for admission and speedup. Keep cold and warm timing
 separate; mark unselected states
 `not_run` with empty samples and zero timing, never speedup. Report workflow
 and production code graph counts separately. If the production graph was not
@@ -97,6 +98,7 @@ Return JSON only:
     "environment_after":"",
     "source_hash_before":"",
     "source_hash_after":"",
+    "source_changed":false,
     "oracle_hash_before":"",
     "oracle_hash_after":"",
     "hashes_verified":false,
