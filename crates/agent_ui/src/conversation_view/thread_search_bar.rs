@@ -324,12 +324,17 @@ impl ThreadSearchBar {
             return;
         };
 
+        // Historical user editors retain their focus handles at thread load,
+        // but their content is populated only when viewed or searched.
+        self.entry_view_state.update(cx, |state, cx| {
+            state.materialize_user_messages(&self.thread, window, cx);
+        });
         let mut targets: Vec<SearchTarget> = Vec::new();
         let thread = self.thread.read(cx);
         let entry_view_state = self.entry_view_state.read(cx);
         for (entry_ix, entry) in thread.entries().iter().enumerate() {
             match entry {
-                // Past user messages render through `MessageEditor`, not markdown.
+                // User messages render through `MessageEditor`, not markdown.
                 AgentThreadEntry::UserMessage(_) => {
                     let editor = entry_view_state
                         .entry(entry_ix)

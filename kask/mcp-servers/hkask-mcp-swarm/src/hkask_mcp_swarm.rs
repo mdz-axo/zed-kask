@@ -192,11 +192,10 @@ impl rmcp::ServerHandler for SwarmServer {}
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Resolve the shared consent store path. `HKASK_SWARM_CONSENT_STORE`
-/// overrides; the default is `mcp/swarm/consent.db`. Both swarm server
-/// processes (governed `McpRuntime` and per-project `ContextServerStore`)
-/// compute the same path, which is what makes consent tokens consumable
-/// across processes.
+/// Resolve the governed swarm server's durable consent-store path.
+/// `HKASK_SWARM_CONSENT_STORE` overrides the default `mcp/swarm/consent.db`.
+/// Kask MCP servers have a single spawn authority (`McpRuntime`); the old
+/// per-project `ContextServerStore` launch path is removed.
 fn resolve_consent_store_path() -> String {
     std::env::var("HKASK_SWARM_CONSENT_STORE")
         .ok()

@@ -1,7 +1,7 @@
 ---
 title: "Swarm Diagrams — Server Architecture, Panel Modes, Feedback Loops, PDCA Cascade, Steering Loop"
 audience: [architects, developers]
-last_updated: 2026-09-19
+last_updated: 2026-09-23
 version: "1.0.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -13,20 +13,20 @@ mds_categories: [domain, composition, trust]
 Consolidated diagrams for the swarm system: the `hkask-mcp-swarm` server
 (architecture + class), the swarm panel modes, the cybernetic feedback-loop
 map, the `swarm-intelligence` PDCA cascade, and the steering loop. Unique
-`DIAGRAM_ALIGNMENT` IDs are preserved from the originals. Every diagram was
-re-verified against current code on 2026-08-28.
+`DIAGRAM_ALIGNMENT` IDs are preserved from the originals. The server architecture and class diagrams were re-verified against current
+router and spawn wiring on 2026-09-23; other diagrams retain their own
+`DIAGRAM_ALIGNMENT` verification dates.
 
 ## Swarm MCP Server Architecture
 
-The swarm server (`hkask-mcp-swarm`) exposes **87 tools** across four
-routers, selected by `kask.swarm.mode`. It is launched by two independent
-paths — `McpRuntime` (app-global, governed dispatch for the skill cascade)
-and `ContextServerStore` (per-project, for the agent tool picker) — both
-correct by design, and both compute the same consent-store path so consent
-tokens are consumable across processes.
+The swarm server (`hkask-mcp-swarm`) exposes **90 tools** across four
+routers. The governed `McpRuntime` is the sole Kask MCP spawn authority;
+`kask.swarm.mode` selects the execution substrate, not the tool surface.
+The agent tool picker reads from that runtime, not a second per-project
+`ContextServerStore` child (`crates/zed/src/main.rs:3350-3364`).
 
-**Corrections (2026-09-09):** the tool surface is now **87** (48 cloud + 32
-local + 3 A2A + 4 knowledge); the router composition is
+**Current router (2026-09-23):** **90** tools (48 cloud + 32 local + 3 A2A
++ 4 knowledge + 3 swarm-scoped thread tools); the router composition is
 `cloud_swarm_router + local_router + a2a_router + knowledge_router`
 (`hkask_mcp_swarm.rs:174-179`) — the former `ledger_router` was removed with
 `hkask-ledger` and the local budget system (2026-09-08); `swarm_fleet_digest_local`
@@ -37,13 +37,9 @@ and `swarm_select_agent_local` were added 2026-09-09 with the fermi absorption
 
 ```mermaid
 flowchart TD
-    subgraph launch[Launch Paths]
-        MR[McpRuntime<br/>app-global, governed]
-        CS[ContextServerStore<br/>per-project]
-    end
-    SWARM[hkask-mcp-swarm<br/>87 tools: 48 cloud + 32 local + 3 a2a + 4 knowledge]
+    MR[McpRuntime<br/>sole governed spawn authority]
+    SWARM[hkask-mcp-swarm<br/>90 tools: 48 cloud + 32 local + 3 a2a + 4 knowledge + 3 scoped thread]
     MR --> SWARM
-    CS --> SWARM
 
     subgraph abw[ABW Backend cloud]
         ABW_API[ABW REST API<br/>agent-bestiary.world]
@@ -81,8 +77,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router L174-179 = cloud_swarm_router + local_router + a2a_router + knowledge_router; build.rs-generated tool_names.gen.rs; resolve_consent_store_path — both launch paths); tool count: 87 pinned by tool_surface_is_exactly_87_registered_tools (hkask_mcp_swarm.rs:751) — 48 in src/cloud_swarm_tools.rs, 32 in src/local_tools.rs, 3 in src/a2a_tools.rs, 4 in src/knowledge_tools.rs; crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:179-185 (four routers),1029-1052 (90-tool count and partitions); crates/zed/src/main.rs:3350-3364 (single spawn authority); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
 status: VERIFIED
 -->
 
@@ -100,12 +96,12 @@ operator's own substrate, so nothing is priced or gated
 in protocol-compliant types over the in-process transport (no HTTP server
 required).
 
-**Corrections (2026-09-09):** 87 tools (was 82); `agent_stats` added as the
+**Current count (2026-09-23):** 90 tools (87 before the three scoped-thread tools); `agent_stats` added as the
 eighth collaborator (`AgentStatsStore`, fermi absorption `256f87307c`); the
 local-runtime ledger and its debit-before-return invariant were removed with
 `hkask-ledger` and the local budget system (2026-09-08) — the runtime now
 measures and records, never debits; the tool surface is pinned by
-`tool_surface_is_exactly_87_registered_tools` plus the build.rs-generated
+`tool_surface_is_exactly_90_registered_tools` plus the build.rs-generated
 `tool_names.gen.rs` asserted against the live `combined_router()` at test
 time.
 
@@ -213,14 +209,14 @@ classDiagram
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "87 tools = 48 cloud + 32 local + 3 a2a + 4 knowledge\ncombined_router = cloud + local + a2a + knowledge routers\nkask.swarm.mode selects the substrate not the surface\nTool names generated by build.rs, asserted against combined_router at test time\nSpend mutating tools are consent gated"
+    note for SwarmServer "90 tools = 48 cloud + 32 local + 3 a2a + 4 knowledge + 3 scoped thread\ncombined_router = cloud + local + a2a + knowledge routers\nkask.swarm.mode selects the substrate not the surface\nTool names generated by build.rs, asserted against combined_router at test time\nSpend mutating tools are consent gated"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (mcp_server! struct block L160-169 — 8 collaborators incl. agent_stats; combined_router L174-179; tool_names.gen.rs include); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime L47-53 agent_stats field, lazy(agent_stats) L125; LocalSwarmRuntime L148+ executor/capture_drops/agent_stats; delegate(card,task) L312; LocalDelegateResult L638+ — no cost/balance fields; no-spending-policy doc L140-146); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS L21); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:163-185 (server collaborators and four-router composition),1029-1060 (90 registered tools and tool-name pin); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime L47-53 agent_stats field, lazy(agent_stats) L125; LocalSwarmRuntime L148+ executor/capture_drops/agent_stats; delegate(card,task) L312; LocalDelegateResult L638+ — no cost/balance fields; no-spending-policy doc L140-146); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS L21); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs
 status: VERIFIED
 -->
 

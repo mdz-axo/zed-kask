@@ -6211,7 +6211,7 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
-                if this.entry_view_state.read(cx).is_deferred_tool_call(index) {
+                if this.entry_view_state.read(cx).is_deferred_entry(index) {
                     this.entry_view_state.update(cx, |state, cx| {
                         state.materialize_entry(index, &this.thread, window, cx);
                     });

@@ -3067,13 +3067,11 @@ fn main() {
     });
 }
 
-// ── Kask MCP server registration ───────────────────────────────────────────
+// ── Kask MCP single-spawn authority ────────────────────────────────────────
 //
-// zed-kask: D3 — F21: sync_kask_mcp_servers fn definition.
-// Registers the built-in kask MCP servers as zed context servers via the
-// app-level ContextServerDescriptorRegistry. This makes kask MCP tools appear
-// in the agent tool picker and available to zed's agent thread. The servers
-// are launched as stdio child processes by zed's ContextServerStore.
+// zed-kask: D3 — the governed McpRuntime owns kask child processes and
+// supplies their tools to the agent through set_kask_tool_source. The
+// ContextServerStore must not launch duplicate, keyless per-project children.
 
 /// zed-kask: D24 — wire the kask edit-prediction port.
 ///
@@ -3305,16 +3303,11 @@ fn wire_kask_inference_stack(
             // closure's scope ends). Dropping this value is therefore
             // harmless; the binding exists only to acknowledge the result.
             let _ipc_server = ipc_server;
-            // zed-kask: D3/D8 — F19: MCP re-sync (inference socket).
-            // Re-sync both MCP server paths so the inference socket path is
-            // included in the env passed to context server processes:
-            //   1. `sync_kask_mcp_servers` — restarts the per-project
-            //      ContextServerStore instances (agent tool picker)
-            //   2. `sync_kask_mcp_runtime_servers` — restarts the governed
-            //      McpRuntime instances (skill execution + kask panel)
-            // Without (2), the governed servers keep their stale env (no
-            // socket) and all inference calls fail with "IPC bridge not
-            // configured" even though the socket is live.
+            // zed-kask: D3/D8 — refresh the single managed path after the
+            // inference socket is available. First remove stale per-project
+            // descriptors and raw shadow entries, then restart governed
+            // McpRuntime children whose environment changed; otherwise those
+            // children retain a missing inference socket.
             sync_kask_mcp_servers(cx);
             sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
         }
@@ -3336,14 +3329,11 @@ fn wire_kask_inference_stack(
 /// Reconcile the app-level `ContextServerDescriptorRegistry` with the
 /// current kask MCP settings.
 ///
-// zed-kask: D3 — F24: sync_kask_mcp_servers impl (descriptor registration).
-/// Registers descriptors for all enabled servers and unregisters descriptors
-/// for servers that are no longer enabled. Called once at startup, whenever
-/// `SettingsStore` changes (via `cx.observe_global::<SettingsStore>`), and
-/// after the inference IPC socket is set (so servers get the socket path).
-///
-/// The `ContextServerStore` (per-project) observes the registry and will
-/// start/stop/restart the actual server processes to match.
+// zed-kask: D3 — reject stale per-project registrations.
+/// Unregisters kask descriptors and removes raw settings entries that could
+/// spawn duplicate, keyless children through `ContextServerStore`. The
+/// governed `McpRuntime` alone starts and restarts kask server processes.
+/// Called at startup, on settings changes, and after inference IPC startup.
 fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     // zed-kask: diagnostic for the settings-reactivity defect (2026-08-29):
     // live probes showed this function's effects on settings CHANGES never
@@ -3379,13 +3369,10 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
         }
     });
 
-    // zed-kask: raw `context_servers` entries for built-in kask server IDs
-    // shadow the managed registration above — `maintain_servers` merges
-    // registry descriptors with `or_insert`, so a settings entry always
-    // wins, and it carries only the env written in the file (a stale entry
-    // with `env: {}` strips every credential and the inference socket from
-    // the server the agent's tools connect to, silently). Remove such
-    // entries so the managed registration is authoritative, summarized in
+    // zed-kask: raw `context_servers` entries for built-in kask IDs can
+    // independently spawn keyless per-project children through the generic
+    // store path. Remove them so the governed runtime remains the only
+    // spawn authority, summarized in
     // one warn (count + IDs) so the operator sees the correction without a
     // wall of near-identical lines. The write is self-
     // terminating: the next observer pass finds nothing to remove, and
@@ -3537,8 +3524,8 @@ fn wire_kask_mcp_shutdown(runtime: std::sync::Arc<hkask_mcp::McpRuntime>, cx: &m
 /// Re-sync the governed `McpRuntime` server processes when kask settings
 /// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
 ///
-/// `sync_kask_mcp_servers` (above) re-syncs only the per-project
-/// `ContextServerStore` path. The governed McpRuntime instances — which the
+/// `sync_kask_mcp_servers` (above) only removes stale per-project entries.
+/// The governed McpRuntime instances — which the
 /// kask panel's `ToolInvoker` and the skill execution route through — are
 /// started once at login and would otherwise keep their startup env forever
 /// (a `kask.swarm.mode` toggle would never re-route the panel's own tool
