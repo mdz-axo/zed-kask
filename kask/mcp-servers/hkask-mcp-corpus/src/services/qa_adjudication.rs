@@ -397,9 +397,8 @@ mod tests {
         Ok(tempfile::Builder::new().prefix("case-").tempdir_in(root)?)
     }
 
-    #[test]
-    fn adjudication_template_examples_round_trip_through_consumer()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn rendered_adjudication_examples()
+    -> Result<(PreparedQaPrompt, Vec<Value>), Box<dyn std::error::Error>> {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../registry/templates/docproc/adjudicate-passages.j2"),
@@ -415,33 +414,79 @@ mod tests {
                 "prompts_path": "prepared.jsonl",
                 "decisions_path": "adjudications.jsonl"
             }))?;
-        let prompts = [prompt("qa-1"), prompt("qa-2"), prompt("qa-3")];
-        let mut rows = rendered
+        let prepared_line = rendered
+            .lines()
+            .find(|line| line.starts_with("{\"prompt_id\":"))
+            .ok_or("template needs an illustrative prepared JSONL row")?;
+        let prepared: PreparedQaPrompt = serde_json::from_str(prepared_line)?;
+        prepared.validate()?;
+        let examples = rendered
             .lines()
             .filter(|line| line.starts_with("{\"protocol\":\"prepared-qa-adjudication-v2\""))
             .map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(
-            rows.len(),
-            prompts.len(),
-            "template must show all three decisions"
+            examples.len(),
+            3,
+            "template must show all three decision shapes"
         );
-        for (row, prompt) in rows.iter_mut().zip(&prompts) {
-            row["prompt_id"] = json!(prompt.prompt_id);
-            row["chunk_ref"] = json!(prompt.primary().chunk_ref);
-            row["source"] = json!(prompt.primary().source);
+        Ok((prepared, examples))
+    }
+
+    #[test]
+    fn adjudication_template_example_preserves_prepared_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (prepared, examples) = rendered_adjudication_examples()?;
+        assert_eq!(prepared.passages.len(), 2, "context must differ from p0");
+        assert_ne!(prepared.primary().chunk_ref, prepared.passages[1].chunk_ref);
+        for example in &examples {
+            let _: ReviewedQaAdjudicationRow = serde_json::from_value(example.clone())?;
         }
         let directory = fixture()?;
-        let path = write_rows(&directory, &rows)?;
-        let adjudications = read_complete_adjudications(&path, &prompts)?;
-        assert_eq!(adjudications.passage_admits(), 2);
-        assert_eq!(adjudications.passage_skips(), 1);
-        assert_eq!(adjudications.level_generates(), 3);
-        assert_eq!(adjudications.level_skips(), 3);
-        assert!(matches!(
-            adjudications.decision("qa-2").map(|decision| &decision.levels()[1]),
-            Some(ReviewedLevelDecision::Skip { reason }) if reason == "conceptual_support_absent"
-        ));
+        let path = write_rows(&directory, &examples[..1])?;
+        let adjudications = read_complete_adjudications(&path, std::slice::from_ref(&prepared))?;
+        assert_eq!(adjudications.passage_admits(), 1);
+        assert_eq!(adjudications.level_generates(), 2);
+        assert!(adjudications.decision(&prepared.prompt_id).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn adjudication_consumer_rejects_wrong_or_context_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (prepared, examples) = rendered_adjudication_examples()?;
+        let directory = fixture()?;
+        // The other examples illustrate decision shapes, not this prompt's identity.
+        let path = write_rows(&directory, &examples[1..2])?;
+        let error = read_complete_adjudications(&path, std::slice::from_ref(&prepared))
+            .err()
+            .ok_or("placeholder identity must be rejected")?;
+        assert!(format!("{error:?}").contains("unknown prompt_id"));
+        for field in ["prompt_id", "chunk_ref", "source"] {
+            let mut wrong_identity = examples[0].clone();
+            wrong_identity[field] = json!("unrelated-identity");
+            let path = write_rows(&directory, &[wrong_identity])?;
+            let error = read_complete_adjudications(&path, std::slice::from_ref(&prepared))
+                .err()
+                .ok_or("identity mismatch must be rejected")?;
+            let expected = if field == "prompt_id" {
+                "unknown prompt_id"
+            } else {
+                "does not match its prepared chunk_ref and source"
+            };
+            assert!(
+                format!("{error:?}").contains(expected),
+                "{field}: {error:?}"
+            );
+        }
+        let mut context_identity = examples[0].clone();
+        context_identity["chunk_ref"] = json!(prepared.passages[1].chunk_ref);
+        context_identity["source"] = json!(prepared.passages[1].source);
+        let path = write_rows(&directory, &[context_identity])?;
+        let error = read_complete_adjudications(&path, &[prepared])
+            .err()
+            .ok_or("p1 identity must be rejected")?;
+        assert!(format!("{error:?}").contains("does not match its prepared chunk_ref and source"));
         Ok(())
     }
 

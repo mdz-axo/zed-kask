@@ -235,11 +235,33 @@ impl SkillIndex {
     /// skills the agent has already discovered for a project.
     /// [P5] Motivating: one disk-backed catalog wins over an older startup snapshot.
     /// pre: startup has finished loading the seeded global directory.
-    /// post: an agent-published catalog is retained; absent globals are filled
-    /// without discarding project skills. None means no publication is needed.
+    /// post: an agent-published catalog retains its entries and project groups
+    /// and gains missing shipped non-core skills. Core entries require verified
+    /// reseed provenance before they can replace or extend a partial catalog.
+    /// None means no publication is needed.
     fn with_startup_globals(mut self, global_skills: Vec<Skill>) -> Option<Self> {
         if self.agent_published && !self.global_skills.is_empty() {
-            return None;
+            let mut added = false;
+            for skill in global_skills {
+                if !is_core_skill(&skill.name)
+                    && shipped_skill_seed()
+                        .iter()
+                        .any(|(name, _)| *name == skill.name)
+                    && !self
+                        .global_skills
+                        .iter()
+                        .any(|present| present.name == skill.name)
+                {
+                    self.global_skills.push(skill);
+                    added = true;
+                }
+            }
+            if !added {
+                return None;
+            }
+            self.global_skills
+                .sort_by(|left, right| left.skill_file_path.cmp(&right.skill_file_path));
+            return Some(self);
         }
         self.global_skills = global_skills;
         Some(self)
@@ -1074,6 +1096,124 @@ mod tests {
             assert_eq!(index.project_skills.len(), 1);
             assert_eq!(index.project_skills[0].skills[0].name, "local");
             assert!(index.agent_published);
+        });
+    }
+
+    // expect: Startup fills shipped skills missing from a partial agent scan
+    // without resurrecting unrelated globals or replacing newer descriptions.
+    // [P5] Motivating: the disk-backed catalog stays complete and user edits win.
+    // pre: the agent published before startup finished seeding shipped skills.
+    // post: missing shipped entries appear; project groups and newer edits survive.
+    #[gpui::test]
+    async fn partial_agent_catalog_receives_missing_shipped_startup_skills(
+        cx: &mut TestAppContext,
+    ) {
+        let shipped_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| !is_core_skill(name))
+            .expect("shipped non-core skill");
+        let global = |name: &str, description: &str| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: {description}\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: Vec::new(),
+        };
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![global("user-skill", "Newer edit")],
+                vec![project],
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![
+                    global("user-skill", "Stale startup copy"),
+                    global(shipped_name, "Seeded copy"),
+                    global("deleted-user-skill", "Stale only"),
+                ],
+                cx,
+            );
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills.len(), 2);
+            assert!(
+                index
+                    .global_skills
+                    .iter()
+                    .any(|skill| skill.name == shipped_name)
+            );
+            assert!(
+                index.global_skills.iter().any(|skill| {
+                    skill.name == "user-skill" && skill.description == "Newer edit"
+                })
+            );
+            assert_eq!(index.project_skills.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn startup_does_not_promote_unverified_core_over_agent_edits(cx: &mut TestAppContext) {
+        let core_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| is_core_skill(name))
+            .expect("shipped core skill");
+        let user_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| !is_core_skill(name))
+            .expect("shipped non-core skill");
+        let global = |name: &str, description: &str, core: bool| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: {description}\ncore: {core}\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![
+                    global(core_name, "Pre-seed core", true),
+                    global(user_name, "Newer user edit", false),
+                ],
+                Vec::new(),
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![
+                    global(core_name, "Canonical core", true),
+                    global(user_name, "Stale user edit", false),
+                ],
+                cx,
+            );
+            let globals = &cx.global::<SkillIndex>().global_skills;
+            assert!(
+                globals.iter().any(|skill| {
+                    skill.name == core_name && skill.description == "Pre-seed core"
+                })
+            );
+            assert!(globals.iter().any(|skill| {
+                skill.name == user_name && skill.description == "Newer user edit"
+            }));
+            cx.set_global(SkillIndex::from_agent(
+                vec![global(user_name, "Newer user edit", false)],
+                Vec::new(),
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![global(core_name, "Unverified core", true)],
+                cx,
+            );
+            assert!(
+                cx.global::<SkillIndex>()
+                    .global_skills
+                    .iter()
+                    .all(|skill| skill.name != core_name)
+            );
         });
     }
 

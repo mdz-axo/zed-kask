@@ -8,8 +8,9 @@ description: "Run the full fine-tuning loop for an agent or skill: measure curre
 Improve an agent's or skill's model behavior end to end: measure, build
 a dataset from real verdict-labeled rollouts, train under the
 math-contract gates, evaluate against the baseline, and iterate. The
-loop is verifier-gated — every stage produces a deterministic verdict,
-and no adapter ships without beating its baseline.
+loop is verifier-gated: a first adapter needs a deployed, matched
+held-out comparison against its baseline and the operator's pre-agreed
+acceptance criterion; a retrain can also report previous-adapter loss.
 
 ## When to Use
 
@@ -45,8 +46,12 @@ surface that blocker. Only an explicit operator choice may override the model.
 1. Define the task set: 3-10 representative tasks, each with a
    deterministic response evaluator (contains / not_contains / regex)
    and an explicit experiment scope (tasks/repeats and any approved run
-   deadline). Token usage is observed evidence, not a quota. The local
-   harness has no credits_authorized or token-budget parameter.
+   deadline). Agree with the operator *before training* on the held-out
+   acceptance criterion and evaluation method for comparing the baseline
+   and candidate on identical inputs; record what outcome counts as
+   acceptance rather than inventing a pass-rate threshold afterward.
+   Token usage is observed evidence, not a quota. The local harness has
+   no credits_authorized or token-budget parameter.
 2. Call `swarm_eval_agent_local` (swarm server) with the agent name,
    the task set, and repeats (2-3 for a first measurement). Read the
    per-task pass rates and standard error. This is the BASELINE —
@@ -89,8 +94,10 @@ surface that blocker. Only an explicit operator choice may override the model.
    adapter from the HuggingFace manifest. `ab_comparison` is available
    only for a retrain with a previous adapter for the same skill and
    both losses present; it compares previous vs new training loss, NOT
-   base-model vs candidate loss. Do not infer improvement if absent;
-   its `auto_promoted` field is not evidence of the evaluation gate.
+   base-model vs candidate loss. First-time adapters have no such loss
+   comparison: do not synthesize one or block their held-out verdict on it.
+   On retrains, record any `loss_improved` as separate evidence; the
+   `auto_promoted` field is not evidence of the held-out evaluation gate.
 8. Prepare held-out tasks and expected answers that neither model trained
    on. For a pass-rate comparison, run `training_evaluate` twice on the
    SAME `test_dataset_path`, `method`, `max_examples`, and (if semantic)
@@ -109,24 +116,40 @@ surface that blocker. Only an explicit operator choice may override the model.
 
 ### Phase 5 — Verdict and retrain
 
-9. Convergence gate — only after verifying deployment and collecting
-   comparable Phase 4 results and loss evidence, call `lisp_eval` with:
-   - form: `(and (= deployed 1) (= loss_improved 1) (>= pass_rate baseline_pass_rate))`
+9. Convergence gate — for a FIRST adapter, require verified candidate
+   deployment and both matched Phase 4 evaluations. Call `lisp_eval` with
+   the operator-approved acceptance predicate over the *measured* baseline
+   and candidate results; include deployment in the predicate. For example,
+   ONLY if the operator agreed that the candidate must strictly beat the
+   baseline on accuracy:
+   - form: `(and (= deployed 1) (> pass_rate baseline_pass_rate))`
    - env: `{ "deployed": <1 only if the candidate route serves the adapter>,
-            "loss_improved": <1 only for an evidenced comparable loss improvement>,
             "pass_rate": <candidate Phase 4 accuracy>,
             "baseline_pass_rate": <baseline Phase 4 accuracy> }`
-   A missing loss comparison (including a first-time adapter), missing
-   deployment, or missing comparable evaluation leaves promotion unverified:
-   do NOT substitute zero or Phase 1 rates, run the gate with fabricated
-   inputs, or promote. Report the missing evidence to the operator;
-   training loss alone is not a pass-rate verdict. If a measured gate
-   fails, diagnose the failures, curate the exchanges into a feedback
-   file, and re-enter Phase 3 with `training_submit` passing feedback_path
-   and skill_name (retrain mode merges feedback, deduplicates by question,
-   and increments the adapter version). Obtain operator confirmation for
-   each new submission. Bound: max 2 retrain cycles per adapter version;
-   a third failure escalates to the operator with the diagnosis.
+   If the approved criterion differs, encode that exact criterion instead;
+   do not use the example as a default policy. A first adapter can receive
+   an acceptance verdict with NO `ab_comparison`: its loss is not an input.
+   For a RETRAIN, apply the same deployed, matched held-out gate against
+   the agreed baseline (base model or prior deployed adapter, fixed before
+   evaluation). Record `ab_comparison` only if present. If the operator's
+   pre-agreed retrain criterion also requires improved loss vs the prior
+   adapter, include its evidenced `loss_improved` in `lisp_eval`; if that
+   comparison is absent, mark that criterion unresolved, not false or
+   satisfied. Counterexamples to an unconditional loss gate: a first
+   adapter with no `ab_comparison` but verified deployment and a passing
+   operator-approved held-out comparison can be accepted; a retrain with
+   `loss_improved: true` and `auto_promoted: true` but a failed matched
+   held-out criterion cannot. Never treat loss improvement or
+   `auto_promoted` alone as a pass-rate verdict. Missing deployment,
+   route verification, matched evaluation, or an approved criterion means
+   no acceptance/promotion;
+   report the gap rather than fabricate inputs or compare Phase 1 rates.
+   If a measured gate fails, diagnose the failures, curate the exchanges
+   into a feedback file, and re-enter Phase 3 with `training_submit`
+   passing feedback_path and skill_name (retrain mode merges feedback,
+   deduplicates by question, and increments the adapter version). Obtain
+   operator confirmation for each new submission. Bound: max 2 retrain
+   cycles per adapter version; a third failure escalates to the operator.
 10. Persist the verdict — call `memory_insert` (curator server) with
     entity = the agent/skill name, attribute = "adapter_verdict",
     value = { adapter_id, baseline_pass_rate, pass_rate, promoted,
@@ -145,9 +168,11 @@ surface that blocker. Only an explicit operator choice may override the model.
 ## Constraints
 
 - Never submit with unresolved refuse-severity gate findings.
-- Do not promote without verified deployment, comparable loss improvement
-  and a pass rate meeting the baseline on the same held-out evaluation.
-  The skill records a verdict; it does not deploy or promote an adapter.
+- Do not record acceptance or recommend promotion without verified
+  deployment, matched held-out baseline/candidate evaluation, and the
+  operator's pre-agreed criterion being met. Do not require retrain-only
+  loss comparison for a first adapter or treat it as sufficient for a
+  retrain. The skill records a verdict; it does not deploy or promote.
 - Rollouts and training jobs consume provider resources; do not invent a
   spend quota or promote on the basis of an unverified cost estimate.
   Present the available estimate and obtain operator confirmation before

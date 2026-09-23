@@ -80,7 +80,10 @@ State the null for the chosen design. For superiority/difference/association, th
 - If findings show statistical significance → **reject H₀**
 - If findings do not show significance → **fail to reject H₀**
 
-**Format**: "In [population], there is no difference in [outcome] between [intervention] and [comparison]."
+**Format by hypothesis type** (define Δ as intervention minus comparison on the prespecified outcome scale):
+- Difference, superiority, association, diagnostic accuracy, or prognostic: state the design's no-difference/no-association/no-predictive-effect null, with the relevant measure and comparator where applicable.
+- Non-inferiority (larger Δ is better): H₀: Δ ≤ −δ; H₁: Δ > −δ. State the justified δ and reverse signs if lower outcomes are better.
+- Equivalence: H₀: Δ ≤ −δ OR Δ ≥ +δ; H₁: −δ < Δ < +δ. State the justified bounds. Never substitute a no-difference null for either margin-based design.
 
 ---
 
@@ -159,7 +162,7 @@ Respond with a single JSON object:
 ```json
 {
   "research_hypothesis": "In [population], [intervention] will [direction] [outcome] compared to [comparison].",
-  "null_hypothesis": "Design-specific null: no difference for superiority; inferior by at least δ for non-inferiority; outside ±δ for equivalence", 
+  "null_hypothesis": "The design-specific null with outcome measure, comparator (where applicable), direction, and justified δ for margin-based designs",
   "hypothesis_type": "difference|association|superiority|non_inferiority|equivalence|diagnostic_accuracy|prognostic",
   "directional": true,
   "testability_assessment": {

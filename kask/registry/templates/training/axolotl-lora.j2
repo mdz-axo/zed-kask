@@ -30,7 +30,7 @@ lora_dropout: {{ lora_dropout | default(0) }}
 {% endif %}
 lora_target_modules:
 {% for module in lora_target_modules %}
-  - {{ module }}
+  - {{ module | tojson }}
 {% endfor %}
 
 datasets:

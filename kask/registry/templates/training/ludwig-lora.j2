@@ -37,7 +37,7 @@ adapter:
 {% endif %}
   target_modules:
 {% for module in lora_target_modules %}
-    - {{ module }}
+    - {{ module | tojson }}
 {% endfor %}
 
 input_features:

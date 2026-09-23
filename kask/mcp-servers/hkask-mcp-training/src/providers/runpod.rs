@@ -1441,6 +1441,47 @@ mod tests {
         }
     }
 
+    /// expect: [P1] a target-module name remains one literal YAML scalar and cannot rewrite training settings.
+    #[test]
+    fn f3_target_module_names_cannot_inject_yaml_keys() {
+        let module = "q_proj\nload_in_4bit: false";
+        for harness in [TrainingHarnessId::Axolotl, TrainingHarnessId::Ludwig] {
+            let mut job = hostile_job(harness);
+            job.params.lora.target_modules = vec![module.to_string()];
+            job.params.quantization.load_in_4bit = true;
+            let config = match harness {
+                TrainingHarnessId::Axolotl => crate::providers::AxolotlHarness.render_config(&job),
+                TrainingHarnessId::Ludwig => crate::providers::LudwigHarness.render_config(&job),
+            }
+            .expect("render training config");
+            let expected = serde_json::to_string(module).expect("JSON-quoted YAML scalar");
+            assert!(
+                config
+                    .lines()
+                    .any(|line| line.trim() == format!("- {expected}")),
+                "{harness:?} must quote the module as one scalar: {config}"
+            );
+            assert!(
+                !config.lines().any(|line| line == "load_in_4bit: false"),
+                "{harness:?} module must not introduce a root setting: {config}"
+            );
+            let yaml: serde_json::Value =
+                serde_yaml_neo::from_str(&config).expect("rendered YAML must parse");
+            let modules = match harness {
+                TrainingHarnessId::Axolotl => &yaml["lora_target_modules"],
+                TrainingHarnessId::Ludwig => &yaml["adapter"]["target_modules"],
+            };
+            assert_eq!(modules[0].as_str(), Some(module));
+            match harness {
+                TrainingHarnessId::Axolotl => assert_eq!(yaml["load_in_4bit"], true),
+                TrainingHarnessId::Ludwig => {
+                    assert_eq!(yaml["quantization"]["bits"], 4);
+                    assert!(yaml.get("load_in_4bit").is_none());
+                }
+            }
+        }
+    }
+
     /// expect: [P1] byte transfer preserves control bytes and trailing newlines; argv data is never evaluated.
     #[test]
     fn f3_encoded_data_round_trips() {

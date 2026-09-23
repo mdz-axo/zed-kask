@@ -1,4 +1,4 @@
-{# goal: Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/ authorize/maintain), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). #}
+{# goal: Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/authorize/maintain/undetermined), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). #}
 [inference]
 contract:
   input:
@@ -59,13 +59,13 @@ CAPABILITY: <name>
   Dimension: <Nussbaum functioning | TACIT trait | CMMI level | custom>
   Definition used: <task-performance | latent-variable | hierarchical-structural | emergence-threshold | elicitation>
   Elicited level: <measured value, with metric>
-  Floor: <threshold> — <satisfied | violated (gap: ...)>
-  Ceiling: <threshold> — <satisfied | violated (overshoot: ...)>
-  Maturity prerequisites: <list> — <all met | missing: ...>
-  Verdict: <expand | restrict | block | authorize | maintain>
+  Floor: <threshold or unavailable> — <satisfied | violated (gap: ...) | undetermined (missing measurement: ...)>
+  Ceiling: <threshold or unavailable> — <satisfied | violated (overshoot: ...) | undetermined (missing measurement: ...)>
+  Maturity prerequisites: <list> — <all met | missing: ... | undetermined (missing level: ...)>
+  Verdict: <expand | restrict | block | authorize | maintain | undetermined>
   Warrant: <if restrict — Akselrod test result>
   Reauthorization: <if expand — deprivation evidence>
-  Token: <if grant — token_id, scope, budget, max_depth, expiry>
+  Token: <if grant — token_id, scope, budget, max_depth, expiry; none if undetermined>
   Confidence: <0.0–1.0>
   Rationale: <one-line explanation of the verdict>
 ```
@@ -78,7 +78,9 @@ Produce a summary:
 - **restrict**: count (ceiling violations — warrant passed)
 - **block**: count (maturity violations — prerequisites missing)
 - **authorize**: count (new grants)
-- **maintain**: count (no violation)
+- **maintain**: count (no violation and sufficient measurements)
+- **undetermined**: count (missing/incomparable measurements or prerequisites; list the missing evidence, do not call it maintain or a violation)
+- Reconcile counts: `total_capabilities = expand + restrict + block + authorize + maintain + undetermined`. Every capability appears once, with the verdict from its intervention; if the evaluation or intervention is undetermined, report undetermined rather than manufacturing a resolved verdict.
 - **metric_stability_note**: if any verdict is metric-sensitive (would
   flip under a different metric), flag it here. The convergence check
   will use this to determine whether to re-elicite.
@@ -113,5 +115,5 @@ metric instability.
 ## Output
 
 Produce a JSON object with: capability_report (array of ranked
-entries), verdict_summary (object with counts and metric_stability_note),
+entries, preserving undetermined status and missing_measurements), verdict_summary (object with counts including undetermined and metric_stability_note),
 capability_lessons (array), verdict_signatures (array).

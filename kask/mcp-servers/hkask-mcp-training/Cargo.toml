@@ -48,6 +48,9 @@ hf-hub.workspace = true
 minijinja.workspace = true
 dirs.workspace = true
 
+[dev-dependencies]
+serde_yaml_neo.workspace = true
+
 [lints]
 workspace = true
 

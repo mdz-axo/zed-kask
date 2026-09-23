@@ -1025,6 +1025,9 @@ fn main() {
             let cache = source.cache.clone();
             let runtime = source.runtime.clone();
             let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            // Install before the Tokio task can publish its first update: a
+            // registry cannot replay a notification received while unwired.
+            agent::set_kask_tool_source(source);
             tokio_handle.spawn(async move {
                 let mut surface_changes = runtime.tool_surface_changes();
                 loop {
@@ -1049,7 +1052,6 @@ fn main() {
                     }
                 }
             });
-            agent::set_kask_tool_source(source);
         }
 
         // zed-kask: D3/D8 — F6: CyberneticsLoop + MetacognitionLoop tick cycles.
@@ -5114,6 +5116,25 @@ mod tests {
     /// from a unit test. F8 (`<dyn fs::Fs>::set_global`) is a trait method
     /// call on an external value and cannot be pinned via `TypeId`; it is
     /// covered by the F2–F25 compile-time reachability of the `fs` value.
+    // Pin the startup order at the composition root: an initial background
+    // notification is useless if registries have no source to read yet.
+    #[test]
+    fn kask_tool_source_is_installed_before_initial_refresh() {
+        let (_, wiring) = include_str!("main.rs")
+            .split_once("let source = std::sync::Arc::new(ZedKaskToolSource {")
+            .expect("managed tool source construction");
+        let install = wiring
+            .find("agent::set_kask_tool_source(source);")
+            .expect("source installation");
+        let start_refresh = wiring
+            .find("tokio_handle.spawn(async move {")
+            .expect("initial tool-surface refresh");
+        assert!(
+            install < start_refresh,
+            "tool source must exist before its refresh task can notify registries"
+        );
+    }
+
     #[test]
     fn kask_wiring_symbols_exist() {
         let _ = wire_kask_mcp_shutdown as fn(std::sync::Arc<hkask_mcp::McpRuntime>, &mut gpui::App);

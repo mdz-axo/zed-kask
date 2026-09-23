@@ -3516,12 +3516,17 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             // collide with MCP's `/<server>.<name>` grammar. The popup
             // inserts a qualified form for every skill so picking the
             // global row unambiguously runs the global skill even when
-            // a same-named project-local one exists.
-            if let Some(scope) = parsed_command.skill_scope
-                && let Some(skill) = project_state.skills.iter().find(|skill| {
+            // a same-named project-local one exists. A missing scoped
+            // skill is an error, not an unqualified MCP prompt or chat turn.
+            if let Some(scope) = parsed_command.skill_scope {
+                let Some(skill) = project_state.skills.iter().find(|skill| {
                     skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
-                })
-            {
+                }) else {
+                    return Task::ready(Err(anyhow!(
+                        "Skill '/{scope}:{}' not found in the requested scope",
+                        parsed_command.prompt_name
+                    )));
+                };
                 let skill = skill.clone();
                 return self.0.update(cx, |agent, cx| {
                     agent.send_skill_invocation(
@@ -5622,6 +5627,40 @@ mod internal_tests {
             .skip(1)
             .map(language_model::LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    // expect: A qualified skill request never falls through to another slash namespace.
+    // [P2] Motivating: explicit skill scope selects only that skill or reports a miss.
+    // pre: no global skill matches the typed qualified name.
+    // post: no model request or MCP prompt dispatch occurs.
+    #[gpui::test]
+    async fn missing_scoped_skill_does_not_fall_through_to_other_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id, vec!["/:missing-skill".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert!(
+            model.pending_completions().is_empty(),
+            "scoped miss must not reach model"
+        );
+        let error = prompt_task
+            .await
+            .expect_err("scoped skill must report a miss");
+        assert!(error.to_string().contains("/:missing-skill"), "{error}");
     }
 
     // expect: Typing an unqualified core skill sends its shipped instructions,
