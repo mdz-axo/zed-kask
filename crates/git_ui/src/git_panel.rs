@@ -4170,7 +4170,6 @@ impl GitPanel {
                     reasoning_effort: reasoning_effort,
                     speed: None,
                     compact_at_tokens: None,
-                    max_tokens: None,
                 };
 
                 let mut retried_with_thinking = false;
