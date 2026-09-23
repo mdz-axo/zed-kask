@@ -2153,7 +2153,12 @@ impl Sidebar {
             .collect();
 
         for cv in draft_conversation_views {
-            if let Some(thread_view) = cv.read(cx).active_thread() {
+            let thread_id = cv.read(cx).parent_id();
+            let is_draft = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .is_some_and(ThreadMetadata::is_draft);
+            if is_draft && let Some(thread_view) = cv.read(cx).active_thread() {
                 let editor = thread_view.read(cx).message_editor.clone();
                 self._draft_editor_observations.push(cx.subscribe(
                     &editor,

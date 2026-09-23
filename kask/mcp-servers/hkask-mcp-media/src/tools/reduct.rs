@@ -669,6 +669,22 @@ impl MediaServer {
     }
 
     #[tool(
+        description = "List up to limit (1–100) reel IDs and titles from an existing Reduct project. Read-only, excludes private share tokens, and does not claim server-side pagination or render state."
+    )]
+    pub async fn reduct_reels_snapshot(
+        &self,
+        Parameters(ReductProjectItemsRequest { project_id, limit }): Parameters<
+            ReductProjectItemsRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_reels_snapshot", async {
+            project_titled_snapshot(self.reduct_api_key.as_deref(), &project_id, "reels", limit)
+                .await
+        })
+        .await
+    }
+
+    #[tool(
         description = "Create a Reduct cloud recording in an existing project (POST title). This mutates the Reduct workspace; returns the provider's recording ID. Never creates a local educt transcript."
     )]
     pub async fn reduct_create_recording(
@@ -1262,6 +1278,10 @@ mod tests {
                     "Reduct reel metadata: count={}; first-field-names={fields:?}",
                     reels.len()
                 );
+                let snapshot =
+                    project_titled_snapshot(Some(key.as_str()), project_id, "reels", 10).await?;
+                assert_eq!(snapshot["provider_returned_count"], reels.len());
+                assert!(snapshot["returned_count"].as_u64().is_some_and(|n| n <= 10));
                 break;
             }
         }
