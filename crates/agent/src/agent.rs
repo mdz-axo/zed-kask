@@ -45,8 +45,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
     SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary,
-    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
-    project_skills_relative_path, seed_shipped_skills,
+    global_skills_dir, parse_skill_frontmatter, project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -756,12 +755,10 @@ impl NativeAgent {
         // Pre-release: no migration from legacy paths.
         let _ = fs.create_dir(&skills_dir).await;
 
-        // zed-kask: In development, link shipped global skills to the authored
-        // checkout, never copy a second independently editable body. Installed
-        // builds without that checkout seed the bundled skills to disk. This
-        // must complete before discovery; the Settings startup publisher uses
-        // the same serialized seeding function. FakeFs tests supply their own
-        // catalog instead.
+        // zed-kask: Remove copied shipped global skills in a development
+        // checkout; discovery reads their authored files directly. Installed
+        // builds without the checkout seed the bundled payload to disk. The
+        // Settings startup publisher uses the same serialized seed operation.
         if !fs.is_fake() {
             seed_shipped_skills(fs.as_ref(), &skills_dir).await;
         }
@@ -1251,28 +1248,17 @@ impl NativeAgent {
             })
             .collect::<Vec<_>>();
 
-        // Load global skills. Two sources contribute, both tagged
-        // `SkillSource::Global`:
-        //
-        // 1. Disk-loaded skills from the global skills dir — the user's own
-        //    installs. These win on name conflicts with embedded skills
-        //    because `apply_skill_overrides` keeps the first entry on ties,
-        //    and `combine_skills` chains `global` before embedded globals.
-        // 2. Embedded kask skills — the SKILL.md files shipped in this
-        //    repo's `.agents/skills/` directory, baked into the binary at
-        //    build time by `agent_skills/build.rs`. These are always
-        //    available regardless of install location or CWD.
-        //
-        // Both are `Global`, so the user sees them in the slash-command
-        //    catalog as `/:<name>` in every project.
+        // In development, shipped skills come straight from this checkout;
+        // global-only user skills come from disk. Installed builds without a
+        // checkout read their seeded bodies. The loader excludes stale
+        // shipped copies so each name has one runtime body.
         let global_skills_task = {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
-                load_skills_from_directory(
+                agent_skills::load_authoritative_global_skills(
                     &global_skills_fs,
                     &global_skills_dir,
-                    SkillSource::Global,
                 )
                 .await
             })

@@ -26,6 +26,12 @@ use crate::kanban::{Goal, GoalResolution, GoalVerdict, VerificationCriterion};
 
 const GOAL_ENTITY: &str = "kanban:goal";
 
+impl From<hkask_storage::HMemError> for KanbanError {
+    fn from(error: hkask_storage::HMemError) -> Self {
+        KanbanError::Internal(format!("atomic goal transition failed: {error}"))
+    }
+}
+
 /// Bounds on goal criteria — lifted from `goal-analysis` (`create.j2`:
 /// "2–4 observable semantic conditions"), relaxed to allow a single
 /// criterion for trivially verifiable goals while keeping verification
@@ -83,7 +89,7 @@ impl KanbanService {
         // Process-family anchor: `pplan:Step` (P-Plan, soft-reused by PKO) —
         // the same term the goal responses emit via `kanban_type_to_pko`,
         // so the goal's record and its wire surface agree. Later updates use
-        // HMemStore::update, which carries this metadata into the replacement.
+        // update_value_atomic, which changes only the value under the write lock.
         let ontology = hkask_types::HMemOntology {
             dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
             dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
@@ -182,7 +188,7 @@ impl KanbanService {
         verdict: GoalVerdict,
         judge: WebID,
     ) -> Result<Goal, KanbanError> {
-        let mut goal = self.require_goal(goal_id)?;
+        self.transition_goal(goal_id, |mut goal| {
         if goal.owner != judge {
             return Err(KanbanError::PermissionDenied(format!(
                 "goal {goal_id} is not owned by caller — cannot judge"
@@ -238,8 +244,8 @@ impl KanbanService {
 
         goal.verdicts.push(verdict);
         goal.updated_at = chrono::Utc::now();
-        self.goal_persist(&goal)?;
-        Ok(goal)
+        Ok((true, goal))
+        })
     }
 
     /// Resolve a goal: record the realized outcome and Brier-score the
@@ -255,7 +261,7 @@ impl KanbanService {
         achieved: bool,
         judge: WebID,
     ) -> Result<Goal, KanbanError> {
-        let mut goal = self.require_goal(goal_id)?;
+        let goal = self.transition_goal(goal_id, |mut goal| {
         if goal.owner != judge {
             return Err(KanbanError::PermissionDenied(format!(
                 "goal {goal_id} is not owned by caller — cannot score"
@@ -263,7 +269,7 @@ impl KanbanService {
         }
         if let Some(resolution) = &goal.resolution {
             if resolution.achieved == achieved {
-                return Ok(goal);
+                return Ok((false, goal));
             }
             return Err(KanbanError::InvalidInput(format!(
                 "goal {goal_id} is already resolved with achieved={} — conflicting outcome {achieved} rejected",
@@ -288,8 +294,13 @@ impl KanbanService {
         // The resolved row is the durable outbox entry. It remains retryable
         // until the production turn-ingestion path confirms the score outcome
         // was stored in curator memory and explicitly acknowledges it.
-        self.goal_persist(&goal)?;
+        Ok((true, goal))
+        })?;
 
+        let brier = goal
+            .resolution
+            .as_ref()
+            .and_then(|resolution| resolution.brier);
         tracing::info!(
             target: "hkask.kanban",
             operation = "goal_resolved",
@@ -326,45 +337,32 @@ impl KanbanService {
         self.goal_prune(goal_id)
     }
 
-    /// Fetch a goal by id or return `KanbanError::NotFound`.
-    /// Mirrors `require_task`.
-    fn require_goal(&self, goal_id: GoalID) -> Result<Goal, KanbanError> {
-        self.goal_get(goal_id)?.ok_or_else(|| {
-            KanbanError::NotFound(hkask_types::NotFound {
-                entity_type: "goal".to_string(),
-                id: goal_id.to_string(),
-            })
-        })
-    }
-
-    /// Atomically replace the one durable row for a goal.
-    fn goal_persist(&self, goal: &Goal) -> Result<(), KanbanError> {
-        let rows = self
-            .store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())
-            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
-        let row = match rows.as_slice() {
-            [row] => row,
-            [] => {
-                return Err(KanbanError::NotFound(hkask_types::NotFound {
+    /// Read, validate, and commit a goal transition under one storage write lock.
+    fn transition_goal(
+        &self,
+        goal_id: GoalID,
+        change: impl FnOnce(Goal) -> Result<(bool, Goal), KanbanError>,
+    ) -> Result<Goal, KanbanError> {
+        self.store
+            .update_value_atomic(GOAL_ENTITY, &goal_id.to_string(), |value| {
+                let current: Goal = serde_json::from_value(value).map_err(|error| {
+                    KanbanError::Internal(format!("goal deserialization failed: {error}"))
+                })?;
+                let (changed, goal) = change(current)?;
+                let value = changed
+                    .then(|| serde_json::to_value(&goal))
+                    .transpose()
+                    .map_err(|error| {
+                        KanbanError::Internal(format!("goal serialization failed: {error}"))
+                    })?;
+                Ok::<_, KanbanError>((value, goal))
+            })?
+            .ok_or_else(|| {
+                KanbanError::NotFound(hkask_types::NotFound {
                     entity_type: "goal".to_string(),
-                    id: goal.id.to_string(),
-                }));
-            }
-            rows => {
-                return Err(KanbanError::Internal(format!(
-                    "goal {} has {} durable rows; expected exactly one",
-                    goal.id,
-                    rows.len()
-                )));
-            }
-        };
-        let value = serde_json::to_value(goal).map_err(|error| {
-            KanbanError::Internal(format!("goal serialization failed: {error}"))
-        })?;
-        self.store.update(&row.id, value, 1.0f64).map_err(|error| {
-            KanbanError::Internal(format!("atomic goal replacement failed: {error}"))
-        })
+                    id: goal_id.to_string(),
+                })
+            })
     }
 
     /// Delete the one durable goal row. A missing row is already acknowledged.
@@ -575,19 +573,19 @@ mod goal_tests {
     /// expect: "A failed goal update leaves the prior durable outbox row available for retry."
     /// [P3] Motivating: Generative Space — goal learning survives transient storage failure.
     /// [P2] Constraining: Transparent Imperfection — failure preserves the last durable state.
-    /// pre: one goal exists and replacement insertion is forced to fail
+    /// pre: one goal exists and its update is forced to fail
     /// post: judging returns an error and the original unjudged goal remains readable
     #[test]
-    fn goal_replacement_failure_preserves_prior_outbox_row() -> anyhow::Result<()> {
+    fn goal_update_failure_preserves_prior_outbox_row() -> anyhow::Result<()> {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let store = HMemStore::from_driver(driver.clone())?;
         let svc = KanbanService::new(store);
         let owner = WebID::new();
         let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
         let trigger = format!(
-            "CREATE TRIGGER reject_goal_replacement BEFORE UPDATE ON hmems
+            "CREATE TRIGGER reject_goal_update BEFORE UPDATE ON hmems
              WHEN NEW.entity = '{GOAL_ENTITY}' AND NEW.attribute = '{}'
-             BEGIN SELECT RAISE(FAIL, 'forced goal replacement failure'); END;",
+             BEGIN SELECT RAISE(FAIL, 'forced goal update failure'); END;",
             goal.id
         );
         driver.execute_batch(&trigger)?;
@@ -598,19 +596,52 @@ mod goal_tests {
         );
         let retained = svc
             .goal_get(goal.id)?
-            .ok_or_else(|| anyhow::anyhow!("failed replacement removed the prior goal"))?;
+            .ok_or_else(|| anyhow::anyhow!("failed update removed the prior goal"))?;
         assert!(retained.verdicts.is_empty());
         assert_eq!(retained.goal_text, goal.goal_text);
         Ok(())
     }
 
+    /// expect: "A failed score leaves the open goal available for a successful retry."
+    /// [P2] Motivating: Transparent Imperfection — failed outbox publication does not resolve the goal.
+    /// pre: storage rejects the first score update
+    /// post: open row remains; retry after fault removal retains the scored outcome until acknowledgment
+    #[test]
+    fn goal_score_failure_preserves_open_outbox_for_retry() -> anyhow::Result<()> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let svc = KanbanService::new(HMemStore::from_driver(driver.clone())?);
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.8), None, owner)?;
+        driver.execute_batch(
+            "CREATE TRIGGER reject_goal_score BEFORE UPDATE ON hmems
+             WHEN NEW.entity = 'kanban:goal'
+             BEGIN SELECT RAISE(FAIL, 'forced score failure'); END;",
+        )?;
+        assert!(svc.goal_score(goal.id, true, owner).is_err());
+        assert!(
+            svc.goal_get(goal.id)?
+                .expect("open outbox row")
+                .resolution
+                .is_none()
+        );
+        driver.execute_batch("DROP TRIGGER reject_goal_score;")?;
+        assert!(svc.goal_score(goal.id, true, owner)?.resolution.is_some());
+        assert!(
+            svc.goal_get(goal.id)?
+                .expect("scored outbox row retained")
+                .resolution
+                .is_some()
+        );
+        Ok(())
+    }
+
     /// expect: "Updating a goal preserves the ontology anchor assigned when the goal was created."
     /// [P3] Motivating: Generative Space — goal records remain part of the published process graph.
-    /// [P8] Constraining: Semantic Grounding — replacement cannot erase the goal's ontology identity.
+    /// [P8] Constraining: Semantic Grounding — updating cannot erase the goal's ontology identity.
     /// pre: one ontology-anchored goal exists
-    /// post: judging the goal replaces its value while retaining the identical ontology payload
+    /// post: judging changes only the value while retaining the identical ontology payload
     #[test]
-    fn goal_replacement_preserves_ontology() -> anyhow::Result<()> {
+    fn goal_update_preserves_ontology() -> anyhow::Result<()> {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let store = HMemStore::from_driver(driver)?;
         let svc = KanbanService::new(store.clone());
@@ -636,11 +667,7 @@ mod goal_tests {
             .next()
             .ok_or_else(|| anyhow::anyhow!("updated goal has no h_mem row"))?;
         let reloaded: Goal = serde_json::from_value(after.value.clone())?;
-        assert_eq!(
-            reloaded.verdicts.len(),
-            1,
-            "the replacement value must land"
-        );
+        assert_eq!(reloaded.verdicts.len(), 1, "the updated value must land");
         let after_ontology = after
             .ontology
             .as_ref()

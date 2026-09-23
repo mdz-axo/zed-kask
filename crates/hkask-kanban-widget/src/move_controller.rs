@@ -19,6 +19,7 @@ use gpui::Context;
 use gpui_util::ResultExt as _;
 use hkask_tool_invoker::shared_tool_invoker;
 use hkask_types::BlockProvenance;
+use hkask_types::tool_response::parse_tool_error;
 
 use crate::block::TaskBody;
 use crate::view::{
@@ -60,6 +61,9 @@ pub(crate) struct KanbanMoveController {
     /// `task_id` currently being moved, if a dispatch is in flight. Single
     /// flight: while set, all move affordances are non-interactive.
     dispatch_in_flight: Option<String>,
+    /// Identifies the current dispatch, including when the same card is moved
+    /// again after cancellation. A retired completion cannot mutate new state.
+    dispatch_generation: u64,
     /// The optimistic move applied to the local cache at dispatch time, tracked
     /// so it can be rolled back if the user cancels mid-dispatch or the dispatch
     /// fails. Cleared on successful dispatch (the move sticks).
@@ -85,6 +89,7 @@ impl KanbanMoveController {
     pub(crate) fn new() -> Self {
         Self {
             dispatch_in_flight: None,
+            dispatch_generation: 0,
             optimistic_move: None,
             dispatch_error: None,
             pending_move: None,
@@ -208,6 +213,8 @@ impl KanbanMoveController {
         };
 
         self.dispatch_error = None;
+        self.dispatch_generation = self.dispatch_generation.wrapping_add(1);
+        let generation = self.dispatch_generation;
         self.dispatch_in_flight = Some(task_id.clone());
         // Apply the optimistic move to the local cache immediately so the UI
         // reflects the move while the dispatch is in flight. Track the original
@@ -222,19 +229,24 @@ impl KanbanMoveController {
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
             this.update(cx, |this, cx| {
+                if this.move_controller.dispatch_generation != generation
+                    || this.move_controller.dispatch_in_flight.is_none()
+                {
+                    return;
+                }
                 this.move_controller.dispatch_in_flight = None;
-                match outcome {
-                    Ok(_) => {
-                        this.move_controller.dispatch_error = None;
-                        // The optimistic move already reflected the new status;
-                        // drop the rollback record (the move sticks).
-                        this.move_controller.optimistic_move = None;
-                    }
-                    Err(error) => {
-                        this.move_controller.dispatch_error = Some(error.message());
-                        this.move_controller
-                            .rollback_optimistic_move(&mut this.columns, &this.column_meta);
-                    }
+                let error = match outcome {
+                    Ok(output) => parse_tool_error(&output).map(|error| error.message),
+                    Err(error) => Some(error.message()),
+                };
+                if let Some(error) = error {
+                    this.move_controller.dispatch_error = Some(error);
+                    this.move_controller
+                        .rollback_optimistic_move(&mut this.columns, &this.column_meta);
+                } else {
+                    this.move_controller.dispatch_error = None;
+                    // The optimistic move already reflected the new status.
+                    this.move_controller.optimistic_move = None;
                 }
                 cx.notify();
             })
@@ -247,8 +259,9 @@ impl KanbanMoveController {
     /// roll back the optimistic local move. The visible feedback is the
     /// rolled-back card position. The underlying tool call is not cancelled
     /// (it may already be queued on the server); the rollback only restores
-    /// the local cache so the user sees the pre-move state. When the deferred
-    /// result lands, it is applied on top of the rolled-back state.
+    /// the local cache so the user sees the pre-move state. A later result
+    /// from this retired dispatch cannot change the local state; the underlying
+    /// tool call may still complete on the server.
     pub(crate) fn cancel_dispatch(
         &mut self,
         columns: &mut Vec<KanbanColumn>,
@@ -258,6 +271,7 @@ impl KanbanMoveController {
         if self.dispatch_in_flight.is_none() {
             return;
         }
+        self.dispatch_generation = self.dispatch_generation.wrapping_add(1);
         self.dispatch_in_flight = None;
         self.rollback_optimistic_move(columns, column_meta);
         cx.notify();

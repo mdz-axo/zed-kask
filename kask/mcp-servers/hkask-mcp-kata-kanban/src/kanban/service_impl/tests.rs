@@ -822,6 +822,32 @@ fn board_delete_atomic_when_child_delete_fails() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// expect: "A board with an invalid procedure root cannot report successful deletion of its tasks."
+/// [P2] Motivating: Transparent Imperfection — malformed roots fail without erasing work.
+/// pre: board and task exist, but the root's procedure anchor is absent or wrong
+/// post: deletion reports an error and board, task, and index remain
+#[test]
+fn board_delete_rejects_invalid_root_and_retains_all_rows() -> anyhow::Result<()> {
+    for replacement in ["NULL", "'{\"pko_procedure\":\"other-board\"}'"] {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver.clone())?;
+        let service = KanbanService::new(store.clone());
+        let owner = WebID::new();
+        let board = service.board_create(owner, "Board", &make_default_columns())?;
+        let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
+        driver.execute_batch(&format!(
+            "UPDATE hmems SET ontology = {replacement} WHERE entity = 'kanban:board'"
+        ))?;
+
+        assert!(service.board_delete(board.id).is_err());
+        assert!(service.board_get(board.id)?.is_some());
+        assert!(service.task_get(task.id)?.is_some());
+        assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
+        assert_eq!(store.count()?, 3);
+    }
+    Ok(())
+}
+
 // ── Mermaid export/import round-trip integration tests ───────────────────
 //
 // These tests exercise the full round-trip through the kanban service layer:

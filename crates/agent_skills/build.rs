@@ -4,11 +4,11 @@
 //! in this repo) and emits a static `SHIPPED_SKILL_SEED_ENTRIES: &[(&str, &str)]`
 //! array of `(name, content)` pairs, sorted by name.
 //!
-//! This payload is **seed-only**: when the authored checkout is available,
-//! `seed_shipped_skills` links the global catalog entries to those source
-//! directories, so source edits have one live body. Without the checkout it
-//! materialises the compiled payload in the global skills directory. Discovery
-//! always reads the catalog from disk, never directly from this payload.
+//! This payload is **seed-only**: in a development checkout, shipped skills
+//! load directly from the authored files and old global copies are removed.
+//! Without the checkout, `seed_shipped_skills` materialises the compiled
+//! payload in the global skills directory. Discovery reads one disk source
+//! for each skill; it never reads this payload directly.
 //!
 //! The SKILL.md files are the *interface* (frontmatter parsed for discovery);
 //! the *implementation* (YAML manifests + Jinja2 templates) is seeded to disk

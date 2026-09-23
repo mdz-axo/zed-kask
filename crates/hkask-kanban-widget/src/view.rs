@@ -1435,6 +1435,34 @@ mod tests {
         }
     }
 
+    struct ScriptedMoveInvoker {
+        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+    }
+
+    impl ToolInvoker for ScriptedMoveInvoker {
+        fn invoke_tool(
+            &self,
+            _server: &str,
+            _tool: &str,
+            _args: serde_json::Value,
+        ) -> Task<Result<String, InvokeError>> {
+            let response = self
+                .responses
+                .lock()
+                .expect("scripted responses lock")
+                .pop_front()
+                .expect("one response per dispatched move");
+            Task::ready(Ok(response))
+        }
+    }
+
+    fn wire_move_responses(responses: &[&str]) -> InvokerGuard {
+        set_tool_invoker(Some(Arc::new(ScriptedMoveInvoker {
+            responses: std::sync::Mutex::new(responses.iter().map(|s| (*s).to_string()).collect()),
+        })));
+        InvokerGuard
+    }
+
     /// Build a single-board `KanbanBlockBody` named "Test" with empty
     /// (non-dispatchable) provenance. Use `body_with_board_and_provenance_with`
     /// for move-dispatch tests that need dispatchable provenance.
@@ -1672,9 +1700,7 @@ mod tests {
             "cancel rolls back the optimistic move to the original status"
         );
 
-        // Let the spawned completion task run. It sees `dispatch_in_flight`
-        // is already cleared; on `Ok(_)` it clears `optimistic_move` (already
-        // None) — a no-op. The rolled-back status must survive.
+        // The retired completion cannot change the rolled-back local state.
         cx.run_until_parked();
         let final_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(

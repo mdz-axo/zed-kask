@@ -37,12 +37,6 @@ impl From<serde_json::Error> for HMemError {
     }
 }
 
-/// Separates a rejected value transition from a storage failure without flattening either error.
-#[derive(Debug)]
-pub enum AtomicHMemUpdateError<E> {
-    Storage(HMemError),
-    Change(E),
-}
 /// A memory with observation and recall timestamps; forgetting deletes it.
 #[derive(Debug, Clone)]
 pub struct HMem {
@@ -431,25 +425,25 @@ impl HMemStore {
     /// expect: "Concurrent changes to a record observe the last committed value and never lose one another."
     /// [P2] Motivating: Transparent Imperfection — failed changes leave the prior durable value intact.
     /// pre: entity + attribute identify zero or one row; change validates the current value
-    /// post: returns None if absent; otherwise commits the new value and returns the change result
-    pub fn update_value_atomic<T, E>(
+    /// post: returns None if absent; otherwise commits an optional new value and returns the change result
+    pub fn update_value_atomic<T, E: From<HMemError>>(
         &self,
         entity: &str,
         attribute: &str,
-        change: impl FnOnce(Value) -> Result<(Value, T), E>,
-    ) -> Result<Option<T>, AtomicHMemUpdateError<E>> {
+        change: impl FnOnce(Value) -> Result<(Option<Value>, T), E>,
+    ) -> Result<Option<T>, E> {
         let storage_error = |error: rusqlite::Error| {
-            AtomicHMemUpdateError::Storage(HMemError::Infra(InfrastructureError::database(
+            E::from(HMemError::Infra(InfrastructureError::database(
                 error.to_string(),
             )))
         };
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
-            AtomicHMemUpdateError::Storage(HMemError::Infra(InfrastructureError::database(
+            E::from(HMemError::Infra(InfrastructureError::database(
                 "atomic h_mem update requires a SqliteDriver",
             )))
         })?;
         let mut connection = pool.get().map_err(|error| {
-            AtomicHMemUpdateError::Storage(HMemError::Infra(InfrastructureError::database(
+            E::from(HMemError::Infra(InfrastructureError::database(
                 error.to_string(),
             )))
         })?;
@@ -467,11 +461,9 @@ impl HMemStore {
             return Ok(None);
         }
         if count != 1 {
-            return Err(AtomicHMemUpdateError::Storage(HMemError::Infra(
-                InfrastructureError::database(format!(
-                    "required h_mem key {entity}/{attribute} has {count} rows"
-                )),
-            )));
+            return Err(E::from(HMemError::Infra(InfrastructureError::database(
+                format!("required h_mem key {entity}/{attribute} has {count} rows"),
+            ))));
         }
         let (id, current): (String, String) = transaction
             .query_row(
@@ -480,17 +472,19 @@ impl HMemStore {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(storage_error)?;
-        let current = serde_json::from_str(&current)
-            .map_err(|error| AtomicHMemUpdateError::Storage(HMemError::from(error)))?;
-        let (new_value, result) = change(current).map_err(AtomicHMemUpdateError::Change)?;
-        let serialized = serde_json::to_string(&new_value)
-            .map_err(|error| AtomicHMemUpdateError::Storage(HMemError::from(error)))?;
-        transaction
-            .execute(
-                "UPDATE hmems SET value = ?1 WHERE id = ?2",
-                rusqlite::params![serialized, id],
-            )
-            .map_err(storage_error)?;
+        let current =
+            serde_json::from_str(&current).map_err(|error| E::from(HMemError::from(error)))?;
+        let (new_value, result) = change(current)?;
+        if let Some(new_value) = new_value {
+            let serialized = serde_json::to_string(&new_value)
+                .map_err(|error| E::from(HMemError::from(error)))?;
+            transaction
+                .execute(
+                    "UPDATE hmems SET value = ?1 WHERE id = ?2",
+                    rusqlite::params![serialized, id],
+                )
+                .map_err(storage_error)?;
+        }
         transaction.commit().map_err(storage_error)?;
         Ok(Some(result))
     }

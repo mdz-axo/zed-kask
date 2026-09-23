@@ -198,3 +198,59 @@ fn procedure_delete_rejects_unanchored_or_mismatched_root_without_deleting_child
     }
     Ok(())
 }
+
+/// expect: "A second goal transition reads the first committed verdict, not a stale snapshot."
+/// [P2] Motivating: Transparent Imperfection — successful verdicts remain durable.
+/// pre: the first writer holds its IMMEDIATE transaction while the second begins
+/// post: the second writer sees the first verdict and commits both in order
+#[test]
+fn goal_value_transitions_serialize_under_immediate_write_lock() -> anyhow::Result<()> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+    let goal = HMem::new("kanban:goal", "goal-1", serde_json::json!([]), WebID::new());
+    store.insert(&goal)?;
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (started_tx, started_rx) = mpsc::channel();
+    let first_store = store.clone();
+    let first = std::thread::spawn(move || -> anyhow::Result<()> {
+        first_store.update_value_atomic("kanban:goal", "goal-1", |value| {
+            entered_tx.send(()).expect("signal first transaction");
+            release_rx.recv().expect("release first transaction");
+            let mut history: Vec<String> = serde_json::from_value(value)?;
+            history.push("first".into());
+            Ok::<_, anyhow::Error>((Some(serde_json::to_value(history)?), ()))
+        })?;
+        Ok(())
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5))?;
+    let second_store = store.clone();
+    let second = std::thread::spawn(move || -> anyhow::Result<Vec<String>> {
+        started_tx.send(())?;
+        second_store
+            .update_value_atomic("kanban:goal", "goal-1", |value| {
+                let mut history: Vec<String> = serde_json::from_value(value)?;
+                history.push("second".into());
+                Ok::<_, anyhow::Error>((Some(serde_json::to_value(&history)?), history))
+            })?
+            .ok_or_else(|| anyhow::anyhow!("goal disappeared"))
+    });
+    started_rx.recv_timeout(Duration::from_secs(5))?;
+    release_tx.send(())?;
+    first
+        .join()
+        .map_err(|_| anyhow::anyhow!("first writer panicked"))??;
+    assert_eq!(
+        second
+            .join()
+            .map_err(|_| anyhow::anyhow!("second writer panicked"))??,
+        ["first", "second"]
+    );
+    assert_eq!(
+        store.get_by_id(&goal.id)?.expect("goal retained").value,
+        serde_json::json!(["first", "second"])
+    );
+    Ok(())
+}

@@ -738,9 +738,9 @@ fn main() {
             agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
         }).detach();
 
-        // zed-kask: Seed shipped skills to disk and populate the SkillIndex
-        // global at startup so the Settings → AI → Skills page displays all
-        // shipped skills without requiring the agent panel to be opened first.
+        // zed-kask: Load shipped skills from the checkout in development (or
+        // seed them for an installed build) and publish one global catalog
+        // so the Settings → AI → Skills page works before the agent panel.
         // The lazy scan in `run_skills_scan` (triggered by agent-panel
         // interaction) will refresh the SkillIndex with project skills when
         // a project context is built; `NativeAgent::new` preserves an existing
@@ -751,12 +751,7 @@ fn main() {
         let skills_fs: Arc<dyn Fs> = fs.clone();
         cx.spawn(async move |cx| {
             agent_skills::seed_shipped_skills(skills_fs.as_ref(), &skills_dir).await;
-            let loaded = agent_skills::load_skills_from_directory(
-                &skills_fs,
-                &skills_dir,
-                agent_skills::SkillSource::Global,
-            )
-            .await;
+            let loaded = agent_skills::load_authoritative_global_skills(&skills_fs, &skills_dir).await;
             let global_skills: Vec<agent_skills::Skill> =
                 loaded.into_iter().filter_map(|result| result.ok()).collect();
             let _ = cx.update(|cx| {
