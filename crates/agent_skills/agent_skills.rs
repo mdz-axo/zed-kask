@@ -1,12 +1,12 @@
 use anyhow::{Context as _, Result};
 use const_format::formatcp;
-use fs::Fs;
-use futures::StreamExt;
+use fs::{CopyOptions, Fs, RemoveOptions};
+use futures::{StreamExt, lock::Mutex};
 use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use util::paths::component_matches_ignore_ascii_case;
 
 /// First segment of the project-local skills directory path: `.agents`.
@@ -852,6 +852,38 @@ fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
     SHIPPED_SKILL_SEED_ENTRIES
 }
 
+/// In a source checkout, shipped skills have one body: the authored file.
+/// Installed binaries without the source checkout retain the disk seed path.
+pub fn development_skills_dir() -> Option<PathBuf> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+    source
+        .is_dir()
+        .then(|| source.canonicalize().ok())
+        .flatten()
+}
+
+pub fn is_shipped_skill(name: &str) -> bool {
+    shipped_skill_seed()
+        .iter()
+        .any(|(shipped, _)| *shipped == name)
+}
+
+/// The development catalog must not load a second project-scoped entry for
+/// a shipped skill already exposed through its global link to this source.
+pub fn is_development_shipped_skill(path: &Path) -> bool {
+    let Some(source) = development_skills_dir() else {
+        return false;
+    };
+    path.canonicalize()
+        .ok()
+        .is_some_and(|resolved| resolved.starts_with(&source))
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .is_some_and(is_shipped_skill)
+}
+
 /// Materialise the shipped kask skills onto the user's disk if missing.
 ///
 /// For each shipped skill in [`shipped_skill_seed`], writes
@@ -866,20 +898,151 @@ fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
 /// editing happens against the disk copies — no compiled-in data is read at
 /// runtime, so changes take effect without recompilation or a new release.
 pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
+    // The agent scanner and startup Settings publisher can call this together.
+    static SEED_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = SEED_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let dev_source = if fs.is_fake() {
+        None
+    } else {
+        development_skills_dir()
+    };
+    seed_shipped_skills_from_source(fs, skills_dir, dev_source.as_deref()).await;
+}
+
+async fn seed_shipped_skills_from_source(
+    fs: &dyn Fs,
+    skills_dir: &Path,
+    dev_source: Option<&Path>,
+) {
     for (name, content) in shipped_skill_seed() {
         let skill_dir = skills_dir.join(name);
         let skill_file = skill_dir.join(SKILL_FILE_NAME);
-        let is_core = is_core_skill(name);
-
-        // Core skills are always overwritten on every startup so user edits
-        // cannot break system-critical functionality. User skills are seeded
-        // only if missing — user edits are sovereign.
-        if fs.is_file(&skill_file).await && !is_core {
+        if let Some(source) = dev_source.as_ref() {
+            let source_dir = source.join(name);
+            let source_file = source_dir.join(SKILL_FILE_NAME);
+            if !fs.is_file(&source_file).await {
+                log::warn!(
+                    "Shipped skill '{name}' missing from development source; refusing a second copy"
+                );
+                continue;
+            }
+            if fs.path_exists(&skill_dir) {
+                match fs.metadata(&skill_dir).await {
+                    Ok(Some(metadata)) if metadata.is_symlink => {
+                        if fs.canonicalize(&skill_dir).await.ok().as_deref()
+                            == Some(source_dir.as_path())
+                        {
+                            continue;
+                        }
+                        log::warn!(
+                            "Shipped skill '{name}' has a symlink to another source; refusing to replace it"
+                        );
+                        continue;
+                    }
+                    Ok(Some(metadata)) if metadata.is_dir => {
+                        let entries = match fs.read_dir(&skill_dir).await {
+                            Ok(entries) => entries.collect::<Vec<_>>().await,
+                            Err(error) => {
+                                log::warn!("Cannot inspect shipped skill '{name}': {error}");
+                                continue;
+                            }
+                        };
+                        if entries
+                            .iter()
+                            .any(|entry| !matches!(entry, Ok(path) if path == &skill_file))
+                        {
+                            log::warn!(
+                                "Shipped skill '{name}' has extra files; refusing to replace the directory"
+                            );
+                            continue;
+                        }
+                        if fs.is_file(&skill_file).await {
+                            let archive = skills_dir
+                                .parent()
+                                .unwrap_or(skills_dir)
+                                .join("skill-migration-archive");
+                            let old_body = match fs.load(&skill_file).await {
+                                Ok(body) => body,
+                                Err(error) => {
+                                    log::warn!("Cannot read copied skill '{name}': {error}");
+                                    continue;
+                                }
+                            };
+                            let source_body = match fs.load(&source_file).await {
+                                Ok(body) => body,
+                                Err(error) => {
+                                    log::warn!("Cannot read source skill '{name}': {error}");
+                                    continue;
+                                }
+                            };
+                            if old_body != source_body {
+                                let archived_file = archive.join(format!("{name}.md"));
+                                if let Err(error) = fs.create_dir(&archive).await {
+                                    log::warn!("Cannot archive shipped skill '{name}': {error}");
+                                    continue;
+                                }
+                                if fs.is_file(&archived_file).await {
+                                    match fs.load(&archived_file).await {
+                                        Ok(body) if body == old_body => {}
+                                        Ok(_) | Err(_) => {
+                                            log::warn!(
+                                                "Prior archive differs for shipped skill '{name}'; manual recovery required"
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                } else if let Err(error) = fs
+                                    .copy_file(
+                                        &skill_file,
+                                        &archived_file,
+                                        CopyOptions {
+                                            overwrite: false,
+                                            ignore_if_exists: false,
+                                        },
+                                    )
+                                    .await
+                                {
+                                    log::warn!(
+                                        "Cannot preserve previous shipped skill '{name}': {error}"
+                                    );
+                                    continue;
+                                }
+                            }
+                            if let Err(error) =
+                                fs.remove_file(&skill_file, RemoveOptions::default()).await
+                            {
+                                log::warn!("Cannot remove copied skill '{name}': {error}");
+                                continue;
+                            }
+                        }
+                        if let Err(error) =
+                            fs.remove_dir(&skill_dir, RemoveOptions::default()).await
+                        {
+                            log::warn!("Cannot remove copied skill directory '{name}': {error}");
+                            continue;
+                        }
+                    }
+                    Ok(_) => {
+                        log::warn!("Shipped skill '{name}' has an unexpected disk entry");
+                        continue;
+                    }
+                    Err(error) => {
+                        log::warn!("Cannot inspect shipped skill '{name}': {error}");
+                        continue;
+                    }
+                }
+            }
+            if let Err(error) = fs.create_symlink(&skill_dir, source_dir).await {
+                log::warn!("Cannot link shipped skill '{name}' to its single source: {error}");
+            }
+            continue;
+        }
+        if fs.is_file(&skill_file).await && !is_core_skill(name) {
             continue;
         }
         if let Err(error) = fs.create_dir(&skill_dir).await {
             log::warn!(
-                "Failed to create shipped skill directory '{}' for seeding: {error}",
+                "Failed to create shipped skill directory '{}': {error}",
                 skill_dir.display()
             );
             continue;

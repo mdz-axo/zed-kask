@@ -409,6 +409,169 @@ async fn different_keys_create_different_tasks() {
     assert_eq!(task_count(&server, &board_id).await, 2);
 }
 
+#[tokio::test]
+async fn changed_request_with_same_key_is_rejected_without_effect() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id");
+    create_task(&server, board_id, "Original", Some("same-key"))
+        .await
+        .expect("first create");
+    let error = create_task(&server, board_id, "Changed", Some("same-key"))
+        .await
+        .expect_err("changed payload cannot replay an old result");
+    assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    assert_eq!(task_count(&server, board_id).await, 1);
+}
+
+#[tokio::test]
+async fn other_webid_cannot_replay_a_key_on_shared_driver() {
+    let (owner, driver) = make_server_with_shared_driver();
+    let first = create_board(&owner, "Owner board", Some("shared-key")).await;
+    let store = HMemStore::from_driver(driver.clone()).expect("shared store");
+    let replay_store = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
+            .expect("shared replay store"),
+    );
+    let other = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(store),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&replay_store),
+        replay_store,
+    );
+    let error = other
+        .kanban_board_create(Parameters(BoardCreateRequest {
+            name: "Owner board".to_string(),
+            columns: None,
+            idempotency_key: Some("shared-key".to_string()),
+        }))
+        .await
+        .expect_err("another caller must not see the saved response");
+    assert_eq!(error.kind, McpErrorKind::PermissionDenied);
+    assert_eq!(board_count(&other).await, 0);
+    assert_eq!(board_count(&owner).await, 1);
+    assert!(first["board_id"].is_string());
+}
+
+#[tokio::test]
+async fn changed_import_after_board_deletion_cannot_replay_old_result() {
+    let server = make_server();
+    let markdown =
+        "kanban\n%% kanban column status: backlog\n  section Backlog\n    Original task\n";
+    let first = parse(
+        &server
+            .kanban_board_import(Parameters(BoardImportRequest {
+                markdown: markdown.to_string(),
+                board_name: None,
+                idempotency_key: Some("import-key".to_string()),
+            }))
+            .await
+            .expect("first import"),
+    );
+    let board_id = first["board_id"].as_str().expect("board id");
+    server
+        .kanban_board_delete(Parameters(BoardDeleteRequest {
+            board_id: board_id.to_string(),
+        }))
+        .await
+        .expect("delete board");
+    let error = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.replace("Original task", "Different task"),
+            board_name: None,
+            idempotency_key: Some("import-key".to_string()),
+        }))
+        .await
+        .expect_err("changed import must not return a deleted board");
+    assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    assert_eq!(board_count(&server).await, 0);
+}
+
+#[tokio::test]
+async fn legacy_unbound_key_is_unknown_and_cannot_be_reused() {
+    let driver = SqliteDriver::in_memory_driver();
+    driver
+        .execute_batch(
+            "CREATE TABLE idempotency_keys (tool TEXT NOT NULL, key TEXT NOT NULL, \
+         response TEXT, created_at TEXT NOT NULL, PRIMARY KEY (tool, key)); \
+         INSERT INTO idempotency_keys VALUES \
+         ('kanban_board_create', 'legacy', '{\"board_id\":\"old\"}', '2020-01-01');",
+        )
+        .expect("old schema with unbound key");
+    let idempotency = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
+            .expect("upgrade schema without trusting old rows"),
+    );
+    let server = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    );
+    for name in ["Original", "Changed"] {
+        let error = server
+            .kanban_board_create(Parameters(BoardCreateRequest {
+                name: name.to_string(),
+                columns: None,
+                idempotency_key: Some("legacy".to_string()),
+            }))
+            .await
+            .expect_err("unbound legacy key must never replay or rerun");
+        assert_eq!(error.kind, McpErrorKind::Unavailable);
+        assert!(error.message.contains("unknown prior identity"));
+    }
+    assert_eq!(board_count(&server).await, 0);
+}
+
+#[test]
+fn request_digest_is_canonical_sha256_not_raw_payload() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    assert_eq!(
+        request_sha256(&serde_json::json!({})).expect("digest"),
+        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    );
+    let a = serde_json::json!({ "name": "sensitive", "columns": [1, 2] });
+    let b = serde_json::json!({ "columns": [1, 2], "name": "sensitive" });
+    assert_eq!(
+        request_sha256(&a).expect("digest"),
+        request_sha256(&b).expect("digest")
+    );
+    assert!(!request_sha256(&a).expect("digest").contains("sensitive"));
+}
+
+#[tokio::test]
+async fn task_list_exposes_description_for_edit_prefill() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board id");
+    let created = server
+        .kanban_task_create(Parameters(TaskCreateRequest {
+            board_id: board_id.to_string(),
+            title: "Editable".to_string(),
+            description: Some("Keep this text".to_string()),
+            criteria: None,
+            advances: Vec::new(),
+            idempotency_key: None,
+        }))
+        .await
+        .expect("create task");
+    let list = parse(
+        &server
+            .kanban_task_list(Parameters(TaskListRequest {
+                board_id: board_id.to_string(),
+                status: None,
+            }))
+            .await
+            .expect("list tasks"),
+    );
+    assert_eq!(list["tasks"][0]["task_id"], parse(&created)["task_id"]);
+    assert_eq!(list["tasks"][0]["description"], "Keep this text");
+}
+
 /// Omitting the key keeps the old behavior: every call is new work.
 ///
 /// Protection is opt-in, so existing callers (and the agent, which does not send
@@ -507,7 +670,7 @@ async fn empty_key_is_rejected() {
     );
 }
 
-/// A replay from a *second process* over the same database is also absorbed.
+/// A replay from a *second server instance* with the same WebID and database is absorbed.
 ///
 /// This is the real deployment shape: the governed `McpRuntime` instance and the
 /// per-project `ContextServerStore` instance both open the same kanban DB. An
@@ -527,7 +690,7 @@ async fn replay_is_absorbed_across_processes() {
     // A second server over the same database — the two-instance production shape.
     let store = HMemStore::from_driver(shared_driver.clone()).expect("hmem store");
     let process_b = KanbanServer::new(
-        WebID::new(),
+        process_a.webid,
         KanbanService::new(store),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
@@ -1179,9 +1342,20 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     let crashed_store =
         hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
             .expect("idempotency schema");
+    let request = serde_json::json!({
+        "task_id": task_id, "delegation_level": "standard",
+        "delegated_skills": [], "memory_scope": null, "swarm_id": null,
+    });
+    let digest =
+        hkask_mcp_kata_kanban::idempotency::request_sha256(&request).expect("request digest");
     assert_eq!(
         crashed_store
-            .reserve("kanban_task_spawn", "crashed")
+            .reserve(
+                "kanban_task_spawn",
+                "crashed",
+                &server.webid.to_string(),
+                &digest
+            )
             .expect("reserve"),
         hkask_mcp_kata_kanban::idempotency::Reservation::Fresh
     );
@@ -1189,7 +1363,7 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
 
     // A second server over the same database — the restart.
     let restarted = KanbanServer::new(
-        WebID::new(),
+        server.webid,
         KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(CountingWorktreeSpawn {

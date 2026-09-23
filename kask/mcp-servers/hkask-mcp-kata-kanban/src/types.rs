@@ -309,6 +309,8 @@ pub struct TaskInfo {
     pub task_id: String,
     pub board_id: String,
     pub title: String,
+    /// Preserved task text for list consumers, including edit prefill.
+    pub description: Option<String>,
     pub status: String,
     pub assignee: Option<String>,
     pub criteria_count: usize,
@@ -561,7 +563,7 @@ pub(crate) struct TaskDelegateResultResponse {
 // ── Board delete ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BoardDeleteRequest {
+pub struct BoardDeleteRequest {
     pub board_id: String,
 }
 

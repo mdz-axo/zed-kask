@@ -98,6 +98,8 @@ async fn with_idempotency<F>(
     store: &idempotency::IdempotencyStore,
     tool: &'static str,
     key: Option<&str>,
+    caller: &hkask_types::WebID,
+    request: serde_json::Value,
     work: F,
 ) -> Result<serde_json::Value, McpToolError>
 where
@@ -111,11 +113,16 @@ where
 
     // Fail closed: if the claim cannot be recorded, the caller asked for replay
     // protection and must not be handed a call that silently lacks it.
-    let reservation = store.reserve(tool, key).map_err(|error| {
-        McpToolError::unavailable(format!(
-            "replay-protection store unavailable, refusing to run {tool} unprotected: {error}"
-        ))
+    let digest = idempotency::request_sha256(&request).map_err(|error| {
+        McpToolError::internal(format!("cannot fingerprint replay request: {error}"))
     })?;
+    let reservation = store
+        .reserve(tool, key, &caller.to_string(), &digest)
+        .map_err(|error| {
+            McpToolError::unavailable(format!(
+                "replay-protection store unavailable, refusing to run {tool} unprotected: {error}"
+            ))
+        })?;
 
     match reservation {
         idempotency::Reservation::Replay { response } => {
@@ -132,6 +139,15 @@ where
             }
             Ok(value)
         }
+        idempotency::Reservation::OtherCaller => Err(McpToolError::permission_denied(
+            "idempotency_key belongs to another caller",
+        )),
+        idempotency::Reservation::DifferentRequest => Err(McpToolError::invalid_argument(
+            "idempotency_key was already used for a different request",
+        )),
+        idempotency::Reservation::UnknownIdentity => Err(McpToolError::unavailable(
+            "idempotency_key has unknown prior identity; outcome unknown, do not reuse this key",
+        )),
         idempotency::Reservation::Pending => Err(McpToolError::unavailable(format!(
             "a previous {tool} call with this idempotency_key did not complete — its \
              outcome is unknown. Re-read the board to see whether it took effect; do not \
@@ -152,16 +168,15 @@ where
                 match serde_json::to_string(&value) {
                     Ok(response) => store.record(tool, key, &response),
                     Err(error) => {
-                        // The work succeeded; only bookkeeping failed. Release so a
-                        // retry re-runs rather than being told "outcome unknown".
+                        // The work succeeded; retain the Pending claim so a
+                        // retry is refused rather than duplicating the effect.
                         tracing::warn!(
                             target: "hkask.mcp.kata_kanban",
                             tool = %tool,
                             %error,
                             "could not serialize response for replay protection - \
-                             releasing the claim"
+                             retaining pending claim"
                         );
-                        store.release(tool, key);
                     }
                 }
                 Ok(value)
@@ -258,6 +273,8 @@ impl KanbanServer {
                 &self.idempotency,
                 "kanban_board_create",
                 idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "name": name, "columns": columns }),
                 async {
                     let column_defs = match columns {
                         Some(inputs) => inputs
@@ -458,6 +475,8 @@ impl KanbanServer {
                 &self.goal_idempotency,
                 "kanban_goal_create",
                 idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "goal_text": goal_text, "criteria": criteria, "prediction": prediction, "task_id": task_id }),
                 async {
                     let tid = match task_id {
                         Some(t) => Some(parse_task_id(&t)?),
@@ -661,6 +680,8 @@ impl KanbanServer {
                 &self.idempotency,
                 "kanban_task_create",
                 idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "board_id": board_id, "title": title, "description": description, "criteria": criteria, "advances": advances }),
                 async {
                     let bid = parse_board_id(&board_id)?;
                     let mut spec = TaskSpec::new(title);
@@ -804,6 +825,7 @@ impl KanbanServer {
                                 task_id: t.id.to_string(),
                                 board_id: t.board_id.to_string(),
                                 title: t.title,
+                                description: t.description,
                                 status: t.status.to_string(),
                                 assignee: t.assignee.map(|a| a.to_string()),
                                 criteria_count: t.criteria.len(),
@@ -1159,6 +1181,8 @@ impl KanbanServer {
                 &self.idempotency,
                 "kanban_task_spawn",
                 idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "task_id": task_id, "delegation_level": delegation_level, "delegated_skills": delegated_skills, "memory_scope": memory_scope, "swarm_id": swarm_id }),
                 async {
                     let tid = self.validate_and_prepare_spawn(
                         &task_id,
@@ -1504,6 +1528,8 @@ impl KanbanServer {
                 &self.idempotency,
                 "kanban_board_import",
                 idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "markdown": markdown, "board_name": board_name }),
                 async {
                     let mut parsed = kanban::mermaid::parse_mermaid_kanban(&markdown)
                         .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;

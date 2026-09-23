@@ -53,7 +53,6 @@ use ui::{
     Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
     prelude::*,
 };
-use util::ResultExt as _;
 use zed_credentials_provider as zed_credentials;
 
 use crate::SettingsWindow;
@@ -255,16 +254,19 @@ pub(crate) fn write_credential(
     // so a write there is not restart-wasted work (the old kask-namespace-only
     // guard predates that consolidation).
     let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
-    // Mark as written immediately so the UI shows "Configured" on next render.
-    // The keychain write is async; the session cache bridges the gap.
-    // `refresh_windows` triggers a re-render so the "Configured" card appears.
-    mark_recently_written(&url);
-    cx.refresh_windows();
     cx.spawn(async move |cx| {
-        let _ = provider
+        if provider
             .write_credentials(&url, "kask", value.as_bytes(), cx)
             .await
-            .log_err();
+            .is_err()
+        {
+            // Never mark a failed write as Configured, restart the child with
+            // a missing key, or include credential contents in the log.
+            log::warn!("Credential keychain write failed for {url}");
+            return;
+        }
+        mark_recently_written(&url);
+        cx.update(|cx| cx.refresh_windows());
         // After the keychain write lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain via
         // `build_mcp_server_env` and restarts any governed MCP server whose
@@ -289,11 +291,13 @@ pub(crate) fn delete_credential(
     // Same predicate as `write_credential`: any URL that feeds MCP server env
     // needs the restart nudge after deletion (see `credential_url_feeds_mcp_servers`).
     let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
-    // Remove from session cache so the UI shows the input field again.
-    unmark_recently_written(&url);
-    cx.refresh_windows();
     cx.spawn(async move |cx| {
-        let _ = provider.delete_credentials(&url, cx).await.log_err();
+        if provider.delete_credentials(&url, cx).await.is_err() {
+            log::warn!("Credential keychain delete failed for {url}");
+            return;
+        }
+        unmark_recently_written(&url);
+        cx.update(|cx| cx.refresh_windows());
         // After the keychain delete lands, nudge `SettingsStore` so the
         // `sync_kask_mcp_runtime_servers` observer re-reads the keychain and
         // restarts any governed MCP server that no longer has a key (rather

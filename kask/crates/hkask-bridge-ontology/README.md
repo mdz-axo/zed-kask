@@ -69,6 +69,7 @@ only sourced edges: derived-concept constituents that resolve to distinct
 published/derived identities, and schema.org's documented inverse-property
 pair (pinned in `fixtures/schema-org-relations.tsv`). A path connects concepts,
 not instances; an absent path in this partial graph is not a negative fact.
-Directed BFS visits at most 256 nodes and 4 hops, returning an explicit budget
-status instead of silently reporting absence. Agent calls without
+Directed BFS discovers at most 256 nodes and 4 hops; neighbor queries return
+at most 256 outgoing edges. Both return an explicit budget status instead of
+silently reporting an incomplete result as absence. Agent calls without
 `relation_query` retain the original `onto_anchor` JSON shape.

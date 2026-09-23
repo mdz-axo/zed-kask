@@ -151,9 +151,21 @@ impl OntologyGraph {
         }
         let start = from.concept;
         let Some(target) = to.map(|resolved| resolved.concept) else {
-            result.status = TraversalStatus::Neighbors;
             result.visited_nodes = 1;
-            result.edges = self.outgoing.get(&start).cloned().unwrap_or_default();
+            let edges = self
+                .outgoing
+                .get(&start)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if edges.len() > MAX_VISITS {
+                result.status = TraversalStatus::BudgetExhausted;
+                result.note = Some(
+                    "Outgoing edge budget exhausted; neighbor set is not complete".to_string(),
+                );
+                return result;
+            }
+            result.status = TraversalStatus::Neighbors;
+            result.edges = edges.to_vec();
             return result;
         };
         if start == target {
@@ -162,23 +174,24 @@ impl OntologyGraph {
         }
 
         let mut queue = VecDeque::from([(start.clone(), 0_u8)]);
-        let mut seen = HashSet::from([start.clone()]);
+        let mut seen = HashSet::from([start]);
         let mut parents: HashMap<String, RelationEdge> = HashMap::new();
         while let Some((node, depth)) = queue.pop_front() {
-            result.visited_nodes += 1;
             if depth == max_hops {
                 continue;
             }
             if let Some(edges) = self.outgoing.get(&node) {
                 for edge in edges {
-                    if !seen.insert(edge.to.clone()) {
+                    if seen.contains(&edge.to) {
                         continue;
                     }
-                    if seen.len() > MAX_VISITS {
+                    if seen.len() == MAX_VISITS {
                         result.status = TraversalStatus::BudgetExhausted;
+                        result.visited_nodes = seen.len();
                         result.note = Some("Traversal visit budget exhausted; absence of a path is not established".to_string());
                         return result;
                     }
+                    seen.insert(edge.to.clone());
                     parents.insert(edge.to.clone(), edge.clone());
                     if edge.to == target {
                         let mut cursor = target;
@@ -188,12 +201,14 @@ impl OntologyGraph {
                         }
                         result.edges.reverse();
                         result.status = TraversalStatus::PathFound;
+                        result.visited_nodes = seen.len();
                         return result;
                     }
                     queue.push_back((edge.to.clone(), depth + 1));
                 }
             }
         }
+        result.visited_nodes = seen.len();
         result.note = Some("No supported directed path within the searched graph and hop bound; this does not prove the relation false".to_string());
         result
     }
@@ -220,6 +235,26 @@ mod tests {
         for edge in path.edges {
             assert_eq!(edge.relation, Relation::HasConstituent);
             assert!(edge.authority.contains("operator ruling"));
+        }
+        // Pin the whole reviewed constituent set, not only one selected path:
+        // a wrongly added edge with the same authority must fail this test.
+        for (term, expected) in [
+            (
+                "sustainable growth rate",
+                &["retention", "return_on_equity"][..],
+            ),
+            (
+                "return on equity",
+                &["asset_turnover", "equity_multiplier", "net_margin"][..],
+            ),
+        ] {
+            let actual: Vec<_> = graph()
+                .traverse(term, None, 1)
+                .edges
+                .into_iter()
+                .map(|edge| edge.to)
+                .collect();
+            assert_eq!(actual, expected, "incorrect constituent edge for {term}");
         }
     }
 
@@ -312,7 +347,7 @@ mod tests {
             TraversalStatus::NoSupportedPath
         );
         let oversized = OntologyGraph::from_edges(
-            (0..MAX_VISITS)
+            (0..=MAX_VISITS)
                 .map(|n| RelationEdge {
                     from: "schema:hasPart".to_string(),
                     to: format!("node_{n}"),
@@ -323,7 +358,11 @@ mod tests {
         );
         let exhausted = oversized.traverse("schema:hasPart", Some("schema:isPartOf"), 2);
         assert_eq!(exhausted.status, TraversalStatus::BudgetExhausted);
+        assert_eq!(exhausted.visited_nodes, MAX_VISITS);
         assert!(exhausted.edges.is_empty());
+        let neighbors = oversized.traverse("schema:hasPart", None, 1);
+        assert_eq!(neighbors.status, TraversalStatus::BudgetExhausted);
+        assert!(neighbors.edges.is_empty());
         assert_eq!(
             graph()
                 .traverse("schema:hasPart", Some("schema:isPartOf"), 0)

@@ -45,13 +45,12 @@ prediction calibration.
 1. Declare the target metacognitive state — what "sufficient meta-knowledge" looks like.
 2. Produce target_artifacts and target_procedure that the gap computation measures toward.
 3. The target should be one step beyond the current knowledge threshold — challenging but achievable.
-4. Before predicting, compute `gap_before` from the measured Step 1 artifacts/procedure against this fixed Step 2 target (object/process hypotenuse). If either component is unmeasured, do not invent a baseline.
 
 ### meta-predict (Kata Step 3: Make a Prediction)
 
-1. Invoke `meta-predict` only when `gap_before > 0` is measured; pass it as a top-level input and retain the same value in the Step 3 prediction. Predict one calibration and an `expected_gap_reduction` in (0,1] relative to this starting gap. Keep the target artifacts and procedure fixed through this experiment; changing the target makes before/after gaps incomparable.
-2. `confidence` in [0,1] is the probability of this predeclared binary event: after the experiment, `gap_after <= gap_before * (1 - expected_gap_reduction)`. It is not a confidence in an unspecified improvement or the fractional reduction itself.
-3. If `gap_before` is zero or unavailable, do not make or score a gap-reduction forecast. Record the target as reached or the measurement as pending, respectively.
+1. Predict which calibration will close the gap and by how much.
+2. Carry a confidence in [0,1] — how sure is the agent that this prediction is correct?
+3. The Brier score tracks whether the confidence is calibrated across cycles.
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
@@ -64,7 +63,7 @@ prediction calibration.
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
-4. Compute `gap_after` from observed Step 4 artifacts/procedure against the *same* Step 2 target. With the Step 3 `gap_before > 0` and both components measured, score the predeclared event: outcome = 1 if `gap_after <= gap_before * (1 - expected_gap_reduction)`, else 0; `Brier = (confidence - outcome)^2`. Use `lisp_eval` for the comparison and arithmetic; never select the event or threshold after observing the result. If either gap is unmeasured, report calibration pending, not zero error.
+4. Score the prediction via Brier score only after the predicted event has a measured binary outcome; without an outcome record calibration as pending, not zero error.
 5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles and report the remaining gap and pending measurements.
 
 ## Registry Templates

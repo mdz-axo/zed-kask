@@ -1347,6 +1347,12 @@ impl NativeAgent {
 
                     let mut worktree_results = Vec::new();
                     for skill_file in skill_files {
+                        // The checkout's shipped skills are already exposed by the
+                        // global directory as links to these very files. Loading them
+                        // again as project skills creates a second catalog entry.
+                        if agent_skills::is_development_shipped_skill(&skill_file.display_path) {
+                            continue;
+                        }
                         // SKILL.md files contain frontmatter (name, description)
                         // plus the body (methodology instructions). The body is
                         // injected on demand via the `skill` tool — the
