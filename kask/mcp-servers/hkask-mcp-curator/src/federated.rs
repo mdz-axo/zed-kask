@@ -79,17 +79,20 @@ pub(crate) struct FederatedSourceRegistry {
 
 impl FederatedSourceRegistry {
     pub(crate) fn unchanged(&self) -> bool {
-        // A failed admission is not a validated snapshot. Retry on the next
-        // query even when the files have stopped changing; otherwise a single
-        // mid-open modification leaves an empty `unavailable` cache forever.
+        // A failed admission must retry on the next query even when the
+        // files settle. This is a cache-admission decision, not a claim that
+        // all healthy source files changed during the current query.
         !self
             .statuses
             .iter()
             .any(|status| status.state == FederatedSourceState::Unavailable)
-            && self
-                .watched
-                .iter()
-                .all(|(path, stamp)| &FileStamp::read(path) == stamp)
+            && !self.changed_during_search()
+    }
+
+    pub(crate) fn changed_during_search(&self) -> bool {
+        self.watched
+            .iter()
+            .any(|(path, stamp)| &FileStamp::read(path) != stamp)
     }
 
     fn snapshot(paths: &[PathBuf]) -> Vec<(PathBuf, FileStamp)> {

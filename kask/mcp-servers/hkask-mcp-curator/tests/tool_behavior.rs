@@ -2322,6 +2322,76 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
     Ok(())
 }
 
+/// expect: "One unavailable corpus cannot erase another corpus's evidence." [P8]
+#[tokio::test]
+async fn federated_search_preserves_healthy_source_during_partial_outage()
+-> Result<(), Box<dyn std::error::Error>> {
+    ensure_embedding_model_env();
+    let directory = tempfile::tempdir()?;
+    let manifest_path = federated_source_fixture(directory.path())?;
+    let mut manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
+    let mut missing = manifest["sources"][0].clone();
+    missing["id"] = serde_json::json!("unavailable-corpus");
+    missing["database_path"] = serde_json::json!(directory.path().join("missing.db"));
+    manifest["sources"]
+        .as_array_mut()
+        .ok_or_else(|| std::io::Error::other("sources must be an array"))?
+        .push(missing);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone())?;
+    let embedding_store = EmbeddingStore::from_driver(driver, test_dim())?;
+    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+    let local = hkask_storage::HMem::new(
+        "curator:partial-outage",
+        "lesson",
+        serde_json::json!("local evidence"),
+        WebID::new(),
+    );
+    memory.store(local.clone())?;
+    memory.store_embedding(
+        &local.entity,
+        &federated_fixture_vector(),
+        "test-embedding-model",
+        Some("local evidence"),
+    )?;
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::from_stores_with_federated_manifest(
+            CuratorStores {
+                escalation_queue: None,
+                regulation_store: None,
+                memory: Some(memory),
+            },
+            manifest_path,
+            "test-passphrase".to_string(),
+        )),
+        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
+    );
+    let output = server
+        .curator_federated_search(Parameters(FederatedSearchRequest {
+            query: "compare local evidence and external corpus evidence".to_string(),
+            limit: Some(4),
+        }))
+        .await?;
+    let response = parse(&output);
+    assert_eq!(response["sources"][0]["state"], "ready");
+    assert_eq!(response["sources"][1]["state"], "ready");
+    assert_eq!(response["sources"][2]["state"], "unavailable");
+    assert!(
+        response["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().any(|hit| hit["source_id"] == "fixture-corpus"))
+    );
+    assert!(
+        response["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().any(|hit| hit["source_id"] == "curator"))
+    );
+    Ok(())
+}
+
 /// expect: "A source removed after first search cannot remain ready or leak stale corpus hits." [P8]
 #[tokio::test]
 async fn federated_search_reloads_removed_and_restored_manifest()

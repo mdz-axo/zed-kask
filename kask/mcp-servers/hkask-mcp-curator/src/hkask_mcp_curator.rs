@@ -889,7 +889,7 @@ impl CuratorServer {
                     }
                 }
             }
-            if !registry.unchanged() {
+            if registry.changed_during_search() {
                 batches.retain(|batch| batch.source_id == "curator");
                 for status in &mut external_statuses {
                     status.state = federated::FederatedSourceState::Unavailable;
