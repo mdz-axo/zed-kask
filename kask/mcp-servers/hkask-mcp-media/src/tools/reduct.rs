@@ -20,11 +20,6 @@ fn validate_reduct_id(name: &str, id: &str) -> Result<(), McpToolError> {
     Ok(())
 }
 
-fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
-    validate_reduct_id("project_id", project_id)?;
-    Ok(format!("{API_ROOT}project/{project_id}"))
-}
-
 fn recording_read_url(
     project_id: &str,
     recording_id: &str,
@@ -362,6 +357,11 @@ impl MediaServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn project_detail_url(project_id: &str) -> Result<String, McpToolError> {
+        validate_reduct_id("project_id", project_id)?;
+        Ok(format!("{API_ROOT}project/{project_id}"))
+    }
 
     #[test]
     fn missing_key_is_permission_denied_not_local_fallback() {

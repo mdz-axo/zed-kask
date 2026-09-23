@@ -3555,14 +3555,14 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
                                 UserMessageContent::from_content_block(block, path_style)
                             });
                             thread.send(client_user_message_id, content, cx)
-                        })?
+                        })
                     }
                 });
                 return cx.spawn(async move |cx| {
                     let result = task.await;
                     let error = result.as_ref().err().map(ToString::to_string);
                     let trace = thread
-                        .update(cx, |thread, _| thread.finish_on_demand_trace(error))?
+                        .update(cx, |thread, _| thread.finish_on_demand_trace(error))
                         .context("No trace was active for the completed turn")?;
                     let directory = hkask_types::agent_paths::resolve_under_artifacts_dir(
                         std::path::Path::new("agent-traces"),
@@ -5839,6 +5839,38 @@ mod internal_tests {
         model.end_completion_stream(&request);
         cx.run_until_parked();
         prompt_task.await.expect("prompt completes");
+    }
+
+    #[gpui::test]
+    async fn trace_prompt_starts_capture_and_sends_only_the_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id.clone(), vec!["/trace inspect this".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().expect("model request");
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec!["inspect this"]
+        );
+        let trace =
+            cx.update(|cx| thread.update(cx, |thread, _| thread.finish_on_demand_trace(None)));
+        let trace = trace.expect("trace capture active during model request");
+        assert_eq!(trace.session_id, session_id.to_string());
+        drop(prompt_task);
     }
 
     #[gpui::test]

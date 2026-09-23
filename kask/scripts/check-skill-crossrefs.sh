@@ -14,8 +14,8 @@
 # proof):
 #   1. `skill-name` backtick refs in SKILL.md bodies that look like skill
 #      names resolve against .agents/skills/ or are in the allowlist.
-#   2. Template refs of the shape `<skill>/<file>` used with render_template
-#      resolve against kask/registry/templates/.
+#   2. Backticked `.j2`/`.yaml` paths resolve against the template registry
+#      or, for style configuration YAML, the style registry.
 #
 # Exit codes:
 #   0 — all refs resolve or are allowlisted
@@ -92,22 +92,23 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
   done < <(grep -n '`' "$skill_md" || true)
 done
 
-# ── Check 2: `<skill>/<file>.j2` / `<skill>/<file>.yaml` template refs must
-# resolve on disk. Only refs carrying an explicit template extension are
-# checked — bare `a/b` backticks are usually git refs, file paths, or prose.
+# ── Check 2: `<skill>/<file>.j2` / `<skill>/<file>.yaml` registry refs must
+# resolve on disk. Only refs carrying an explicit extension are checked —
+# bare `a/b` backticks are usually git refs, file paths, or prose.
 for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
-  grep -noE '`[a-z0-9-]+/[a-z0-9._-]+\.(j2|yaml)`' "$skill_md" 2>/dev/null | while IFS=: read -r line_no match; do
+  while IFS=: read -r line_no match; do
     ref="${match//\`/}"
     ref="${ref%.j2}"
     ref="${ref%.yaml}"
     if is_allowed "$ref"; then
       continue
     fi
-    if [ ! -f "$TEMPLATES_DIR/$ref.j2" ] && [ ! -f "$TEMPLATES_DIR/$ref.yaml" ]; then
-      echo "UNRESOLVED: $skill_md:$line_no template ref \`$ref\` has no file under $TEMPLATES_DIR/"
+    if [ ! -f "$TEMPLATES_DIR/$ref.j2" ] && [ ! -f "$TEMPLATES_DIR/$ref.yaml" ] &&
+       [ ! -f "kask/registry/styles/$ref.yaml" ]; then
+      echo "UNRESOLVED: $skill_md:$line_no registry ref \`$ref\` has no template or style file"
       FAIL=1
     fi
-  done || true
+  done < <(grep -noE '`[a-z0-9-]+/[a-z0-9._-]+\.(j2|yaml)`' "$skill_md" || true)
 done
 
 if [ "$FAIL" -ne 0 ]; then

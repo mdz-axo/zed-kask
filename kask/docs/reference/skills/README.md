@@ -184,7 +184,7 @@ read-only resources the skill body may reference via `render_template`.
 | `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast: inventory ontologies, build prior, map recombination field, detect gradients, select seeds |
 | `principle-constraints` | Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md`, current authority D1–D69) |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md`, current authority D1–D70) |
 | `swarm-compose-guide` | Agent/swarm composition authoring aid: renders guidance templates, returns suggested completions or validation verdict |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |

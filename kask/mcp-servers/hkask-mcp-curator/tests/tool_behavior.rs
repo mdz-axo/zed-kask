@@ -2147,7 +2147,9 @@ fn sorted_federated_fixture(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn federated_fixture_run_id(identity: &serde_json::Value) -> Result<String, Box<dyn std::error::Error>> {
+fn federated_fixture_run_id(
+    identity: &serde_json::Value,
+) -> Result<String, Box<dyn std::error::Error>> {
     use sha2::Digest as _;
     let mut canonical = serde_json::to_vec(&sorted_federated_fixture(identity))?;
     canonical.push(b'\n');
@@ -2232,9 +2234,10 @@ fn federated_source_fixture(
             "child_parent_map": "4".repeat(64),
             "parent": "5".repeat(64)
         },
-        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat}
-        }))?,
-    )?;
+        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
+    });
+    identity["run_id"] = serde_json::json!(federated_fixture_run_id(&identity)?);
+    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
     let manifest_path = directory.join("federated-sources.json");
     std::fs::write(
         &manifest_path,

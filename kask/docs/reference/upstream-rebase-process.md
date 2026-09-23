@@ -31,7 +31,7 @@ hygiene, recovery) on top of the 8 steps below. Note: the skill's "Process
 Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
 is this file, `kask/docs/reference/upstream-rebase-process.md`.
 
-**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority and runs **D1–D69** (`DIVERGENCE.md:225-308`). Retired numbers are never reused: D4, D10, D17, D19, D30, D38, D49, D50, and D53 are recorded in the retired-seams ledger (`DIVERGENCE.md:366`). Trust the table and retired ledger rather than copied range labels in secondary documents.
+**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority and runs **D1–D70** (`DIVERGENCE.md:225-308`). Retired numbers are never reused: D4, D10, D17, D19, D30, D38, D49, D50, and D53 are recorded in the retired-seams ledger (`DIVERGENCE.md:366`). Trust the table and retired ledger rather than copied range labels in secondary documents.
 
 **Removal principles:** what may be removed from upstream Zed (and why) is
 governed by the principle set in §9 — folded here 2026-09-09 from the former
@@ -388,7 +388,7 @@ process + case-study companion.
 > Folded 2026-09-09 from `upstream-removal-principles.md` (v1.2.0,
 > consolidated 2026-08-28). A testable principle set governing **what to
 > removed from upstream Zed** (everything outside `kask/` and outside the
-> named D-seams in `DIVERGENCE.md` — the current authority runs D1–D69, with
+> named D-seams in `DIVERGENCE.md` — the current authority runs D1–D70, with
 > retired numbers preserved in its ledger (`DIVERGENCE.md:225-366`)) and **why**.
 
 **Meta-constraint (inviolable):** the D-seam discipline is a *boundary on
