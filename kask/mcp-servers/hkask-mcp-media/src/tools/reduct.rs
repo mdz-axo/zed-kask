@@ -890,6 +890,10 @@ mod tests {
             recording_read_url("p-id", "r_1", "transcript.json")?,
             "https://app.reduct.video/api/v3/project/p-id/recording/r_1/transcript.json"
         );
+        assert_eq!(
+            recording_read_url("p-id", "r_1", "highlight")?,
+            "https://app.reduct.video/api/v3/project/p-id/recording/r_1/highlight"
+        );
         assert!(recording_read_url("../other", "r_1", "status").is_err());
         assert!(recording_read_url("p-id", "r/2", "status").is_err());
         assert!(recording_read_url("p-id", "r_1", "transcript.docx").is_err());

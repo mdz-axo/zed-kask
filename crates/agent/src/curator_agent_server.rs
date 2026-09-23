@@ -225,3 +225,39 @@ impl AgentServer for CuratorAgentServer {
         self
     }
 }
+
+#[cfg(test)]
+mod status_snapshot_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn session_state_does_not_turn_missing_measurements_into_health() {
+        let state = format_state_block(&json!({}));
+        assert!(state.contains("Regulation acceptance rate: unavailable"));
+        assert!(state.contains("Escalations (current cycle): unavailable"));
+        assert!(state.contains("Critical alerts: unavailable"));
+        assert!(state.contains("Memory degraded: unavailable"));
+        assert!(state.contains("Alert log: unavailable (unavailable)"));
+        assert!(state.contains("Loop reading: unavailable"));
+        assert!(!state.contains("nominal"));
+    }
+
+    #[test]
+    fn session_state_displays_the_providers_actual_readings() {
+        let state = format_state_block(&json!({
+            "regulation_acceptance_rate": 0.75,
+            "escalation_count": 0,
+            "critical_alerts": 0,
+            "memory": {"degraded": false},
+            "alert_log_count": 199,
+            "alert_log_cap": 200,
+            "alert_log_approaching_cap": true,
+            "loop_reading": "turning"
+        }));
+        assert!(state.contains("Regulation acceptance rate: 75%"));
+        assert!(state.contains("Memory degraded: false"));
+        assert!(state.contains("Alert log: 199/200 (approaching cap)"));
+        assert!(state.contains("Loop reading: turning"));
+    }
+}

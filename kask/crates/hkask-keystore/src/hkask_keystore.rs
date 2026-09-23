@@ -2,17 +2,15 @@
 #![warn(clippy::let_underscore_future)]
 //! hKask Keystore — OS keychain access and passphrase defaults.
 //!
-//! All keychain reads/writes go through `oo7::Keyring` directly
-//! (synchronous wrappers around async OS keychain I/O). Every entry lives
-//! at `kask://credentials/<key>` with the same attribute schema zed's
-//! `LinuxPlatform::write_credentials` uses — one keychain, one namespace.
-//!
-//! In zed-kask, API keys for inference providers are handled by zed's own
-//! `CredentialsProvider` through the `LanguageModelRegistry` — both paths
-//! hit the same `kask://credentials/*` entries.
+//! All keychain reads/writes go through `oo7::Keyring` directly.
+//! URL operations offer sync wrappers and async-std-spawned async methods;
+//! key-based operations remain synchronous. Data-service and passphrase
+//! entries use `kask://credentials/<key>`; inference-provider entries use
+//! their provider API URL. Both use zed's `LinuxPlatform::write_credentials`
+//! attribute schema in the same OS keychain.
 //!
 //! The MCP servers' `resolve_credential` reads API keys from env vars only
-//! (injected by `build_mcp_server_env`, which reads from the same namespace).
+//! (injected by `build_mcp_server_env`, which reads the canonical keychain URLs).
 //! The DB passphrase is read by this crate via `resolve_db_passphrase_string`,
 //! which also hits `kask://credentials/*`. There is ONE passphrase for all
 //! SQLCipher databases — the swarm memory DB uses the same one.

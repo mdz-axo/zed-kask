@@ -123,8 +123,8 @@ pub(crate) fn unmark_recently_written(url: &str) {
 
 /// Spawn a background task that reads all kask credential URLs from the
 /// OS keychain and populates `KEYCHAIN_CREDENTIAL_CACHE`. Called once on
-/// first settings page render. The background task uses the keystore's
-/// `Keychain` (dedicated async-std thread) so it doesn't block the UI.
+/// first settings page render. Keystore I/O runs on async-std's executor;
+/// the background task awaits each lookup without blocking a GPUI worker.
 pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
     if KEYCHAIN_PREFETCH_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
@@ -137,7 +137,8 @@ pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
         let mut found = HashSet::default();
         for url in &urls {
             if hkask_keystore::Keychain
-                .retrieve_by_url(url)
+                .retrieve_by_url_async(url)
+                .await
                 .is_ok_and(|s| !s.is_empty())
             {
                 found.insert(url.clone());
@@ -794,6 +795,21 @@ pub(crate) fn kask_page() -> SettingsPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_prefetch_awaits_nonblocking_keystore_reads() {
+        let source = include_str!("kask_page.rs");
+        let prefetch = source
+            .split("pub(crate) fn ensure_keychain_prefetch(")
+            .nth(1)
+            .expect("prefetch function exists")
+            .split("pub(crate) fn builtin_mcp_servers(")
+            .next()
+            .expect("next function exists");
+        assert!(prefetch.contains("retrieve_by_url_async(url)"));
+        assert!(prefetch.contains(".await"));
+        assert!(!prefetch.contains(".retrieve_by_url(url)"));
+    }
 
     /// zed-kask: pinning test for the credential-write → MCP-restart wiring.
     ///

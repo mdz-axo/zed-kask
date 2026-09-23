@@ -1,25 +1,24 @@
 # hkask-keystore
 
-OS keychain integration and AES-256-GCM encryption for hKask.
+OS keychain access for hKask credentials and the shared SQLCipher database passphrase.
 
 ## Features
 
-- **OS keychain** — stores secrets in the OS-native keystore (Linux: DBus Secret Service)
-- **AES-256-GCM** — authenticated encryption for passphrase-protected secrets
-- **Default passphrase** — uses `"allostery"` on first run (stored in keychain; user can change it via settings UI or env var)
+- **OS keychain** — stores secrets in the OS-native keystore (Linux: D-Bus Secret Service), using Zed's `url` and `username` item attributes.
+- **Async URL access** — editor callers await async-std-backed `oo7` operations without blocking GPUI workers; synchronous key operations remain available for pre-app rotation and standalone callers.
+- **Default passphrase** — uses `"allostery"` only on first run; a scheduled change is applied at startup before the main keychain slot is updated.
 
 ## Configuration
 
 | Variable | Description |
 |----------|-------------|
-| `HKASK_DB_PASSPHRASE` | Database encryption passphrase (env var) |
-| `HKASK_MASTER_KEY` | 32-byte master key as 64-char hex (env var) |
+| `HKASK_DB_PASSPHRASE` | Database encryption passphrase override |
 
 ### Keychain keys
 
 | Key | Description |
 |-----|-------------|
-| `hkask-db-passphrase` | Database encryption passphrase (OS keychain) |
-| `HKASK_MASTER_KEY` | Master key hex (OS keychain) |
-| `a2a-secret` | A2A root-authority secret |
-| `ocap-secret` | OCAP signing secret (fails closed if master key is unavailable) |
+| `kask://credentials/hkask_db_passphrase` | Shared database passphrase; updated only after a successful rotation |
+| `kask://credentials/hkask_db_passphrase_pending` | Scheduled replacement passphrase; deleted after rotation |
+
+Data-service keys live under `kask://credentials/<key>`; inference-provider keys live at the provider's API URL. The keychain stores credentials, not an additional master key or encryption layer.

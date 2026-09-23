@@ -235,8 +235,7 @@ impl Keychain {
     // These accept any URL string (e.g. `kask://credentials/exa` or
     // `https://openrouter.ai/api/v1`) and use the same oo7 pattern as the
     // key-based methods above. Used by `KeychainCredentialsProvider` so ALL
-    // credential URLs route through the keystore's dedicated async-std
-    // thread, not just `kask://credentials/*`.
+    // credential URLs use the same oo7 schema for both sync and async callers.
 
     /// Store a secret at an arbitrary URL in the OS keychain.
     ///
@@ -249,23 +248,49 @@ impl Keychain {
         username: &str,
         secret: &str,
     ) -> Result<(), KeychainError> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let secret = secret.to_string();
         let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            keyring
-                .create_item(
-                    KEYRING_LABEL,
-                    &[("url", url.as_str()), ("username", username.as_str())],
-                    secret.as_bytes(),
-                    true,
-                )
-                .await?;
-            Ok::<_, KeychainError>(())
-        })
+        block_on(Self::store_url(
+            keyring,
+            url.to_string(),
+            username.to_string(),
+            Zeroizing::new(secret.to_string()),
+        ))
+    }
+
+    /// Async counterpart of `store_by_url`; oo7 I/O runs on async-std's executor.
+    pub async fn store_by_url_async(
+        &self,
+        url: &str,
+        username: &str,
+        secret: &str,
+    ) -> Result<(), KeychainError> {
+        let keyring = open_keyring();
+        async_std::task::spawn(Self::store_url(
+            keyring,
+            url.to_string(),
+            username.to_string(),
+            Zeroizing::new(secret.to_string()),
+        ))
+        .await
+    }
+
+    async fn store_url(
+        keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
+        url: String,
+        username: String,
+        secret: Zeroizing<String>,
+    ) -> Result<(), KeychainError> {
+        let keyring = keyring.await?;
+        keyring.unlock().await?;
+        keyring
+            .create_item(
+                KEYRING_LABEL,
+                &[("url", url.as_str()), ("username", username.as_str())],
+                secret.as_bytes(),
+                true,
+            )
+            .await?;
+        Ok(())
     }
 
     /// Retrieve a secret from an arbitrary URL in the OS keychain.
@@ -274,26 +299,39 @@ impl Keychain {
     /// pre:  url is non-empty
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
     pub fn retrieve_by_url(&self, url: &str) -> Result<Zeroizing<String>, KeychainError> {
-        let url = url.to_string();
         let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            let items = keyring.search_items(&[("url", url.as_str())]).await?;
-            for item in items {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.unlock().await?;
-                    let secret = item.secret().await?;
-                    return Ok(Zeroizing::new(
-                        String::from_utf8_lossy(&secret).into_owned(),
-                    ));
-                }
+        block_on(Self::retrieve_url(keyring, url.to_string()))
+    }
+
+    /// Async counterpart of `retrieve_by_url`; the returned secret is zeroized on drop.
+    pub async fn retrieve_by_url_async(
+        &self,
+        url: &str,
+    ) -> Result<Zeroizing<String>, KeychainError> {
+        let keyring = open_keyring();
+        async_std::task::spawn(Self::retrieve_url(keyring, url.to_string())).await
+    }
+
+    async fn retrieve_url(
+        keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
+        url: String,
+    ) -> Result<Zeroizing<String>, KeychainError> {
+        let keyring = keyring.await?;
+        keyring.unlock().await?;
+        let items = keyring.search_items(&[("url", url.as_str())]).await?;
+        for item in items {
+            if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                item.unlock().await?;
+                let secret = item.secret().await?;
+                return Ok(Zeroizing::new(
+                    String::from_utf8_lossy(&secret).into_owned(),
+                ));
             }
-            Err(KeychainError::NotFound(NotFound {
-                entity_type: "secret".to_string(),
-                id: format!("keychain entry not found at url={url}"),
-            }))
-        })
+        }
+        Err(KeychainError::NotFound(NotFound {
+            entity_type: "secret".to_string(),
+            id: format!("keychain entry not found at url={url}"),
+        }))
     }
 
     /// Delete a secret at an arbitrary URL from the OS keychain.
@@ -302,20 +340,30 @@ impl Keychain {
     /// pre:  url is non-empty
     /// post: secret removed (idempotent — no-op if absent)
     pub fn delete_by_url(&self, url: &str) -> Result<(), KeychainError> {
-        let url = url.to_string();
         let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            let items = keyring.search_items(&[("url", url.as_str())]).await?;
-            for item in items {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.delete().await?;
-                    return Ok(());
-                }
+        block_on(Self::delete_url(keyring, url.to_string()))
+    }
+
+    /// Async counterpart of `delete_by_url`; absent entries are a no-op.
+    pub async fn delete_by_url_async(&self, url: &str) -> Result<(), KeychainError> {
+        let keyring = open_keyring();
+        async_std::task::spawn(Self::delete_url(keyring, url.to_string())).await
+    }
+
+    async fn delete_url(
+        keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
+        url: String,
+    ) -> Result<(), KeychainError> {
+        let keyring = keyring.await?;
+        keyring.unlock().await?;
+        let items = keyring.search_items(&[("url", url.as_str())]).await?;
+        for item in items {
+            if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                item.delete().await?;
+                return Ok(());
             }
-            Ok::<_, KeychainError>(())
-        })
+        }
+        Ok(())
     }
 
     /// Purge ALL entries from the old `service=hkask` namespace.
@@ -658,6 +706,49 @@ mod integration_tests {
             second_pass, 0,
             "No legacy entries should remain after purge"
         );
+    }
+
+    #[test]
+    fn async_url_round_trip_uses_disposable_keyring() -> Result<(), KeychainError> {
+        async_std::task::block_on(async {
+            let url = "kask://credentials/__hkask_async_url_round_trip__";
+            let kc = Keychain;
+            kc.delete_by_url_async(url).await?;
+            kc.store_by_url_async(url, "kask", TEST_VALUE).await?;
+            assert_eq!(kc.retrieve_by_url_async(url).await?.as_str(), TEST_VALUE);
+            kc.delete_by_url_async(url).await?;
+            kc.delete_by_url_async(url).await?;
+            assert!(matches!(
+                kc.retrieve_by_url_async(url).await,
+                Err(KeychainError::NotFound(_))
+            ));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn sync_and_async_url_operations_share_entries() -> Result<(), KeychainError> {
+        async_std::task::block_on(async {
+            let url = "kask://credentials/__hkask_cross_url_round_trip__";
+            let kc = Keychain;
+            kc.delete_by_url(url)?;
+            kc.store_by_url(url, "kask", TEST_VALUE)?;
+            assert_eq!(kc.retrieve_by_url_async(url).await?.as_str(), TEST_VALUE);
+            kc.delete_by_url_async(url).await?;
+            assert!(matches!(
+                kc.retrieve_by_url(url),
+                Err(KeychainError::NotFound(_))
+            ));
+
+            kc.store_by_url_async(url, "kask", TEST_VALUE).await?;
+            assert_eq!(kc.retrieve_by_url(url)?.as_str(), TEST_VALUE);
+            kc.delete_by_url(url)?;
+            assert!(matches!(
+                kc.retrieve_by_url_async(url).await,
+                Err(KeychainError::NotFound(_))
+            ));
+            Ok(())
+        })
     }
 
     #[test]
