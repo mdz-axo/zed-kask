@@ -61,6 +61,7 @@ fn main() {
     // Failing the build here turns a silent runtime WARN into a loud
     // compile error, catching the regression before it ships.
     let mut failures = Vec::new();
+    let mut core_names = Vec::new();
     for (name, path) in &entries {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -69,8 +70,17 @@ fn main() {
                 continue;
             }
         };
-        if let Err(msg) = validate_embedded_skill_frontmatter(name, &content) {
-            failures.push(format!("{name}: {msg}"));
+        match validate_embedded_skill_frontmatter(name, &content) {
+            Ok(frontmatter) => {
+                // The core list is DERIVED from the same frontmatter the
+                // validator already parsed — the frontmatter is the single
+                // source of truth; the constant is generated, never
+                // hand-maintained.
+                if extract_raw_yaml_scalar(frontmatter, "core").as_deref() == Some("true") {
+                    core_names.push(name.clone());
+                }
+            }
+            Err(msg) => failures.push(format!("{name}: {msg}")),
         }
     }
     if !failures.is_empty() {
@@ -94,6 +104,18 @@ fn main() {
     for (name, path) in &entries {
         let abs = path.to_str().expect("UTF-8 SKILL.md path");
         code.push_str(&format!("    (\"{name}\", include_str!(\"{abs}\")),\n"));
+    }
+    code.push_str("];\n");
+
+    // The core-skill list, derived from the shipped `core: true` frontmatter.
+    // Generated on every build — never hand-maintained. Consumers go through
+    // `is_core_skill` / `is_reserved_skill_name`.
+    code.push_str("\n/// Core skills, derived at build time from the shipped SKILL.md\n");
+    code.push_str("/// frontmatter (`core: true`) — the frontmatter is the single source of\n");
+    code.push_str("/// truth for which skills are core.\n");
+    code.push_str("pub const CORE_SKILL_NAMES: &[&str] = &[\n");
+    for name in &core_names {
+        code.push_str(&format!("    \"{name}\",\n"));
     }
     code.push_str("];\n");
 
@@ -181,8 +203,13 @@ fn collect_template_files(base: &PathBuf, dir: &PathBuf, out: &mut Vec<(String, 
 /// Validate a shipped SKILL.md's frontmatter at build time. Mirrors the
 /// runtime checks in `parse_skill_file_content_for_loading` so a build break
 /// here corresponds exactly to a runtime load failure there. Only checks the
-/// fields that discovery hard-rejects on: name and description.
-fn validate_embedded_skill_frontmatter(name: &str, content: &str) -> Result<(), String> {
+/// fields that discovery hard-rejects on: name and description. Returns the
+/// extracted frontmatter block on success (the caller derives the core-skill
+/// list from it).
+fn validate_embedded_skill_frontmatter<'a>(
+    name: &str,
+    content: &'a str,
+) -> Result<&'a str, String> {
     let content = content.trim_start();
     if !content.starts_with("---") {
         return Err("SKILL.md must start with YAML frontmatter (---)".into());
@@ -262,7 +289,7 @@ fn validate_embedded_skill_frontmatter(name: &str, content: &str) -> Result<(), 
         }
     }
 
-    Ok(())
+    Ok(frontmatter)
 }
 
 /// Extract a simple YAML scalar value (`key: value`) from frontmatter.

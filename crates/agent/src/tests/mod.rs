@@ -5259,10 +5259,10 @@ impl KaskToolSource for MutableKaskToolSource {
 /// registry is created during window restore, before the deferred MCP launch
 /// registers kask tools — and because kask servers are not in the
 /// ContextServerStore, no store event ever announces the late registration.
-/// The registry's poll must surface tools that appear in the source after
-/// construction, or every agent-panel conversation runs without kask tools
-/// for the whole app session (observed live 2026-08-30: a fresh session had
-/// zero kask tools until a store event was fired by hand).
+/// The registry's surface-change subscription must surface tools that appear
+/// in the source after construction, or every agent-panel conversation runs
+/// without kask tools for the whole app session (observed live 2026-08-30: a
+/// fresh session had zero kask tools until a store event was fired by hand).
 ///
 /// The source double is scoped to this test thread, so its populated window
 /// cannot alter a registry constructed by a parallel test.
@@ -5292,11 +5292,10 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
         description: "A kask tool registered after the registry was created".to_string(),
         input_schema: serde_json::json!({"type": "object", "properties": {}}),
     }]);
-    // The poll fires — but TestAppContext::run_until_parked is tick-based
-    // and does not advance the clock to pending timers (only
-    // BackgroundExecutor::run_until_parked does), so advance the clock past
-    // the registry's 2s kask-tool poll interval explicitly, then drain.
-    cx.executor().advance_clock(Duration::from_secs(4));
+    // Fire the surface-change signal — the registry's subscription task
+    // reloads on receipt; run_until_parked drives the foreground task to
+    // completion. (Replaces the former advance-clock-past-the-poll dance.)
+    crate::tools::notify_kask_tool_surface_changed();
     cx.run_until_parked();
 
     thread.update(cx, |thread, cx| {
@@ -5324,7 +5323,7 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
 /// model never mistakes the visible list for the complete surface (the live
 /// failure that motivated this: an agent reported `web_ping` as unavailable
 /// because a filter layer hadn't selected it). This drives the full path —
-/// kask source → registry poll → enabled_tools (profile filters) →
+/// kask source → registry change-signal → enabled_tools (profile filters) →
 /// render_system_prompt — and asserts both halves: the filtered tool is
 /// absent from the request's tool list AND the marker names it as hidden.
 #[gpui::test]
@@ -5382,7 +5381,7 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
             input_schema: serde_json::json!({"type": "object", "properties": {}}),
         },
     ]);
-    cx.executor().advance_clock(Duration::from_secs(4));
+    crate::tools::notify_kask_tool_surface_changed();
     cx.run_until_parked();
 
     thread.update(cx, |thread, cx| {
@@ -5437,7 +5436,7 @@ async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContex
 /// list (observed 4/4 announce-then-stop failures on GLM 5.3), so the
 /// gate produced silent no-effect stops indistinguishable from thread
 /// kills while blocking operator-approved memory writes. Drives the real
-/// path — kask source → registry poll → enabled_tools — and asserts the
+/// path — kask source → registry change-signal → enabled_tools — and asserts the
 /// memory-edit tool reaches a default (zed-agent) thread, where the old
 /// gate would have dropped it.
 #[gpui::test]
@@ -5480,7 +5479,7 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
         description: "Insert a new memory into the curator's store.".to_string(),
         input_schema: serde_json::json!({"type": "object", "properties": {}}),
     }]);
-    cx.executor().advance_clock(Duration::from_secs(4));
+    crate::tools::notify_kask_tool_surface_changed();
     cx.run_until_parked();
 
     thread.update(cx, |thread, cx| {
@@ -5508,7 +5507,7 @@ async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mu
 /// model enumerates the registered MCP surface on demand (grouped by
 /// server, filterable by substring over server id / tool name / description)
 /// instead of a per-turn heuristic guessing what is relevant. Drives the
-/// real path — kask source → registry poll → listing — so a break anywhere
+/// real path — kask source → registry change-signal → listing — so a break anywhere
 /// in the surfacing chain fails here, not in a live session. The
 /// system-prompt visibility marker points the model at this tool when it
 /// finds a tool missing; if the listing dropped tools or mis-grouped them,
@@ -5523,7 +5522,8 @@ async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
 
     let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
 
-    // Register tools on two servers and let the registry's poll merge them.
+    // Register tools on two servers and fire the surface-change signal so
+    // the registry merges them.
     let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
     source_override.replace(source.clone());
     source.set(vec![
@@ -5546,7 +5546,7 @@ async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
             input_schema: serde_json::json!({"type": "object", "properties": {}}),
         },
     ]);
-    cx.executor().advance_clock(Duration::from_secs(4));
+    crate::tools::notify_kask_tool_surface_changed();
     cx.run_until_parked();
 
     let run_listing = |cx: &mut TestAppContext, filter: Option<String>| {
@@ -7418,6 +7418,81 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             "subagent tool should not be present at max depth"
         );
     });
+}
+
+/// zed-kask: pins the construction↔list seam of the four-gate tool
+/// visibility chain (the gates are documented on the `tools!` macro).
+/// `Thread::add_default_tools` and the macro's `ALL_TOOL_NAMES` are two
+/// hand-kept lists; a tool constructed but missing from the macro silently
+/// disappears from every macro consumer (the profile pin, the permission
+/// UI) — the exact defect class that shipped `record_skill_feedback`
+/// registered-but-invisible (D1). A macro entry with no construction site
+/// is a dead entry. Both directions fail here instead of in a live session.
+#[gpui::test]
+async fn default_constructed_tools_and_macro_list_are_in_sync(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone() as Arc<dyn LanguageModel>),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    let registered: std::collections::HashSet<String> = thread.read_with(cx, |thread, _| {
+        thread
+            .registered_tool_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    });
+
+    // Session-registered tools (SkillTool, RecordSkillFeedbackTool) are
+    // added by NativeAgent::register_session, not add_default_tools — the
+    // only legitimate absentees from the construction set.
+    const SESSION_TOOLS: &[&str] = &[SkillTool::NAME, RecordSkillFeedbackTool::NAME];
+
+    for name in crate::ALL_TOOL_NAMES {
+        if SESSION_TOOLS.contains(name) {
+            continue;
+        }
+        assert!(
+            registered.contains(*name),
+            "ALL_TOOL_NAMES lists `{name}` but add_default_tools never constructs it — \
+             a dead macro entry or a missing construction site"
+        );
+    }
+    for name in &registered {
+        // SandboxedTerminalTool surfaces under the canonical `terminal`
+        // name, so the macro deliberately excludes it.
+        if name.as_str() == SandboxedTerminalTool::NAME {
+            continue;
+        }
+        assert!(
+            crate::ALL_TOOL_NAMES.contains(&name.as_str()),
+            "add_default_tools constructs `{name}` but the tools! macro does not list it — \
+             the tool is invisible to every macro consumer (the record_skill_feedback \
+             defect class, D1)"
+        );
+    }
 }
 
 #[gpui::test]

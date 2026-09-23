@@ -78,6 +78,12 @@ telemetry.workspace = true
 tempfile.workspace = true
 text.workspace = true
 thiserror.workspace = true
+# zed-kask: `tokio::sync::watch` — the kask tool-surface change signal in
+# `tools/context_server_registry.rs`. Scoped to nothing extra (the workspace
+# declares tokio with `features = ["full"]`); watch is executor-agnostic,
+# safe to await from GPUI foreground tasks (see the .rules GPUI traps: the
+# timer wheel is the hazard, not the sync primitives).
+tokio.workspace = true
 ui.workspace = true
 url.workspace = true
 util.workspace = true

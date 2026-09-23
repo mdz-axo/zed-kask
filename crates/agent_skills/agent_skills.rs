@@ -17,16 +17,17 @@ pub const AGENTS_DIR_NAME: &str = ".agents";
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
 
-/// The canonical list of core skill names. Core skills are always-on,
-/// re-seeded on every startup (overwriting user edits), locked against
-/// editing, and undisableable. They cannot be shadowed by project-local
-/// skills of the same name.
+/// Returns `true` if the given skill name is a core skill.
 ///
-/// This list is the single source of truth for which skills are core. It is
-/// consumed by:
+/// The canonical list ([`CORE_SKILL_NAMES`]) is generated at build time by
+/// `build.rs` from the shipped SKILL.md frontmatter (`core: true`) — the
+/// frontmatter is the single source of truth; the constant is derived, not
+/// hand-maintained. Core skills are always-on, re-seeded on every startup
+/// (overwriting user edits), locked against editing, and undisableable;
+/// they cannot be shadowed by project-local skills of the same name.
+///
+/// Consumed by:
 /// - `seed_shipped_skills` — to decide whether to overwrite or seed-once.
-/// - `kask_bridge` — seeds registry artifacts to disk at startup
-///   templates.
 /// - `apply_skill_overrides` — to enforce unshadowability.
 /// - `skill_tool` — to skip the authorization prompt.
 /// - `settings_ui::skills_setup` — to render core skills with a distinct
@@ -40,41 +41,6 @@ pub const SKILLS_DIR_NAME: &str = "skills";
 ///    methodology.
 /// 3. All delegation targets (hard or optional) of a core skill must also
 ///    be core — an editable delegate is a backdoor around consent/trust.
-pub const CORE_SKILL_NAMES: &[&str] = &[
-    // Skill-authoring + maintenance
-    "create-skill",
-    "skill-bundler",
-    "skill-discovery",
-    "skill-logic-audit",
-    "skill-maintenance",
-    "skill-router",
-    // Curator methodologies
-    "metacognition",
-    "pragmatic-cybernetics",
-    "pragmatic-semantics",
-    "superforecasting",
-    // Curator human-in-the-loop review
-    "algedonic-review",
-    "gemba-walk",
-    // Universal quality gates
-    "code-review",
-    "essentialist",
-    "refactor-architecture",
-    // Essentialist delegates
-    "deep-module",
-    "coding-guidelines",
-    // skill-router integration
-    "task-breakdown",
-    // MCP server / panel invocations
-    "swarm-compose-guide",
-    "swarm-intelligence",
-    "swarm-steering",
-    "kanban-task-management",
-    // code-review optional delegates (Q16: editable delegate = backdoor)
-    "bug-hunt",
-];
-
-/// Returns `true` if the given skill name is a core skill.
 pub fn is_core_skill(name: &str) -> bool {
     CORE_SKILL_NAMES.contains(&name)
 }
@@ -809,9 +775,12 @@ pub fn read_skill_body_from_content(
 // from disk via `load_skills_from_directory`, never from this compiled
 // payload. User edits take effect immediately without recompilation.
 //
-// The SKILL.md is the *interface* (frontmatter parsed for discovery); the
-// SKILL.md files are the *interface* (frontmatter parsed for discovery);
+// The SKILL.md files are the *interface* (frontmatter parsed for discovery);
 // .j2 templates are companion *resources* seeded to disk alongside them.
+//
+// The same generated file carries `CORE_SKILL_NAMES`, derived from the
+// shipped `core: true` frontmatter — the single source of truth for which
+// skills are core (see `is_core_skill`).
 include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
 include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
 
@@ -861,9 +830,19 @@ pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
     }
 }
 
+/// Whether the on-disk template needs (re-)seeding: missing, unreadable, or
+/// different from the shipped copy. An identical file is left untouched —
+/// an unchanged registry does not churn writes on every startup, and a
+/// corrupted or stale file is still replaced.
+fn template_needs_seed(existing: Option<&str>, shipped: &str) -> bool {
+    existing != Some(shipped)
+}
+
 /// Seed shipped prompt templates to the registry templates directory.
-/// In dev, the tool reads from the live source tree and seeding is a no-op.
-/// In production, templates are seeded to `{kask_data_dir}/skills/registry/templates/`.
+/// The seeded copy is what MCP servers read via `HKASK_TEMPLATE_ROOT` (in
+/// dev the `render_template` tool reads the live source tree instead); in
+/// production it is the only copy. Only changed, missing, or corrupted
+/// files are written.
 pub async fn seed_templates(fs: &dyn Fs, templates_dir: &Path) {
     for (rel_path, content) in shipped_template_seed() {
         let target = templates_dir.join(rel_path);
@@ -875,6 +854,10 @@ pub async fn seed_templates(fs: &dyn Fs, templates_dir: &Path) {
                 );
                 continue;
             }
+        }
+        let existing = fs.load(&target).await.ok();
+        if !template_needs_seed(existing.as_deref(), content) {
+            continue;
         }
         if let Err(error) = fs.write(&target, content.as_bytes()).await {
             log::warn!("Failed to seed template '{}': {error}", rel_path);
@@ -2467,68 +2450,6 @@ description: A skill with no body content
         );
     }
 
-    // The `CORE_SKILL_NAMES` constant is the single source of truth for which
-    // skills are core. Every shipped SKILL.md with `core: true` in its
-    // frontmatter must appear in `CORE_SKILL_NAMES`, and every name in
-    // `CORE_SKILL_NAMES` must have a shipped SKILL.md marked `core: true`.
-    // A drift in either direction is a contract violation: a frontmatter
-    // `core: true` not in the constant would be seeded-once (editable) instead
-    // of always-overwritten, and a constant entry without frontmatter would
-    // be overwritten on every startup against the user's will.
-    #[test]
-    fn test_core_skill_names_constant_matches_shipped_core_frontmatter() {
-        let seed = shipped_skill_seed();
-
-        // Skills whose shipped SKILL.md frontmatter has `core: true`.
-        let frontmatter_core: std::collections::HashSet<&str> = seed
-            .iter()
-            .filter_map(|(name, content)| {
-                let (metadata, _body) = extract_frontmatter(content)
-                    .unwrap_or_else(|e| panic!("shipped skill '{name}' failed to parse: {e}"));
-                if metadata.core { Some(*name) } else { None }
-            })
-            .collect();
-
-        let constant_core: std::collections::HashSet<&str> =
-            CORE_SKILL_NAMES.iter().copied().collect();
-
-        // Every frontmatter-core skill must be in the constant.
-        let missing_from_constant: Vec<&str> = frontmatter_core
-            .difference(&constant_core)
-            .copied()
-            .collect();
-        assert!(
-            missing_from_constant.is_empty(),
-            "skills with `core: true` frontmatter but absent from CORE_SKILL_NAMES: \
-             {missing_from_constant:?} — add them to CORE_SKILL_NAMES or remove the \
-             frontmatter flag"
-        );
-
-        // Every constant entry must have a shipped SKILL.md marked core.
-        let missing_from_frontmatter: Vec<&str> = constant_core
-            .difference(&frontmatter_core)
-            .copied()
-            .collect();
-        assert!(
-            missing_from_frontmatter.is_empty(),
-            "CORE_SKILL_NAMES entries with no shipped SKILL.md marked `core: true`: \
-             {missing_from_frontmatter:?} — add `core: true` to the SKILL.md frontmatter \
-             or remove the name from CORE_SKILL_NAMES"
-        );
-
-        // Sanity: the core set is non-empty and a strict subset of shipped.
-        assert!(
-            !constant_core.is_empty(),
-            "CORE_SKILL_NAMES must not be empty"
-        );
-        let shipped_names: std::collections::HashSet<&str> =
-            seed.iter().map(|(name, _)| *name).collect();
-        assert!(
-            constant_core.is_subset(&shipped_names),
-            "CORE_SKILL_NAMES references skills with no shipped SKILL.md"
-        );
-    }
-
     #[test]
     fn test_parse_skill_frontmatter_accepts_core_skill_with_reserved_name() {
         // A legitimate core skill (frontmatter `core: true`) bearing a
@@ -2598,8 +2519,9 @@ description: A skill with no body content
 
     // Template seeding writes the compiled-in .j2 templates to disk so MCP
     // servers (corpus, training) find them in production where the CWD-relative
-    // default does not exist. Unlike skill seeding, templates are ALWAYS
-    // overwritten — they have no user-sovereignty exception.
+    // default does not exist. Templates have no user-sovereignty exception:
+    // the seeded copy is always brought back to the shipped content — but
+    // only files that actually differ are written.
     #[gpui::test]
     async fn test_seed_templates_writes_all_shipped_templates_to_disk(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -2679,8 +2601,9 @@ description: A skill with no body content
         }
     }
 
-    // Template seeding always overwrites — a stale or corrupted file is
-    // replaced with the shipped copy on re-seed.
+    // Template seeding refreshes stale content — a file that differs from
+    // the shipped copy (corrupted or outdated) is replaced on re-seed; a
+    // file that already matches is left untouched.
     #[gpui::test]
     async fn test_seed_templates_overwrites_existing_files(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -2704,6 +2627,25 @@ description: A skill with no body content
         assert_eq!(
             after, original,
             "template re-seed must overwrite corrupted content; got tampered file"
+        );
+    }
+
+    // The skip decision itself: identical content is not rewritten; a
+    // missing or changed file is.
+    #[test]
+    fn template_needs_seed_skips_identical_content_only() {
+        let shipped = "[inference]\ncontract: {}\nvisibility: Public\n---\nbody";
+        assert!(
+            template_needs_seed(None, shipped),
+            "a missing file is seeded"
+        );
+        assert!(
+            template_needs_seed(Some("stale content"), shipped),
+            "changed content is re-seeded"
+        );
+        assert!(
+            !template_needs_seed(Some(shipped), shipped),
+            "identical content is left untouched"
         );
     }
 

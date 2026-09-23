@@ -702,31 +702,37 @@ fn main() {
             ));
         agent_skills::set_global_skills_dir_override(Some(kask_skills_dir));
 
-        // zed-kask: Wire the kask registry templates directory for the
-        // `render_template` tool. In dev (CWD = repo root), use the live
-        // source tree at `kask/registry/templates/` so edits take effect
-        // without recompilation. In production, use the seeded copy under
-        // `{kask_data_dir}/skills/registry/templates/`.
+        // zed-kask: one root rule for the seeded template registry. The
+        // shared `KaskSettings::resolved_template_root()` — the same rule
+        // `mcp_env()` emits as `HKASK_TEMPLATE_ROOT` (operator `kask.data_dir`
+        // setting, else env, else platform default) — owns where the seeded
+        // copy lives; main.rs previously re-derived it with the env-only
+        // `resolve_under_data_dir` rule, so a custom `kask.data_dir` diverged
+        // the writer from the reader. The `render_template` tool additionally
+        // prefers the live source tree in dev (CWD = repo root) so template
+        // edits take effect without recompilation; in production both point
+        // at the seeded copy.
+        let template_registry_templates = kask_settings_for_mcp
+            .resolved_template_root()
+            .join("templates");
         let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
         let is_dev = dev_templates_dir.is_dir();
         let template_base_path = if is_dev {
             dev_templates_dir
         } else {
-            hkask_types::agent_paths::resolve_under_data_dir(
-                std::path::Path::new("skills/registry/templates"),
-            )
+            template_registry_templates.clone()
         };
         agent::set_template_base_path(template_base_path);
 
-        // Seed templates to the data-dir path so MCP servers (corpus,
+        // Seed templates to the registry path so MCP servers (corpus,
         // training) find them regardless of dev/prod. The `render_template`
         // tool uses the live source tree in dev (via `template_base_path`
         // above), so this seeding only affects MCP servers which read
         // `HKASK_TEMPLATE_ROOT`. In dev, the seeded copy mirrors the
         // compiled-in source tree; in production, it IS the only copy.
-        let seed_dir = hkask_types::agent_paths::resolve_under_data_dir(
-            std::path::Path::new("skills/registry/templates"),
-        );
+        // Only changed, missing, or corrupted files are written — an
+        // unchanged registry does not churn writes on every startup.
+        let seed_dir = template_registry_templates;
         let seed_fs = fs.clone();
         cx.spawn(async move |_cx| {
             agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
@@ -1008,14 +1014,20 @@ fn main() {
                 runtime: mcp_runtime.clone(),
                 cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             });
-            // Background refresh: the runtime registers tools
-            // asynchronously (deferred launch, restarts, reconnects) with no
-            // event the agent could observe — poll the registered surface so
-            // the cache stays current without per-site wiring.
+            // Event-driven refresh: the runtime signals every tool-surface
+            // membership change (`register_server` / `stop_server` /
+            // `shutdown_all` fire `tool_surface_changes`), so the cache
+            // rebuilds on the signal instead of on a timer — and each rebuild
+            // notifies the agent's registries through the process-global
+            // surface-change signal. The first iteration runs before the
+            // first await, so wiring itself performs the initial cache build
+            // and announcement (the deferred launch may have registered
+            // servers before this task started).
             let cache = source.cache.clone();
             let runtime = source.runtime.clone();
             let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
             tokio_handle.spawn(async move {
+                let mut surface_changes = runtime.tool_surface_changes();
                 loop {
                     let descriptors = runtime
                         .registered_servers()
@@ -1031,7 +1043,11 @@ fn main() {
                         })
                         .collect();
                     *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = descriptors;
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    agent::notify_kask_tool_surface_changed();
+                    if surface_changes.changed().await.is_err() {
+                        // The runtime was dropped — the editor is shutting down.
+                        break;
+                    }
                 }
             });
             agent::set_kask_tool_source(source);

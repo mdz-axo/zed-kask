@@ -466,6 +466,12 @@ pub struct McpRuntime {
     children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
     /// Registered MCP servers (metadata)
     servers: Arc<RwLock<HashMap<String, McpServer>>>,
+    /// Change signal for tool-surface membership (server registered /
+    /// stopped / shutdown-all). Consumers subscribe via
+    /// [`McpRuntime::tool_surface_changes`] and refresh event-driven instead
+    /// of polling — registration is an event, and events are forwarded, not
+    /// sampled.
+    tool_surface_tx: Arc<tokio::sync::watch::Sender<()>>,
     /// Live connections to MCP server processes, keyed by server ID
     connections: Arc<RwLock<HashMap<String, Connection>>>,
     /// Cancellation tokens for managed server processes
@@ -494,6 +500,7 @@ impl McpRuntime {
             lifecycle: Arc::new(Mutex::new(false)),
             children: Arc::new(Mutex::new(HashMap::new())),
             servers: Arc::new(RwLock::new(HashMap::new())),
+            tool_surface_tx: Arc::new(tokio::sync::watch::Sender::new(())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             cancellation_tokens: Arc::new(RwLock::new(HashMap::new())),
             launch_specs: Arc::new(RwLock::new(HashMap::new())),
@@ -567,6 +574,16 @@ impl McpRuntime {
             .collect()
     }
 
+    /// A receiver that fires on every tool-surface membership change
+    /// (server registered / stopped / shutdown-all). Executor-agnostic —
+    /// `tokio::sync::watch` registers no timers, so it is awaitable from any
+    /// executor (the GPUI traps in `.rules` concern the timer wheel, not
+    /// this family).
+    #[must_use]
+    pub fn tool_surface_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.tool_surface_tx.subscribe()
+    }
+
     /// Register an MCP server (metadata only, no live connection).
     pub async fn register_server(&self, server: McpServer) {
         let mut servers = self.servers.write().await;
@@ -580,6 +597,10 @@ impl McpRuntime {
         );
 
         servers.insert(server.id.clone(), server);
+        // Registration is an event, not something consumers must poll for.
+        // `send_replace` is infallible and wakes subscribers without running
+        // them inline, so it is safe while the `servers` write guard is held.
+        self.tool_surface_tx.send_replace(());
     }
 
     /// Start an MCP server process and connect via rmcp stdio transport with
@@ -1344,6 +1365,7 @@ impl McpRuntime {
         self.last_reconnect.write().await.clear();
         self.health_failures.write().await.clear();
         self.stop_children(None).await;
+        self.tool_surface_tx.send_replace(());
     }
 
     // Callers hold `lifecycle`: a child cannot be published behind the drain.
@@ -1404,6 +1426,7 @@ impl McpRuntime {
                 tools = server.tools.len(),
                 "MCP server stopped"
             );
+            self.tool_surface_tx.send_replace(());
         }
     }
 

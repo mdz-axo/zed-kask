@@ -130,6 +130,84 @@ pub fn kask_tool_source() -> Option<Arc<dyn KaskToolSource>> {
     KASK_TOOL_SOURCE.get()
 }
 
+// ── zed-kask: kask tool-surface change signal ──────────────────────
+//
+// The process-global messenger that replaced the former 2s poll
+// (2026-09-22): registration on the governed `McpRuntime` is an event
+// (`register_server` / `stop_server` / `shutdown_all` signal the runtime),
+// and events are forwarded instead of discarded. main.rs's source-refresh
+// loop fires this after every cache rebuild (and once at wiring); tests
+// fire it after mutating their scoped source. Every live
+// `ContextServerRegistry` reloads from `KaskToolSource` on receipt.
+// tokio::sync::watch (declared for this crate scoped to sync): broadcast to
+// every subscriber with natural coalescing, and executor-agnostic — no
+// timer-wheel registration, so awaiting it from GPUI foreground tasks is
+// safe (the .rules GPUI traps concern the timer wheel, not this family).
+// async-channel was evaluated and rejected: its Receiver clones COMPETE for
+// messages (one message reaches one clone) rather than broadcasting, which
+// surfaced as registry starvation in the parallel test suite.
+
+// The production global. Unused in test builds, where notifications are
+// thread-scoped (below) — gated to keep the test-cfg build free of dead code.
+#[cfg(not(test))]
+static KASK_TOOL_SURFACE_TX: std::sync::OnceLock<tokio::sync::watch::Sender<()>> =
+    std::sync::OnceLock::new();
+
+#[cfg(not(test))]
+fn kask_tool_surface_tx() -> &'static tokio::sync::watch::Sender<()> {
+    KASK_TOOL_SURFACE_TX.get_or_init(|| tokio::sync::watch::Sender::new(()))
+}
+
+// zed-kask: test-thread scoping. Tests run parallel schedulers, one per
+// thread, and GPUI's TestExecutor enforces same-thread wake determinism:
+// a notification fired on test B's thread waking a task subscribed by test
+// A aborts the process ("Your test is not deterministic" + a foreign-thread
+// task drop — observed live 2026-09-22). The same discipline as
+// `scoped_kask_tool_source_for_test`: a test's notifications stay on its own
+// thread. Production has one foreground executor by design and cross-thread
+// wakes are its normal operation, so the global sender is used there.
+#[cfg(test)]
+thread_local! {
+    static TEST_KASK_TOOL_SURFACE_TX: std::cell::RefCell<Option<
+        tokio::sync::watch::Sender<()>,
+    >> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_thread_surface_tx() -> tokio::sync::watch::Sender<()> {
+    TEST_KASK_TOOL_SURFACE_TX.with(|tx| {
+        tx.borrow_mut()
+            .get_or_insert_with(|| tokio::sync::watch::Sender::new(()))
+            .clone()
+    })
+}
+
+/// Subscribe to kask tool-surface change notifications. Subscribe before the
+/// event you must not miss — a receiver sees only sends after its creation.
+pub fn subscribe_to_kask_tool_surface_changes() -> tokio::sync::watch::Receiver<()> {
+    #[cfg(test)]
+    {
+        test_thread_surface_tx().subscribe()
+    }
+    #[cfg(not(test))]
+    {
+        kask_tool_surface_tx().subscribe()
+    }
+}
+
+/// Notify every live registry that the kask tool surface may have changed.
+/// Broadcast: every subscribed registry sees the notification.
+pub fn notify_kask_tool_surface_changed() {
+    #[cfg(test)]
+    {
+        test_thread_surface_tx().send_replace(());
+    }
+    #[cfg(not(test))]
+    {
+        kask_tool_surface_tx().send_replace(());
+    }
+}
+
 pub struct ContextServerPrompt {
     pub server_id: ContextServerId,
     pub prompt: context_server::types::Prompt,
@@ -163,12 +241,8 @@ struct RegisteredContextServer {
     _tools_updated_subscription: Option<NotificationSubscription>,
 }
 
-/// How often the registry re-reads the kask tool source. Kask servers
-/// register with the governed `McpRuntime`, not the per-project
-/// `ContextServerStore`, so their registration never fires a store event —
-/// polling is the only way a registry created before the deferred MCP
-/// launch (window restore) can learn about them.
-const KASK_TOOL_SOURCE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+// How the kask-tool startup window is covered is documented on the
+// surface-change signal above and the registry's subscription spawn.
 
 impl ContextServerRegistry {
     pub fn new(server_store: Entity<ContextServerStore>, cx: &mut Context<Self>) -> Self {
@@ -186,20 +260,27 @@ impl ContextServerRegistry {
         // per-project store (single spawn authority, I1).
         this.reload_kask_tools(cx);
         // zed-kask: the startup race. This registry is created during window
-        // restore, before the deferred MCP launch registers kask tools — and
-        // because kask servers are not in the ContextServerStore, no store
-        // event ever announces the late registration. Without this poll the
-        // merge above is the last one for the whole app session and every
-        // agent-panel conversation runs without kask tools (observed live
-        // 2026-08-30: a fresh session had zero kask tools until a store
-        // event was fired by hand). GPUI-native timer, not tokio — tokio
-        // timers panic on the foreground thread (see the .rules GPUI traps).
-        // The loop exits when this registry is dropped.
+        // restore, before the deferred MCP launch wires the kask tool source
+        // and registers kask servers — and because kask servers are not in
+        // the ContextServerStore, no store event ever announces any of that.
+        // The process-global surface-change signal is the messenger: main.rs
+        // fires it after every source-cache rebuild (and once at wiring),
+        // tests fire it after mutating their scoped source, and each live
+        // registry reloads on receipt. This replaced the former 2s poll
+        // (2026-09-22) — registration events exist and polling discarded
+        // them while re-cloning the whole surface every tick. Subscribing
+        // HERE (before the spawn) closes the construction race: a receiver
+        // sees only sends after its creation, so nothing between registry
+        // construction and the task's first poll is lost. The loop exits
+        // when this registry is dropped.
+        let mut surface_changes = subscribe_to_kask_tool_surface_changes();
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(KASK_TOOL_SOURCE_POLL_INTERVAL)
-                    .await;
+                if surface_changes.changed().await.is_err() {
+                    break;
+                }
+                // watch coalesces bursts (a settings-change restart that
+                // stops and re-registers several servers) into one reload.
                 let Ok(()) = this.update(cx, |this, cx| this.reload_kask_tools(cx)) else {
                     break;
                 };
@@ -213,9 +294,9 @@ impl ContextServerRegistry {
     /// [`KaskToolSource`], wired to the governed `McpRuntime` in `main.rs`)
     /// into the registry under each tool's server id. Cache-backed and
     /// synchronous, so it is cheap enough to re-run on every store event and
-    /// on every poll tick. The poll is what catches kask servers that
-    /// registered after this registry was created — store events cannot
-    /// (kask servers are not in the ContextServerStore), so the
+    /// on every surface-change notification. The signal is what catches
+    /// kask servers that registered after this registry was created — store
+    /// events cannot (kask servers are not in the ContextServerStore), so the
     /// store-event path only re-inserts entries that a colliding raw
     /// settings id removed.
     fn reload_kask_tools(&mut self, cx: &mut Context<Self>) {

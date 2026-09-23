@@ -136,24 +136,25 @@ impl AgentTool for RenderTemplateTool {
     }
 }
 
-/// Read a template file from the registry, trying ref as-is, .j2, then .yaml.
+/// Read a template file from the registry, trying ref as-is, then `.j2`.
 /// Prevents path traversal outside the base directory.
 ///
 /// `resolve_template_path` returns `None` for two reasons: the joined path
 /// escapes the base directory (traversal blocked), or the file doesn't exist
-/// (`canonicalize` fails). Both are safe to fall through from — the `.j2`/`.yaml`
-/// retries are checked against the same base path, so traversal stays blocked.
-/// We only error after all three attempts fail.
+/// (`canonicalize` fails). Both are safe to fall through from — the .j2
+/// retry is checked against the same base path, so traversal stays blocked.
+/// We only error after both attempts fail.
 fn read_template_file(base_path: &std::path::Path, template_ref: &str) -> Result<String, String> {
     // Try ref as-is. `None` means either traversal blocked or file absent —
-    // fall through to the extension retries rather than erroring immediately.
+    // fall through to the .j2 retry rather than erroring immediately.
     if let Some(resolved) = resolve_template_path(base_path, template_ref) {
         if let Ok(content) = std::fs::read_to_string(&resolved) {
             return Ok(content);
         }
     }
 
-    // Try .j2 extension.
+    // Try .j2 extension — the documented extensionless-ref convention
+    // (skills cite `skill/name`, the file is `name.j2`).
     if !template_ref.ends_with(".j2") {
         let j2_ref = format!("{template_ref}.j2");
         if let Some(j2_path) = resolve_template_path(base_path, &j2_ref) {
@@ -163,18 +164,8 @@ fn read_template_file(base_path: &std::path::Path, template_ref: &str) -> Result
         }
     }
 
-    // Try .yaml extension.
-    if !template_ref.ends_with(".yaml") {
-        let yaml_ref = format!("{template_ref}.yaml");
-        if let Some(yaml_path) = resolve_template_path(base_path, &yaml_ref) {
-            if let Ok(content) = std::fs::read_to_string(&yaml_path) {
-                return Ok(content);
-            }
-        }
-    }
-
     Err(format!(
-        "Template not found: tried '{template_ref}', '{template_ref}.j2', '{template_ref}.yaml' under '{}'",
+        "Template not found: tried '{template_ref}' and '{template_ref}.j2' under '{}'",
         base_path.display()
     ))
 }
@@ -268,15 +259,13 @@ fn template_metadata_header(content: &str) -> Option<&str> {
         working = working.get(close_pos + 2..)?.trim_start_matches('\n');
     }
 
-    if let Some(metadata) = working.strip_prefix("[inference]\n") {
-        let end = metadata.find("\n---\n")?;
-        metadata.get(..end)
-    } else if let Some(metadata) = working.strip_prefix("---\n") {
-        let end = metadata.find("\n---\n")?;
-        metadata.get(..end)
-    } else {
-        None
-    }
+    // The registry's only header convention is `[inference]`-keyed metadata
+    // terminated by a lone `---` line. The legacy leading-`---` YAML
+    // frontmatter branch was deleted (2026-09-22): zero shipped templates
+    // used it; a file opening with `---` is treated as headerless body.
+    let metadata = working.strip_prefix("[inference]\n")?;
+    let end = metadata.find("\n---\n")?;
+    metadata.get(..end)
 }
 
 /// Strip the template metadata header and inference-param stanzas from a
@@ -296,12 +285,13 @@ fn template_metadata_header(content: &str) -> Option<&str> {
 /// NOT YAML-frontmatter and therefore not delimited by leading `---` — the
 /// terminator is a lone `---` line *after* the header. The old stripper only
 /// fired on a leading `---`, which matched 0 of 309 templates, so the header
-/// leaked verbatim into every rendered prompt.
+/// leaked verbatim into every rendered prompt. The legacy leading-`---`
+/// branch is deleted (2026-09-22): zero shipped templates used it.
 ///
 /// Two stanzas are stripped:
 /// 1. **Header** — everything from a leading `[inference]` line through the
-///    first lone `---` line. Templates that still use legacy leading-`---`
-///    frontmatter keep working (same rule, different opener).
+///    first lone `---` line. A file opening with `---` has no header under
+///    this convention and passes through as body.
 /// 2. **Body param stanza** — a second `[inference]` block at the top of the
 ///    body (temperature/work_effort/verbosity/thinking_budget render params).
 ///    These are tool-execution metadata, not prompt text; minijinja would
@@ -336,11 +326,6 @@ fn strip_frontmatter(content: &str) -> String {
         if let Some(pos) = working.find("\n---\n") {
             working = &working[pos + 1..];
             working = working.strip_prefix("---\n").unwrap_or(working);
-        }
-    } else if working.starts_with("---") {
-        // Legacy YAML frontmatter: everything after the second `---`.
-        if let Some(after) = working.splitn(3, "---").nth(2) {
-            working = after;
         }
     }
 
@@ -436,13 +421,6 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_frontmatter_removes_yaml_header() {
-        let input = "---\ntemplate_type: KnowAct\ncontract:\n  input: {}\n---\nHello {{ name }}!";
-        let result = strip_frontmatter(input);
-        assert_eq!(result, "Hello {{ name }}!");
-    }
-
-    #[test]
     fn test_strip_frontmatter_preserves_content_without_header() {
         let input = "Hello {{ name }}!";
         let result = strip_frontmatter(input);
@@ -476,15 +454,6 @@ mod tests {
 
         validate_contract_inputs(input, &context).expect("optional inputs may be absent");
     }
-
-    #[test]
-    fn test_strip_frontmatter_handles_empty_body() {
-        let input = "---\nfoo: bar\n---\n";
-        let result = strip_frontmatter(input);
-        assert_eq!(result, "");
-    }
-
-    // ── The on-disk convention (219/315 templates) ─────────────────
 
     #[test]
     fn test_strip_inference_header_through_first_lone_terminator() {

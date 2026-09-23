@@ -5208,6 +5208,14 @@ impl Thread {
         self.tools.contains_key(name)
     }
 
+    /// All names in the thread's registered tool map (the `add_tool` set,
+    /// before any visibility filtering). Test-support surface for pinning
+    /// the construction sites against the `tools!` macro's name list.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn registered_tool_names(&self) -> Vec<&str> {
+        self.tools.keys().map(|name| name.as_ref()).collect()
+    }
+
     pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
         self.running_subagents.push(subagent);
     }
