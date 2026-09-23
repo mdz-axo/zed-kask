@@ -50,18 +50,31 @@ ruling (recorded in the derived registry) improves it.
   implementation (`crates/hkask-portfolio-widget/src/view.rs`) — IRR anchors
   on its real FIBO term (rung 1); FIBO-less metrics anchor on
   `sumo:Quantity` (rung 3).
-- **Term resolution for the agent**: the `onto_anchor` tool walks the same
-  ladder for any term and returns the rung, namespace, concept, and — on the
-  derived rung — the recorded identity and authority.
+- **Term resolution and relation traversal for the agent**: `onto_anchor`
+  resolves any term as before. An optional `relation_query` asks for outgoing
+  neighbors (no `to`) or a bounded directed path (`to` term, optional
+  `max_hops`: 1–4). Each edge states its relation and authority. The graph
+  currently includes resolved derived-concept constituents and the published
+  schema.org `hasPart`/`isPartOf` inverse-property relation. It is deliberately
+  incomplete; it contains no facts about particular instances.
 
 ## Process
 
 1. **Resolve before reasoning.** Call `onto_anchor` with the term before
    naming, categorizing, or computing with it.
-2. **Domain or derived rung** → compute from the published identity (rung 1)
+2. **Relational question** → use `relation_query` on `onto_anchor`. For
+   example `{"term":"sustainable growth rate", "relation_query":{"to":"net margin", "max_hops":2}}` traces the recorded constituent chain through return on equity.
+   `{"term":"schema:hasPart", "relation_query":{}}` lists supported outgoing
+   edges. Only assert the relationship actually stated by the directed,
+   provenance-carrying path. `no_supported_path` means this bounded, partial
+   graph lacks a path, not that the relation is false; `coarse_anchor` forbids
+   traversal. An inverse-property edge connects property *concepts*, never
+   proves an instance has or is part of another instance. Do not call the
+   graph when the task needs no relation.
+3. **Domain or derived rung** → compute from the published identity (rung 1)
    or the recorded identity (rung 2). Cite the concept in your output so
    the claim is redeemable against the published anchor.
-3. **Core rung** → the anchor is real but coarse. Surface the term with its
+4. **Core rung** → the anchor is real but coarse. Surface the term with its
    core anchor and request a ruling from the operator. The ruling closes the
    loop through a deliberate, build-gated code change: it lands as an entry
    in the derived registry (`hkask-bridge-ontology/src/derived.rs`) with its
@@ -81,4 +94,6 @@ ruling (recorded in the derived registry) improves it.
 Before sending work that names domain terms: every term is either anchored
 (cite the concept) or carries its core anchor with the ruling requested. A
 term silently used with a private meaning is the failure this pattern exists
-to prevent.
+to prevent. For relational claims, cite the returned directed edge path and
+its authority, or state that no supported path was found within the bound;
+labels alone are not graph evidence.

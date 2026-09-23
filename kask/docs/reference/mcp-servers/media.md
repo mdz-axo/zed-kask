@@ -254,8 +254,11 @@ regression test names.
 The 15 `educt_*` tools implement the interaction model published by Reduct.video:
 word-timed transcript selections become media ranges; labeled highlights compose
 into ordered Reel Keep operations; Cut operations implement strikethrough editing;
-and render/export are non-destructive projections. This is a local implementation,
-not a Reduct cloud/API integration.
+and render/export are non-destructive projections. These tools remain local;
+no Reduct media, transcript, or edit API operation is connected. The separate
+`reduct_connection_status` tool checks only that the key entered in Settings →
+Kask → Data Services reached the media MCP child. Its result explicitly marks
+provider access as not checked; it never returns the key or uploads media.
 
 Transcript, layer, document-export, and rendered-Asset relationships share the
 media database. Deleting a transcript atomically removes its editable layers while

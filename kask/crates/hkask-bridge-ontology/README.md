@@ -35,6 +35,7 @@ common mapping in process or state space regardless of domain.
 | `omc` | MovieLabs Ontology for Media Creation | Domain supplement (media) |
 | `axis` | Domain-selection logic | `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor` |
 | `term_resolution` | Exact fallback-ladder resolution | `resolve_term`, `canonicalize_terms`, `TERM_RESOLUTION_PROTOCOL` |
+| `ontology_graph` | Bounded, source-backed concept relations | `graph().traverse(from, to, max_hops)` |
 
 ## Usage
 
@@ -63,5 +64,11 @@ assert_eq!(terms.ontology_tags["fibo"], [fibo::CORPORATION]);
 ## Thin dependency surface
 
 Pure Rust vocabulary + selection logic with serialization/schema derives. No
-reasoners, OWL parsing or graph databases. Bridges are thin vocabulary layers,
-not ontology engines.
+reasoners, OWL parsing or graph databases. The read-only concept graph contains
+only sourced edges: derived-concept constituents that resolve to distinct
+published/derived identities, and schema.org's documented inverse-property
+pair (pinned in `fixtures/schema-org-relations.tsv`). A path connects concepts,
+not instances; an absent path in this partial graph is not a negative fact.
+Directed BFS visits at most 256 nodes and 4 hops, returning an explicit budget
+status instead of silently reporting absence. Agent calls without
+`relation_query` retain the original `onto_anchor` JSON shape.

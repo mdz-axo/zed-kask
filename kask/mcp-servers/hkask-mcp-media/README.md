@@ -233,7 +233,7 @@ and `forward_schema_preserves_data_and_refuses_duplicate_identity`.
 ## Transcript-as-timeline reference model
 
 The local educt system follows Reduct.video's published interaction model rather
-than integrating or imitating its private cloud API. The current official product
+than calling its private cloud API. The current official product
 surface describes selecting transcript text to create video highlights, arranging
 highlights into a Reel, deleting text to skip media, correcting transcript text,
 and exporting captions or finished video:
@@ -259,8 +259,13 @@ remains readable and corpus-exportable, but timing-dependent navigation,
 highlighting, and SRT fail with an explicit unaligned precondition instead of
 silently using stale source text or inventing timestamps. Reduct can re-align such
 edits server-side; local re-transcription/re-alignment remains the honest capability
-gap. The immutable source bundle remains available for audit, and there is no
-hidden Reduct upload, credential, fallback, or cloud mode.
+gap. The immutable source bundle remains available for audit. Local educt never
+uploads to Reduct or silently falls back from a cloud request. The separate
+`reduct_connection_status` tool reports whether `REDUCT_API_KEY` reached this
+media child, but does not contact Reduct or claim any cloud operations work yet.
+Enter/reset the key in Settings → Kask → Data Services (Reduct.video); the
+keychain write/delete triggers an MCP credential refresh. Reduct API contracts
+and actual cloud operations remain to be verified and implemented.
 
 ## Configuration
 

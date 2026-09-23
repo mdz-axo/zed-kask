@@ -5,8 +5,10 @@ contract:
     goal: string
     current_condition: object
     target_condition: object
+    gap_before: number
     prev_prediction: object|null
   output:
+    gap_before: number
     predicted_calibration: string
     expected_gap_reduction: number
     confidence: number
@@ -42,6 +44,9 @@ Your job is to predict what will happen if you apply a specific calibration. Sta
 {{ target_condition | tojson }}
 ```
 
+## Measured starting gap (against this target)
+{{ gap_before }}
+
 {% if prev_prediction %}
 ## Previous Prediction (for refinement)
 ```json
@@ -54,7 +59,7 @@ This is a refinement cycle. Did the previous prediction hold? If not, what does 
 
 1. **Which calibration to apply**: Choose one specific intervention — a Falstaffian perspective rotation (which shape?), an ellipsis analysis (which gaps to investigate?), or a strategy adjustment (which obstacle to address?). Be specific.
 
-2. **Expected gap reduction**: Predeclare a threshold in (0, 1] — the proportion of the measured starting gap you expect to close. The same target artifacts and procedure must be used when measuring both gaps. If the starting gap is zero or unavailable, say the forecast is not yet scoreable instead of inventing a reduction.
+2. **Expected gap reduction**: Predeclare a threshold in (0, 1] — the proportion of the measured `gap_before` you expect to close. Use the same target artifacts and procedure when measuring the after-gap. The caller must not invoke this step with zero or unavailable `gap_before`; mark it reached/pending instead.
 
 3. **Confidence**: State a probability in [0, 1] that the post-experiment measured gap will be at most `gap_before * (1 - expected_gap_reduction)`. This event is TRUE or FALSE, not a continuous outcome. After measuring both gaps, score `(confidence - outcome)²` where outcome is 1 or 0. Without both measurements leave the forecast unresolved; never redefine the success threshold after observing the result.
 
@@ -62,11 +67,12 @@ This is a refinement cycle. Did the previous prediction hold? If not, what does 
 
 - The prediction is a hypothesis, not a guarantee. It's what you expect to learn from the experiment.
 - Choose the calibration that addresses the single most consequential obstacle from the current condition.
-- Be honest about your confidence in that specific threshold event, not just in the choice of intervention. Record the threshold before the experiment.
+- Be honest about your confidence in that specific threshold event, not just in the choice of intervention. Copy the measured `gap_before` unchanged into the output so the experiment cannot reset the baseline.
 
 Return JSON only:
 ```json
 {
+  "gap_before": {{ gap_before }},
   "predicted_calibration": "apply Falstaffian shape 'subject_expansion' to the assessment, addressing the obstacle that the obstacle list is incomplete",
   "expected_gap_reduction": 0.2,
   "confidence": 0.6,

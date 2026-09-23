@@ -227,7 +227,10 @@ mod tests {
     fn published_relation_is_source_pinned_and_directional() {
         let fixture = include_str!("../fixtures/schema-org-relations.tsv");
         let official_terms = include_str!("../fixtures/schema-org-terms.txt");
-        for edge in graph().traverse("schema:hasPart", None, 1).edges {
+        let forward = graph().traverse("schema:hasPart", None, 1);
+        assert_eq!(forward.status, TraversalStatus::Neighbors);
+        assert_eq!(forward.edges.len(), 1);
+        for edge in forward.edges {
             assert_eq!(edge.relation, Relation::InverseOf);
             assert!(official_terms.lines().any(|line| line == edge.from));
             assert!(official_terms.lines().any(|line| line == edge.to));
@@ -240,6 +243,11 @@ mod tests {
         let reverse = graph().traverse("schema:isPartOf", Some("schema:hasPart"), 1);
         assert_eq!(reverse.status, TraversalStatus::PathFound);
         assert_eq!(reverse.edges[0].authority, "https://schema.org/isPartOf");
+        let row = format!(
+            "{}\tinverse_of\t{}\t{}",
+            reverse.edges[0].from, reverse.edges[0].to, reverse.edges[0].authority
+        );
+        assert!(fixture.lines().any(|line| line == row));
     }
 
     #[test]
@@ -269,7 +277,12 @@ mod tests {
 
     #[test]
     fn bfs_is_directed_stable_and_reports_budget_exhaustion() {
-        let edges = vec![("a", "c"), ("a", "b"), ("c", "d"), ("b", "d")];
+        let edges = vec![
+            ("sustainable_growth_rate", "schema:hasPart"),
+            ("sustainable_growth_rate", "return_on_equity"),
+            ("schema:hasPart", "net_margin"),
+            ("return_on_equity", "net_margin"),
+        ];
         let make = |ordered: Vec<(&str, &str)>| {
             OntologyGraph::from_edges(
                 ordered
@@ -283,11 +296,34 @@ mod tests {
                     .collect(),
             )
         };
-        // Exercise the BFS on real resolvable concept identities rather than
-        // silently substituting them for unknown words in this unit graph.
         let first = make(edges.clone());
         let second = make(edges.into_iter().rev().collect());
-        assert_eq!(first.outgoing, second.outgoing);
+        let path = first.traverse("sustainable growth rate", Some("net margin"), 2);
+        assert_eq!(path.status, TraversalStatus::PathFound);
+        assert_eq!(path.edges[0].to, "return_on_equity");
+        assert_eq!(
+            path,
+            second.traverse("sustainable growth rate", Some("net margin"), 2)
+        );
+        assert_eq!(
+            first
+                .traverse("net margin", Some("sustainable growth rate"), 2)
+                .status,
+            TraversalStatus::NoSupportedPath
+        );
+        let oversized = OntologyGraph::from_edges(
+            (0..MAX_VISITS)
+                .map(|n| RelationEdge {
+                    from: "schema:hasPart".to_string(),
+                    to: format!("node_{n}"),
+                    relation: Relation::InverseOf,
+                    authority: "test".to_string(),
+                })
+                .collect(),
+        );
+        let exhausted = oversized.traverse("schema:hasPart", Some("schema:isPartOf"), 2);
+        assert_eq!(exhausted.status, TraversalStatus::BudgetExhausted);
+        assert!(exhausted.edges.is_empty());
         assert_eq!(
             graph()
                 .traverse("schema:hasPart", Some("schema:isPartOf"), 0)

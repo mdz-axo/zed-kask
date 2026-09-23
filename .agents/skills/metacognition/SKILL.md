@@ -45,10 +45,11 @@ prediction calibration.
 1. Declare the target metacognitive state — what "sufficient meta-knowledge" looks like.
 2. Produce target_artifacts and target_procedure that the gap computation measures toward.
 3. The target should be one step beyond the current knowledge threshold — challenging but achievable.
+4. Before predicting, compute `gap_before` from the measured Step 1 artifacts/procedure against this fixed Step 2 target (object/process hypotenuse). If either component is unmeasured, do not invent a baseline.
 
 ### meta-predict (Kata Step 3: Make a Prediction)
 
-1. Predict one calibration and an `expected_gap_reduction` in (0,1] relative to the measured starting gap. Keep the target artifacts and procedure fixed through this experiment; changing the target makes before/after gaps incomparable.
+1. Invoke `meta-predict` only when `gap_before > 0` is measured; pass it as a top-level input and retain the same value in the Step 3 prediction. Predict one calibration and an `expected_gap_reduction` in (0,1] relative to this starting gap. Keep the target artifacts and procedure fixed through this experiment; changing the target makes before/after gaps incomparable.
 2. `confidence` in [0,1] is the probability of this predeclared binary event: after the experiment, `gap_after <= gap_before * (1 - expected_gap_reduction)`. It is not a confidence in an unspecified improvement or the fractional reduction itself.
 3. If `gap_before` is zero or unavailable, do not make or score a gap-reduction forecast. Record the target as reached or the measurement as pending, respectively.
 
@@ -56,14 +57,14 @@ prediction calibration.
 
 1. Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment.
 2. Re-measure the current condition after the experiment (the experiment changed the system).
-3. Produce new current_artifacts and current_procedure for the gap computation.
+3. Produce new current_artifacts and current_procedure for the gap computation. Carry the Step 3 `gap_before` and reduction threshold unchanged; never recompute the starting gap from post-experiment data.
 
 ### Convergence (Steps 5-9: Check + Act — model-evaluated)
 
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
-4. With a measured `gap_before > 0` and `gap_after` against the same target, determine whether the Step 3 event occurred, then score `Brier = (confidence - outcome)^2` with outcome 1 for true and 0 for false. Use `lisp_eval` for the comparison and arithmetic; never select the event or threshold after observing the result. If either gap is unmeasured, report calibration pending, not zero error.
+4. Compute `gap_after` from observed Step 4 artifacts/procedure against the *same* Step 2 target. With the Step 3 `gap_before > 0` and both components measured, score the predeclared event: outcome = 1 if `gap_after <= gap_before * (1 - expected_gap_reduction)`, else 0; `Brier = (confidence - outcome)^2`. Use `lisp_eval` for the comparison and arithmetic; never select the event or threshold after observing the result. If either gap is unmeasured, report calibration pending, not zero error.
 5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles and report the remaining gap and pending measurements.
 
 ## Registry Templates
@@ -82,7 +83,7 @@ To render a template, call `render_template` with the template ref and these **t
 |---|---|---|
 | `metacognition/meta-grasp-current` | `goal` | `session_history`, `current_state`, `prior_outcomes`, `prev_grasp`, `prior_calibration` |
 | `metacognition/meta-establish-target` | `goal`, `current_condition` (Step 1 result) | — |
-| `metacognition/meta-predict` | `goal`, `current_condition` (Step 1 result), `target_condition` (Step 2 result) | `prev_prediction` |
+| `metacognition/meta-predict` | `goal`, `current_condition` (Step 1 result), `target_condition` (Step 2 result), measured `gap_before` (>0) | `prev_prediction` |
 | `metacognition/meta-experiment` | `goal`, `current_condition` (Step 1 result), `prediction` (Step 3 result) | `perspectives`, `context_text`, `prev_experiment` |
 | `metacognition/ellipsis-analysis` | `text`, `expectations`, `biases`, `assumptions`, `domain` | — |
 

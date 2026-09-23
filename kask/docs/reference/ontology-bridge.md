@@ -1,8 +1,8 @@
 ---
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "0.39.0"
+last_updated: 2026-09-22
+version: "0.40.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -12,7 +12,7 @@ mds_categories: [domain, curation]
 
 **Crate:** `hkask-bridge-ontology` (`kask/crates/hkask-bridge-ontology/`)
 
-The single source of truth for published ontology vocabulary, artifact-axis selection, derived concepts, and exact term resolution in hKask. Eleven vocabularies are exposed through 14 modules: two universal axes, one upper ontology, six domain supplements, two pipeline vocabularies, and the `axis`, `derived`, and `term_resolution` logic modules (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:3-74`, `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:96-109`).
+The single source of truth for published ontology vocabulary, artifact-axis selection, derived concepts, exact term resolution, and a small sourced relation graph in hKask. The bridge exposes vocabulary modules plus `axis`, `derived`, `term_resolution`, and `ontology_graph` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`).
 No ontology vocabulary lives inside any MCP server; every server that does
 tagging depends on this crate (user directive 2026-08-05, recorded at
 `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:70-73`).
@@ -40,7 +40,13 @@ dispatch form (rungs named in its doc comment);
 
 ## Modules
 
-Declared at `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:96-109`: `axis`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `pko`, `rdf`, `schema_org`, `sdmx`, `sepio`, `sumo`, and `term_resolution`.
+Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `rdf`, `schema_org`, `sdmx`, `sepio`, `sumo`, and `term_resolution`.
+
+### `ontology_graph` — bounded sourced concept traversal
+
+`graph().traverse(from_term, to_term, max_hops)` performs deterministic directed BFS. Omit `to_term` with one hop to inspect outgoing edges; supply it for a shortest supported path (up to four hops). Each edge carries `from`, `relation`, `to`, and `authority`; `no_supported_path`, `coarse_anchor`, `invalid_query`, and `budget_exhausted` are distinct states. The graph is intentionally partial: only distinctly resolved constituents of recorded derived concepts and the published schema.org `hasPart`/`isPartOf` inverse-property pair are present. The latter links property concepts, **not** individual creative works. A missing path is never a proof of falsity (`kask/crates/hkask-bridge-ontology/src/ontology_graph.rs`, `fixtures/schema-org-relations.tsv`).
+
+The agent's `onto_anchor` accepts optional `relation_query` (`to`, `max_hops`); omitted queries preserve its resolution-only JSON. Petgraph's [BFS visitor and graph-trait reference](https://docs.rs/petgraph/0.8.3/petgraph/visit/) informed the non-recursive queue and visited-set design; no dependency was added for this bounded static graph.
 
 ### `dc_bibo` — Dublin Core + BIBO + CiTO (state axis, universal)
 

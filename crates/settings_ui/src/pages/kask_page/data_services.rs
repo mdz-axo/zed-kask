@@ -94,11 +94,20 @@ fn render_data_service_row(
 
     // Built before the closures below move `credential_url` — the copy names
     // the exact keychain slot this row reads and writes.
-    let storage_copy = format!(
-        "Enabled when the API key is present. Stored in the \
-         keychain under {credential_url}, or set the \
-         {env_var} environment variable."
-    );
+    let storage_copy = if key == "reduct_api_key" {
+        format!(
+            "Stored in the keychain under {credential_url}, or set {env_var}. \
+             Key presence does not verify Reduct access; use reduct_connection_status \
+             in the Media panel to check delivery to the media server. \
+             Cloud operations are not yet connected."
+        )
+    } else {
+        format!(
+            "Enabled when the API key is present. Stored in the \
+             keychain under {credential_url}, or set the \
+             {env_var} environment variable."
+        )
+    };
 
     let key_input = if has_key {
         let reset_id = format!("kask-{key}-reset");
