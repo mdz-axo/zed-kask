@@ -93,6 +93,7 @@ pub(crate) struct EditTaskForm {
     pub labels: Entity<Editor>,
     /// The task id being edited.
     pub task_id: String,
+    initial_description: Option<String>,
 }
 
 impl EditTaskForm {
@@ -141,6 +142,7 @@ impl EditTaskForm {
             priority,
             labels,
             task_id: task_id.to_string(),
+            initial_description: current_description.map(str::to_string),
         }
     }
 
@@ -151,26 +153,47 @@ impl EditTaskForm {
         let priority = self.priority.read(cx).text(cx);
         let labels_text = self.labels.read(cx).text(cx);
 
-        let mut args = json!({ "task_id": self.task_id });
-
-        if !title.trim().is_empty() {
-            args["title"] = json!(title);
-        }
-        // Empty description clears the field; non-empty sets it.
-        args["description"] = json!(description);
-        if !priority.trim().is_empty() {
-            args["priority"] = json!(priority);
-        }
-        if !labels_text.trim().is_empty() {
-            let labels: Vec<String> = labels_text
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            args["labels"] = json!(labels);
-        }
-        args
+        task_edit_args(
+            &self.task_id,
+            &title,
+            &description,
+            self.initial_description.as_deref(),
+            &priority,
+            &labels_text,
+        )
     }
+}
+
+/// Build the edit patch: omitted fields keep their current server value.
+/// An explicitly emptied prefilled description clears it.
+fn task_edit_args(
+    task_id: &str,
+    title: &str,
+    description: &str,
+    initial_description: Option<&str>,
+    priority: &str,
+    labels_text: &str,
+) -> serde_json::Value {
+    let mut args = json!({ "task_id": task_id });
+    if !title.trim().is_empty() {
+        args["title"] = json!(title);
+    }
+    if description != initial_description.unwrap_or_default() {
+        args["description"] = json!(description);
+    }
+    if !priority.trim().is_empty() {
+        args["priority"] = json!(priority);
+    }
+    if !labels_text.trim().is_empty() {
+        let labels: Vec<String> = labels_text
+            .split(',')
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .collect();
+        args["labels"] = json!(labels);
+    }
+    args
 }
 
 /// The form state for spawning a subagent on a task.
@@ -913,5 +936,22 @@ impl KanbanPanel {
             true,
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod edit_form_contract_tests {
+    use super::task_edit_args;
+
+    /// expect: "Editing a title does not rewrite a description the operator left unchanged."
+    /// [P3] Motivating: Generative Space — existing task detail survives unrelated edits.
+    /// post: an untouched description is omitted; deliberately clearing it sends an empty string
+    #[test]
+    fn unchanged_description_is_not_sent_but_explicit_clear_is() {
+        let kept = task_edit_args("task-1", "New title", "keep", Some("keep"), "", "");
+        assert!(kept.get("description").is_none());
+        assert_eq!(kept["title"], "New title");
+        let cleared = task_edit_args("task-1", "New title", "", Some("keep"), "", "");
+        assert_eq!(cleared["description"], "");
     }
 }

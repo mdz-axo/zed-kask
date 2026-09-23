@@ -2279,6 +2279,84 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
     Ok(())
 }
 
+/// expect: "A source removed after first search cannot remain ready or leak stale corpus hits." [P8]
+#[tokio::test]
+async fn federated_search_reloads_removed_and_restored_manifest()
+-> Result<(), Box<dyn std::error::Error>> {
+    ensure_embedding_model_env();
+    let directory = tempfile::tempdir()?;
+    let manifest_path = federated_source_fixture(directory.path())?;
+    let original_manifest = std::fs::read(&manifest_path)?;
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone())?;
+    let embedding_store = EmbeddingStore::from_driver(driver.clone(), test_dim())?;
+    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+    let local = hkask_storage::HMem::new(
+        "curator:decision:manifest-refresh",
+        "lesson",
+        serde_json::json!("local knowledge survives corpus outage"),
+        WebID::new(),
+    );
+    memory.store(local.clone())?;
+    memory.store_embedding(
+        &local.entity,
+        &federated_fixture_vector(),
+        "test-embedding-model",
+        Some("local knowledge survives corpus outage"),
+    )?;
+    let db = Arc::new(CuratorDb::from_stores_with_federated_manifest(
+        CuratorStores {
+            escalation_queue: None,
+            regulation_store: None,
+            memory: Some(memory),
+        },
+        manifest_path.clone(),
+        "test-passphrase".to_string(),
+    ));
+    let server = CuratorServer::new(
+        WebID::new(),
+        db,
+        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
+    );
+    let search = || async {
+        let output = server
+            .curator_federated_search(Parameters(FederatedSearchRequest {
+                query: "compare local knowledge and external corpus evidence".to_string(),
+                limit: Some(4),
+            }))
+            .await?;
+        Ok::<_, hkask_mcp_server::server::McpToolError>(parse(&output))
+    };
+
+    let first = search().await?;
+    assert_eq!(first["sources"][1]["state"], "ready");
+    assert!(
+        first["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().any(|hit| hit["source_kind"] == "corpus"))
+    );
+
+    std::fs::remove_file(&manifest_path)?;
+    let absent = search().await?;
+    assert_eq!(absent["sources"][1]["state"], "unconfigured");
+    assert!(
+        absent["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().all(|hit| hit["source_kind"] == "curator"))
+    );
+    assert_eq!(absent["sources"][0]["state"], "ready");
+
+    std::fs::write(&manifest_path, original_manifest)?;
+    let restored = search().await?;
+    assert_eq!(restored["sources"][1]["state"], "ready");
+    assert!(
+        restored["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().any(|hit| hit["source_kind"] == "corpus"))
+    );
+    Ok(())
+}
+
 /// expect: "An unconfigured external source is visible and cannot suppress healthy Curator recall." [P8]
 #[tokio::test]
 async fn federated_search_surfaces_unconfigured_source_with_curator_results() {

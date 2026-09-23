@@ -1864,6 +1864,22 @@ mod tests {
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
 
+    /// expect: "An exhausted interrupted mutation remains uncertain; an undelivered one does not."
+    /// [P2] Motivating: Transparent Imperfection — feedback distinguishes unknown from known absence.
+    /// post: interruption cannot produce a no-change assertion
+    #[test]
+    fn exhausted_mutation_reports_unknown_outcome() {
+        assert!(super::exhausted_mutation_message("import board", true).contains("may"));
+        assert!(
+            !super::exhausted_mutation_message("import board", true)
+                .contains("Nothing was changed")
+        );
+        assert!(
+            super::exhausted_mutation_message("import board", false)
+                .contains("Nothing was changed")
+        );
+    }
+
     // ── Idempotency keys ────────────────────────────────────────────────────
     //
     // A key makes an interrupted create safe to retry: the server absorbs the

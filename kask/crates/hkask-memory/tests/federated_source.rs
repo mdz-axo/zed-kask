@@ -241,6 +241,58 @@ fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()
     Ok(())
 }
 
+/// expect: "An altered run ID cannot label unchanged sealed evidence as another run." [P8]
+#[test]
+fn bound_source_rejects_run_id_that_does_not_match_identity() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let run_identity_path = directory.path().join("run-identity.json");
+    let mut identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
+    identity["run_id"] = serde_json::json!("0".repeat(64));
+    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
+
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("altered run ID was accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("run identity"));
+    Ok(())
+}
+
+/// expect: "A sealed source with WAL-resident writes is rejected before immutable reads." [P8]
+#[test]
+fn bound_source_rejects_nonempty_wal() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let path = directory.path().join("reference.db");
+    let database_path = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
+    let database = hkask_storage::open_or_repair(database_path, PASSPHRASE)?;
+    let pool = database.sqlite_pool()?;
+    let connection = pool.get()?;
+    connection.execute_batch("PRAGMA wal_autocheckpoint = 0;")?;
+    connection.execute(
+        "UPDATE hmems SET value = '\"uncheckpointed\"' WHERE attribute = 'text'",
+        [],
+    )?;
+    let wal = std::path::Path::new(&format!("{database_path}-wal")).to_path_buf();
+    assert!(
+        std::fs::metadata(&wal)?.len() > 0,
+        "fixture must contain WAL-resident writes"
+    );
+
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("uncheckpointed source was accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("WAL"));
+    Ok(())
+}
+
 /// expect: "A source whose sealed index no longer matches its run identity is rejected." [P8]
 #[test]
 fn bound_source_rejects_index_digest_mismatch() -> anyhow::Result<()> {

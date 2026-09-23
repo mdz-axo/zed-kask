@@ -1,4 +1,4 @@
-{# goal: Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/authorize/maintain/undetermined), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). #}
+{# goal: Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/authorize/maintain/undetermined), warrant (if restricting), proposed token only with explicit authorization evidence (never an issued grant), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). #}
 [inference]
 contract:
   input:
@@ -30,7 +30,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a capabilities reasoner. Compile the per-capability verdicts into a structured report.
+You are a capabilities reasoner. Compile the per-capability verdicts into a structured report. These are recommended interventions, not applied authority. No proposed token or revocation is effective without an independently verified OCAP issuance or revocation; this report does not perform either.
 
 ## Evaluations
 
@@ -64,8 +64,8 @@ CAPABILITY: <name>
   Maturity prerequisites: <list> — <all met | missing: ... | undetermined (missing level: ...)>
   Verdict: <expand | restrict | block | authorize | maintain | undetermined>
   Warrant: <if restrict — Akselrod test result>
-  Reauthorization: <if expand — deprivation evidence>
-  Token: <if grant — token_id, scope, budget, max_depth, expiry; none if undetermined>
+  Reauthorization: <if expand — actual authorization evidence, or pending; deprivation is a rationale, not consent>
+  Token: <proposed token details only if explicitly authorized; otherwise none; never signed or effective by this report>
   Confidence: <0.0–1.0>
   Rationale: <one-line explanation of the verdict>
 ```
@@ -77,7 +77,7 @@ Produce a summary:
 - **expand**: count (floor violations — deprived)
 - **restrict**: count (ceiling violations — warrant passed)
 - **block**: count (maturity violations — prerequisites missing)
-- **authorize**: count (new grants)
+- **authorize**: count (recommended authorizations, not new grants)
 - **maintain**: count (no violation and sufficient measurements)
 - **undetermined**: count (missing/incomparable measurements or prerequisites; list the missing evidence, do not call it maintain or a violation)
 - Reconcile counts: `total_capabilities = expand + restrict + block + authorize + maintain + undetermined`. Every capability appears once, with the verdict from its intervention; if the evaluation or intervention is undetermined, report undetermined rather than manufacturing a resolved verdict.
