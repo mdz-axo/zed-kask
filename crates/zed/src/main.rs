@@ -754,8 +754,14 @@ fn main() {
             let loaded = agent_skills::load_authoritative_global_skills(&skills_fs, &skills_dir).await;
             let global_skills: Vec<agent_skills::Skill> =
                 loaded.into_iter().filter_map(|result| result.ok()).collect();
+            let verified_core =
+                agent_skills::verify_core_skill_contents(skills_fs.as_ref(), &global_skills).await;
             let _ = cx.update(|cx| {
-                agent_skills::SkillIndex::publish_seeded_globals(global_skills, cx);
+                agent_skills::SkillIndex::publish_verified_globals(
+                    global_skills,
+                    &verified_core,
+                    cx,
+                );
             });
         }).detach();
 

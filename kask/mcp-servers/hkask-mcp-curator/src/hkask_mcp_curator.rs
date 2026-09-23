@@ -889,6 +889,15 @@ impl CuratorServer {
                     }
                 }
             }
+            if !registry.unchanged() {
+                batches.retain(|batch| batch.source_id == "curator");
+                for status in &mut external_statuses {
+                    status.state = federated::FederatedSourceState::Unavailable;
+                    status.reason =
+                        Some("source identity changed during retrieval; retry search".to_string());
+                    status.result_count = 0;
+                }
+            }
             statuses.extend(external_statuses);
             let results = hkask_memory::interleave_ranked_batches(batches, limit);
             Ok(json!({

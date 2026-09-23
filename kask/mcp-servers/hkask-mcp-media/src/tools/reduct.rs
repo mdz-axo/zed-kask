@@ -29,7 +29,7 @@ fn classify_project_probe_status(status: reqwest::StatusCode) -> Result<(), McpT
     }
 }
 
-async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value, McpToolError> {
+async fn project_response(key: Option<&str>, url: &str) -> Result<reqwest::Response, McpToolError> {
     connection_status(key)?;
     let key = key.ok_or_else(|| McpToolError::permission_denied("REDUCT_API_KEY is missing"))?;
     let header = reqwest::header::HeaderValue::from_str(key).map_err(|_| {
@@ -52,17 +52,100 @@ async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value
                 error.without_url()
             ))
         })?;
+    classify_project_probe_status(response.status())?;
+    Ok(response)
+}
+
+async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value, McpToolError> {
+    let response = project_response(key, url).await?;
     let status = response.status();
-    classify_project_probe_status(status)?;
     // Never return or log the response body: this check establishes only that
     // the project-read request succeeded, not what projects the account owns.
     Ok(serde_json::json!({
         "probe": "read_only_project_endpoint",
         "http_status": status.as_u16(),
         "provider_connection": "project_read_succeeded",
-        "cloud_operations": "not_yet_available",
-        "evidence": "Pipedream public Reduct connector documents the project-read URL; authentication header is still being verified against Reduct."
+        "cloud_editing": "not_available",
+        "evidence": "Project-read URL is shown by Pipedream and was verified against Reduct; no editing API contract is available."
     }))
+}
+
+fn parse_project_snapshot(body: &[u8], limit: usize) -> Result<serde_json::Value, McpToolError> {
+    if !(1..=100).contains(&limit) {
+        return Err(McpToolError::invalid_argument(
+            "limit must be between 1 and 100",
+        ));
+    }
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct project response was not valid JSON")
+    })?;
+    let projects = response
+        .get("project")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            McpToolError::failed_precondition(
+                "Reduct project response lacks the observed project map; no results returned",
+            )
+        })?;
+    let selected = projects
+        .iter()
+        .take(limit)
+        .map(|(id, project)| {
+            let title = project
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    McpToolError::failed_precondition(
+                        "Reduct project response contains a project without a title",
+                    )
+                })?;
+            Ok(serde_json::json!({"id": id, "title": title}))
+        })
+        .collect::<Result<Vec<_>, McpToolError>>()?;
+    Ok(serde_json::json!({
+        "provider_returned_count": projects.len(),
+        "returned_count": selected.len(),
+        "truncated": selected.len() < projects.len(),
+        "pagination": "unknown",
+        "projects": selected,
+        "cloud_editing": "not_available"
+    }))
+}
+
+async fn projects_snapshot(
+    key: Option<&str>,
+    limit: usize,
+    url: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    if !(1..=100).contains(&limit) {
+        return Err(McpToolError::invalid_argument(
+            "limit must be between 1 and 100",
+        ));
+    }
+    let mut response = project_response(key, url).await?;
+    const MAX_BYTES: usize = 2 * 1024 * 1024;
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        McpToolError::unavailable(format!(
+            "Reduct project response read failed: {}",
+            error.without_url()
+        ))
+    })? {
+        if chunk.len() > MAX_BYTES.saturating_sub(body.len()) {
+            return Err(McpToolError::failed_precondition(
+                "Reduct project response exceeds the 2 MiB limit",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    parse_project_snapshot(&body, limit)
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductProjectsRequest {
+    /// Maximum projects to return from the provider response (1–100). This
+    /// does not request server-side pagination; that contract is unknown.
+    limit: usize,
 }
 
 fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolError> {
@@ -74,8 +157,8 @@ fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolErro
     Ok(serde_json::json!({
         "credential": "configured",
         "provider_connection": "not_checked",
-        "cloud_operations": "not_yet_available",
-        "note": "The API key reached the media MCP child; no Reduct request has been made."
+        "cloud_editing": "not_available",
+        "note": "The API key reached the media MCP child; no Reduct request has been made. Project reads are available separately."
     }))
 }
 
@@ -100,6 +183,19 @@ impl MediaServer {
         })
         .await
     }
+
+    #[tool(
+        description = "List up to limit (1–100) Reduct project IDs and titles from the live project-read endpoint. Returns only provider-supplied subset; server-side pagination is unverified. Does not upload or edit media."
+    )]
+    pub async fn reduct_projects_snapshot(
+        &self,
+        Parameters(ReductProjectsRequest { limit }): Parameters<ReductProjectsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_projects_snapshot", async {
+            projects_snapshot(self.reduct_api_key.as_deref(), limit, PROJECT_PROBE_URL).await
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +208,24 @@ mod tests {
         assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
         assert!(error.message.contains("REDUCT_API_KEY"));
         assert!(connection_status(Some("  ")).is_err());
+    }
+
+    #[test]
+    fn project_snapshot_projects_only_ids_and_titles() -> Result<(), McpToolError> {
+        let body = br#"{"project":{"p2":{"title":"Second","member":["private"],"description":"secret"},"p1":{"title":"First","member":["private"]}}}"#;
+        let snapshot = parse_project_snapshot(body, 1)?;
+        assert_eq!(snapshot["returned_count"], 1);
+        assert_eq!(snapshot["provider_returned_count"], 2);
+        assert_eq!(snapshot["truncated"], true);
+        assert_eq!(snapshot["projects"][0]["id"], "p1");
+        assert_eq!(snapshot["projects"][0]["title"], "First");
+        assert!(!snapshot.to_string().contains("private"));
+        assert!(!snapshot.to_string().contains("secret"));
+        assert_eq!(snapshot["pagination"], "unknown");
+        assert!(parse_project_snapshot(br#"{"other": []}"#, 1).is_err());
+        assert!(parse_project_snapshot(br#"{"project":{"p1":{}}}"#, 1).is_err());
+        assert!(parse_project_snapshot(body, 0).is_err());
+        Ok(())
     }
 
     #[tokio::test]
@@ -210,6 +324,31 @@ mod tests {
                 eprintln!(
                     "Reduct response field={field}; type={kind}; count={count}; first_has_id={has_id}; known_fields={has_named_fields}"
                 );
+                if field == "project" {
+                    let first_value = value.as_object().and_then(|fields| fields.values().next());
+                    eprintln!(
+                        "Reduct first project entry: object={}; fields={}; has_id={}; has_name={}",
+                        first_value.is_some_and(serde_json::Value::is_object),
+                        first_value
+                            .and_then(serde_json::Value::as_object)
+                            .map(serde_json::Map::len)
+                            .unwrap_or(0),
+                        first_value.and_then(|entry| entry.get("id")).is_some(),
+                        first_value.and_then(|entry| entry.get("name")).is_some()
+                    );
+                    let field_names: Vec<&str> = first_value
+                        .and_then(serde_json::Value::as_object)
+                        .into_iter()
+                        .flat_map(|entry| entry.keys().map(String::as_str))
+                        .filter(|name| {
+                            name.len() <= 32
+                                && name
+                                    .chars()
+                                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                        })
+                        .collect();
+                    eprintln!("Reduct project entry field names (not values): {field_names:?}");
+                }
             }
         }
         Ok(())

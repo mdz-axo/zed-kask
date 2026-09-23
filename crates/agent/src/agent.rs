@@ -679,6 +679,7 @@ impl NativeAgent {
                 // Flush thread content on quit so an in-flight async save
                 // can't leave a thread orphaned ("no thread found with ID").
                 cx.on_app_quit(Self::flush_threads_on_quit),
+                cx.observe_global::<SkillIndex>(Self::refresh_projects_after_startup_skills),
             ];
 
             if !cx.has_global::<SkillIndex>() {
@@ -746,6 +747,15 @@ impl NativeAgent {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| Self::run_skills_scan(this, fs, cx).await)
             .detach();
+    }
+
+    fn refresh_projects_after_startup_skills(&mut self, cx: &mut Context<Self>) {
+        if !cx.global::<SkillIndex>().is_startup_publication() {
+            return;
+        }
+        for state in self.projects.values_mut() {
+            state.project_context_needs_refresh.send(()).ok();
+        }
     }
 
     async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
@@ -6373,6 +6383,71 @@ mod internal_tests {
             let disk = disk_global_skills(&state.skills);
             assert_eq!(disk.len(), 1);
             assert_eq!(disk[0].description, "Second version");
+        });
+    }
+
+    // expect: A shipped skill discovered after a project is open reaches its active model catalog.
+    // [P5] Motivating: Settings listing a skill must not leave an existing project unable to use it.
+    // pre: the project scan has completed; filesystem events are paused.
+    // post: startup publication alone refreshes the project's loaded skill list.
+    #[gpui::test]
+    async fn startup_publication_refreshes_active_project_without_filesystem_event(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let dir = global_skills_dir();
+        fs.create_dir(&dir).await.expect("global dir");
+        let user_dir = dir.join("user-skill");
+        fs.create_dir(&user_dir).await.expect("user skill dir");
+        fs.insert_file(
+            user_dir.join("SKILL.md"),
+            b"---\nname: user-skill\ndescription: Newer user edit\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        cx.update(|cx| agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx)));
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _session = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        let skill_dir = dir.join("lora-training");
+        fs.pause_events();
+        fs.create_dir(&skill_dir).await.expect("new skill dir");
+        let content = "---\nname: lora-training\ndescription: Later shipped skill\n---\nbody";
+        fs.insert_file(skill_dir.join("SKILL.md"), content.as_bytes().to_vec())
+            .await;
+        let skill = agent_skills::parse_skill_frontmatter(
+            &skill_dir.join("SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("loaded skill");
+        cx.update(|cx| agent_skills::SkillIndex::publish_seeded_globals(vec![skill], cx));
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, _| {
+            let state = agent
+                .projects
+                .get(&project.entity_id())
+                .expect("active project");
+            assert!(
+                state
+                    .skills
+                    .iter()
+                    .any(|skill| skill.name == "lora-training")
+            );
+            assert!(state.skills.iter().any(|skill| skill.name == "user-skill"));
         });
     }
 

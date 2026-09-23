@@ -2364,6 +2364,41 @@ async fn federated_search_reloads_removed_and_restored_manifest()
             .as_array()
             .is_some_and(|hits| hits.iter().any(|hit| hit["source_kind"] == "corpus"))
     );
+
+    let run_identity_path = directory.path().join("run-identity.json");
+    let original_identity = std::fs::read(&run_identity_path)?;
+    let mut tampered_identity: serde_json::Value = serde_json::from_slice(&original_identity)?;
+    tampered_identity["run_id"] = serde_json::json!("0".repeat(64));
+    std::fs::write(
+        &run_identity_path,
+        serde_json::to_vec_pretty(&tampered_identity)?,
+    )?;
+    let unsealed = search().await?;
+    assert_eq!(unsealed["sources"][1]["state"], "incompatible");
+    assert!(
+        unsealed["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().all(|hit| hit["source_kind"] == "curator"))
+    );
+    std::fs::write(&run_identity_path, original_identity)?;
+    assert_eq!(search().await?["sources"][1]["state"], "ready");
+
+    use std::io::Write as _;
+    let source_db_path = directory.path().join("reference.db");
+    let original_db = std::fs::read(&source_db_path)?;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&source_db_path)?
+        .write_all(b"stale")?;
+    let changed_db = search().await?;
+    assert_eq!(changed_db["sources"][1]["state"], "incompatible");
+    assert!(
+        changed_db["results"]
+            .as_array()
+            .is_some_and(|hits| hits.iter().all(|hit| hit["source_kind"] == "curator"))
+    );
+    std::fs::write(&source_db_path, original_db)?;
+    assert_eq!(search().await?["sources"][1]["state"], "ready");
     Ok(())
 }
 
