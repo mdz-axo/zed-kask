@@ -25,11 +25,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::SharedString;
-use language_model::LanguageModelCompletionError;
+use language_model::{LanguageModelCompletionError, LanguageModelToolUseId};
 use project::AgentId;
 
 use crate::thread::{CachedFilteredContext, CachedSystemPrompt, DeferredToolResult};
 use crate::tool_retry_tracker::ToolRetryTracker;
+use crate::tool_trace::ToolTraceCapture;
 
 /// All kask-specific per-thread state. Created with `new()` (all defaults)
 /// for both upstream Zed and kask threads. Kask-specific setters
@@ -55,6 +56,9 @@ pub(crate) struct KaskThreadState {
     // Caching
     cached_system_prompt: Option<CachedSystemPrompt>,
     cached_filtered_context: Option<CachedFilteredContext>,
+
+    // D70 — only populated for an explicitly traced turn.
+    tool_trace: Option<ToolTraceCapture>,
 }
 
 impl KaskThreadState {
@@ -68,7 +72,28 @@ impl KaskThreadState {
             last_completion_truncated: false,
             cached_system_prompt: None,
             cached_filtered_context: None,
+            tool_trace: None,
         }
+    }
+
+    pub(crate) fn start_tool_trace(&mut self, session_id: String, first_message_ix: usize) {
+        self.tool_trace = Some(ToolTraceCapture::new(session_id, first_message_ix));
+    }
+
+    pub(crate) fn trace_tool_started(&mut self, id: &LanguageModelToolUseId) {
+        if let Some(trace) = self.tool_trace.as_mut() {
+            trace.tool_started(id);
+        }
+    }
+
+    pub(crate) fn trace_tool_finished(&mut self, id: &LanguageModelToolUseId) {
+        if let Some(trace) = self.tool_trace.as_mut() {
+            trace.tool_finished(id);
+        }
+    }
+
+    pub(crate) fn take_tool_trace(&mut self) -> Option<ToolTraceCapture> {
+        self.tool_trace.take()
     }
 
     // ── Truncation detection (D25) ────────────────────────────────────

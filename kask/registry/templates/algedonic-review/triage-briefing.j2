@@ -52,7 +52,7 @@ You are the algedonic review triage synthesizer. Your job is to structure the al
 1. Copy `loop_reading`, `alert_log_count`, `alert_log_cap`, and `alert_log_approaching_cap` from `status_result` to the output as observed; use null for unavailable values, not a healthy default. A `broken` or `wiring-closed` loop must have been stopped by the SKILL.md SENSE gate: do not classify its alerts if this template is called anyway. Parse the escalation result only when its retrieval succeeded. Each escalation has an `id`, `output`, `error_context`, `created_at`, `confidence`, and `status`.
 
 2. For each escalation, classify it:
-   - **severity**: Critical (deficit > threshold), Warning (deficit > threshold/2), Info (deficit <= threshold/2). Extract from `error_context` if available; otherwise infer from `confidence` (1.0 = Critical, 0.5 = Warning).
+   - **severity**: Prefer the recorded `error_context.severity`. If absent, derive Critical (deficit > threshold), Warning (deficit > threshold/2), or Info (deficit <= threshold/2) only when both quantities are present and valid. `error_context` may be a JSON-encoded string; parse it before using its fields. If neither source is usable, set severity to `Unknown` and recommend investigation — `confidence` is not severity evidence.
    - **domain**: Extract from `error_context.domain` or from the `output` message.
    - **recommended_action**: Based on severity and domain:
      - Critical → `investigate` (needs root-cause analysis before resolving)

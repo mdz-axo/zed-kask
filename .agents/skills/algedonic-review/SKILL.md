@@ -35,7 +35,7 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 ### TRIAGE — Synthesize triage briefing (step 2)
 
 1. Only after the SENSE gate, render `algedonic-review/triage-briefing` with `escalations_result`, `algedonic_result`, and the complete `status_result`. A successful response with zero alerts is a no-alert review, not an error; a failed or unavailable response is not a no-alert review.
-2. Each alert is classified by severity (Critical → act now, Warning → act soon, Info → acknowledge).
+2. Each alert is classified from observed severity or valid deficit/threshold data (Critical → act now, Warning → act soon, Info → acknowledge). Missing or invalid severity remains `Unknown` and requires investigation; alert `confidence` is not a severity substitute.
 3. Each alert gets a recommended action: `resolve` (issue addressed), `dismiss` (not actionable), `investigate` (needs root-cause analysis), or `escalate_to_human` (beyond curator authority).
 4. The briefing includes the alert log cap status (count/cap, approaching flag) so the operator knows whether eviction is imminent.
 5. The briefing carries the observed `loop_reading` and cap fields from `status_result` to `present-triage`; never fill unknown measurements with healthy defaults. A broken or wiring-closed reading was already stopped at SENSE.

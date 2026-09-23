@@ -3928,6 +3928,7 @@ impl Thread {
             None,
         );
         this.update(cx, |this, _cx| {
+            this.kask.trace_tool_finished(&tool_result.tool_use_id);
             this.pending_message()
                 .tool_results
                 .insert(tool_result.tool_use_id.clone(), tool_result)
@@ -4124,6 +4125,7 @@ impl Thread {
         cx.notify();
 
         let owning_message_ix = self.messages.len();
+        self.kask.trace_tool_started(&tool_use.id);
         let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
@@ -5260,6 +5262,24 @@ impl Thread {
 
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
+    }
+
+    pub(crate) fn start_on_demand_trace(&mut self) -> Result<()> {
+        if !self.is_turn_complete() {
+            return Err(anyhow!("Cannot trace while another turn is running"));
+        }
+        self.kask
+            .start_tool_trace(self.id.to_string(), self.messages.len());
+        Ok(())
+    }
+
+    pub(crate) fn finish_on_demand_trace(
+        &mut self,
+        error: Option<String>,
+    ) -> Option<crate::tool_trace::ToolTrace> {
+        self.kask
+            .take_tool_trace()
+            .map(|trace| trace.finish(&self.messages, error))
     }
 
     fn build_request_messages(

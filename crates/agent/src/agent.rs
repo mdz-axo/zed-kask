@@ -11,6 +11,7 @@ mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
+mod tool_trace;
 pub use delegation_authority::{DelegatedToolIdentity, DelegationAuthority};
 mod thread;
 mod thread_store;
@@ -196,6 +197,7 @@ impl From<&Skill> for NativeAvailableSkill {
 }
 
 pub const COMPACT_COMMAND_NAME: &str = "compact";
+const TRACE_COMMAND_NAME: &str = "trace";
 
 /// Returns the set of MCP prompt names that must be server-qualified
 /// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
@@ -1752,6 +1754,16 @@ impl NativeAgent {
         .meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ));
+        let trace_command = acp::AvailableCommand::new(
+            TRACE_COMMAND_NAME,
+            "Run one prompt with an on-demand private tool trace",
+        )
+        .input(acp::AvailableCommandInput::Unstructured(
+            acp::UnstructuredCommandInput::new("<prompt>"),
+        ))
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
 
         let registry = state.context_server_registry.read(cx);
 
@@ -1759,7 +1771,7 @@ impl NativeAgent {
         // force-prefixed (`/<server>.compact`) and stays reachable: an
         // unqualified `/compact` always routes to the native command.
         let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
-            [COMPACT_COMMAND_NAME],
+            [COMPACT_COMMAND_NAME, TRACE_COMMAND_NAME],
             registry.prompts().map(|p| p.prompt.name.as_str()),
         );
 
@@ -1798,7 +1810,8 @@ impl NativeAgent {
             Some(command)
         });
 
-        std::iter::once(compact_command)
+        [compact_command, trace_command]
+            .into_iter()
             .chain(mcp_commands)
             .collect()
     }

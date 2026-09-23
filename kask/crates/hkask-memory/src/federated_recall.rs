@@ -288,7 +288,7 @@ impl ReadOnlyPassageSource {
                 actual: run_identity.schema_version,
             });
         }
-        validate_required_identity(&spec.id, "run_id", &run_identity.run_id)?;
+        run_identity.validate_shape(&spec.id)?;
         verify_run_id(
             &spec.id,
             &spec.run_identity_path,
