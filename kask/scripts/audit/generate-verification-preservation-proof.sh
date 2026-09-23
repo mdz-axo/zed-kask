@@ -16,6 +16,13 @@ done
 [[ ! -e "$proof" ]] || { echo "refusing to overwrite proof: $proof" >&2; exit 73; }
 [[ -d "$(dirname "$proof")" ]] || { echo "proof parent does not exist: $proof" >&2; exit 66; }
 
+# jq -e over a stream reports the LAST verdict. Reject multiple top-level
+# objects first, or a valid final object could hide an invalid predecessor.
+if ! jq -e -s 'length == 1 and (.[0] | type == "object")' "$graph" >/dev/null; then
+    echo "verification graph must contain exactly one JSON object" >&2
+    exit 65
+fi
+
 if ! jq -e '
   def key: [.expectation_id,.falsifier_id,.oracle_kind,.failure_class,.provenance_tier] | @json;
   def pair: [.artifact_id, (.signal | key)] | @json;

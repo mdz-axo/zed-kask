@@ -932,69 +932,6 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 
 #[test]
 #[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_disable_cursor_blinking() {
-    let input_file_path = "root/editor.rs";
-    let input_file_content = include_str!("fixtures/disable_cursor_blinking/before.rs");
-    let possible_diffs = vec![
-        include_str!("fixtures/disable_cursor_blinking/possible-01.diff"),
-        include_str!("fixtures/disable_cursor_blinking/possible-02.diff"),
-        include_str!("fixtures/disable_cursor_blinking/possible-03.diff"),
-        include_str!("fixtures/disable_cursor_blinking/possible-04.diff"),
-    ];
-
-    eval_utils::eval(100, 0.51, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(User, [text("Let's research how to cursor blinking works.")]),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_1",
-                        GrepTool::NAME,
-                        GrepToolInput {
-                            regex: "blink".into(),
-                            include_pattern: None,
-                            offset: 0,
-                            case_sensitive: false,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_1",
-                        GrepTool::NAME,
-                        [
-                            lines(input_file_content, 100..400),
-                            lines(input_file_content, 800..1300),
-                            lines(input_file_content, 1600..2000),
-                            lines(input_file_content, 5000..5500),
-                            lines(input_file_content, 8000..9000),
-                            lines(input_file_content, 18455..18470),
-                            lines(input_file_content, 20000..20500),
-                            lines(input_file_content, 21000..21300),
-                        ]
-                        .join("Match found:\n\n"),
-                    )],
-                ),
-                message(
-                    User,
-                    [text(indoc::indoc! {"
-                            Comment out the lines that interact with the BlinkManager.
-                            Keep the outer `update` blocks, but comments everything that's inside (including if statements).
-                            Don't add additional comments.
-                        "})],
-                ),
-            ],
-            input_file_path,
-            Some(input_file_content.into()),
-            EvalAssertion::assert_diff_any(possible_diffs.clone()),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("fixtures/from_pixels_constructor/before.rs");

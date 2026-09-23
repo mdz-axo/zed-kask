@@ -50,6 +50,11 @@ if bash "$generator" "$scratch/duplicate-before.json" "$scratch/duplicate-before
     echo "duplicate baseline artifact+signal was accepted" >&2
     exit 1
 fi
+cat "$scratch/duplicate-before.json" "$scratch/graph.json" > "$scratch/multiple-objects.json"
+if bash "$generator" "$scratch/multiple-objects.json" "$scratch/multiple-objects.lean" > /dev/null 2>&1; then
+    echo "invalid first JSON object hidden by a valid trailing object was accepted" >&2
+    exit 1
+fi
 jq '.after += [.after[0]]' "$scratch/graph.json" > "$scratch/duplicate-after.json"
 if bash "$generator" "$scratch/duplicate-after.json" "$scratch/duplicate-after.lean" > /dev/null 2>&1; then
     echo "duplicate retained artifact+signal was accepted" >&2
@@ -64,4 +69,4 @@ if bash "$generator" "$scratch/graph.json" "$scratch/preserves.lean" > /dev/null
     echo "proof overwrite was accepted" >&2
     exit 1
 fi
-printf 'verification_proof_contract=pass positive=1 negative=10 lean=%s\n' "$lean"
+printf 'verification_proof_contract=pass positive=1 negative=11 lean=%s\n' "$lean"
