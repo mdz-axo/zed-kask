@@ -6195,14 +6195,14 @@ pub mod test {
         assert_eq!(project_skills.len(), 1);
 
         cx.update(|cx| {
-            cx.set_global(SkillIndex {
+            cx.set_global(SkillIndex::from_agent(
                 global_skills,
-                project_skills: vec![ProjectSkillGroup {
+                vec![ProjectSkillGroup {
                     worktree_id: SkillScopeId(worktree_id.to_usize()),
                     worktree_root_name: "project".into(),
                     skills: project_skills,
                 }],
-            });
+            ));
         });
 
         let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {

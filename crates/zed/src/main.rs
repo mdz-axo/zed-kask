@@ -744,7 +744,9 @@ fn main() {
         // The lazy scan in `run_skills_scan` (triggered by agent-panel
         // interaction) will refresh the SkillIndex with project skills when
         // a project context is built; `NativeAgent::new` preserves an existing
-        // SkillIndex rather than overwriting it with an empty default.
+        // SkillIndex rather than overwriting it with an empty default. If the
+        // agent publishes first, the delayed startup result must not erase its
+        // project skills or replace its newer disk-loaded global catalog.
         let skills_dir = agent_skills::global_skills_dir();
         let skills_fs: Arc<dyn Fs> = fs.clone();
         cx.spawn(async move |cx| {
@@ -758,10 +760,7 @@ fn main() {
             let global_skills: Vec<agent_skills::Skill> =
                 loaded.into_iter().filter_map(|result| result.ok()).collect();
             let _ = cx.update(|cx| {
-                cx.set_global(agent_skills::SkillIndex {
-                    global_skills,
-                    project_skills: Vec::new(),
-                });
+                agent_skills::SkillIndex::publish_seeded_globals(global_skills, cx);
             });
         }).detach();
 

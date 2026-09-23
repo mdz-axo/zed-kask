@@ -220,6 +220,40 @@ impl SkillSource {
 pub struct SkillIndex {
     pub global_skills: Vec<Skill>,
     pub project_skills: Vec<ProjectSkillGroup>,
+    agent_published: bool,
+}
+
+impl SkillIndex {
+    /// The agent's disk refresh is authoritative over an older startup snapshot.
+    pub fn from_agent(global_skills: Vec<Skill>, project_skills: Vec<ProjectSkillGroup>) -> Self {
+        Self {
+            global_skills,
+            project_skills,
+            agent_published: true,
+        }
+    }
+
+    /// expect: Startup may publish shipped globals for Settings without erasing
+    /// skills the agent has already discovered for a project.
+    /// [P5] Motivating: one disk-backed catalog wins over an older startup snapshot.
+    /// pre: startup has finished loading the seeded global directory.
+    /// post: an agent-published catalog is retained; absent globals are filled
+    /// without discarding project skills. None means no publication is needed.
+    fn with_startup_globals(mut self, global_skills: Vec<Skill>) -> Option<Self> {
+        if self.agent_published && !self.global_skills.is_empty() {
+            return None;
+        }
+        self.global_skills = global_skills;
+        Some(self)
+    }
+
+    /// Publish the startup seed only against the index current *after* disk I/O.
+    pub fn publish_seeded_globals(global_skills: Vec<Skill>, cx: &mut App) {
+        let current = cx.try_global::<Self>().cloned().unwrap_or_default();
+        if let Some(index) = current.with_startup_globals(global_skills) {
+            cx.set_global(index);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -976,6 +1010,68 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    // expect: Settings keeps project skills and the newest global catalog regardless
+    // of whether the detached startup seed finishes before or after the agent scan.
+    // [P5] Motivating: one disk-backed skill catalog, with no stale startup overwrite.
+    // pre: the two publishers may complete in either order.
+    // post: agent publication wins; startup supplies globals if the agent had none.
+    #[gpui::test]
+    async fn startup_skill_publication_respects_agent_refresh_order(cx: &mut TestAppContext) {
+        let global = |name: &str| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: Global skill\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        let project_skill = parse_skill_frontmatter(
+            Path::new("/project/.agents/skills/local/SKILL.md"),
+            "---\nname: local\ndescription: Project skill\n---\n",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(7),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .expect("valid project skill");
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: vec![project_skill],
+        };
+
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("seeded")], cx));
+        cx.update(|cx| {
+            assert_eq!(cx.global::<SkillIndex>().global_skills[0].name, "seeded");
+            cx.set_global(SkillIndex::from_agent(
+                vec![global("fresh")],
+                vec![project.clone()],
+            ));
+            assert_eq!(cx.global::<SkillIndex>().global_skills[0].name, "fresh");
+        });
+
+        // The detached startup task finishes after the agent's disk refresh.
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("stale")], cx));
+        cx.update(|cx| {
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "fresh");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "local");
+        });
+
+        // A refresh with no globals must not suppress the startup seed, but
+        // the seed must not erase the project's skill groups.
+        cx.update(|cx| cx.set_global(SkillIndex::from_agent(Vec::new(), vec![project])));
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("seeded")], cx));
+        cx.update(|cx| {
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "seeded");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "local");
+            assert!(index.agent_published);
+        });
+    }
 
     #[test]
     fn test_skill_source_precedence_is_total_and_ordered() {

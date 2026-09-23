@@ -1715,10 +1715,7 @@ impl NativeAgent {
             }
         }
 
-        cx.set_global(SkillIndex {
-            global_skills,
-            project_skills: project_groups,
-        });
+        cx.set_global(SkillIndex::from_agent(global_skills, project_groups));
     }
 
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
@@ -6132,6 +6129,61 @@ mod internal_tests {
                 thread.read(cx).project_context().read(cx).worktrees,
                 expected_worktrees
             );
+        });
+    }
+
+    // expect: A late startup seed cannot erase project skills published by
+    // NativeAgent, or replace a newer global skill with its earlier snapshot.
+    // [P5] Motivating: one observable disk-backed skill catalog in Settings.
+    // pre: the agent publishes while the startup task is still loading.
+    // post: Settings still sees the agent's project and global skills.
+    #[gpui::test]
+    async fn test_late_startup_seed_keeps_agent_published_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+
+        let global = |name: &str| Skill {
+            name: name.into(),
+            description: "Global skill".into(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from(format!("/skills/{name}")),
+            skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        };
+        let project_skill = Skill {
+            name: "project-skill".into(),
+            description: "Project skill".into(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(7),
+                worktree_root_name: "project".into(),
+            },
+            directory_path: PathBuf::from("/project/.agents/skills/project-skill"),
+            skill_file_path: PathBuf::from("/project/.agents/skills/project-skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        };
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| {
+                let id = agent.get_or_create_project_state(&project, cx);
+                if let Some(state) = agent.projects.get_mut(&id) {
+                    state.skills = Arc::new(vec![global("fresh"), project_skill]);
+                }
+                agent.publish_skill_index(cx);
+            });
+            agent_skills::SkillIndex::publish_seeded_globals(vec![global("stale")], cx);
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "fresh");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "project-skill");
         });
     }
 
