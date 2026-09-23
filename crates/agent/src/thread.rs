@@ -5027,7 +5027,6 @@ impl Thread {
             reasoning_effort: self.reasoning_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
-            max_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
