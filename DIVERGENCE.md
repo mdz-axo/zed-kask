@@ -337,10 +337,11 @@ Media Steer group in `crates/media_panel/src/media_panel.rs` labels generated
 `reduct_*` tools separately from local `educt_*`. The media server's optional
 credential grant is media-only. The operator supplied Reduct's authenticated
 v3 API introduction and code examples in chat: the X-Auth-Key project,
-recording-status and JSON-transcript read paths were verified live; the
-recording-create, URL-import, and raw indexed-gallery upload examples were
-implemented with fixture tests, but no live POST was run. Reel composition,
-redaction and editing remain unsupported until the expanded endpoint schemas
+recording-status, JSON/TXT-transcript, highlight and reel-detail read paths
+were verified live (reel detail excludes share tokens); the recording-create,
+URL-import, and raw indexed-gallery upload examples were implemented with
+fixture tests, but no live POST was run. Reel composition, redaction and
+editing remain unsupported until the expanded endpoint schemas
 are available. Pins: `reduct_row_uses_refreshable_keychain_slot`,
 `reduct_key_reaches_only_media_child`, media `tools::reduct::tests`,
 `tool_names_match_live_router`, and Media-panel `server_tools_are_all_advertised`.

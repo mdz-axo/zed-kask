@@ -1417,6 +1417,11 @@ mod tests {
                             .map(serde_json::Map::len)
                             .unwrap_or(0)
                     );
+                    let projection = reel_detail(Some(key.as_str()), project_id, reel_id).await?;
+                    assert_eq!(projection["source"], "reduct_cloud");
+                    assert!(projection["title"].is_string());
+                    assert_eq!(projection["share_tokens"], "redacted");
+                    assert!(projection.get("share_token").is_none());
                 }
                 break;
             }

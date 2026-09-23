@@ -267,12 +267,17 @@ its body. The `reduct_projects_snapshot` / `reduct_recordings_snapshot` tools
 return bounded provider-supplied ID/title views (server-side pagination is
 unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
 `reduct_recording_highlights` read an existing recording's status, JSON/TXT
-transcript, and provider-native bounded highlight map, respectively. The logged-in v3 API
+transcript, and provider-native bounded highlight map, respectively.
+`reduct_reels_snapshot` projects bounded reel IDs/titles from project detail;
+`reduct_reel_detail` reads an existing reel's title and blocks while removing
+all nested `share_token` fields. The logged-in v3 API
 reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
 header, root URL, these recording paths, and the mutating calls below. A live
 OS-keychain-based test retrieved a project, project-scoped recordings, recording
-status, JSON/TXT transcripts, and the highlight GET path without logging or
-printing private content.
+status, JSON/TXT transcripts, the highlight GET path, and an existing reel's
+ID-keyed block map without logging or printing private content. The sampled
+highlight map was empty; a live reel-detail request returned a populated block
+map. Reading block fields does not prove their POST write schema.
 
 The same excerpt specifies `POST /project/{project_id}/recording` with JSON
 `{"title": ...}` returning a `recording` ID, and `POST .../media-import`

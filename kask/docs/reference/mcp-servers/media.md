@@ -257,17 +257,19 @@ into ordered Reel Keep operations; Cut operations implement strikethrough editin
 and render/export are non-destructive projections. These tools remain local
 and never fall back from a Reduct request. A separate `reduct_*` MCP group
 uses the Reduct API key entered in Settings → Kask → Data Services:
-credential-status/probe, bounded project and recording snapshots, recording
-status, JSON/TXT transcript and provider-native highlight retrieval. Read-only
-project, recording-status, JSON/TXT-transcript and highlight calls passed
-explicit live tests against the provider using
-the stored key; the key and response content were not printed in those tests.
+credential-status/probe, bounded project/recording/reel snapshots, recording
+status, JSON/TXT transcript, provider-native highlight retrieval and reel-detail
+read with recursive share-token removal. Project, recording-status, JSON/TXT
+transcript, highlight and reel-detail GET paths passed explicit live tests using
+the stored key; key and response content were not printed in those tests.
 The operator supplied the login-gated API reference's v3 examples and warnings
 in the conversation on 2026-09-23. From those exact contracts, the media server
 also implements cloud recording creation, URL-based media import, and bounded
 SHA-256-verified gallery audio/video upload. Those three POST paths are pinned
 by fixtures but **not live-mutated** in the operator's workspace. Project and
-recording snapshots describe provider-returned subsets, not complete pagination.
+recording and reel snapshots describe provider-returned subsets, not complete
+pagination. Reel read results do not authorize writes: Reduct reel/block payload
+fields are not supplied by the excerpt.
 Reduct reel/strikethrough composition, redaction, and editing remain unsupported
 because the excerpt did not include the expanded mutation schemas. See the
 media server README for the operation boundary and API caveats.
