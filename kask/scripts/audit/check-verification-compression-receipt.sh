@@ -17,7 +17,7 @@ while IFS=$'\t' read -r role phase id digest path extra; do
   [[ -z ${extra:-} && -n $role && -n $phase && -n $id && $id =~ ^[A-Za-z0-9_.-]+$ && $digest =~ ^[0-9a-f]{64}$ && $path == /* && -f $path && ! -L $path ]] || { echo 'invalid receipt row' >&2; exit 1; }
   [[ $(realpath -e -- "$path") == "$path" ]] || { echo 'noncanonical path' >&2; exit 1; }
   case "$role/$phase/$id" in
-    graph/before/singleton|graph/after/singleton|contract/before/singleton|contract/after/singleton|oracle/before/singleton|oracle/after/singleton|proof/after/singleton|log/before/singleton|log/after/singleton|candidate_diff/after/singleton|source/before/*|source/after/*) ;;
+    graph/before/singleton|graph/after/singleton|contract/before/singleton|contract/after/singleton|oracle/before/singleton|oracle/after/singleton|proof/after/singleton|log/before/singleton|log/after/singleton|timing/before/singleton|timing/after/singleton|candidate_diff/after/singleton|source/before/*|source/after/*) ;;
     *) echo 'unexpected receipt role' >&2; exit 1 ;;
   esac
   key="$role/$phase/$id"
@@ -25,7 +25,7 @@ while IFS=$'\t' read -r role phase id digest path extra; do
   hashes[$key]=$digest paths[$key]=$path
   [[ $(sha256sum "$path" | cut -d ' ' -f 1) == "$digest" ]] || { echo "file hash mismatch: $key" >&2; exit 1; }
 done < "$receipt"
-for key in graph/before/singleton graph/after/singleton contract/before/singleton contract/after/singleton oracle/before/singleton oracle/after/singleton proof/after/singleton log/before/singleton log/after/singleton candidate_diff/after/singleton; do
+for key in graph/before/singleton graph/after/singleton contract/before/singleton contract/after/singleton oracle/before/singleton oracle/after/singleton proof/after/singleton log/before/singleton log/after/singleton timing/before/singleton timing/after/singleton candidate_diff/after/singleton; do
   [[ -v hashes[$key] ]] || { echo "missing receipt role: $key" >&2; exit 1; }
 done
 for role in contract oracle; do
@@ -54,6 +54,27 @@ cmp -s "$work/baseline" "$work/candidate-baseline" || { echo 'candidate graph ch
 generator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generate-verification-preservation-proof.sh"
 bash "$generator" "${paths[graph/after/singleton]}" "$work/derived.lean" > "$work/generator.log" || { echo 'candidate graph is not a valid preservation proof instance' >&2; exit 1; }
 cmp -s "$work/derived.lean" "${paths[proof/after/singleton]}" || { echo 'proof is not generated from candidate graph' >&2; exit 1; }
+if ! jq -e -n \
+  --slurpfile before "${paths[timing/before/singleton]}" \
+  --slurpfile after "${paths[timing/after/singleton]}" '
+    def valid_samples: type == "array" and length >= 2 and all(.[]; type == "number" and . > 0 and floor == .);
+    def valid_state($selected):
+      (keys == ["samples_ms","status"]) and
+      (if $selected then (.status == "measured" and (.samples_ms | valid_samples))
+       else (.status == "not_run" and .samples_ms == []) end);
+    ($before | length == 1) and ($after | length == 1) and
+    ($before[0] | keys == ["cold","scope","warm"]) and
+    ($after[0] | keys == ["cold","scope","warm"]) and
+    ($before[0].scope == $after[0].scope) and
+    ($before[0].scope | IN("cold","warm","both")) and
+    ($before[0].cold | valid_state($before[0].scope == "cold" or $before[0].scope == "both")) and
+    ($after[0].cold | valid_state($before[0].scope == "cold" or $before[0].scope == "both")) and
+    ($before[0].warm | valid_state($before[0].scope == "warm" or $before[0].scope == "both")) and
+    ($after[0].warm | valid_state($before[0].scope == "warm" or $before[0].scope == "both"))
+  ' >/dev/null; then
+  echo 'pinned timing samples are incomplete or nonpositive' >&2
+  exit 1
+fi
 : > "$work/diff"
 while IFS= read -r id; do
   before="source/before/$id" after="source/after/$id"
@@ -69,4 +90,11 @@ if [[ $mode == execute && $(sha256sum "$work/diff" | cut -d ' ' -f 1) != "$appro
   echo 'candidate diff does not match independently approved digest' >&2
   exit 1
 fi
-echo 'receipt, graph, proof and candidate diff verified'
+jq -cn --arg mode "$mode" \
+  --slurpfile before "${paths[timing/before/singleton]}" \
+  --slurpfile after "${paths[timing/after/singleton]}" '
+  {verified:true,mode:$mode,authorized_diff_verified:($mode=="execute"),
+   timing:{scope:$before[0].scope,
+     cold:{status:$before[0].cold.status,before_ms:$before[0].cold.samples_ms,after_ms:$after[0].cold.samples_ms},
+     warm:{status:$before[0].warm.status,before_ms:$before[0].warm.samples_ms,after_ms:$after[0].warm.samples_ms}}}
+  '

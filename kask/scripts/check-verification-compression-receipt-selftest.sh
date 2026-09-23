@@ -16,11 +16,13 @@ cp "$tmp/graph" "$tmp/graph-after"
 bash "$generator" "$tmp/graph-after" "$tmp/proof" > /dev/null
 printf 'log before\n' > "$tmp/log-before"
 printf 'log after\n' > "$tmp/log-after"
+printf '%s\n' '{"scope":"warm","cold":{"status":"not_run","samples_ms":[]},"warm":{"status":"measured","samples_ms":[200,210]}}' > "$tmp/timing-before"
+printf '%s\n' '{"scope":"warm","cold":{"status":"not_run","samples_ms":[]},"warm":{"status":"measured","samples_ms":[180,190]}}' > "$tmp/timing-after"
 diff -u --label source/x --label source/x "$tmp/before" "$tmp/after" > "$tmp/diff" || test "$?" -eq 1
 receipt() {
   local role phase id path
   : > "$tmp/receipt"
-  for spec in 'graph before graph' 'graph after graph-after' 'source before before' 'source after after' 'contract before contract' 'contract after contract' 'oracle before oracle' 'oracle after oracle' 'proof after proof' 'log before log-before' 'log after log-after' 'candidate_diff after diff'; do
+  for spec in 'graph before graph' 'graph after graph-after' 'source before before' 'source after after' 'contract before contract' 'contract after contract' 'oracle before oracle' 'oracle after oracle' 'proof after proof' 'log before log-before' 'log after log-after' 'timing before timing-before' 'timing after timing-after' 'candidate_diff after diff'; do
     read -r role phase path <<< "$spec"
     id=singleton
     if [[ $role == source ]]; then id=x; fi
@@ -31,7 +33,12 @@ approved=$(sha256sum "$tmp/diff" | cut -d ' ' -f 1)
 check() { local authorization=${2:-$approved}; bash "$checker" "$1" "$tmp/receipt" "$(sha256sum "$tmp/receipt" | cut -d ' ' -f 1)" "$authorization"; }
 reject() { if check "$1" "${3:-$approved}" > /dev/null 2>&1; then echo "accepted negative control: $2" >&2; exit 1; fi; }
 receipt
-check execute
+check execute | jq -e '.verified == true and .timing.scope == "warm" and .timing.warm.before_ms == [200,210] and .timing.warm.after_ms == [180,190]' >/dev/null
+printf '%s\n' '{"scope":"warm","cold":{"status":"not_run","samples_ms":[]},"warm":{"status":"measured","samples_ms":[-10,190]}}' > "$tmp/timing-after"
+receipt
+reject execute 'nonpositive pinned timing sample'
+printf '%s\n' '{"scope":"warm","cold":{"status":"not_run","samples_ms":[]},"warm":{"status":"measured","samples_ms":[180,190]}}' > "$tmp/timing-after"
+receipt
 reject execute 'unapproved diff despite valid pinned receipt' "$(printf 'other operator-approved diff\n' | sha256sum | cut -d ' ' -f 1)"
 reject analyze 'source changed in analyze mode' '-' 
 printf 'forged proof\n' > "$tmp/proof"
