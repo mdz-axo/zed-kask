@@ -1711,6 +1711,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn server_refusal_envelopes_roll_back_and_surface_error(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        for (kind, message) in [
+            ("failed_precondition", "WIP limit reached"),
+            ("permission_denied", "move not permitted"),
+            ("failed_precondition", "task not ready for review"),
+        ] {
+            let response = serde_json::json!({"error": message, "kind": kind}).to_string();
+            let _guard = wire_move_responses(&[&response]);
+            let body = body_with_board_and_provenance_with(vec![task("t1", "Card", "backlog")]);
+            let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+            widget.update(cx, |this, cx| {
+                this.stage_move(
+                    "t1".into(),
+                    "Card".into(),
+                    "Backlog".into(),
+                    "ready".into(),
+                    "Ready".into(),
+                    cx,
+                );
+                this.move_controller.confirm_move(
+                    &mut this.columns,
+                    &this.column_meta,
+                    &this.provenance,
+                    cx,
+                );
+            });
+            assert_eq!(
+                widget.read_with(cx, |this, _| this.find_task_status("t1")),
+                Some("ready".into()),
+                "optimistic move applied before completion"
+            );
+            cx.run_until_parked();
+            widget.read_with(cx, |this, _| {
+                assert_eq!(this.find_task_status("t1").as_deref(), Some("backlog"));
+                assert_eq!(this.move_controller.dispatch_error(), Some(message));
+                assert!(this.move_controller.dispatch_in_flight().is_none());
+                assert!(this.move_controller.pending_move().is_none());
+                assert!(this.move_controller.optimistic_move_is_cleared_for_test());
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn cancelled_completion_cannot_clobber_subsequent_move(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let old_refusal = r#"{"error":"old move refused","kind":"failed_precondition"}"#;
+        let _guard = wire_move_responses(&[old_refusal, "{}"]);
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Card", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Card".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
+            this.move_controller
+                .cancel_dispatch(&mut this.columns, &this.column_meta, cx);
+            this.stage_move(
+                "t1".into(),
+                "Card".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
+        });
+        assert_eq!(
+            widget.read_with(cx, |this, _| this.find_task_status("t1")),
+            Some("ready".into())
+        );
+        cx.run_until_parked();
+        widget.read_with(cx, |this, _| {
+            assert_eq!(this.find_task_status("t1").as_deref(), Some("ready"));
+            assert_eq!(this.move_controller.dispatch_error(), None);
+            assert!(this.move_controller.dispatch_in_flight().is_none());
+        });
+    }
+
+    #[gpui::test]
     async fn chips_disabled_while_pending(cx: &mut TestAppContext) {
         let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
         let _guard = InvokerGuard;
