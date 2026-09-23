@@ -116,8 +116,8 @@ enum RefreshTarget {
 ///
 /// These are exactly the kanban tools that mint a fresh server-side identity, so
 /// a duplicate call would create a second row or burn a second spawn. Every other
-/// mutation is already idempotent by construction (`task_update` converges;
-/// `task_delete` of a deleted task is a no-op), so it needs no key.
+/// mutation does not mint a new identity (`task_update` converges;
+/// a repeated `task_delete` returns NotFound rather than creating another effect).
 ///
 /// Keep in sync with the `with_idempotency` wiring in
 /// `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. A tool listed here that
@@ -185,6 +185,27 @@ fn mutation_retry_delay(attempts_so_far: u32) -> Option<Duration> {
         return None;
     }
     Some(MUTATION_RETRY_BASE_DELAY * 2u32.pow(attempts_so_far))
+}
+
+fn visible_panel_error<'a>(
+    mutation_error: Option<&'a SharedString>,
+    fetch_error: Option<&'a SharedString>,
+) -> Option<&'a SharedString> {
+    mutation_error.or(fetch_error)
+}
+
+fn exhausted_mutation_message(label: &str, outcome_unknown: bool) -> SharedString {
+    if outcome_unknown {
+        format!(
+            "Could not confirm whether {label} succeeded. It may have changed the board — check the refreshed state before retrying."
+        )
+        .into()
+    } else {
+        format!(
+            "Could not {label}: the kanban server is unreachable. Nothing was changed — try again once it reconnects."
+        )
+        .into()
+    }
 }
 
 /// Which fetch a refresh tick should issue.
@@ -425,6 +446,8 @@ struct TaskInfo {
     #[serde(default)]
     title: String,
     #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
     status: String,
     #[serde(default)]
     assignee: Option<String>,
@@ -558,8 +581,10 @@ pub struct KanbanPanel {
     kanban_widget: Option<Entity<KanbanWidget>>,
     /// True while a fetch (board list or task list) is in flight.
     fetching: bool,
-    /// Error message if the last fetch failed.
+    /// Error message if the last fetch failed (separate from durable mutation feedback).
     error: Option<SharedString>,
+    /// Last mutation result, retained across automatic board/task refreshes.
+    mutation_error: Option<SharedString>,
     /// Auto-refresh task — periodically re-fetches the task list. Cancelled
     /// when the panel is dropped.
     refresh_task: Option<Task<()>>,
@@ -648,6 +673,7 @@ impl KanbanPanel {
                 kanban_widget: None,
                 fetching: false,
                 error: None,
+                mutation_error: None,
                 refresh_task: None,
                 last_detail_open: None,
                 comments_fetched: HashSet::new(),
@@ -740,8 +766,9 @@ impl KanbanPanel {
         capture_created_board: bool,
         cx: &mut Context<Self>,
     ) {
+        self.mutation_error = None;
         let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
+            self.mutation_error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
             cx.notify();
             return;
         };
@@ -753,7 +780,7 @@ impl KanbanPanel {
         let args = match attach_idempotency_key(tool, args) {
             Ok(args) => args,
             Err(error) => {
-                self.error = Some(format!("Could not {label}: {error}").into());
+                self.mutation_error = Some(format!("Could not {label}: {error}").into());
                 cx.notify();
                 return;
             }
@@ -762,6 +789,7 @@ impl KanbanPanel {
 
         cx.spawn(async move |this, cx| {
             let mut attempt: u32 = 0;
+            let mut saw_unknown_outcome = false;
             loop {
                 let outcome = invoker.invoke_tool(KANBAN_SERVER, tool, args.clone()).await;
                 match outcome {
@@ -778,7 +806,7 @@ impl KanbanPanel {
                         // `Err(InvokeError::Failed(_))`.
                         if let Some(err) = parse_tool_error(&output) {
                             this.update(cx, |this, cx| {
-                                this.error =
+                                this.mutation_error =
                                     Some(format!("Failed to {label}: {}", err.message).into());
                                 cx.notify();
                             })
@@ -804,7 +832,7 @@ impl KanbanPanel {
                             }
                         }
                         this.update(cx, |this, cx| {
-                            this.error = None;
+                            this.mutation_error = None;
                             if let Some(fixup) = before_refresh {
                                 fixup(this);
                             }
@@ -826,15 +854,24 @@ impl KanbanPanel {
                     Err(error)
                         if error.is_retryable() || (replay_safe && error.is_outcome_unknown()) =>
                     {
+                        saw_unknown_outcome |= error.is_outcome_unknown();
                         let Some(delay) = mutation_retry_delay(attempt) else {
                             this.update(cx, |this, cx| {
-                                this.error = Some(
-                                    format!(
-                                        "Could not {label}: the kanban server is unreachable. \
-                                         Nothing was changed — try again once it reconnects."
-                                    )
-                                    .into(),
-                                );
+                                this.mutation_error =
+                                    Some(exhausted_mutation_message(label, saw_unknown_outcome));
+                                if saw_unknown_outcome {
+                                    if let Some(fixup) = before_refresh {
+                                        fixup(this);
+                                    }
+                                    match refresh {
+                                        RefreshTarget::Tasks => this.fetch_tasks(cx),
+                                        RefreshTarget::Boards => this.fetch_boards(cx),
+                                        RefreshTarget::BoardsAndTasks => {
+                                            this.fetch_boards(cx);
+                                            this.fetch_tasks(cx);
+                                        }
+                                    }
+                                }
                                 cx.notify();
                             })
                             .log_err();
@@ -845,7 +882,7 @@ impl KanbanPanel {
                         // than a frozen form.
                         if this
                             .update(cx, |this, cx| {
-                                this.error = Some(
+                                this.mutation_error = Some(
                                     format!(
                                         "Reconnecting to the kanban server to {label}… \
                                          (attempt {attempt}/{MAX_MUTATION_RETRIES})"
@@ -867,7 +904,7 @@ impl KanbanPanel {
                         // refresh below lets the operator see the true state.
                         let outcome_unknown = error.is_outcome_unknown();
                         this.update(cx, |this, cx| {
-                            this.error = Some(if outcome_unknown {
+                            this.mutation_error = Some(if outcome_unknown {
                                 format!(
                                     "The connection dropped while trying to {label}. It may or \
                                      may not have taken effect — check the board below before \
@@ -917,7 +954,7 @@ impl KanbanPanel {
                 task_id: task.task_id.clone(),
                 title: task.title.clone(),
                 status: task.status.clone(),
-                description: None,
+                description: task.description.clone(),
                 assignee: task.assignee.clone(),
                 swarm_id: task.swarm_id.clone(),
                 activity: task.activity.as_ref().map(|activity| TaskActivityBody {
@@ -1139,7 +1176,7 @@ impl KanbanPanel {
 
     /// Render the error strip.
     fn render_error(&self) -> Option<impl IntoElement> {
-        self.error.as_ref().map(|error| {
+        visible_panel_error(self.mutation_error.as_ref(), self.error.as_ref()).map(|error| {
             Label::new(format!("Error: {error}"))
                 .size(LabelSize::Small)
                 .color(Color::Warning)
@@ -1610,7 +1647,7 @@ impl Render for KanbanPanel {
                     self.edit_task_form = Some(EditTaskForm::for_task(
                         &task.task_id,
                         &task.title,
-                        None,
+                        task.description.as_deref(),
                         None,
                         &[],
                         window,
@@ -1877,6 +1914,23 @@ mod tests {
         assert!(
             super::exhausted_mutation_message("import board", false)
                 .contains("Nothing was changed")
+        );
+    }
+
+    /// expect: "A board refresh cannot erase or supersede unresolved mutation feedback."
+    /// [P2] Motivating: Transparent Imperfection — the operator keeps the mutation outcome in view.
+    /// post: clearing the fetch status leaves mutation feedback selected for display
+    #[test]
+    fn mutation_feedback_survives_fetch_refresh() {
+        let mutation = super::SharedString::from("Outcome may be unknown");
+        let fetch = super::SharedString::from("Reconnecting");
+        assert_eq!(
+            super::visible_panel_error(Some(&mutation), Some(&fetch)).map(|value| value.as_ref()),
+            Some("Outcome may be unknown")
+        );
+        assert_eq!(
+            super::visible_panel_error(Some(&mutation), None).map(|value| value.as_ref()),
+            Some("Outcome may be unknown")
         );
     }
 

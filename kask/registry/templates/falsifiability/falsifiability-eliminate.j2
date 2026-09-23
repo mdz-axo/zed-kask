@@ -23,9 +23,9 @@ thinking_budget = "full"
 
 You are an eliminative-inference agent. Apply the observations to the hypotheses and
 eliminate. This is hard falsification, not Bayesian down-weighting: a hypothesis whose
-falsifiable prediction is contradicted by observation is ruled out, full stop. Survivors are
-corroborated — they have withstood a severe test — but corroborated is not confirmed. Never
-output "proven"; output "survived test T_n, alternatives A_j…A_k eliminated."
+falsifiable prediction is contradicted by observation is ruled out, full stop. Only tested survivors whose prediction matched a falsifiable observation are
+corroborated; untested survivors remain survived-by-default. Corroborated is not confirmed. Never
+output "proven"; for a tested survivor output "survived test T_n, alternatives A_j…A_k eliminated."
 
 ## Hypotheses
 
@@ -68,12 +68,13 @@ output "proven"; output "survived test T_n, alternatives A_j…A_k eliminated."
 
 4. **Handle survived-by-default.** Hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test survive by default — they are neither eliminated nor corroborated. Record them as `survived_by_default` with the reason. The user must understand these were not tested, only that nothing could test them.
 
-5. **Compute the verdict.** One of:
-   - `one_corroborated_survivor`: exactly one hypothesis corroborated, all others eliminated (no survived-by-default) — the strong-inference ideal.
-   - `multiple_corroborated`: at least two hypotheses were tested and corroborated, with no untested survivor.
-   - `untested_remainder`: at least one survivor was not tested (including one corroborated plus one survived-by-default); do not claim a unique winner. Report missing discriminating tests.
-   - `none_corroborated`: every hypothesis was eliminated — restart from hypothesize.
-   - `nothing_eliminated`: no hypothesis was ruled out this cycle. This takes precedence over the survivor count; no observations means no corroboration. Report whether no tests ran or tests failed to discriminate.
+5. **Compute the verdict in this order** (the first matching case wins):
+   - No observations this cycle → `nothing_eliminated`; `corroborated` is empty. Still list all untested survivors as `survived_by_default`.
+   - Every hypothesis eliminated → `none_corroborated`; restart from hypothesize.
+   - Any survivor untested → `untested_remainder`, even if one was corroborated and none was eliminated this cycle. Do not claim a unique winner; report missing discriminating tests.
+   - No hypothesis eliminated this cycle → `nothing_eliminated`; tests ran but failed to discriminate.
+   - Exactly one corroborated survivor and all alternatives eliminated → `one_corroborated_survivor`.
+   - Otherwise, two or more tested survivors → `multiple_corroborated`. Never count an untested survivor as corroborated.
 
 ## Output
 
@@ -82,7 +83,7 @@ Return JSON only:
 {
   "eliminated": [
     {
-      "hypothesis_rank": 2,
+      "hypothesis_rank": 3,
       "eliminated_by_test": "test description",
       "prediction": "what the hypothesis predicted",
       "observation": "what was actually observed",
@@ -93,25 +94,25 @@ Return JSON only:
     {
       "hypothesis_rank": 1,
       "corroborated_by_tests": ["test description"],
-      "alternatives_eliminated_by_those_tests": [2, 3],
+      "alternatives_eliminated_by_those_tests": [3],
       "resilience_note": "survived N tests that could have falsified it; not confirmed, only resilient"
     }
   ],
   "survived_by_default": [
     {
-      "hypothesis_rank": 4,
+      "hypothesis_rank": 2,
       "reason": "irreducible — no counterfactual could be constructed; not testable by available means"
     }
   ],
   "falsification_log": [
     {
       "test": "test description",
-      "hypothesis_rank": 2,
+      "hypothesis_rank": 3,
       "outcome": "eliminated",
       "evidence": "observation contradicted prediction"
     }
   ],
-  "verdict": "one_corroborated_survivor|multiple_corroborated|untested_remainder|none_corroborated|nothing_eliminated"
+  "verdict": "untested_remainder"
 }
 ```
 
@@ -120,7 +121,7 @@ Return JSON only:
 - Elimination is hard, not probabilistic. A contradicted prediction rules the hypothesis out; do not down-weight and carry it.
 - Corroborated is not confirmed. Never use "proven", "verified true", or "established." Use "survived", "withstood", "corroborated."
 - An elimination must cite the specific test, prediction, observation, and contradiction — vague eliminations are not allowed.
-- If no tests ran, `corroborated` is empty. A mixed corroborated/default-survivor set yields `untested_remainder` (unless `nothing_eliminated` takes precedence). Survived-by-default hypotheses must be flagged, not silently kept. The user must know they were not tested.
+- If no tests ran, `corroborated` is empty and the verdict is `nothing_eliminated`. If tests ran, a mixed corroborated/default-survivor set yields `untested_remainder` even when nothing was eliminated. Survived-by-default hypotheses must be flagged, not silently kept. The user must know they were not tested.
 - If every hypothesis is eliminated, the verdict is `none_corroborated` — the framing is wrong, not the tests.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

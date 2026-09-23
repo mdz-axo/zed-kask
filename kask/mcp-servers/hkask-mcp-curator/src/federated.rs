@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use hkask_memory::{FederatedRecallError, FederatedSourcesManifest, ReadOnlyPassageSource};
 use serde::Serialize;
@@ -30,15 +31,87 @@ pub(crate) struct FederatedSourceStatus {
     pub result_count: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FileStamp {
+    Missing,
+    Unreadable(String),
+    Present {
+        bytes: u64,
+        modified: Option<SystemTime>,
+        #[cfg(unix)]
+        device: u64,
+        #[cfg(unix)]
+        inode: u64,
+    },
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> Self {
+        match std::fs::metadata(path) {
+            Ok(metadata) => match metadata.modified() {
+                Ok(modified) => Self::Present {
+                    bytes: metadata.len(),
+                    modified: Some(modified),
+                    #[cfg(unix)]
+                    device: {
+                        use std::os::unix::fs::MetadataExt;
+                        metadata.dev()
+                    },
+                    #[cfg(unix)]
+                    inode: {
+                        use std::os::unix::fs::MetadataExt;
+                        metadata.ino()
+                    },
+                },
+                Err(error) => Self::Unreadable(error.to_string()),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Missing,
+            Err(error) => Self::Unreadable(error.to_string()),
+        }
+    }
+}
+
 pub(crate) struct FederatedSourceRegistry {
     sources: Vec<Arc<ReadOnlyPassageSource>>,
     statuses: Vec<FederatedSourceStatus>,
+    watched: Vec<(PathBuf, FileStamp)>,
 }
 
 impl FederatedSourceRegistry {
+    pub(crate) fn unchanged(&self) -> bool {
+        self.watched
+            .iter()
+            .all(|(path, stamp)| &FileStamp::read(path) == stamp)
+    }
+
+    fn snapshot(paths: &[PathBuf]) -> Vec<(PathBuf, FileStamp)> {
+        paths
+            .iter()
+            .map(|path| (path.clone(), FileStamp::read(path)))
+            .collect()
+    }
+
+    fn watched_paths(
+        manifest_path: &Path,
+        sources: &[hkask_memory::FederatedSourceSpec],
+    ) -> Vec<PathBuf> {
+        let mut paths = vec![manifest_path.to_path_buf()];
+        for source in sources {
+            let mut wal = source.database_path.as_os_str().to_os_string();
+            wal.push("-wal");
+            paths.extend([
+                source.database_path.clone(),
+                PathBuf::from(wal),
+                source.run_identity_path.clone(),
+                source.representations_manifest_path.clone(),
+            ]);
+        }
+        paths
+    }
     pub(crate) fn load(manifest_path: &Path, passphrase: Option<&str>) -> Self {
         if manifest_path.as_os_str().is_empty() || !manifest_path.exists() {
             return Self::single_status(
+                manifest_path,
                 "external_sources",
                 FederatedSourceState::Unconfigured,
                 format!(
@@ -51,6 +124,7 @@ impl FederatedSourceRegistry {
             Ok(manifest) => manifest,
             Err(error) => {
                 return Self::single_status(
+                    manifest_path,
                     "external_sources",
                     FederatedSourceState::Invalid,
                     error.to_string(),
@@ -59,13 +133,17 @@ impl FederatedSourceRegistry {
         };
         if manifest.sources.is_empty() {
             return Self::single_status(
+                manifest_path,
                 "external_sources",
                 FederatedSourceState::Unconfigured,
                 "federated source manifest contains no sources".to_string(),
             );
         }
+        let watched_paths = Self::watched_paths(manifest_path, &manifest.sources);
+        let before = Self::snapshot(&watched_paths);
         let Some(passphrase) = passphrase else {
             return Self {
+                watched: before,
                 statuses: manifest
                     .sources
                     .iter()
@@ -104,7 +182,31 @@ impl FederatedSourceRegistry {
                 }),
             }
         }
-        Self { sources, statuses }
+        let after = Self::snapshot(&watched_paths);
+        if before != after {
+            return Self {
+                sources: Vec::new(),
+                statuses: manifest
+                    .sources
+                    .iter()
+                    .map(|source| FederatedSourceStatus {
+                        source_id: source.id.clone(),
+                        source_kind: "corpus",
+                        state: FederatedSourceState::Unavailable,
+                        reason: Some(
+                            "source identity changed during admission; retry search".to_string(),
+                        ),
+                        result_count: 0,
+                    })
+                    .collect(),
+                watched: after,
+            };
+        }
+        Self {
+            sources,
+            statuses,
+            watched: after,
+        }
     }
 
     pub(crate) fn sources(&self) -> &[Arc<ReadOnlyPassageSource>] {
@@ -115,9 +217,15 @@ impl FederatedSourceRegistry {
         self.statuses.clone()
     }
 
-    fn single_status(source_id: &str, state: FederatedSourceState, reason: String) -> Self {
+    fn single_status(
+        manifest_path: &Path,
+        source_id: &str,
+        state: FederatedSourceState,
+        reason: String,
+    ) -> Self {
         Self {
             sources: Vec::new(),
+            watched: Self::snapshot(&[manifest_path.to_path_buf()]),
             statuses: vec![FederatedSourceStatus {
                 source_id: source_id.to_string(),
                 source_kind: "corpus",
@@ -138,6 +246,8 @@ pub(crate) fn classify_error(error: &FederatedRecallError) -> FederatedSourceSta
     match error {
         FederatedRecallError::UnsupportedSchema { .. }
         | FederatedRecallError::DigestMismatch { .. }
+        | FederatedRecallError::RunIdentityMismatch { .. }
+        | FederatedRecallError::UnsealedWal { .. }
         | FederatedRecallError::SchemaMismatch { .. }
         | FederatedRecallError::IncompatibleEmbedding { .. }
         | FederatedRecallError::IncompatibleEntity { .. } => FederatedSourceState::Incompatible,

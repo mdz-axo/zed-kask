@@ -220,6 +220,7 @@ pub struct SkillIndex {
     pub global_skills: Vec<Skill>,
     pub project_skills: Vec<ProjectSkillGroup>,
     agent_published: bool,
+    startup_published: bool,
 }
 
 impl SkillIndex {
@@ -229,7 +230,13 @@ impl SkillIndex {
             global_skills,
             project_skills,
             agent_published: true,
+            startup_published: false,
         }
+    }
+
+    /// Whether the latest publication came from startup rather than a project scan.
+    pub fn is_startup_publication(&self) -> bool {
+        self.startup_published
     }
 
     /// expect: Startup may publish shipped globals for Settings without erasing
@@ -240,40 +247,64 @@ impl SkillIndex {
     /// and gains missing shipped non-core skills. Core entries require verified
     /// reseed provenance before they can replace or extend a partial catalog.
     /// None means no publication is needed.
-    fn with_startup_globals(mut self, global_skills: Vec<Skill>) -> Option<Self> {
+    fn with_startup_globals(
+        mut self,
+        global_skills: Vec<Skill>,
+        verified_core: &HashSet<String>,
+    ) -> Option<Self> {
         if self.agent_published && !self.global_skills.is_empty() {
-            let mut added = false;
+            let mut changed = false;
             for skill in global_skills {
-                if !is_core_skill(&skill.name)
-                    && shipped_skill_seed()
-                        .iter()
-                        .any(|(name, _)| *name == skill.name)
+                if verified_core.contains(&skill.name) && skill.core {
+                    if let Some(existing) = self
+                        .global_skills
+                        .iter_mut()
+                        .find(|present| present.name == skill.name)
+                    {
+                        *existing = skill;
+                    } else {
+                        self.global_skills.push(skill);
+                    }
+                    changed = true;
+                } else if !is_core_skill(&skill.name)
+                    && is_shipped_skill(&skill.name)
                     && !self
                         .global_skills
                         .iter()
                         .any(|present| present.name == skill.name)
                 {
                     self.global_skills.push(skill);
-                    added = true;
+                    changed = true;
                 }
             }
-            if !added {
+            if !changed {
                 return None;
             }
             self.global_skills
                 .sort_by(|left, right| left.skill_file_path.cmp(&right.skill_file_path));
-            return Some(self);
+        } else {
+            self.global_skills = global_skills;
         }
-        self.global_skills = global_skills;
+        self.startup_published = true;
         Some(self)
     }
 
-    /// Publish the startup seed only against the index current *after* disk I/O.
-    pub fn publish_seeded_globals(global_skills: Vec<Skill>, cx: &mut App) {
+    /// Publish startup globals against the index current after disk I/O.
+    /// Only cores whose source bytes were verified may extend an agent catalog.
+    pub fn publish_verified_globals(
+        global_skills: Vec<Skill>,
+        verified_core: &HashSet<String>,
+        cx: &mut App,
+    ) {
         let current = cx.try_global::<Self>().cloned().unwrap_or_default();
-        if let Some(index) = current.with_startup_globals(global_skills) {
+        if let Some(index) = current.with_startup_globals(global_skills, verified_core) {
             cx.set_global(index);
         }
+    }
+
+    /// Publish without a provenance receipt (e.g. caller tests without disk I/O).
+    pub fn publish_seeded_globals(global_skills: Vec<Skill>, cx: &mut App) {
+        Self::publish_verified_globals(global_skills, &HashSet::new(), cx);
     }
 }
 
@@ -878,6 +909,44 @@ pub async fn load_authoritative_global_skills(
     load_global_skills_from_source(fs, global_dir, source.as_deref()).await
 }
 
+/// Check the actual loaded core bytes before startup promotes a disk entry over
+/// an agent-published catalog. A readable file alone is not a seed receipt.
+/// The development checkout is the authored source; installed builds require
+/// byte equality with the compiled seed even if an attempted write failed.
+pub async fn verify_core_skill_contents(fs: &dyn Fs, skills: &[Skill]) -> HashSet<String> {
+    let source = if fs.is_fake() {
+        None
+    } else {
+        development_skills_dir()
+    };
+    let mut verified = HashSet::new();
+    for skill in skills.iter().filter(|skill| skill.core) {
+        let is_authored = source
+            .as_ref()
+            .is_some_and(|source| skill.skill_file_path.starts_with(source));
+        let expected = if is_authored {
+            None
+        } else {
+            shipped_skill_seed()
+                .iter()
+                .find(|(name, _)| *name == skill.name)
+                .map(|(_, content)| *content)
+        };
+        match fs.load(&skill.skill_file_path).await {
+            Ok(content) if is_authored || expected == Some(content.as_str()) => {
+                verified.insert(skill.name.clone());
+            }
+            Ok(_) | Err(_) => {
+                log::warn!(
+                    "Core skill '{}' has no verified startup content; not promoting it",
+                    skill.name
+                );
+            }
+        }
+    }
+    verified
+}
+
 async fn load_global_skills_from_source(
     fs: &Arc<dyn Fs>,
     global_dir: &Path,
@@ -1396,6 +1465,141 @@ mod tests {
                     .iter()
                     .all(|skill| skill.name != core_name)
             );
+        });
+    }
+
+    // expect: A failed core overwrite never turns readable old disk bytes into a canonical Settings entry.
+    // [P5] Motivating: Settings must not advertise an unverified core body.
+    // pre: an installed core file remains readable but is not writable.
+    // post: verification rejects the stale file and startup preserves the agent's catalog.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn failed_core_seed_write_does_not_promote_readable_stale_content(
+        cx: &mut TestAppContext,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (name, canonical) = shipped_skill_seed()
+            .iter()
+            .find(|(name, _)| is_core_skill(name))
+            .expect("shipped core skill");
+        let root = std::env::temp_dir().join(format!(
+            "kask-core-seed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let file = root.join(name).join(SKILL_FILE_NAME);
+        std::fs::create_dir_all(file.parent().expect("core directory")).expect("create fixture");
+        let stale = format!("---\nname: {name}\ndescription: Stale core\ncore: true\n---\n");
+        std::fs::write(&file, &stale).expect("write stale core");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444))
+            .expect("protect stale core");
+        // RealFs::write reaches std::fs::write; exercise its denied-write
+        // boundary without parking a real filesystem task in GPUI's fake scheduler.
+        let write_error = std::fs::write(&file, canonical).expect_err("core overwrite denied");
+        assert_eq!(write_error.kind(), std::io::ErrorKind::PermissionDenied);
+        let disk = std::fs::read_to_string(&file).expect("stale core stays readable");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))
+            .expect("restore permissions");
+        std::fs::remove_dir_all(&root).expect("clean fixture");
+        assert_eq!(disk, stale, "the core write must have failed");
+        assert_ne!(disk, *canonical);
+
+        let fake = FakeFs::new(cx.executor());
+        let stale_dir = Path::new("/skills").join(name);
+        fake.create_dir(&stale_dir)
+            .await
+            .expect("fake core directory");
+        let stale_path = stale_dir.join(SKILL_FILE_NAME);
+        fake.insert_file(&stale_path, stale.into_bytes()).await;
+        let loaded = load_skills_from_directory(
+            &(fake.clone() as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("readable stale skill");
+        let verified = verify_core_skill_contents(fake.as_ref(), &loaded).await;
+        assert!(!verified.contains(*name));
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![
+                    parse_skill_frontmatter(
+                        Path::new("/skills/user-skill/SKILL.md"),
+                        "---\nname: user-skill\ndescription: User edit\n---\n",
+                        SkillSource::Global,
+                    )
+                    .expect("user skill"),
+                ],
+                Vec::new(),
+            ));
+            SkillIndex::publish_verified_globals(loaded, &verified, cx);
+            assert!(
+                cx.global::<SkillIndex>()
+                    .global_skills
+                    .iter()
+                    .all(|skill| skill.name != *name)
+            );
+        });
+    }
+
+    // expect: A verified installed core replaces stale agent metadata without losing project skills or user edits.
+    // [P5] Motivating: the Settings catalog converges to the canonical shipped core after successful seeding.
+    // pre: disk contains exactly the bundled core bytes; the agent published a partial catalog.
+    // post: the core is promoted and the publication signals active project refresh.
+    #[gpui::test]
+    async fn verified_core_seed_promotes_and_signals_refresh(cx: &mut TestAppContext) {
+        let (name, content) = shipped_skill_seed()
+            .iter()
+            .find(|(name, _)| is_core_skill(name))
+            .expect("shipped core skill");
+        let fs = FakeFs::new(cx.executor());
+        let dir = Path::new("/skills").join(name);
+        fs.create_dir(&dir).await.expect("core dir");
+        let path = dir.join(SKILL_FILE_NAME);
+        fs.insert_file(&path, content.as_bytes().to_vec()).await;
+        let loaded = load_skills_from_directory(
+            &(fs.clone() as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("canonical core");
+        let verified = verify_core_skill_contents(fs.as_ref(), &loaded).await;
+        assert!(verified.contains(*name));
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: Vec::new(),
+        };
+        let user = parse_skill_frontmatter(
+            Path::new("/skills/user-skill/SKILL.md"),
+            "---\nname: user-skill\ndescription: Newer user edit\n---\n",
+            SkillSource::Global,
+        )
+        .expect("user entry");
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(vec![user], vec![project]));
+            SkillIndex::publish_verified_globals(loaded, &verified, cx);
+            let index = cx.global::<SkillIndex>();
+            assert!(index.is_startup_publication());
+            assert_eq!(index.project_skills.len(), 1);
+            assert!(
+                index
+                    .global_skills
+                    .iter()
+                    .any(|skill| skill.name == *name && skill.core)
+            );
+            assert!(index.global_skills.iter().any(|skill| {
+                skill.name == "user-skill" && skill.description == "Newer user edit"
+            }));
         });
     }
 

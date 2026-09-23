@@ -29,7 +29,7 @@ fn classify_project_probe_status(status: reqwest::StatusCode) -> Result<(), McpT
     }
 }
 
-async fn probe_project(key: Option<&str>) -> Result<serde_json::Value, McpToolError> {
+async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value, McpToolError> {
     connection_status(key)?;
     let key = key.ok_or_else(|| McpToolError::permission_denied("REDUCT_API_KEY is missing"))?;
     let header = reqwest::header::HeaderValue::from_str(key).map_err(|_| {
@@ -37,12 +37,12 @@ async fn probe_project(key: Option<&str>) -> Result<serde_json::Value, McpToolEr
     })?;
     let client = reqwest::Client::builder()
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect_policy(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|_| McpToolError::internal("Could not initialize Reduct HTTP client"))?;
     let response = client
-        .get(PROJECT_PROBE_URL)
+        .get(url)
         .header("x-auth-key", header)
         .send()
         .await
@@ -96,7 +96,7 @@ impl MediaServer {
     )]
     pub async fn reduct_connection_probe(&self) -> Result<String, McpToolError> {
         execute_tool(self, "reduct_connection_probe", async {
-            probe_project(self.reduct_api_key.as_deref()).await
+            probe_project(self.reduct_api_key.as_deref(), PROJECT_PROBE_URL).await
         })
         .await
     }
@@ -116,10 +116,187 @@ mod tests {
 
     #[tokio::test]
     async fn project_probe_missing_key_never_dispatches_network_request() {
-        let error = probe_project(None)
+        let error = probe_project(None, PROJECT_PROBE_URL)
             .await
             .expect_err("missing key must fail locally");
         assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+    }
+
+    // Explicitly opt in from the operator's workstation after configuring
+    // Settings → Kask → Data Services. Never prints the key or project body.
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_project_probe_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 to authorize this read-only probe".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let status = probe_project(Some(key.as_str()), PROJECT_PROBE_URL).await?;
+        assert_eq!(status["provider_connection"], "project_read_succeeded");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_project_response_shape_with_stored_key() -> Result<(), Box<dyn std::error::Error>>
+    {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let header = reqwest::header::HeaderValue::from_str(key.as_str())
+            .map_err(|_| std::io::Error::other("invalid key header"))?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect_policy(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+        let response = client
+            .get(PROJECT_PROBE_URL)
+            .header("x-auth-key", header)
+            .send()
+            .await?;
+        let status = response.status();
+        if status != reqwest::StatusCode::OK {
+            return Err(format!("Reduct project read returned HTTP {status}").into());
+        }
+        let body = response.bytes().await?;
+        if body.len() > 1024 * 1024 {
+            return Err("Project response exceeds the one-MiB inspection cap".into());
+        }
+        let value: serde_json::Value = serde_json::from_slice(&body)?;
+        let (shape, count, first_has_id, first_has_name) = match &value {
+            serde_json::Value::Array(items) => (
+                "array",
+                items.len(),
+                items.first().and_then(|item| item.get("id")).is_some(),
+                items.first().and_then(|item| item.get("name")).is_some(),
+            ),
+            serde_json::Value::Object(fields) => (
+                "object",
+                fields.len(),
+                fields.get("id").is_some(),
+                fields.get("name").is_some(),
+            ),
+            _ => ("other", 0, false, false),
+        };
+        // Counts and field-presence only: never project names, IDs, or content.
+        eprintln!(
+            "Reduct project response shape={shape}; count={count}; first_has_id={first_has_id}; first_has_name={first_has_name}"
+        );
+        for field in ["projects", "project", "data", "results", "items", "status"] {
+            if let Some(value) = value.get(field) {
+                let kind = if value.is_array() {
+                    "array"
+                } else if value.is_object() {
+                    "object"
+                } else {
+                    "scalar"
+                };
+                let count = value
+                    .as_array()
+                    .map(Vec::len)
+                    .or_else(|| value.as_object().map(serde_json::Map::len))
+                    .unwrap_or(0);
+                let has_id = value
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|item| item.get("id"))
+                    .is_some();
+                let has_named_fields = ["id", "name", "description", "recordings", "items"]
+                    .into_iter()
+                    .filter(|candidate| value.get(*candidate).is_some())
+                    .count();
+                eprintln!(
+                    "Reduct response field={field}; type={kind}; count={count}; first_has_id={has_id}; known_fields={has_named_fields}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
+    async fn live_api_reference_access_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
+        }
+        let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
+        let header = reqwest::header::HeaderValue::from_str(key.as_str())
+            .map_err(|_| std::io::Error::other("invalid key header"))?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect_policy(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+        let response = client
+            .get("https://app.reduct.video/backstage/api/")
+            .header("x-auth-key", header)
+            .send()
+            .await?;
+        let status = response.status();
+        let is_login_page = if status.is_success() {
+            response.text().await?.contains("Log in to Reduct")
+        } else {
+            false
+        };
+        // Do not print the response body or any account identifiers.
+        eprintln!("Reduct API reference: HTTP {status}; login_page={is_login_page}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn project_probe_sends_key_only_in_header_and_discards_private_body()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        listener.set_nonblocking(true)?;
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut bytes = [0_u8; 4096];
+            let count = stream.read(&mut bytes)?;
+            let request = String::from_utf8_lossy(&bytes[..count]).to_string();
+            let body = r#"{"private_project":"do-not-return"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+            Ok(request)
+        });
+        let status = probe_project(
+            Some("fixture-secret-do-not-echo"),
+            &format!("http://{address}/api/v3/project"),
+        )
+        .await?;
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("probe test server thread panicked"))??;
+        assert!(request.starts_with("GET /api/v3/project HTTP/1.1"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-secret-do-not-echo")
+        );
+        assert!(!status.to_string().contains("fixture-secret-do-not-echo"));
+        assert!(!status.to_string().contains("do-not-return"));
+        assert_eq!(status["provider_connection"], "project_read_succeeded");
+        assert_eq!(status["cloud_operations"], "not_yet_available");
+        Ok(())
     }
 
     #[test]

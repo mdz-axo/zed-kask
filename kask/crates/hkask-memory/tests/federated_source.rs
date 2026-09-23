@@ -28,6 +28,20 @@ fn sha256_file(path: &std::path::Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn reseal_fixture_identity(identity: &mut serde_json::Value) -> anyhow::Result<()> {
+    let index = identity["indexes"]["reference"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing reference digest"))?;
+    let representations = identity["representations_manifest_sha256"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing representation digest"))?;
+    let canonical = format!(
+        "{{\"actual_embedding_model\":\"{ACTUAL_MODEL}\",\"indexes\":{{\"reference\":\"{index}\"}},\"representations_manifest_sha256\":\"{representations}\",\"requested_embedding_model\":\"{REQUESTED_MODEL}\",\"schema_version\":3}}\n"
+    );
+    identity["run_id"] = serde_json::json!(format!("{:x}", Sha256::digest(canonical.as_bytes())));
+    Ok(())
+}
+
 fn fixture_vector() -> Vec<f32> {
     let mut vector = vec![0.0; hkask_storage::embedding_dim()];
     vector[0] = 1.0;
@@ -92,17 +106,15 @@ fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     )?;
     let manifest_digest = sha256_file(&representations_path)?;
     let run_identity_path = directory.join("run-identity.json");
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 3,
-            "run_id": "fixture-run-id",
-            "representations_manifest_sha256": manifest_digest,
-            "requested_embedding_model": REQUESTED_MODEL,
-            "actual_embedding_model": ACTUAL_MODEL,
-            "indexes": {"reference": digest}
-        }))?,
-    )?;
+    let mut identity = serde_json::json!({
+        "schema_version": 3,
+        "representations_manifest_sha256": manifest_digest,
+        "requested_embedding_model": REQUESTED_MODEL,
+        "actual_embedding_model": ACTUAL_MODEL,
+        "indexes": {"reference": digest}
+    });
+    reseal_fixture_identity(&mut identity)?;
+    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
     let manifest_path = directory.join("federated-sources.json");
     std::fs::write(
         &manifest_path,
@@ -131,7 +143,14 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     let manifest = FederatedSourcesManifest::load(&manifest_path)?;
     let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
     assert_eq!(source.identity().source_id, SOURCE_ID);
-    assert_eq!(source.identity().run_id, "fixture-run-id");
+    let run_identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("run-identity.json"))?)?;
+    assert_eq!(
+        source.identity().run_id,
+        run_identity["run_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing run ID"))?
+    );
     assert_eq!(source.identity().entity_ref_prefix, ENTITY_PREFIX);
     assert_eq!(source.identity().actual_embedding_model, ACTUAL_MODEL);
     assert_eq!(source.identity().dimensions, hkask_storage::embedding_dim());
@@ -141,7 +160,7 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     assert_eq!(batch.hits.len(), 1);
     assert_eq!(batch.hits[0].text, "grounded fixture passage");
     assert_eq!(batch.hits[0].source_id, SOURCE_ID);
-    assert_eq!(batch.hits[0].run_id, "fixture-run-id");
+    assert_eq!(batch.hits[0].run_id, source.identity().run_id);
     assert_eq!(batch.missing_text, 0);
     assert!(!batch.hits[0].text.contains("parataxis_ratio"));
     drop(source);
@@ -227,6 +246,7 @@ fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()
     let mut run_identity: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
     run_identity["indexes"]["reference"] = serde_json::json!(digest);
+    reseal_fixture_identity(&mut run_identity)?;
     std::fs::write(
         &run_identity_path,
         serde_json::to_vec_pretty(&run_identity)?,
@@ -302,6 +322,7 @@ fn bound_source_rejects_index_digest_mismatch() -> anyhow::Result<()> {
     let mut run_identity: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
     run_identity["indexes"]["reference"] = serde_json::json!("0".repeat(64));
+    reseal_fixture_identity(&mut run_identity)?;
     std::fs::write(
         &run_identity_path,
         serde_json::to_vec_pretty(&run_identity)?,

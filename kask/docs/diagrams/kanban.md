@@ -133,8 +133,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-GOAL-LIFECYCLE
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L45, goal_get L127, goal_judge L176-236, goal_score L249-300, goal_acknowledge_memory L305, goal_persist L349, goal_prune L366); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L145, GoalResolution L163)
+verified_date: 2026-09-23
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create, goal_get, goal_judge, goal_score, goal_acknowledge_memory, transition_goal, goal_prune); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal, GoalVerdict, GoalResolution)
 status: VERIFIED
 -->
 

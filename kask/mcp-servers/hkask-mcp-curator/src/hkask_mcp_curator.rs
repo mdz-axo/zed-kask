@@ -37,7 +37,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
+
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -155,7 +155,7 @@ pub struct CuratorDb {
     db_path: Option<String>,
     passphrase: Option<String>,
     federated_manifest_path: PathBuf,
-    federated_sources: OnceLock<federated::FederatedSourceRegistry>,
+    federated_sources: std::sync::Mutex<Option<Arc<federated::FederatedSourceRegistry>>>,
     /// The decay constant applied to every (re)opened memory store. Resolved
     /// once from env at construction so construction and heals apply the
     /// same operator setting.
@@ -213,7 +213,7 @@ impl CuratorDb {
             db_path: Some(db_path),
             passphrase,
             federated_manifest_path,
-            federated_sources: OnceLock::new(),
+            federated_sources: std::sync::Mutex::new(None),
             memory_life_days,
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled,
@@ -264,7 +264,7 @@ impl CuratorDb {
             db_path: None,
             passphrase: None,
             federated_manifest_path: PathBuf::new(),
-            federated_sources: OnceLock::new(),
+            federated_sources: std::sync::Mutex::new(None),
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled: false,
@@ -283,7 +283,7 @@ impl CuratorDb {
             db_path: None,
             passphrase: Some(passphrase),
             federated_manifest_path: manifest_path,
-            federated_sources: OnceLock::new(),
+            federated_sources: std::sync::Mutex::new(None),
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled: false,
@@ -291,13 +291,22 @@ impl CuratorDb {
         }
     }
 
-    fn federated_sources(&self) -> &federated::FederatedSourceRegistry {
-        self.federated_sources.get_or_init(|| {
-            federated::FederatedSourceRegistry::load(
-                &self.federated_manifest_path,
-                self.passphrase.as_deref(),
-            )
-        })
+    fn federated_sources(&self) -> Arc<federated::FederatedSourceRegistry> {
+        let mut cached = self.federated_sources.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(target: "hkask.mcp.curator", "Federated source cache lock poisoned; revalidating source identities");
+            poisoned.into_inner()
+        });
+        if let Some(registry) = cached.as_ref()
+            && registry.unchanged()
+        {
+            return Arc::clone(registry);
+        }
+        let fresh = Arc::new(federated::FederatedSourceRegistry::load(
+            &self.federated_manifest_path,
+            self.passphrase.as_deref(),
+        ));
+        *cached = Some(Arc::clone(&fresh));
+        fresh
     }
 
     fn db_level_down(stores: &CuratorStores) -> bool {

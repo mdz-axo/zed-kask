@@ -8944,6 +8944,7 @@ dependencies = [
  "base64 0.22.1",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-keystore",
  "hkask-mcp-server",
  "hkask-storage",
  "hkask-types",

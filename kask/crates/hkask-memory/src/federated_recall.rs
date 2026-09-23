@@ -80,6 +80,18 @@ pub enum FederatedRecallError {
         expected: String,
         actual: String,
     },
+    #[error("Source {source_id} run identity mismatch: expected {expected}, recomputed {actual}")]
+    RunIdentityMismatch {
+        source_id: String,
+        expected: String,
+        actual: String,
+    },
+    #[error("Source {source_id} is not sealed: nonempty WAL at {path} ({bytes} bytes)")]
+    UnsealedWal {
+        source_id: String,
+        path: PathBuf,
+        bytes: u64,
+    },
     #[error("Source {source_id} has a non-current database schema: {reason}")]
     SchemaMismatch { source_id: String, reason: String },
     #[error("Source {source_id} embedding identity is incompatible: {reason}")]
@@ -277,6 +289,12 @@ impl ReadOnlyPassageSource {
             });
         }
         validate_required_identity(&spec.id, "run_id", &run_identity.run_id)?;
+        verify_run_id(
+            &spec.id,
+            &spec.run_identity_path,
+            &run_bytes,
+            &run_identity.run_id,
+        )?;
         validate_required_identity(
             &spec.id,
             "requested_embedding_model",
@@ -293,6 +311,7 @@ impl ReadOnlyPassageSource {
                 index_name: spec.index_name.clone(),
             }
         })?;
+        ensure_checkpointed(&spec.id, &spec.database_path)?;
         let actual_digest = sha256_file(&spec.database_path)?;
         if !expected_digest.eq_ignore_ascii_case(&actual_digest) {
             return Err(FederatedRecallError::DigestMismatch {
@@ -372,6 +391,7 @@ impl ReadOnlyPassageSource {
                 spec.id
             ))
         })?;
+        ensure_checkpointed(&spec.id, &database_path)?;
         let database = Database::open_read_only(database_str, passphrase).map_err(|source| {
             FederatedRecallError::Database {
                 source_id: spec.id.clone(),
@@ -531,6 +551,7 @@ impl ReadOnlyPassageSource {
                 "search limit must be positive".to_string(),
             ));
         }
+        ensure_checkpointed(&self.identity.source_id, &self.identity.database_path)?;
         let results = self
             .embeddings
             .search(query_vector, limit)
@@ -645,6 +666,83 @@ fn validate_required_identity(
         )));
     }
     Ok(())
+}
+
+/// The producer hashes `jq -cS .` over the identity without `run_id`.
+/// `preserve_order` is enabled in this workspace, so every nested object must
+/// be sorted explicitly before compact serialization; jq appends one newline.
+fn sorted_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut sorted = serde_json::Map::new();
+            let mut keys: Vec<_> = object.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = object.get(key) {
+                    sorted.insert(key.clone(), sorted_json(value));
+                }
+            }
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(sorted_json).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn verify_run_id(
+    source_id: &str,
+    path: &Path,
+    bytes: &[u8],
+    expected: &str,
+) -> Result<(), FederatedRecallError> {
+    let mut identity: serde_json::Value = parse_artifact("run identity", path, bytes)?;
+    let fields = identity.as_object_mut().ok_or_else(|| {
+        FederatedRecallError::InvalidManifest(format!(
+            "source {source_id} run identity must be a JSON object"
+        ))
+    })?;
+    fields.remove("run_id");
+    let mut canonical = serde_json::to_vec(&sorted_json(&identity)).map_err(|error| {
+        FederatedRecallError::ParseArtifact {
+            artifact: "run identity",
+            path: path.to_path_buf(),
+            source: error,
+        }
+    })?;
+    canonical.push(b'\n');
+    let actual = format!("{:x}", Sha256::digest(&canonical));
+    if !expected.eq_ignore_ascii_case(&actual) {
+        return Err(FederatedRecallError::RunIdentityMismatch {
+            source_id: source_id.to_string(),
+            expected: expected.to_string(),
+            actual,
+        });
+    }
+    Ok(())
+}
+
+fn ensure_checkpointed(source_id: &str, path: &Path) -> Result<(), FederatedRecallError> {
+    let mut wal_path = path.as_os_str().to_os_string();
+    wal_path.push("-wal");
+    let wal_path = PathBuf::from(wal_path);
+    match std::fs::metadata(&wal_path) {
+        Ok(metadata) if metadata.len() > 0 || !metadata.is_file() => {
+            Err(FederatedRecallError::UnsealedWal {
+                source_id: source_id.to_string(),
+                path: wal_path,
+                bytes: metadata.len(),
+            })
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(FederatedRecallError::ReadArtifact {
+            artifact: "source WAL",
+            path: wal_path,
+            source,
+        }),
+    }
 }
 
 fn sha256_file(path: &Path) -> Result<String, FederatedRecallError> {

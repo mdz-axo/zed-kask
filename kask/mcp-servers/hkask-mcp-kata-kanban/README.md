@@ -61,9 +61,7 @@ there is no curator-perspective duplicate.
 ### Kata prompts
 | Tool | Description |
 |------|-------------|
-| `kanban_task_kata_coaching` | Generate a Coaching Kata prompt (5-question dialogue) for a task |
-| `kanban_task_kata_improvement` | Generate an Improvement Kata prompt (PDCA cycle) for a task |
-| `kanban_task_kata_practice` | Generate a Starter Kata observation drill prompt for a task sub-problem |
+| `kanban_task_kata_prompt` | Generate a task-scoped prompt; `stage` selects `coaching`, `improvement`, or `practice` (`sub_problem` required for `practice`) |
 
 ### Agent spawning
 | Tool | Description |

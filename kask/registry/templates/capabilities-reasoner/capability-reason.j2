@@ -11,6 +11,13 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
 {# Phase 4 — REASON (ACT: determine interventions) #}
 {# hKask v0.39.0 — Capabilities Reasoner #}
 {#
@@ -40,12 +47,6 @@ visibility: Public
   you cannot widen an existing token; you must mint a new one with a
   recorded warrant.
 #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a capabilities reasoner. Determine interventions for each evaluation result.
 

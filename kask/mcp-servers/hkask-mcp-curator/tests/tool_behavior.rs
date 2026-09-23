@@ -2127,6 +2127,14 @@ fn federated_fixture_sha256(path: &std::path::Path) -> Result<String, Box<dyn st
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn federated_fixture_run_id(index_digest: &str, representations_digest: &str) -> String {
+    use sha2::Digest as _;
+    let canonical = format!(
+        "{{\"actual_embedding_model\":\"test-embedding-model\",\"indexes\":{{\"reference\":\"{index_digest}\"}},\"representations_manifest_sha256\":\"{representations_digest}\",\"requested_embedding_model\":\"test-embedding-model\",\"schema_version\":3}}\n"
+    );
+    format!("{:x}", sha2::Sha256::digest(canonical.as_bytes()))
+}
+
 fn federated_source_fixture(
     directory: &std::path::Path,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
@@ -2190,7 +2198,7 @@ fn federated_source_fixture(
         &run_identity_path,
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 3,
-            "run_id": "fixture-run",
+            "run_id": federated_fixture_run_id(&digest, &manifest_digest),
             "representations_manifest_sha256": manifest_digest,
             "requested_embedding_model": "test-embedding-model",
             "actual_embedding_model": "test-embedding-model",
@@ -2271,7 +2279,9 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
     assert_eq!(response["results"][0]["text"], "curator experience");
     assert_eq!(response["results"][1]["source_kind"], "corpus");
     assert_eq!(response["results"][1]["text"], "external corpus evidence");
-    assert_eq!(response["results"][1]["run_id"], "fixture-run");
+    let identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("run-identity.json"))?)?;
+    assert_eq!(response["results"][1]["run_id"], identity["run_id"]);
     assert_eq!(response["sources"][0]["state"], "ready");
     assert_eq!(response["sources"][1]["state"], "ready");
     assert!(!response.to_string().contains("parataxis_ratio"));
