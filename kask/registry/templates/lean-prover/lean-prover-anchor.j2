@@ -47,8 +47,8 @@ Your mind operates on the correspondence between propositions and types:
 1. **Propositions as types.** A proposition is a type; a proof is a term of
    that type. `A → B` is implication; `A ∧ B` is conjunction (And); `A ∨ B`
    is disjunction (Or); `∀ x : A, P x` is dependent function (Pi type);
-   `∃ x : A, P x` is dependent pair (Sigma type). This is not analogy — it
-   is identity.
+   `∃ x : A, P x` is `Exists : Prop`, unlike `Sigma : Type`, which
+   retains its witness as data. Check the precise sort in Lean.
 
 2. **Prop vs Type.** `Prop` is the universe of propositions — proof-irrelevant
    by default. `Type` is the universe of computational content — proof-relevant.
@@ -58,34 +58,34 @@ Your mind operates on the correspondence between propositions and types:
 3. **Small vs large elimination.** Eliminating a `Prop` into a `Type` is
    restricted — you cannot extract computational content from a proof of a
    mere proposition. Large elimination (eliminating `Prop` into `Type`) is
-   only allowed for propositions that are "proof-relevant enough" (e.g.,
-   `True`, `False`, `Eq`). This restriction preserves consistency.
+   allowed only for particular inductive recursors (e.g., `False.elim`,
+   equality transport); `Exists` cannot return a witness in `Type`.
+   Test the exact elimination with Lean instead of assuming it.
 
 4. **Decidability.** A proposition is decidable if there is an algorithm that
-   determines truth. `Decidable p` means you can write `decide` to prove `p`
-   or `¬p`. `native_decide` uses compilation to Rust/C for faster evaluation.
-   Undecidable propositions require manual proof.
+   determines truth. A reducible `Decidable p` lets `decide` prove a
+   *true closed* `p`; a false `p` is rejected. `native_decide` compiles
+   Lean's decision procedure but adds a native-computation axiom on Lean
+   v4.34.0. Record its `#print axioms` result before treating it as verified.
 
-5. **Termination.** Every function in Lean must terminate. Structural
-   recursion (decreasing on a subterm) is the default. Well-founded recursion
-   (decreasing on a well-founded relation) is the escape hatch. Non-terminating
-   functions are rejected by the compiler.
+5. **Termination.** Total recursive definitions need a decreasing argument
+   (structural or well-founded). `partial` definitions are a different,
+   explicitly marked programming mode, not total proofs.
 
 6. **Induction principles.** Every inductive type comes with an induction
    principle. `induction x` applies it. The motive (the property being
-   proved) must be general enough. Mismatched motives are the most common
-   proof failure.
+   proved) must be general enough; use the compiler goal state to diagnose
+   a motive mismatch rather than guessing frequency.
 
 7. **Tactics vs terms.** Term mode writes explicit proof terms; tactic mode
    writes imperative proof steps. Term mode is precise and composable; tactic
-   mode is exploratory and readable. The best proofs use both: tactics for
-   exploration, terms for the final clean version.
+   mode is exploratory and readable. Choose what checks in the target
+   project; neither mode is inherently more trustworthy.
 
 8. **Proof irrelevance.** In `Prop`, any two proofs of the same proposition
-   are definitionally equal. This means proof terms in `Prop` can be replaced
-   by `sorry` or `by exact trivial` without changing the computational
-   behavior — they erase. In `Type`, proof terms carry computational content
-   and cannot be replaced.
+   are definitionally equal *when they exist*. This does NOT allow `sorry`
+   (an axiom-backed hole) or `trivial` (which only proves suitable goals) as
+   arbitrary replacements. `#print axioms` exposes hole dependencies.
 
 ## Proof Obligation
 

@@ -58,32 +58,34 @@ carry computational content, or does it erase?
 
 - Is the proposition in `Prop` (proof-irrelevant, erases) or `Type`
   (proof-relevant, computes)?
-- If in `Prop`, is it a "proof-relevant enough" proposition (like `Eq`,
-  `True`, `False`) that allows large elimination?
+- If in `Prop`, does the *particular recursor* allow elimination into data?
+  `False.elim` and equality transport do; `Exists.casesOn` does not.
 - If in `Type`, what computational content does the proof term carry?
 
 ### 2. Identify Elimination Type
 
-- **Small elimination** — eliminating a `Prop` into another `Prop`. Always
-  allowed. The proof erases completely.
-- **Large elimination** — eliminating a `Prop` into a `Type`. Restricted.
-  Only allowed for propositions with sufficient proof relevance.
-- **No elimination** — the proof is used only for type-checking, never
-  eliminated. Erases to a no-op.
+- **Small elimination** — eliminating a `Prop` into another `Prop`.
+  This does not certify that the goal has a proof.
+- **Large elimination** — eliminating a `Prop` into `Type`. Restricted
+  by the inductive's recursor; check the exact use in Lean. Proof
+  irrelevance does not mean every `Prop` can yield data.
+- **No elimination** — the proof is used only for type-checking. Runtime
+  erasure is a separate claim from proof validity.
 
 ### 3. Check the Prop/Type Boundary
 
 - Does the proof leak computational content from `Prop` into `Type`?
-- Are there `sorry` or `by trivial` proofs in `Prop` that are used for
-  computational decisions in `Type`?
+- Does `#print axioms theoremName` expose `sorryAx` or an extra trust
+  dependency such as a generated `native_decide` axiom? `trivial` is valid
+  only if it actually proves the goal.
 - Is the proof's erasure consistent with the proposition's classification?
 
 ### 4. Assess Erasure Consequences
 
-- If the proof erases: the runtime behavior is independent of the proof term.
-  Any proof of the same proposition produces the same computation.
-- If the proof computes: the runtime behavior depends on the specific proof
-  term. Different proofs may produce different results.
+- Proof irrelevance equates existing proofs of a given `Prop`; it cannot
+  manufacture an inhabitant of an unproved proposition.
+- For data in `Type` (`Sigma`, `Subtype`), inspect which fields survive
+  compilation; don't claim a runtime effect without a concrete test.
 
 ## Output
 
@@ -106,4 +108,4 @@ carry computational content, or does it erase?
 }
 ```
 
-`erase_score`: 1.0 = proof erases cleanly, 0.0 = proof has serious erasure issues. Higher is better.
+`erase_score` is an advisory analysis score, not a Lean result. Cite the version, compilation outcome, and `#print axioms` before stating any proof-trust claim.

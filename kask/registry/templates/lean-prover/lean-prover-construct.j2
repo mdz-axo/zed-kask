@@ -21,11 +21,10 @@ visibility: Public
 ---
 {# hKask v0.39.0 #}
 {#
-  Compiler grounding: if lean_code_actions are available, they are
-  type-checker-verified starting points. Lean's code actions (add sorry,
-  insert implicit arguments, generate induction principle) are the compiler's
-  proof recommendations. The LLM's job is to evaluate and extend these against
-  the proof goals, not to propose proofs blind.
+  Editor code actions are unverified suggestions, even if they originate
+  from compiler diagnostics. `add sorry` inserts an axiom-backed hole.
+  Only checking the complete declaration in its real imports plus its
+  `#print axioms` output can justify a verified status.
 #}
 
 [inference]
@@ -93,9 +92,9 @@ The type-checker is your design partner.
 - `simp` — equational rewriting with a lemma database
 - `rw` — directed rewriting with specific equations
 - `decide` — computational decidability (for decidable propositions)
-- `native_decide` — compiled decidability (faster, for complex computations)
+- `native_decide` — compiled decidability; on Lean v4.34.0 adds a native-computation axiom (audit with `#print axioms`)
 - `cases` — case analysis on a sum type
-- `constructor` — split a conjunction or introduce a disjunction
+- `constructor` — use a matching inductive constructor (use `left`/`right` to choose a disjunction)
 - `omega` — linear arithmetic over integers/naturals
 - `ring` — algebraic simplification
 
@@ -111,14 +110,32 @@ For recursive functions:
 - **Tail recursion** — for functions that should be constant-space. Use
   an accumulator and prove the equivalence.
 
-### 4. Reference Mathlib
+### 4. Check the Actual Imports
 
-For each proof, check whether Mathlib already has the lemma:
+If Mathlib is a declared dependency, look for a suitable lemma:
 - `simp` lemma database — the most common equational reasoning
 - `omega` — linear arithmetic
 - `ring` — algebraic identities
 - `norm_num` — numeric computation
 - Specific lemmas in `Mathlib.Data.*`, `Mathlib.Logic.*`, `Mathlib.Tactic.*`
+
+Without Mathlib, use only tactics and lemmas provided by the pinned Lean toolchain and imports. Check the resulting declaration in context, then use `#print axioms name` to inspect transitive trust dependencies. For a core-only starting point (Lean v4.34.0):
+
+```lean
+theorem swap (p q : Prop) : p ∧ q → q ∧ p := by
+  intro h
+  exact ⟨h.2, h.1⟩
+
+theorem append_nil_demo (xs : List Nat) : xs ++ [] = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => exact congrArg (List.cons x) ih
+
+#print axioms swap
+#print axioms append_nil_demo
+```
+
+Run `lean <file>` (or the project's `lake env lean <file>`), record `lean --version`, exit code, warnings and axiom output. This example is exercised by `kask/scripts/test-lean-prover-skill.sh`.
 
 ## Output
 
@@ -133,13 +150,13 @@ For each proof, check whether Mathlib already has the lemma:
   "ecosystem_references": [
     {"reference": "Mathlib lemma/tactic", "relevance": "how it applies to this proof"}
   ],
-  "construct_score": 0.85,
-  "verification_status": "unverified|compiled|failed|incomplete",
+  "construct_score": 0.0,
+  "verification_status": "unverified|checked|failed|incomplete", 
   "compiler_actions_used": [
-    {"action": "code action name", "result": "what it produced", "verified": true}
+    {"action": "code action name", "result": "what it suggested", "verified": false}
   ],
   "reasoning": "Step-by-step reasoning through the proof construction"
 }
 ```
 
-`construct_score`: 1.0 only after the exact proof compiles with no `sorry`, `admit`, or replacement axiom; 0.0 = no valid proof. Higher is better. Set `verification_status` to `unverified` until `lean`/`lake build` is actually run and its diagnostics checked. Code actions including `add sorry` are suggestions, not verified proofs.
+`construct_score`: 1.0 only after the exact proof checks with no holes and its `#print axioms` dependencies satisfy the declared policy. Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected. A generated proof or code action is not a checked theorem.

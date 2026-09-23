@@ -3,7 +3,7 @@ contract:
   input:
     enhanced_prompt:
       type: string
-      description: The Phase 3 rewritten prompt to deliver
+      description: The rewritten prompt to deliver
     prompt_type:
       type: string
     effort_tier:
@@ -65,7 +65,7 @@ visibility: Public
 
 {# ── Build the change log sections deterministically ── #}
 
-{# Summary line #}
+{# Summary line: only report state produced by the active stages. #}
 {%- set summary_line -%}
 type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }}
 {%- endset -%}

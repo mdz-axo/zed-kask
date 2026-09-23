@@ -21,9 +21,9 @@ Three independently discovered principles converge on the same pattern:
 | **Implementation** | Carneiro's "The Type Theory of Lean" | Prop/Type distinction; proof irrelevance; erasure |
 
 The convergent pattern: **a proof is a program that inhabits a type, and the
-type-checker is the oracle that verifies the proof.** This makes Lean proofs
-the strongest form of falsification — a proof that compiles is a proof that
-holds, not a proof that might hold.
+type-checker is the oracle that verifies the proof.** A checked proof establishes its *exact stated proposition relative to its
+assumptions and axioms*. A successful `lean` exit alone is insufficient:
+`sorry` is accepted with a warning, and `native_decide` adds an axiom.
 
 ## When to Use
 
@@ -34,10 +34,6 @@ holds, not a proof that might hold.
 - Determining whether a proposition is decidable
 - Auditing the Prop/Type boundary in a Lean development
 
-Do NOT use for:
-- Informal mathematical reasoning (use hypothesis-framer or sequential-inquiry)
-- Statistical hypothesis testing (use falsifiability)
-- Performance benchmarking (use HELM directly)
 
 ## Relationship to falsifiability
 
@@ -58,8 +54,8 @@ when you need mathematical verification.
 ```
 Plan:  Phase 1 — Anchor    → Classify the proposition (Prop/Type, decidability, structure)
 Do:    Phase 2 — Construct → Build the proof via tactics and term mode
-Check: Phase 3 — Refute    → Search for counterexamples and failed proof paths
-Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
+Check: Phase 3 — Refute    → Compile the exact declaration, audit axioms, run negative controls
+Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or report blocked
 ```
 
 ## When NOT to Use
@@ -72,35 +68,27 @@ Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 
 ### lean-prover-anchor
 
-1. Classify the proposition: is it in `Prop` or `Type`? What is its logical structure?
-2. Determine decidability: is there a `Decidable` instance? Can `decide` or `native_decide` be used?
-3. Identify the proof structure: direct, contrapositive, contradiction, induction?
-4. Determine the proof method: term mode, tactic mode, or hybrid?
-5. Assess termination strategy if recursive functions are involved.
-6. Check Lean diagnostics for type errors and termination issues.
+1. Read the *exact* declaration, imports, hypotheses, and toolchain pin (`lean --version`, and `lean-toolchain`/`lakefile` if present). Render `lean-prover/lean-prover-anchor` with the obligation, context, and actual diagnostics; do not label absent diagnostics as clean.
+2. Classify the target (`Prop` or data in `Type`), its connectives, whether an executable `Decidable` instance exists, and whether recursion requires an induction hypothesis or termination argument. `∃ x, P x` is `Exists : Prop`, not `Sigma : Type`.
+3. Choose a term, tactic, or hybrid proof; specify any permitted assumptions and whether extra trust from `native_decide` is acceptable. Prefer `decide` for small closed decidable goals; `native_decide` is not an axiom-free substitute. For library lemmas, search the imports actually available; Mathlib is optional.
 
 ### lean-prover-construct
 
-1. Choose the proof mode (term, tactic, hybrid) based on the anchor.
-2. Apply the appropriate tactics: intro, apply, exact, induction, simp, rw, decide.
-3. Handle termination: structural recursion, well-founded recursion, or tail recursion.
-4. Reference Mathlib for existing lemmas and tactics.
-5. Verify the exact proof obligation with the generated proof in context by running `lean` or `lake build`; check exit status and diagnostics, and inspect the proof for `sorry`/`admit`/new axioms. A generated proof or compiler code action alone is not a verified theorem. If compilation fails, feed the diagnostic into refute and retry at most twice; then report the unsolved goal.
+1. Render `lean-prover/lean-prover-construct` with the anchor and obligation. Write the proof in its real context, retaining the original statement. For implications use `fun`/`intro`; for an existential supply a witness and its proof; for recursive data use `induction` with a named induction hypothesis. Do not introduce new axioms to replace the goal.
+2. Run the project's pinned `lake env lean <file>` / `lake build` when a Lake project exists, otherwise `lean <file>` with a version-identified Lean 4 binary. Preserve the command, version, exit status, and diagnostics. For each named theorem, run `#print axioms theoremName` in the same environment; inspect transitive dependencies, not just the proof text. A code action (especially `add sorry`) is only a suggestion.
+3. A positive result requires exit 0, no proof-hole warnings, no `sorryAx`, and an axiom list consistent with the declared policy. `native_decide` may compile with a generated native-computation axiom; report that dependency, do not call it kernel-only verification. A missing Lean executable or unchecked proof is `unverified`, never `compiled`.
 
 ### lean-prover-refute
 
-1. Search for counterexamples: try specific inputs, use `decide`/`native_decide`.
-2. Identify failed proof paths: tactics that don't apply, induction with wrong motive.
-3. Challenge assumptions about termination, decidability, and erasure.
-4. Test edge cases: empty types, uninhabited Props, universe inconsistencies.
-5. Produce refinement directives for each failure.
+1. Render `lean-prover/lean-prover-refute` with the actual compiler output. For a decidable universal claim, try a specific counterexample as a *separate* `example : ¬ P witness := by decide`; a failed attempt to prove `P witness` is evidence about that instance, not a universal proof of negation. Distinguish false proposition, invalid tactic, missing instance, and missing import.
+2. Run a negative control expected to fail (`example : 1 = 2 := by decide`) and inspect the error, not just its exit status. In a Prop/Type question also test `Exists` elimination into data. See `kask/scripts/test-lean-prover-skill.sh` for runnable controls; give it a Lean binary path.
+3. Call `lisp_eval` only for deterministic *workflow bookkeeping*, e.g. `form: (and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`, `env: {"obligations":["base","step"],"checks":["verified","verified"]}`. This checks counts and statuses supplied by the agent, not Lean syntax, semantics, axioms, or proof validity. Always retain the corresponding Lean logs. On failure, revise from the diagnostic and rerun at most twice; otherwise report the unsolved obligation.
 
 ### lean-prover-erase
 
-1. Classify the proof's universe (Prop vs Type).
-2. Identify the elimination type (small, large, none).
-3. Check the Prop/Type boundary for violations.
-4. Assess erasure consequences: does the proof compute or erase?
+1. Render `lean-prover/lean-prover-erase` only when a Prop/Type, elimination, or runtime-computation claim matters. `Exists` cannot expose its witness as `Nat` by pattern matching; `Sigma`/`Subtype` retain data. Some `Prop` eliminators (e.g. `False`, `Eq`) support elimination into `Type`; verify each particular recursor by checking a Lean example rather than guessing from the universe.
+2. Proof irrelevance is **not** permission to replace a proof by `sorry` or `trivial`. Audit the exact theorem's `#print axioms` output, then report the checked statement, assumed axioms, and whether any erasure claim was actually tested.
+3. Converge only when all chosen positive declarations check, expected negatives fail for the intended reason, axiom policy holds, and no outcome remains unverified. Re-enter anchor on a changed statement/assumption, construct on a proof error, or stop after two corrections with the remaining gap.
 
 ## Registry Templates
 
@@ -116,8 +104,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 ## Constraints
 
 - All templates are prompt templates with `Public` visibility.
-- The Lean type-checker is the extrinsic oracle — always run `lean` or `lake build` to verify proofs.
-- A proof with `sorry` or `admit`, or a newly assumed axiom replacing the obligation, is not a complete proof — even if Lean exits successfully. Report the exact command and result before claiming verification.
-- The Prop/Type boundary is inviolable: computational content cannot leak from Prop to Type without large elimination.
-- Termination is mandatory: every recursive function must have a termination proof.
+- Source basis: *Theorem Proving in Lean 4* (edition targeting Lean 4.33.0), §§3.1–3.3 (proof terms), §3.6 (`sorry`), §4 (quantifiers), §8 (induction), §12 (axioms); Lean repository tag [`v4.34.0/src/Init/Core.lean`](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Core.lean) (`Exists`, `Sigma`, `Lean.ofReduceBool`) and [`v4.34.0/src/Init/Tactics.lean`](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Tactics.lean) (`decide`, `native_decide`, `sorry`, `induction`). Changes to tactic implementation or trust policy are version-dependent: recheck against the installed toolchain.
+- Only Lean checks Lean propositions; `lisp_eval` is a sandboxed JSON/Lisp invariant checker, not a Lean kernel or proof checker.
+- No `sorry`/`admit`, replacement axiom, or unexamined transitive axiom dependency in a completed proof. Record the exact Lean command and result.
+- Recursive definitions require termination unless explicitly marked partial; partial computations are not silently treated as total proofs.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
