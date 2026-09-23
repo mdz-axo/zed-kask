@@ -88,7 +88,7 @@ fn parse_project_snapshot(body: &[u8], limit: usize) -> Result<serde_json::Value
             )
         })?;
     let mut ordered: Vec<_> = projects.iter().collect();
-    ordered.sort_by(|(left, _), (right, _)| left.cmp(right));
+    ordered.sort_by_key(|(id, _)| *id);
     let selected = ordered
         .into_iter()
         .take(limit)

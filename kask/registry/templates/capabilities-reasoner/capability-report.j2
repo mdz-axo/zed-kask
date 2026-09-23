@@ -82,9 +82,10 @@ Produce a summary:
 - **maintain**: count (no violation and sufficient measurements)
 - **undetermined**: count (missing/incomparable measurements or prerequisites; list the missing evidence, do not call it maintain or a violation)
 - Reconcile counts: `total_capabilities = expand + restrict + block + authorize + maintain + undetermined`. Every capability appears once, with the verdict from its intervention; if the evaluation or intervention is undetermined, report undetermined rather than manufacturing a resolved verdict.
-- **metric_stability_note**: if any verdict is metric-sensitive (would
-  flip under a different metric), flag it here. The convergence check
-  will use this to determine whether to re-elicite.
+- **metric_stability_note**: record observed flips only when a second
+  comparable metric was measured. Otherwise state that stability is pending;
+  do not infer a hypothetical flip or call a single metric stable. Phase 6
+  uses the actual report entries to select the next elicitation.
 
 ## Step 3 — Capability Lessons (feedback loop closure)
 

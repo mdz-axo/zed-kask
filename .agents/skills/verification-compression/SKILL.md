@@ -131,31 +131,26 @@ verification code.
 ### CHECK — Prove graph preservation and run the experiment
 
 8. Call `skill` for `lean-prover`, then call `read_file` for
-   `kask/registry/templates/verification-compression/proof.j2`. Encode the
-   finite preservation claim in Lean: every required signal present before is
-   present after, and every removed artifact's signal set is covered by retained
-   artifacts. Model each `SignalKey` as the complete expectation, falsifier,
-   oracle-kind, failure-class, and provenance-tier tuple; an opaque ordinal is
-   insufficient. Store proof files under `target/verification-compression/<run-id>/`.
-   Before Lean, reconcile the ONE observed inventory graph to the candidate,
-   mapping, and Lean input mechanically. Project each row to the five ordered
-   fields (expectation_id, falsifier_id, oracle_kind, failure_class,
-   provenance_tier), rejecting empty fields and duplicate (artifact, key) rows.
-   Required keys must be exactly the distinct baseline projection, not a
-   hand-selected subset. Candidate signal rows must be exactly the baseline
-   rows for retained artifacts. Every removed (artifact, key) row must map
-   exactly once to an actually retained row with the identical key; reject
-   extra mapping rows and uncovered keys. Use `lisp_eval` over the raw graph
-   rows (not summary counters) to check both set directions and cardinalities.
-   Serialize the reconciled five-field set in a canonical sorted file; have
-   Lean `#eval` emit its instantiated key set in the same serialization and
-   `cmp` the files. Hash both outputs in the receipt. Run `lean` or `lake build`
-   as the extrinsic oracle, capture version, command, exit code, raw output,
-   and proof-source hash. Compile a negative control with one required key
-   omitted from retained coverage; it MUST fail. Any `sorry`, convenience
-   axiom, unsafe escape, missing toolchain, timeout, unsupported proposition,
-   mismatch, failed negative control, or compile error is `proof_unavailable`;
-   no reduction may proceed. Lean alone cannot establish empirical quality.
+   `kask/registry/templates/verification-compression/proof.j2`. From the ONE
+   observed inventory and candidate, publish two graph JSON artifacts: the
+   before graph and a candidate graph. Each uses the current schema:
+   `schema_version:1`, `required` (all distinct baseline signal keys),
+   `before` and `after` (artifact_id + full five-field signal), and
+   `removed_mappings` (removed_artifact + retained_artifact + same signal).
+   The candidate graph keeps the same `required` and `before` arrays as the
+   before graph. Do not select a convenient key subset. Run
+   `bash kask/scripts/audit/generate-verification-preservation-proof.sh
+   <candidate-graph.json> <new-proof.lean>`: it rejects incomplete keys,
+   missing mappings, and lost signals and deterministically emits the only
+   admissible Lean instance. Never hand-author or edit the resulting proof.
+   Run `lean <new-proof.lean>` (or the configured Lean binary) and preserve
+   exit code, stdout/stderr, version, graph hash, and proof hash. Run
+   `bash kask/scripts/test-generate-verification-preservation-proof.sh
+   <lean-binary>` to check both the valid graph and a missing-signal proof
+   fail case. Any `sorry`, missing toolchain, timeout, graph rejection,
+   failed negative control, or compile error is `proof_unavailable`, never a
+   passed reduction. Lean proves only finite declared coverage; empirical
+   oracle quality remains a separate gate.
 9. Call `skill` for `kata-improvement` and execute one bounded experiment.
    Hold the contract, oracle inputs, toolchain, environment, cache state, harmful
    cases, and allowed-change control fixed. `analyze` requires identical source

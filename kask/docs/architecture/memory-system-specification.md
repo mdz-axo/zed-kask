@@ -106,9 +106,13 @@ narrative generation loop.
    identity-bound sealed corpus databases, and rank-interleaves the already-ranked
    source batches. Every hit carries source and record provenance; every source
    reports `ready`, `unconfigured`, `invalid`, `incompatible`, or `unavailable`.
-   External stores open through SQLite `mode=ro&immutable=1` and cannot be
-   migrated, repaired, touched, linked, or written (`hkask-memory/federated_recall.rs`;
-   `hkask-mcp-curator/federated.rs`).
+   Source admission requires the current producer's schema-3 run identity,
+   re-derived run ID, schema-2 representation manifest, and matching database
+   digest. A nonempty WAL is incompatible with sealed `mode=ro&immutable=1`
+   reads. Source file metadata is checked on each search, with full re-admission
+   when it changes; an in-flight change excludes external hits. External stores
+   cannot be migrated, repaired, touched, linked, or written
+   (`hkask-memory/federated_recall.rs`; `hkask-mcp-curator/federated.rs`).
 
 ### What it does NOT do
 

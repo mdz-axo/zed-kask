@@ -183,30 +183,26 @@ below — probes measure retrieval above a floor, never self-report.
    categorical verdicts for the same capability, definition, and target system;
    never compare raw scores across incompatible metric units. If no second
    measurement exists, mark metric stability `pending` rather than `1.0`.
-2. Count `registry_total` and `measured` capabilities from the current report,
-   and `comparable` and `stable` capabilities with two comparable, measured
-   categorical verdicts. Call `lisp_eval` with
-   `(if (= comparable 0) (quote pending) (/ stable comparable))`
-   and env `{ "comparable": <count>, "stable": <count> }` for
-   `verdict_stability_metric`. Call `lisp_eval` with
-   `(if (= registry_total 0) (quote pending) (/ measured registry_total))`
-   and env `{ "registry_total": <count>, "measured": <count> }` for
-   `registry_coverage_estimate`. Before either call, check
-   `0 <= stable <= comparable <= registry_total` and
-   `0 <= measured <= registry_total`; invalid counts halt with the observed
-   defect rather than produce a verdict.
-3. Only if both ratios are measured **and** `comparable = registry_total`, call
-   `lisp_eval` with
-   `(/ (+ (- 1 verdict_stability_metric) (- 1 registry_coverage_estimate)) 2)`
-   and env containing those two measured ratios. This is the `improvement_gap`;
-   emit `metric_stability_verdict: stable` and converge when it is <= 0.25.
-   If no second metric or any comparable verdict is missing, emit
-   `metric_stability_verdict: pending` and do not converge; identify the missing
-   measurement in `next_registry_focus`. If comparable verdicts flip or the
-   measured gap exceeds 0.25, emit `metric_stability_verdict: unstable` and
-   identify the specific capability or metric choice in `next_registry_focus`.
+2. Count `registry_total` and `measured` capabilities from the report,
+   and `comparable` and `stable` capabilities with two measured, comparable
+   categorical verdicts. Check the count invariant with `lisp_eval`:
+   `(and (>= stable 0) (>= comparable stable) (>= measured comparable) (>= registry_total measured))`
+   using those four counts in the env. If false, halt with the count defect.
+3. Compute the fraction missing a demonstrated stable verdict via `lisp_eval`:
+   `(if (= registry_total 0) (quote pending) (/ (- registry_total stable) registry_total))`
+   with env `{ "registry_total": <count>, "stable": <count> }`. This is the
+   `improvement_gap`, not an estimate of performance. If `registry_total` is
+   zero or `comparable < registry_total`, emit `metric_stability_verdict: pending`
+   and identify the missing measurements in `next_registry_focus`. If every
+   capability is comparable but any verdict flips, emit
+   `metric_stability_verdict: unstable` and identify its capability and metric.
+   Only when `stable = comparable = registry_total > 0` emit
+   `metric_stability_verdict: stable` and converge. Never compensate for an
+   unstable verdict with coverage elsewhere.
 4. Return `{metric_stability_verdict, improvement_gap, next_registry_focus}`
-   with `improvement_gap: null` while pending. Feed this result together with
+   with `improvement_gap: null` only when `registry_total` is zero; otherwise
+   the gap counts missing comparable evidence without calling it stability.
+   Feed this result together with
    `capability_lessons` and `verdict_signatures` from the report as the next
    iteration's `prior_iteration` in `capability-register`. Stop after three
    iterations; on the last iteration, report the remaining gap or pending
@@ -215,13 +211,13 @@ below — probes measure retrieval above a floor, never self-report.
 
 ## Improvement Measure
 
-**Signal:** measured `improvement_gap` from Phase 6. **Threshold:** <= 0.25.
-**Bound:** at most three iterations. The two sub-metrics carry equal weight:
-verdict stability across two comparable metric choices, and registry coverage
-by elicited measurements. The first iteration without a second metric is
-pending, never perfect stability. Report emits `capability_lessons` and
-`verdict_signatures`; convergence supplies `next_registry_focus` for the next
-Register phase.
+**Signal:** `improvement_gap`, the fraction of registry capabilities without
+an observed stable categorical verdict under two comparable metrics.
+**Threshold:** zero missing or unstable verdicts. **Bound:** at most three
+iterations; stop with `pending` or `unstable` if the threshold is not met.
+A first iteration without a second metric is pending, never perfect stability.
+Report emits `capability_lessons` and `verdict_signatures`; convergence supplies
+`next_registry_focus` for the next Register phase.
 
 ## Composed Skills
 

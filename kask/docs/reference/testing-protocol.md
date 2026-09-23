@@ -214,17 +214,25 @@ The process composes five existing methods in a fixed bounded loop:
 
 Signal preservation is non-compensable. A candidate is rejected or reverted
 when any required expectation, falsifier, oracle kind, failure class, or
-provenance tier is lost; when a harmful case escapes; when the allowed-change
-control fails; or when raw before/after toolchain, environment, source, or
-oracle identities differ, even if the candidate is much faster. Acceptance
-uses deterministic comparisons of those raw fields and at least two samples
-per selected timing state, never a model-supplied context-equality flag. Lean models the complete five-field signal key,
-not an opaque ID, and proves only the declared finite graph relation under
-propositions-as-types[^lean-proofs]; it does not establish
+provenance tier is lost; when a harmful case escapes; or when the allowed-change
+control fails. Toolchain, environment, contract and oracle identities remain
+fixed. In `analyze` mode the source remains fixed; in `execute` mode source
+changes are allowed only when before/after snapshots and the exact approved
+candidate diff reconcile under the externally pinned receipt. At least two
+positive samples are required per selected timing state. No model-supplied
+context-equality flag is authority. The generator at
+`kask/scripts/audit/generate-verification-preservation-proof.sh` derives a
+complete five-field Lean instance from the candidate graph and rejects missing
+or unmapped baseline signals. The receipt checker regenerates that proof from
+the pinned graph and compares the bytes before admitting it. Lean proves only
+the declared finite graph relation under propositions-as-types[^lean-proofs];
+it does not establish
 runtime oracle quality, fault realism, I/O behavior, or performance. Those
 remain empirical obligations under fixed harmful cases and allowed-change
 controls. A Lean source containing `sorry`, an unavailable toolchain, timeout,
-unsupported proposition, or compile error is not proof.
+unsupported proposition, or compile error is not proof. The input graph remains
+an expectation claim requiring independent contract review; mechanical set
+reconciliation alone cannot discover an expectation the operator never named.
 
 Graph compression distinguishes (1) verification-workflow artifact nodes and
 `invokes` / `depends_on` / `verifies` / `detects` / `duplicates` edges from

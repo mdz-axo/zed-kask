@@ -58,20 +58,28 @@ Federated retrieval is configured by the presence of
 `$HKASK_DATA_DIR/agents/curator/federated-sources.json`; there is no separate
 enable toggle. The current schema is version 1. Each source names an ID,
 display name, database path, sealed `run-identity.json`, representation
-manifest, and index name. The server derives and verifies the run ID, database
-SHA-256, exact requested/actual embedding identities, dimensions, passage
-prefix, current database schema, and passage count. Legacy manifests, schemas,
-model aliases, and database shapes are rejected rather than migrated or
-adapted.
+manifest, and index name. The source run identity must be current schema 3,
+and its representation manifest current schema 2. The server re-computes the
+producer's sorted-JSON SHA-256 run ID and verifies the representation manifest
+and database digests, exact embedding identities, dimensions, passage prefix,
+current database schema, and passage count. Legacy manifests, schemas, model
+aliases, and database shapes are rejected rather than migrated or adapted.
 
-Configured external stores open through SQLite `mode=ro&immutable=1`; the
-federated path creates no maintenance lock, inventory entry, WAL/SHM sidecar,
-schema, migration, recall touch, co-occurrence link, or corpus write. Corpus
-results project only `embeddings.passage_text`, never h_mems such as
+Configured external stores open through SQLite `mode=ro&immutable=1` only
+after confirming the `-wal` sidecar is absent or empty; a nonempty WAL makes the
+source incompatible rather than serving a potentially stale main-file image.
+The federated path creates no maintenance lock, inventory entry, WAL/SHM
+sidecar, schema, migration, recall touch, co-occurrence link, or corpus write.
+Corpus results project only `embeddings.passage_text`, never h_mems such as
 `method_signals`. `curator_federated_search` rank-interleaves already-ranked
 source batches and exposes `ready`, `unconfigured`, `invalid`, `incompatible`,
-or `unavailable` status per source. Phase 1 is explicit search only: no
-automatic prompt injection and no automatic lesson promotion.
+or `unavailable` status per source. The server rechecks configured source file
+identity (path, size, modification time, and Unix inode) on each search;
+changes trigger re-admission and full hash verification. A source that changes
+during retrieval contributes no hits. This freshness check assumes normal
+filesystem metadata changes; it is not a tamper-proof guarantee against a
+writer able to restore metadata or race the check. Phase 1 is explicit search
+only: no automatic prompt injection and no automatic lesson promotion.
 
 ## Dependencies
 

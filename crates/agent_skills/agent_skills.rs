@@ -910,7 +910,27 @@ pub async fn load_authoritative_global_skills(
     } else {
         development_skills_dir()
     };
-    load_global_skills_from_source(fs, global_dir, source.as_deref()).await
+    let loaded = load_global_skills_from_source(fs, global_dir, source.as_deref()).await;
+    let skills = loaded
+        .iter()
+        .filter_map(|result| result.as_ref().ok().cloned())
+        .collect::<Vec<_>>();
+    let verified_core = verify_core_skill_contents(fs.as_ref(), &skills).await;
+    loaded
+        .into_iter()
+        .map(|result| match result {
+            Ok(skill) if skill.core && !verified_core.contains(&skill.name) => {
+                Err(SkillLoadError {
+                    path: skill.skill_file_path,
+                    message: format!(
+                        "unverified core skill '{}': on-disk content does not match the shipped source",
+                        skill.name
+                    ),
+                })
+            }
+            other => other,
+        })
+        .collect()
 }
 
 /// Check the actual loaded core bytes before startup promotes a disk entry over
@@ -1519,6 +1539,12 @@ mod tests {
             .expect("fake core directory");
         let stale_path = stale_dir.join(SKILL_FILE_NAME);
         fake.insert_file(&stale_path, stale.into_bytes()).await;
+        let authoritative =
+            load_authoritative_global_skills(&(fake.clone() as Arc<dyn Fs>), Path::new("/skills"))
+                .await;
+        assert!(authoritative.iter().any(|result| {
+            matches!(result, Err(error) if error.message.contains("unverified core"))
+        }));
         let loaded = load_skills_from_directory(
             &(fake.clone() as Arc<dyn Fs>),
             Path::new("/skills"),
@@ -1651,8 +1677,8 @@ mod tests {
 
     // zed-kask: A skill declaring `core: true` with a non-reserved name must
     // be refused at load time. This closes the backdoor where a hand-edited
-    // skill claims core status to gain sovereignty
-    // (never overwritten on seed) and hidden edit/delete controls.
+    // skill claims core status to bypass ordinary user-skill edit/delete
+    // controls and gain core-only precedence.
     // Project-local skills claiming a core name and status are rejected by
     // `parse_skill_frontmatter`; this pins the unregistered-name side.
     #[test]

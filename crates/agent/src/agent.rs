@@ -6476,6 +6476,48 @@ mod internal_tests {
         });
     }
 
+    // expect: A failed installed core overwrite cannot become an active model skill merely because its old file parses.
+    // [P2] Motivating: the model must not execute a stale file as an authoritative core skill.
+    // pre: disk contains a syntactically valid but noncanonical core body.
+    // post: the active project's skill catalog excludes that core entry.
+    #[gpui::test]
+    async fn stale_installed_core_is_excluded_from_active_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let core_dir = global_skills_dir().join("create-skill");
+        fs.create_dir(&core_dir).await.expect("core dir");
+        fs.insert_file(
+            core_dir.join("SKILL.md"),
+            b"---\nname: create-skill\ndescription: Stale core\ncore: true\n---\nstale body"
+                .to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _session = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, _| {
+            let state = agent.projects.get(&project.entity_id()).expect("project");
+            assert!(
+                state
+                    .skills
+                    .iter()
+                    .all(|skill| skill.name != "create-skill")
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_global_skill_with_long_description_loads_with_warning(cx: &mut TestAppContext) {
         init_test(cx);

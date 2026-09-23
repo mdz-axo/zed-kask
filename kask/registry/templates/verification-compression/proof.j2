@@ -3,13 +3,13 @@
 contract:
   input:
     baseline_graph: object
-    candidate: object
-    signal_mapping: array
-    required_signal_keys: array
-    lean_version: string
+    candidate_graph: object
+    lean_binary: string
   output:
-    proof_obligations: array
-    lean_source: string
+    graph_gate_status: string
+    generated_proof_path: string
+    lean_status: string
+    negative_control_status: string
     proof_scope: object
     empirical_residual: array
 visibility: Public
@@ -21,58 +21,38 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-Construct Lean 4 obligations for this finite verification graph reduction.
+Use the deterministic current graph gate to generate Lean 4 obligations.
 
 Observed baseline graph (the sole source of required keys):
 ```json
 {{ baseline_graph | tojson }}
 ```
-Candidate:
+Candidate graph with retained rows and removed-to-retained mappings:
 ```json
-{{ candidate | tojson }}
+{{ candidate_graph | tojson }}
 ```
-Signal mapping:
-```json
-{{ signal_mapping | tojson }}
-```
-Required complete signal keys:
-```json
-{{ required_signal_keys | tojson }}
-```
-Lean version: {{ lean_version }}
+Lean executable: {{ lean_binary }}
 
-Model `SignalKey` as a finite decidable structure containing expectation ID,
-falsifier ID, oracle kind, failure class, and provenance tier. Do not replace
-the tuple with an opaque ordinal. Prove that every complete required key covered
-by the original graph is covered by the retained graph when every removed key
-maps into retained coverage. Instantiate the theorem for this
-candidate. Do not model or claim test effectiveness, I/O, timing, fault
-realism, or provenance truth; list those as empirical residual obligations.
-Before generating Lean, deterministically project the five fields from EVERY
-baseline `verification_graph.signal_keys` row to `required_signal_keys`;
-reject omissions, additions, duplicates and empty fields. Compare the complete
-candidate signal rows to the declared retained artifacts and the removed→retained
-mapping; every removed baseline (artifact, key) pair must map exactly once to
-an actually retained artifact carrying the identical five-field key. Reject
-extra mapping entries. Encode that same normalized set as the Lean instance,
-and emit a machine-readable serialization of its keys via Lean `#eval`;
-compare its output byte-for-byte to the normalized graph projection before
-accepting the proof. Store both projections and the comparison log in the
-receipt. Compile with `lean` or `lake build` and record command, exit status,
-version and raw output. Compile a negative control omitting one required key
-from the retained instance: it MUST fail (a vacuous theorem is not a pin).
-Use no `sorry`, new axioms, or unsafe proof escape. A compilation or negative-
-control failure is `proof_unavailable`, not a passing proof.
+The candidate graph must retain exactly the baseline `required` and `before`
+arrays. Call `generate-verification-preservation-proof.sh` on the candidate
+JSON artifact to validate complete five-field signals, exact required set,
+retained artifacts, and all removed mappings; it emits the Lean source, not
+the model. The receipt checker regenerates the proof and compares it to the
+supplied file. Run the named Lean binary, capture the output and version,
+and run `test-generate-verification-preservation-proof.sh` with that binary;
+a missing-signal instance must fail. No `sorry`, axioms, or unsafe escape.
+The proof does not establish runtime oracle quality, fault realism, I/O,
+or timing; preserve these empirical checks independently.
 
 Return JSON only:
 ```json
 {
-  "proof_obligations": [
-    {"id":"coverage_preserved", "proposition":"", "decidable":true, "method":"term|tactic|decide"}
-  ],
-  "lean_source":"complete compilable Lean 4 source",
+  "graph_gate_status":"passed|failed",
+  "generated_proof_path":"path returned by deterministic generator",
+  "lean_status":"compiled|failed|unavailable",
+  "negative_control_status":"missing-signal rejected|failed|unavailable",
   "proof_scope": {
-    "proves":["finite required-signal coverage preservation"],
+    "proves":["finite declared five-field signal coverage preservation"],
     "does_not_prove":["runtime oracle quality","fault realism","timing improvement"]
   },
   "empirical_residual": []
