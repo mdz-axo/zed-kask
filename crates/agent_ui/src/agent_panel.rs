@@ -7419,6 +7419,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_active_conversation_notification_persists_panel_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .expect("workspace exists");
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        let changes = || {
+            kvp.select_row::<i64>("SELECT total_changes()")
+                .expect("prepare total_changes query")()
+            .expect("read total_changes")
+            .expect("total_changes returns a row")
+        };
+        let before = changes();
+        let conversation_view = panel
+            .read_with(cx, |panel, _cx| panel.active_conversation_view().cloned())
+            .expect("active conversation exists");
+        conversation_view.update(cx, |_view, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(
+            changes() - before,
+            1,
+            "one active view update needs one panel write"
+        );
+    }
+
+    #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {

@@ -860,6 +860,7 @@ mod tests {
         assert_eq!(imported["media_ids"][0], "m1");
         assert!(parse_recording_create_response(br#"{"recording":{}}"#).is_err());
         assert!(parse_media_import_response(br#"{"media_ids":"m1"}"#).is_err());
+        assert!(parse_media_import_response(br#"{"media_ids":[]}"#).is_err());
         Ok(())
     }
 

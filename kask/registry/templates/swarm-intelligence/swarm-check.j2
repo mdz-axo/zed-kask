@@ -1,4 +1,4 @@
-{# goal: Re-measure the swarm state post-Act. Mode-aware (v2 §15): in `abw` mode, re-fetch workspace + wallet via `swarm_get_swarm`; in `local` mode, re-read the local agent registry + ledger balance. Compute the convergence metric: composite swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target condition is met on all three axes. Emit next_focus (which axis dominates d). #}
+{# goal: Re-measure the swarm state post-Act. Mode-aware (v2 §15): in `abw` mode, re-fetch workspace + wallet via `swarm_get_swarm`; in `local` mode, re-read the local swarm roster and agent registry. Compute the convergence metric: composite swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target condition is met on all three axes. Emit next_focus (which axis dominates d). #}
 [inference]
 contract:
   input:
@@ -83,9 +83,7 @@ recompute the team properties against the post-Act roster.
 ```
 
 {% if mode == "local" %}
-Also call `swarm_balance_local` for the current ledger balance (lightweight,
-not worth a dedicated execute step). If it fails, set
-`wallet_state = { balance: null, source: "local_ledger" }`.
+Use the scoped local swarm roster; there is no local wallet read.
 {% else %}
 Optionally call `swarm_run_status` for recent workspace messages
 (dispatch/reconciliation evidence) — this is a lightweight read not worth
@@ -98,11 +96,9 @@ exactly as in SENSE, against the post-Act roster.
 ### No pre-fetched state — fetch via tool calls
 
 {% if mode == "local" %}
-Re-fetch the local agent registry via `swarm_list_local_agents`, the local
-ledger balance via `swarm_balance_local`, and the local ledger history via
-`swarm_local_history` (funds/debits — the reconciliation record for this
-session's dispatches). Recompute variety_coverage, diversity, alignment,
-cohesion, separation exactly as in SENSE, against the post-Act roster.
+Re-fetch the member roster via `swarm_get_local_swarm` and the agent cards
+via `swarm_list_local_agents`. Recompute variety_coverage, diversity,
+alignment, cohesion and separation against the post-Act roster.
 {% else %}
 Re-fetch the workspace roster and wallet via hkask-mcp-swarm (the agent
 orchestrates these calls), plus `swarm_run_status` for the workspace's
@@ -120,16 +116,12 @@ loop_closure = (successful_delegations / total_delegations)
 ```
 
 where:
-- `total_delegations` = count of emitted_calls from ACT.
-- `successful_delegations` = count of emitted_calls whose `swarm_delegate_local`
-  response returned a result rather than an error. Do NOT anchor this on
-  `PaymentRequired`-for-funds: local delegation has no funding gate, so that
-  error cannot occur for an unfunded ledger.
-
-There is no curator dispatch in local mode (no `curator_involved` field).
-The ledger balance is **not** an algedonic signal in local mode: it records
-accumulated spend (and may be negative), so it never predicts a failure. Zero is
-not a floor and does not mean the next delegation will fail.
+- `total_delegations` = count of delegate entries actually attempted (not
+  composition moves or unexecuted intents).
+- `successful_delegations` = count of those with a returned
+  `LocalDelegateResult`; a tool error is a failed attempt, not a success.
+  If only a plan was emitted and no results were supplied, closure is
+  unmeasured, not zero or one. There is no local credit reconciliation.
 
 Vacuous-truth default: if `total_delegations = 0`, `loop_closure = 1.0`
 (vacuously satisfied).
@@ -193,14 +185,9 @@ convergence_metric = d.
 ## Step 4 — Algedonic override
 
 {% if mode == "local" %}
-Check for algedonic signals that override convergence:
-- Any `PaymentRequired` from `swarm_delegate_local` during the Act. In local
-  mode this means only that `credits_authorized` exceeded the per-dispatch
-  ceiling — a misconfigured request, NOT an exhausted ledger. The remedy is to
-  lower `credits_authorized` or raise `HKASK_ABW_MAX_CREDITS`; do **not**
-  propose `swarm_fund_local`, which gates nothing.
-- A delegation error that is not a ceiling refusal (inference unreachable,
-  agent missing) — the substrate, not the budget.
+Check for local execution errors (for example, missing member or inference
+failure). Surface the failure as an algedonic signal; do not invent a credit
+or wallet error for a local result.
 
 If present, set algedonic_signal = { type, detail } and the loop
 MUST NOT claim convergence regardless of d.

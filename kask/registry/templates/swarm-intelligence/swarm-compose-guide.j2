@@ -69,7 +69,7 @@ When composing a **swarm**, the following fields are defined:
 {% if mode == "abw" %}
   - ABW: hiring agents into the workspace is consent-gated and costs credits (own-agent `/add` = 2 cr flat; third-party `/hire` = 5 cr base + required + optional). A publish preflight must pass before the swarm is live. Names must be strict slugs (`[a-z0-9_]{3,64}`).
 {% else %}
-  - Local: the roster is a list of local agent ids; resolution happens at delegation time. There is no per-hire cost — the local ledger is operator-funded and charges per delegation (1 cr / 1000 tokens, capped at `credits_authorized`). No consent gate.
+  - Local: the roster is a list of local agent ids; scoped delegations share the swarm thread. There is no local credit ledger or consent gate.
 {% endif %}
 {% endif %}
 
@@ -83,7 +83,7 @@ When composing a **swarm**, the following fields are defined:
 - Authoring an agent with no catalogue match: seed the prompt via `swarm_generate_prompt`, optionally enrich the knowledge graph via `swarm_generate_ontology`, then create via `swarm_create_agent`; authoring is followed by a consent-gated `hire` to add the agent to the workspace.
 {% else %}
 **Local (filesystem) mode:**
-- Agents live on the local filesystem under `agents/local/curated/<id>/agent_card.json`; the local ledger is operator-funded (no cloud credits, no consent gate).
+- Agents live on the local filesystem under `agents/local/curated/<id>/agent_card.json`; local delegation has no cloud-credit or consent gate.
 - Agent ids are filesystem-safe slugs (alphanumeric + dash + underscore + dot).
 - Prompts may be memory-seeded (the local registry can inject prior knowledge into the system prompt).
 - Authoring an agent: the process authors the `system_prompt` directly (no ABW generation endpoint); the card is created via `swarm_create_local_agent` and is immediately delegable. There is no `swarm_hire_local` tool (§15.1.1 rejected — the team is emergent from the call pattern).

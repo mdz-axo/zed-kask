@@ -1,4 +1,4 @@
-{# goal: Measure the current swarm state. Mode-aware (v2 §15): in `abw` mode, fetch the ABW workspace roster (agents[], accepts[], produces[], capabilities, dependencies) and the wallet balance/transactions via hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local agent registry via `swarm_list_local_agents` and the local ledger balance. #}
+{# goal: Measure the current swarm state. Mode-aware (v2 §15): in `abw` mode, fetch the ABW workspace roster (agents[], accepts[], produces[], capabilities, dependencies) and the wallet balance/transactions via hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local swarm's member roster and agent cards. #}
 [inference]
 contract:
   input:
@@ -31,7 +31,7 @@ visibility: Public
 {# hKask v0.39.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Measure the current swarm state. The state is sensed against two substrates:
-  (1) the swarm backend's APIs (ABW REST or local registry + ledger, selected
+  (1) the swarm backend's APIs (ABW REST or local swarm roster + registry, selected
   by `mode`), and (2) the Onto4MAT multi-agent teaming ontology (the
   measurable team properties: alignment, cohesion, separation).
 
@@ -52,7 +52,7 @@ You are a swarm-state sensing analyst. Measure the current state of the swarm ag
 
 {# Mode determines which tools to call for state fetching. #}
 {# - abw: swarm_get_swarm (ABW REST) + ABW wallet envelope #}
-{# - local: swarm_list_local_agents (local registry) + local ledger balance #}
+{# - local: swarm_get_local_swarm (member roster) + local agent registry #}
 
 ## Swarm ID
 {{ swarm_id }}
@@ -114,7 +114,7 @@ should be pre-populated):
   The `status` field is the durable task state (Backlog → Ready →
   InProgress → Review → Done); `delegate_result` carries the structured
   `LocalDelegateResult` from the last `kanban_task_spawn` (agent_id,
-  response, model, tokens_used, latency_ms, tool_calls, executed_skills).
+  response, model, tokens_used, latency_ms, tool_calls, task_success?).
   `deterministic_verdict` carries the deterministic
   `TaskSuccessVerdict` (pass, score, detail, provenance) when the model
   stamped one.
@@ -170,10 +170,8 @@ The `fetched_swarm_state` contains the local swarm's member roster
 the execute step also fetched the local agent registry — but only the
 roster is passed here. Use the `members[]` list as the team scope.
 
-Also call `swarm_balance_local` to get the local ledger balance (this is
-a lightweight call not worth a dedicated execute step). If the call fails,
-set `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
-fabricate a zero balance.
+Local mode has no wallet. Set `wallet_state = null`; do not fetch or
+fabricate a local balance.
 {% else %}
 The `fetched_swarm_state` contains the ABW workspace roster (`agents[]`
 each with `{ agent_id, agent_name, agent_type, accepts[], produces[],
@@ -193,7 +191,7 @@ back to fetching via tool calls:
 - `swarm_get_local_swarm` with swarm_id → the swarm's member roster.
 - `swarm_list_local_agents` → the full local agent registry (filter to
   members[]).
-- `swarm_balance_local` → the local ledger balance.
+
 {% else %}
 - `swarm_get_swarm` with swarm_id → workspace roster + wallet envelope.
 {% endif %}
@@ -291,18 +289,9 @@ two per-agent metrics. These complement the Team-level properties (alignment,
 cohesion, separation) with Agent-level fitness, enabling DECIDE to make
 per-agent decisions (route around a depleted agent, reconfigure a stuck one).
 
-- **energy** = `delegate_results[].balance` (the ledger balance after that
-  agent's last delegation). `null` when no prior delegation exists (first
-  iteration or the agent was hired but not yet delegated to).
-  - **ABW mode:** a low or zero balance IS a constraint — cloud credits buy
-    someone else's compute, so DECIDE should route around a depleted agent or
-    have the operator fund the wallet.
-  - **Local mode:** balance is **accounting, not capacity**. Local delegation
-    never refuses for lack of funds, so a zero or negative `energy` means
-    "this much local spend has accumulated", NOT "depleted". Do NOT route
-    around a local agent on balance alone and do NOT propose funding the local
-    ledger as a remedy — treat local `energy` as a cost signal for
-    prioritisation, not a gate.
+- **energy**: local `LocalDelegateResult` has no balance or energy field;
+  set `energy = null` (unmeasured). For ABW, use a verified wallet reading
+  when available; never infer an agent balance from local results.
 - **distanceToGoal** = `delegate_results[].task_success.score` when
   `task_success` is present and `provenance == "deterministic"`. `null` when
   `task_success` is absent (open task, no oracle) or `provenance == "llm_judged"`

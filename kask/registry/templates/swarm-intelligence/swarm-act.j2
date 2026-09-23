@@ -1,4 +1,4 @@
-{# goal: Emit the gated composition change. Mode-aware (v2 §15): in `abw` mode, the gate is the consent token from `swarm_request_consent`; in `local` mode there is NO funding gate and no consent token — the per-dispatch ceiling is the only local bound, and an unfunded or negative ledger does not block a delegation. For each proposed delegate, construct a DispatchIntent { swarm_id, task, estimated_credits, curator_involved (default false), data_shared }. #}
+{# goal: Emit scoped local-swarm calls without credit gates, or consent-gated ABW calls with credit estimates. #}
 [inference]
 contract:
   input:
@@ -16,14 +16,13 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Phase 4 — ACT (DO: gated swarm_delegate / swarm_delegate_local) #}
+{# Phase 4 — ACT (DO: scoped local calls or gated ABW calls) #}
 {# hKask v0.39.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Emit the gated composition change. The gate is mode-dependent:
   - abw: consent token from swarm_request_consent (the v1 gate).
-  - local: per-dispatch ceiling only — no consent token (§15.1.2 rejected) and
-    no funding gate (the ledger records spend, it does not authorize it).
-  No call is emitted without passing the gate.
+  - local: no credit or consent gate; use the local swarm's shared thread.
+  ABW spend calls require consent before they are emitted.
 #}
 
 [inference]
@@ -50,6 +49,10 @@ You are a swarm-dispatch executor. Emit the gated composition changes for the sw
 
 ## Step 1 — Construct a DispatchIntent for each proposed move
 
+{% if mode == "local" %}
+For local moves, record the swarm id, task and proposed tool; no credit
+estimate or curator consent fields apply.
+{% else %}
 For each proposed hire/fire/delegate, construct:
 
 ```json
@@ -65,22 +68,14 @@ For each proposed hire/fire/delegate, construct:
 `curator_involved` defaults to **false** (ABW plan §3.7: Private/opt-in is the
 default). Set to true only if the move explicitly invokes the Xaman Ek
 curator, which requires separate per-dispatch opt-in.
+{% endif %}
 
 ## Step 2 — Route through the gate
 
 {% if mode == "local" %}
-In local mode the only gate is the **per-dispatch ceiling** — no consent token
-(§15.1.2 rejected consent tokens on local tools) and **no funding gate**. Each
-delegate call to `swarm_delegate_local` takes `credits_authorized`, which is
-checked against the per-dispatch ceiling only; `PaymentRequired` is returned
-solely when `credits_authorized` exceeds that ceiling, never for insufficient
-funds. An unfunded or negative ledger does not block a delegation.
-
-Each dispatch intent must produce a gate decision:
-- `Proceed { credits_authorized }` — the operator authorized the spend.
-  The `credits_authorized` is passed directly to `swarm_delegate_local`.
-- `Abort { reason }` — the operator declined. Record the reason; emit no
-  spend for this move.
+Local moves have no credit or consent gate. Check swarm membership and tool
+arguments before emitting calls; if a required agent is absent, record an
+`Abort { reason }` and emit no partial delegation plan.
 {% else %}
 In abw mode, the gate is the consent token minted by `swarm_request_consent`
 (action + target-scoped, single-use). Each dispatch intent must produce a
@@ -100,17 +95,11 @@ point for the .rules "Advertised invariants need enforcement points" trap.
 
 {% if mode == "local" %}
 For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
-- `delegate` → `swarm_delegate_local` with `{ agent_name, task,
-  credits_authorized }`. The agent must exist in the local registry
-  (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
-  workspace is the session (§15.1.9 rejected workspace_id on local tools).
-  No consent token and no funding gate — local agents run on the operator's own
-  substrate, so an unfunded (or negative) ledger does NOT block a local
-  delegation. Do not treat a low local balance as a reason to skip a move.
-  The per-dispatch ceiling is the only local bound.
-  In steering mode, batch all delegate calls into a single
-  `swarm_execute_plan_local` call instead (see Step 5) — the tool runs
-  each delegation, evaluates results, and returns the collected array.
+- `delegate` → in advisory mode, emit `swarm_delegate_in_thread_local`
+  with `{ swarm_id, agent_name, task }`. In steering mode, emit one
+  `swarm_execute_plan_local` plan with `{ swarm_id, delegations:
+  [{ agent_name, task, evaluator?, task_id? }, ...] }` for all delegate moves.
+  Both paths use the local swarm's shared thread; neither takes credits.
 - `remove` → `swarm_remove_local` with `{ agent_name }` (the local
   counterpart of firing — deletes the card; a synced card's ABW agent is
   untouched).
@@ -135,12 +124,11 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
   uncovered transform; ACT creates the card directly into the local registry
   (no `swarm_hire_local` tool — §15.1.1 rejected). The new agent is
   immediately delegable; a separate `delegate` move runs it.
-- `fanout` → `swarm_fanout_local` with `{ delegations: [{ agent_name, task,
-  credits_authorized }, ...] }` when DECIDE proposes parallel multi-agent
-  dispatch (capped at MAX_FANOUT=10; runs sequentially to avoid ledger
-  TOCTOU).
+- `fanout` → for a scoped swarm, use `swarm_execute_plan_local` with
+  `{ swarm_id, delegations: [{ agent_name, task, evaluator?, task_id? }, ...] }`.
+  Do not substitute standalone `swarm_fanout_local` for shared-thread work.
 
-For each Abort, emit no call. Record the abort reason in aborted_reasons.
+For each aborted local move, emit no call. Record its reason in aborted_reasons.
 {% else %}
 For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
 - `hire` → `swarm_hire` with `{ workspace_id, agent_name, include_optional:
@@ -171,9 +159,10 @@ For each Abort, emit no call. Record the abort reason in aborted_reasons.
 
 ## Step 4 — Record what was emitted
 
-emitted_calls lists the actual MCP calls made (move_type, agent, tool_name,
-credits_authorized). This is the ground truth the CHECK phase reconciles
-against /api/wallet/transactions.
+`emitted_calls` lists the planned MCP calls (move_type, agent, tool_name,
+arguments). In ABW mode, include `credits_authorized` for consent-gated spend
+and reconcile actual transactions separately. In local mode, include `swarm_id`
+and do not claim these planned calls are executed results.
 
 ## Step 5 — Steering directive (Cybernetic Swarm Plan C5/C6 execution boundary)
 
@@ -191,8 +180,8 @@ emitted_calls and feeds the results back. Emit a `steering_directive` object:
 }
 ```
 
-The Curator (local) calls `swarm_execute_plan_local` with the emitted_calls
-as delegations (each with an optional deterministic evaluator), collects the
+The Curator (local) calls `swarm_execute_plan_local` with `swarm_id` and only
+the delegate entries mapped into `delegations` (optional evaluator/task_id), collects the
 returned `LocalDelegateResult` array (with `task_success` verdicts already
 stamped by the tool), and re-invokes swarm-intelligence with `delegate_results`
 set to that array — closing the feedback loop in one tool call. For cloud
@@ -207,6 +196,6 @@ and feeds `delegate_results` back on the next invocation (Option A).
 ## Output
 
 Produce a JSON object with: dispatch_intents (array), gate_decisions (array
-of { decision: "Proceed"|"Abort", credits_authorized?, reason? }), emitted_calls
+of { decision: "Proceed"|"Abort", credits_authorized? (ABW only), reason? }), emitted_calls
 (array), aborted_reasons (array), steering_directive (object or null — present
 in steering mode, null in advisory mode), delegate_notes.

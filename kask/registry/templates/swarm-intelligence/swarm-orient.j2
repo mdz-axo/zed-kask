@@ -45,29 +45,22 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 ```json
 {{ delegate_results | tojson }}
 ```
-`delegate_results` is an array of `swarm_delegate_local` results
-(`LocalDelegateResult`-shaped: `agent_id`, `response`, `model`, `tokens_used`,
-`cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
-`executed_skills[]` (each `{skill, ok, error?}`), and an optional `task_success`
-(the executor's deterministic verdict on whether this delegation's output
-solved the task — `null` when the server returned it; populated by the Curator
-or human after running a declared evaluator)). These are EXECUTED outcomes —
-the operator or the Kask Curator ran the prior plan via `swarm_delegate_local`
-and fed the real results back. The deterministic fault-attribution inputs are:
-(1) `delegate_results[].task_success.pass` (highest fidelity — task success,
-not just execution success; Loop B fidelity fix), then (2) the binary
-`delegate_results[].tool_calls[].ok` / `executed_skills[].ok` (execution
-success). The terminal agent (fallback rule) is the `agent_id` of the LAST
+`delegate_results` is an array of local execution results from
+`swarm_execute_plan_local` (`LocalDelegateResult`: `agent_id`, `response`,
+`model`, `tokens_used`, `latency_ms`, `tool_calls[]` and optional
+`task_success`). These are executed outcomes, not emitted intents.
+Fault attribution uses a deterministic `task_success.pass` first, then
+`tool_calls[].ok` failures when present. The terminal agent (fallback rule) is the `agent_id` of the LAST
 entry (the last delegation produced the terminal output the task metric
 scored).
 {% else %}
 ## Delegate Results — Execution Telemetry
 No `delegate_results` supplied. The planning process's ACT emits dispatch
 intents (`emitted_calls`), not executed outcomes — do NOT fabricate
-`tool_calls[].ok` / `executed_skills[].ok` from intents (the `.rules`
+`tool_calls[].ok` from intents (the `.rules`
 never-fabricate trap). Set `agent_at_fault = null` (honest: no execution data
 to attribute from). C5/C6 are inert until the operator or the Kask Curator
-feeds `delegate_results` from a real `swarm_delegate_local` run.
+feeds `delegate_results` from a real `swarm_execute_plan_local` run.
 {% endif %}
 
 ## Task
@@ -110,9 +103,10 @@ Sub-classify: `coherence_low_diversity` (needs diversification) vs
 `coherence_low_alignment` (diverse but not coordinated — needs a coordinator).
 
 ### (c) Loop-break
-Un-reconciled dispatches (estimated_credits not matching actual spend in
-wallet/transactions) OR un-acknowledged curator data-sharing (a dispatch with
-`curator_involved = true` that has no consent record). This is a cybernetic
+For ABW only: un-reconciled cloud dispatches (estimated_credits not matching
+actual spend in wallet/transactions) OR un-acknowledged curator data-sharing.
+For local swarms: an attempted delegation without an observed result or a
+surfaced execution failure is a loop-break; there is no local wallet. This is a cybernetic
 closure failure — the feedback loop is open. (Anchor: ABW plan §4.1; .rules
 "unwrap_or(0) on regulation-loop sense inputs" trap.)
 
@@ -153,9 +147,9 @@ set cybernetic_assessment = null.
 
 Attribute fault ONLY when `delegate_results` execution telemetry is present
 (an array of `LocalDelegateResult`-shaped objects, each with `agent_id`,
-`tool_calls[].ok`, `executed_skills[].ok`, and an optional `task_success`).
+`tool_calls[].ok`, and an optional `task_success`).
 The planning process's `emitted_calls` are dispatch INTENTS, not outcomes —
-they do NOT carry `tool_calls[].ok` / `executed_skills[].ok` / `task_success`,
+they do NOT carry `tool_calls[].ok` / `task_success`,
 so they are not attribution inputs. Do not fabricate outcomes from intents.
 
 **Determinism guard (audit Gap S3).** If any `delegate_results[].task_success`
@@ -163,7 +157,7 @@ carries `provenance: "llm_judged"`, do NOT use it for attribution — an LLM
 judge violates the C0 determinism constraint. Set `task_success_warning` to a
 short note naming the agent and the provenance, and treat that entry's
 `task_success` as absent. Only `provenance: "deterministic"` (or absent
-`provenance`, treated as `deterministic` for backward compatibility) is trusted.
+`provenance` when the tool supplied a deterministic verdict) is trusted.
 
 When `delegate_results` IS present, attribute fault to exactly one agent by
 this deterministic priority rule (JudgeFlow with the LLM Judge replaced by a
@@ -185,10 +179,7 @@ builds):
 3. **Execution crash.** Else if any `delegate_results[]` entry has
    `tool_calls[].ok = false` (a dispatch failed or was not in the declared
    `mcp_tools` allowlist), attribute to the **earliest such agent**.
-4. **Skill execution failure.** Else if any `delegate_results[]` entry has
-   `executed_skills[].ok = false` (a declared skill execution failed),
-   attribute to the **earliest such agent**.
-5. **Tie-break** by `delegate_results` array order (deterministic).
+4. **Tie-break** by `delegate_results` array order (deterministic).
 
 If no `delegate_results` telemetry is present (the default in the planning
 phase), OR no failure is present, set `agent_at_fault = null`. When

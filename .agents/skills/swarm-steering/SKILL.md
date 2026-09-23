@@ -17,8 +17,8 @@ and C6 (reconfigure) in the next swarm-intelligence iteration.
 ## Substrate: local swarms (zed-kask v2 §15)
 
 A local swarm runs on the zed-kask substrate: `hkask-inference` (Ollama/cloud).
-Local delegation carries no credit cost — the `hkask-ledger` budget system
-was removed 2026-09-08 and the runtime measures and records, never debits. The
+Local delegation carries no credit cost or local ledger. A scoped plan runs
+against the swarm's shared thread. The
 Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the in-process agent
 with governed tool access (the MCP servers via `McpRuntime`), sovereign
 memory, and the regulation/metacognition loops. In steering mode it executes
@@ -39,7 +39,7 @@ Curator's normal tool-call turn IS the execution).
 - **Conant-Ashby Good Regulator** (Conant & Ashby 1970): the steering skill is
   the actuator that closes the feedback loop the swarm-intelligence planner
   opens. The Good Regulator theorem: the steering directive must model the
-  swarm it steers (the roster + the plan + the credit budget).
+  swarm it steers (the roster + the plan).
 
 ## When to Use
 
@@ -68,7 +68,7 @@ Do NOT use for:
 ## Instructions
 
 ```
-Receive:  the swarm-intelligence plan (emitted_calls) + swarm state + credit budget
+Receive:  the swarm-intelligence plan (emitted_calls) + local swarm_id
 Direct:   the swarm_execute_plan_local delegation array (pre-flight + delegations with optional evaluators)
 Collect:  the delegate_results collection shape (LocalDelegateResult array with task_success verdicts)
 Feedback: the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering)
@@ -83,14 +83,13 @@ Regulator's "model the system you control."
 
 `delegate_results` is an array of `swarm_execute_plan_local` results
 (`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
-`cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
-`executed_skills[]` (each `{skill, ok, error?}`), `task_success` (optional
+`latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), `task_success` (optional
 deterministic verdict stamped by the tool when an evaluator was provided).
 The `swarm_execute_plan_local` tool returns the array directly; you
 feeds it back as `delegate_results` on the next swarm-intelligence invocation.
 ORIENT attributes fault from `delegate_results[].task_success.pass` (highest
 fidelity, when present) and `delegate_results[].tool_calls[].ok` /
-`executed_skills[].ok`; `fault_count` accumulates (deterministic, in
+`response` failure when observable; `fault_count` accumulates (deterministic, in
 `swarm.converge_accumulate`); C6 reconfigures the most-blamed agent.
 
 ## Known limitations (audit 2026-08-03)
@@ -141,7 +140,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 
 | Template | Purpose |
 |----------|---------|
-| `swarm-steering-direct.j2` | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
+| `swarm-steering-direct.j2` | Take the plan and local swarm id; check member agents; produce a scoped `swarm_execute_plan_local` call with optional deterministic evaluators, a `LocalDelegateResult` collection shape, and a feedback instruction. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `swarm-steering/swarm-steering-direct`) and a context object with the required variables.
 

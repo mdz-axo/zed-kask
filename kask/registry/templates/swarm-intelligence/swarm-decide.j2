@@ -24,7 +24,7 @@ visibility: Public
   mode-agnostic — it operates on the state shape from SENSE and the
   orientation from ORIENT, not on the data source. The `mode` input is
   passed through for context (the ACT phase uses it to select the correct
-  tool: `swarm_delegate` for abw, `swarm_delegate_local` for local).
+  tool: `swarm_delegate` for abw, `swarm_delegate_in_thread_local` for a local swarm).
 
   The no-delegation-chains invariant is mandatory: delegates lose
   delegate_to_agent/execute_agent. Every proposed delegate move must be one
@@ -179,43 +179,16 @@ agents cannot fix it.
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
-### If swarm_state.per_agent_metrics contains a low-energy agent
-
-`energy` is the ledger balance after that agent's last delegation (Onto4MAT
-Agent-level property, Step 5b of SENSE). **What it means depends on the mode —
-and only in `abw` is it a capacity constraint.**
+### If ABW wallet capacity is low
 
 {% if mode == "local" %}
-**Local mode: `energy` is a COST signal, not a capacity limit.** Local agents run
-on the operator's own substrate, so delegation has no funding gate: a zero or
-negative `energy` means "this much local spend has accumulated", NOT "depleted".
-
-- Do **NOT** route around a local agent on `energy` alone.
-- Do **NOT** propose funding the local ledger as a remedy — it is not blocking
-  anything, and `swarm_fund_local` is optional bookkeeping.
-- Do **NOT** treat a negative `energy` as a fault to repair.
-- You MAY use `energy` to prioritise between otherwise-equivalent agents when
-  accumulated cost is a consideration worth surfacing in `delegate_notes`.
+Local results do not carry balance or energy. Do not infer capacity or propose
+funding from `per_agent_metrics.energy = null`.
 {% else %}
-**ABW mode: `energy = 0` IS a hard constraint.** Cloud credits buy someone
-else's compute, so a depleted wallet fails the spend gate. This is proactive
-(before failure) rather than reactive (after failure), and is distinct from C4
-(latency) and C5 (fault).
-
-For each depleted agent:
-- If the agent covers a required transform, propose a `delegate` move to a
-  *different* agent that also covers that transform (route around the depleted
-  one). If no alternative exists, the operator must fund the ABW wallet — note
-  this in `delegate_notes`.
-- If the agent is structurally redundant, propose a `remove` move
-  (`swarm_fire`).
-- Do NOT propose a `delegate` move to the depleted agent itself — the spend
-  gate will refuse it.
+A verified ABW wallet reading can constrain cloud spend. If insufficient,
+request operator funding or defer the credit-consuming move; never treat a
+missing reading as zero. Local `delegate_results` do not measure ABW balance.
 {% endif %}
-
-**`energy = null` means "not measured" in either mode** (no prior delegation, or
-the balance read failed). Never treat `null` as zero — an unmeasured balance is
-not a depleted one.
 
 ### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
 
@@ -270,12 +243,8 @@ For every proposed move:
   (the compound agent auto-hires its team, but the required dependencies must
   exist in the catalogue).
 {% if mode == "local" %}
-- **Cost awareness**: local delegation has no credit cost — it runs on the
-  operator's own substrate (no local budget, operator ruling 2026-09-04).
-  No hire cost — `swarm_create_local_agent` creates a card for free (no
-  `swarm_hire_local` tool, §15.1.1 rejected). Record `tokens_used` and
-  `latency_ms` per move as the cost signal; there is no `credits_authorized`
-  to set.
+- Local delegation has no credit gate. Observe `tokens_used` and `latency_ms`
+  from executed results; include `swarm_id` for shared-thread delegations.
 {% else %}
 - **Credit awareness** (verified live 2026-08-02): own-agent hire via `/add` is
   a flat 2 cr fee; third-party `/hire` is a flat 5 cr base (quote `total` =
@@ -293,7 +262,7 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 
 Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
 "delegate"|"remove"|"reconfigure_agent"|"author_agent", agent_id_or_type,
-estimated_credits, covers_transforms?, redundant_candidates?,
+estimated_credits? (ABW only), covers_transforms?, redundant_candidates?,
 authored_card?, rationale }), tuning_rationale
 (object mapping move → swarm-algorithm term), respects_no_delegation_chains
 (boolean), delegate_notes. `remove` moves are local-mode only via

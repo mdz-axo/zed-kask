@@ -9284,16 +9284,50 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
         cx.update(|cx| {
-            thread.read_with(cx, |thread, _| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
                 assert!(thread.has_registered_tool("curator_status"));
                 assert!(!thread.has_registered_tool("curator_directive"));
                 assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
             });
         });
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = model.pending_completions().pop().expect("model request");
+        assert_eq!(
+            request
+                .tools
+                .iter()
+                .filter(|tool| tool.name == "curator_status")
+                .count(),
+            1,
+            "the model receives exactly one canonical status tool"
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "curator_directive")
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "curator_clear_algedonic_log")
+        );
+        drop(prompt_task);
     }
 
     /// Pin that Curator sessions register both the `curator_status` and
@@ -9360,6 +9394,28 @@ mod internal_tests {
                 );
             });
         });
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                agent.as_ref(),
+                ClientUserMessageId::new(),
+                acp::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = model.pending_completions().pop().expect("model request");
+        assert_eq!(
+            request
+                .tools
+                .iter()
+                .filter(|tool| tool.name == "curator_status")
+                .count(),
+            1,
+            "Curator must see the same status tool exactly once"
+        );
+        drop(prompt_task);
     }
 
     /// Pin that `NativeAgentConnection::agent_id()` reports the correct

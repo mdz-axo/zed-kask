@@ -1,7 +1,7 @@
 ---
 name: swarm-intelligence
 core: true
-description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via gated delegation calls with a budget gate."
+description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via shared-thread local delegation or consent-gated ABW calls."
 ---
 
 # Swarm Intelligence
@@ -65,7 +65,7 @@ Do NOT use for:
 
 - Single-agent tasks — delegate directly; the SENSE→ORIENT→DECIDE→ACT→CHECK→CONVERGE loop buys nothing without a swarm to regulate.
 - Executing the plan yourself — `swarm-steering` closes the execute-and-feed-back loop; in steering mode the manifest's step 8 does it structurally.
-- Unbudgeted delegations — every delegation carries `credits_authorized` (its own constraint); no gate, no call.
+- Unbudgeted ABW spend calls — cloud delegations require `credits_authorized` and consent; local delegations have neither.
 
 ## Instructions
 
@@ -74,7 +74,7 @@ Check: Phase 1  — SENSE            → Measure current swarm state against Ont
 Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Inspect `delegate_results[].reasoning_steps` for reasoning-loop detection (C1).
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
-Do:    Phase 5  — ACT              → Emit gated swarm_hire / swarm_delegate / swarm_delegate_local
+Do:    Phase 5  — ACT              → Emit consent-gated ABW calls or shared-thread local-swarm calls
 Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
 Check: Phase 7  — CONVERGE (check)  → evaluate d (swarm-state distance)
 Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
@@ -98,9 +98,9 @@ A swarm is well-composed for a task when three conditions hold simultaneously:
    agents' `accepts[]`/`produces[]` cover the task's required transforms.
 2. **Coherence without premature convergence**: `diversity >= 0.25` (≥¼ of
    agents are non-identical) and Thagard coherence non-decreasing.
-3. **Closed feedback loop**: `loop_closure = 1.0` — every dispatch's
-   `estimated_credits` reconciled against `/api/wallet/transactions` and
-   every `curator_involved` dispatch's `data_shared` acknowledged.
+3. **Closed feedback loop**: `loop_closure = 1.0` — ABW spend reconciles
+   against wallet transactions and curator consent; local delegation attempts
+   have observed results or surfaced errors (no local credit ledger).
 
 ## Convergence criterion
 
@@ -131,7 +131,7 @@ sets/sums must be tracked consistently across loop iterations.
 | **C2** Go See cadence               | Scheduled human check every N convergences + event trigger                                                                                                                                                      | `cadence_every` param in the monitor; SENSE surfaces `go_see`                                                                                                                                                                                                                                                                                   |
 | **C3** failed-edit memory           | Anti-loop set; the FILTER drops moves matching prior failed signatures                                                                                                                                          | `swarm.filter_proposed_moves` `lisp_eval` call (step 4)                                                                                                                                                                                                                                                                                         |
 | **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
-| **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → binary `tool_calls[].ok`/`executed_skills[].ok`; fault-count aggregation | ORIENT template (rules 1-6) + `swarm.converge_accumulate` `fault_count`. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning process emits intents, not executed results). See Steering modes below. |
+| **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → `tool_calls[].ok`; fault-count aggregation | ORIENT template (rules 1-6) + `swarm.converge_accumulate` `fault_count`. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning process emits intents, not executed results). See Steering modes below. |
 | **C6** reconfigure_agent            | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis)                                                                                                                                             | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode).                                                                                                                                                                                                                               |
 | **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm                                                                                                                                                     | `swarm.filter_proposed_moves` `lisp_eval` call (step 4)                                                                                                                                                                                                                                                                                         |
 | **C8** task-gated alignment         | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port)                                                                                                                                                   | SENSE template `alignment` definition                                                                                                                                                                                                                                                                                                           |
@@ -193,19 +193,12 @@ call `swarm_execute_plan_local` with the plan, collect the returned
 
 `delegate_results` is an array of `swarm_execute_plan_local` results
 (`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
-`cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
-`executed_skills[]` (each `{skill, ok, error?}`), `task_success` (optional
-deterministic verdict), `reasoning_steps[]` (each `{title, reasoning, action?,
-next_action, confidence?, round}` — present when the agent opts into reasoning
-via `capabilities.reasoning: true`). ORIENT attributes fault from
+`latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), and `task_success`
+(optional deterministic verdict). ORIENT attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and
-`delegate_results[].tool_calls[].ok` / `executed_skills[].ok`; `fault_count`
-accumulates; C6 reconfigures the most-blamed agent. When `reasoning_steps` is
-present, ORIENT inspects the trace for reasoning-loop detection (C1) — a model
-that records many `continue` steps without converging on `final_answer` is a
-second-order monitor signal, not a fault attribution signal. Absent
-`delegate_results`, C5/C6 are inert (the planning process has no execution
-telemetry).
+`delegate_results[].tool_calls[].ok`; `fault_count` accumulates; C6
+reconfigures the most-blamed agent. Absent `delegate_results`, C5/C6 are inert.
+Do not infer reasoning traces or skill executions from this result shape.
 
 ### The task board (durable task progress)
 
@@ -264,10 +257,8 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   the swarm compute primitives)
-- MCP tool surface (52 tools — both sets always registered in either mode;
-  `kask.swarm.mode` selects the substrate, not the surface; pinned by
-  `tool_surface_is_exactly_52_registered_tools`):
-  - **ABW tools (27)**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+- MCP tool surface (consult current registration rather than a fixed count):
+  - **ABW tools**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
     `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
     `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
     `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_fanout`,
@@ -276,7 +267,8 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
     `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
     `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
     `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools (31)**: `swarm_delegate_local`,
+  - **Local tools**: `swarm_delegate_local` (standalone),
+    `swarm_delegate_in_thread_local` (member-scoped shared thread),
     `swarm_fanout_local`, `swarm_pipeline_local`,
     `swarm_execute_plan_local`, `swarm_a2a_send` (A2A protocol message, in-process),
     `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
@@ -316,8 +308,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
   `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,
   action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
-  (headless). In local mode there is no consent token and no funding gate —
-  the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is the gate.
+  (headless). In local mode there is no consent token, credit budget, or funding gate.
   See the [Swarm Systems Reference](../../../kask/docs/diataxis/swarm_system/reference.md)
   for the full tool/contract table and the token model.
 
@@ -337,7 +328,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- Every delegation carries an explicit credit budget (`credits_authorized`); no unbudgeted calls.
+- Every ABW spend delegation carries an explicit `credits_authorized` and consent. Local member delegation carries `swarm_id`, not a credit budget.
 - Task-success verdicts are deterministic (`swarm_evaluate_local` or a configured evaluator) or null — never LLM-judged; `llm_judged` provenance is downgraded by ORIENT.
 - Algedonic override: a 402 or un-acknowledged curator dispatch escalates regardless of the convergence distance `d` — a broken algedonic channel is never read as "no deviation".
 - Convergence requires |d_i − d_{i−1}| < 0.03 for 3 consecutive iterations; a healthy swarm that fails the task must NOT converge.
