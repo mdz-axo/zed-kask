@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-09-19
+last_updated: 2026-09-23
 version: "1.3.0"
 status: "Active"
 domain: "Integration"
@@ -180,8 +180,8 @@ Sizes below are counted directly from each descriptor in
 | `training` | 3 | 20 |
 | `media` | 3 | 10 |
 
-The media server's live router is pinned at 81 tools
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-485`).
+The media server's live router is pinned at 93 tools
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:478-489`).
 
 ## Child environment lifecycle
 

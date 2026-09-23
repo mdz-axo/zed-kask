@@ -247,12 +247,20 @@ impl EntryViewState {
                 }),
             );
         } else {
-            self.sync_entry(index, thread, window, cx);
+            self.sync_entry_impl(index, thread, window, cx, false);
         }
     }
 
     pub fn is_deferred_tool_call(&self, index: usize) -> bool {
         matches!(self.entries.get(index), Some(Entry::ToolCall(tool)) if !tool.materialized)
+    }
+
+    pub fn is_deferred_entry(&self, index: usize) -> bool {
+        self.is_deferred_tool_call(index)
+            || matches!(
+                self.entries.get(index),
+                Some(Entry::UserMessage { loaded: false, .. })
+            )
     }
 
     pub fn materialize_entry(
@@ -262,11 +270,35 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(Entry::ToolCall(tool)) = self.entries.get_mut(index)
-            && !tool.materialized
-        {
-            tool.materialized = true;
+        let deferred = match self.entries.get_mut(index) {
+            Some(Entry::ToolCall(tool)) if !tool.materialized => {
+                tool.materialized = true;
+                true
+            }
+            Some(Entry::UserMessage { loaded, .. }) if !*loaded => {
+                *loaded = true;
+                true
+            }
+            _ => false,
+        };
+        if deferred {
             self.sync_entry(index, thread, window, cx);
+        }
+    }
+
+    pub fn materialize_user_messages(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for index in 0..self.entries.len() {
+            if matches!(
+                self.entries.get(index),
+                Some(Entry::UserMessage { loaded: false, .. })
+            ) {
+                self.materialize_entry(index, thread, window, cx);
+            }
         }
     }
 
@@ -277,6 +309,17 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_entry_impl(index, thread, window, cx, true);
+    }
+
+    fn sync_entry_impl(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        hydrate_user: bool,
+    ) {
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
             return;
         };
@@ -286,16 +329,19 @@ impl EntryViewState {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
-                let chunks = message.chunks.clone();
-                if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
-                    if !editor.focus_handle(cx).is_focused(window) {
-                        // Only update if we are not editing.
-                        // If we are, cancelling the edit will set the message to the newest content.
-                        editor.update(cx, |editor, cx| {
-                            editor.set_message(chunks, window, cx);
-                        });
+                if let Some(Entry::UserMessage { editor, loaded }) = self.entries.get_mut(index) {
+                    if hydrate_user {
+                        *loaded = true;
+                        if !editor.focus_handle(cx).is_focused(window) {
+                            // Only update if we are not editing. Cancelling an edit
+                            // restores the current thread content.
+                            editor.update(cx, |editor, cx| {
+                                editor.set_message(message.chunks.clone(), window, cx);
+                            });
+                        }
                     }
                 } else {
+                    let chunks = hydrate_user.then(|| message.chunks.clone());
                     let message_editor = cx.new(|cx| {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
@@ -314,7 +360,9 @@ impl EntryViewState {
                         if !can_rewind || !has_client_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
-                        editor.set_message(chunks, window, cx);
+                        if let Some(chunks) = chunks {
+                            editor.set_message(chunks, window, cx);
+                        }
                         editor
                     });
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {
@@ -324,7 +372,13 @@ impl EntryViewState {
                         })
                     })
                     .detach();
-                    self.set_entry(index, Entry::UserMessage(message_editor));
+                    self.set_entry(
+                        index,
+                        Entry::UserMessage {
+                            editor: message_editor,
+                            loaded: hydrate_user,
+                        },
+                    );
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
@@ -583,10 +637,15 @@ pub struct ToolCallEntry {
 
 #[derive(Debug)]
 pub enum Entry {
-    UserMessage(Entity<MessageEditor>),
+    UserMessage {
+        editor: Entity<MessageEditor>,
+        loaded: bool,
+    },
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
-    Elicitation { focus_handle: FocusHandle },
+    Elicitation {
+        focus_handle: FocusHandle,
+    },
     CompletedPlan,
     ContextCompaction,
 }
@@ -594,7 +653,7 @@ pub enum Entry {
 impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
-            Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
+            Self::UserMessage { editor, .. } => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
@@ -604,7 +663,7 @@ impl Entry {
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
-            Self::UserMessage(editor) => Some(editor),
+            Self::UserMessage { editor, .. } => Some(editor),
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
@@ -673,7 +732,7 @@ impl Focusable for ToolCallEntry {
 impl Focusable for Entry {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
-            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::UserMessage { editor, .. } => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
