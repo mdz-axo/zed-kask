@@ -5679,6 +5679,43 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_non_draft_editor_does_not_subscribe_for_draft_title_updates(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+    cx.run_until_parked();
+
+    let views = panel.read_with(cx, |panel, _cx| panel.conversation_views());
+    assert!(!views.is_empty());
+    sidebar.read_with(cx, |sidebar, cx| {
+        let metadata = ThreadMetadataStore::global(cx);
+        for view in &views {
+            let thread_id = view.read(cx).parent_id();
+            assert!(
+                metadata
+                    .read(cx)
+                    .entry(thread_id)
+                    .is_some_and(|row| !row.is_draft()),
+                "test must exercise a promoted non-draft thread"
+            );
+        }
+        assert_eq!(
+            sidebar._draft_editor_observations.len(),
+            views.len(),
+            "only the lifecycle observer, not an editor observer, is needed per non-draft"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
     // When the user types into a draft, the parked draft entry's title in
     // the sidebar should reflect the editor's text — both while the

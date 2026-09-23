@@ -366,65 +366,75 @@ async fn projects_snapshot(
     parse_project_snapshot(&body, limit)
 }
 
-fn parse_recording_snapshot(
+fn parse_project_titled_collection(
     body: &[u8],
     project_id: &str,
+    collection: &str,
     limit: usize,
 ) -> Result<serde_json::Value, McpToolError> {
     if !(1..=100).contains(&limit) {
         return Err(McpToolError::invalid_argument(
             "limit must be between 1 and 100",
+        ));
+    }
+    if !matches!(collection, "recordings" | "reels") {
+        return Err(McpToolError::invalid_argument(
+            "unsupported project collection",
         ));
     }
     let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
         McpToolError::failed_precondition("Reduct project detail was not valid JSON")
     })?;
-    let recordings = response
+    let records = response
         .get(project_id)
-        .and_then(|project| project.get("recordings"))
+        .and_then(|project| project.get(collection))
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| {
-            McpToolError::failed_precondition(
-                "Reduct project detail lacks the observed recordings map",
-            )
+            McpToolError::failed_precondition(format!(
+                "Reduct project detail lacks the observed {collection} map"
+            ))
         })?;
-    let mut ordered: Vec<_> = recordings.iter().collect();
+    let mut ordered: Vec<_> = records.iter().collect();
     ordered.sort_by_key(|(id, _)| *id);
     let selected = ordered
         .into_iter()
         .take(limit)
-        .map(|(id, recording)| {
-            let title = recording
+        .map(|(id, record)| {
+            let title = record
                 .get("title")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| {
-                    McpToolError::failed_precondition("Reduct recording lacks a title")
+                    McpToolError::failed_precondition(format!(
+                        "Reduct {collection} entry lacks a title"
+                    ))
                 })?;
             Ok(serde_json::json!({"id": id, "title": title}))
         })
         .collect::<Result<Vec<_>, McpToolError>>()?;
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "source": "reduct_cloud", "project_id": project_id,
-        "provider_returned_count": recordings.len(), "returned_count": selected.len(),
-        "truncated": selected.len() < recordings.len(), "pagination": "unknown",
-        "recordings": selected
-    }))
+        "provider_returned_count": records.len(), "returned_count": selected.len(),
+        "truncated": selected.len() < records.len(), "pagination": "unknown"
+    });
+    result[collection] = serde_json::Value::Array(selected);
+    Ok(result)
 }
 
-async fn recordings_snapshot(
+async fn project_titled_snapshot(
     key: Option<&str>,
     project_id: &str,
+    collection: &str,
     limit: usize,
 ) -> Result<serde_json::Value, McpToolError> {
-    if !(1..=100).contains(&limit) {
+    if !(1..=100).contains(&limit) || !matches!(collection, "recordings" | "reels") {
         return Err(McpToolError::invalid_argument(
-            "limit must be between 1 and 100",
+            "collection must be recordings or reels and limit between 1 and 100",
         ));
     }
     let url = project_detail_url(project_id)?;
     let response = read_response(key, &url, "project detail").await?;
     let body = read_bounded(response, 2 * 1024 * 1024).await?;
-    parse_recording_snapshot(&body, project_id, limit)
+    parse_project_titled_collection(&body, project_id, collection, limit)
 }
 
 async fn create_recording(
@@ -562,7 +572,7 @@ struct ReductProjectsRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductRecordingsRequest {
+struct ReductProjectItemsRequest {
     project_id: String,
     limit: usize,
 }
@@ -642,12 +652,18 @@ impl MediaServer {
     )]
     pub async fn reduct_recordings_snapshot(
         &self,
-        Parameters(ReductRecordingsRequest { project_id, limit }): Parameters<
-            ReductRecordingsRequest,
+        Parameters(ReductProjectItemsRequest { project_id, limit }): Parameters<
+            ReductProjectItemsRequest,
         >,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "reduct_recordings_snapshot", async {
-            recordings_snapshot(self.reduct_api_key.as_deref(), &project_id, limit).await
+            project_titled_snapshot(
+                self.reduct_api_key.as_deref(),
+                &project_id,
+                "recordings",
+                limit,
+            )
+            .await
         })
         .await
     }
@@ -918,15 +934,23 @@ mod tests {
     fn recording_snapshot_projects_ids_and_titles_from_project_detail() -> Result<(), McpToolError>
     {
         let body = br#"{"p1":{"recordings":{"r2":{"title":"Second","member":["secret"]},"r1":{"title":"First","description":"private"}}}}"#;
-        let result = parse_recording_snapshot(body, "p1", 1)?;
+        let result = parse_project_titled_collection(body, "p1", "recordings", 1)?;
         assert_eq!(result["provider_returned_count"], 2);
         assert_eq!(result["recordings"][0]["id"], "r1");
         assert_eq!(result["recordings"][0]["title"], "First");
         assert_eq!(result["truncated"], true);
         assert!(!result.to_string().contains("secret"));
         assert!(!result.to_string().contains("private"));
-        assert!(parse_recording_snapshot(body, "unknown", 1).is_err());
-        assert!(parse_recording_snapshot(br#"{"p1":{"recordings":{"r1":{}}}}"#, "p1", 1).is_err());
+        assert!(parse_project_titled_collection(body, "unknown", "recordings", 1).is_err());
+        assert!(
+            parse_project_titled_collection(
+                br#"{"p1":{"recordings":{"r1":{}}}}"#,
+                "p1",
+                "recordings",
+                1
+            )
+            .is_err()
+        );
         Ok(())
     }
 
@@ -948,6 +972,20 @@ mod tests {
         assert!(recording_read_url("p-id", "r/2", "status").is_err());
         assert!(recording_read_url("p-id", "r_1", "transcript.docx").is_err());
         assert!(recording_read_url("p-id", "r_1", "unknown").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn reel_snapshot_preserves_only_id_and_title() -> Result<(), McpToolError> {
+        let body = br#"{"p1":{"reels":{"reel2":{"title":"Second","share_token":"private"},"reel1":{"title":"First","blocks":{"sensitive":true}}}}}"#;
+        let result = parse_project_titled_collection(body, "p1", "reels", 1)?;
+        assert_eq!(result["reels"][0]["id"], "reel1");
+        assert_eq!(result["reels"][0]["title"], "First");
+        assert_eq!(result["provider_returned_count"], 2);
+        assert_eq!(result["truncated"], true);
+        assert!(!result.to_string().contains("private"));
+        assert!(!result.to_string().contains("sensitive"));
+        assert!(parse_project_titled_collection(br#"{"p1":{}}"#, "p1", "reels", 1).is_err());
         Ok(())
     }
 
@@ -1249,7 +1287,7 @@ mod tests {
         let response = read_response(Some(key.as_str()), &url, "project detail").await?;
         let body = read_bounded(response, 2 * 1024 * 1024).await?;
         let detail: serde_json::Value = serde_json::from_slice(&body)?;
-        let snapshot = parse_recording_snapshot(&body, first_project, 5)?;
+        let snapshot = parse_project_titled_collection(&body, first_project, "recordings", 5)?;
         assert!(
             snapshot["returned_count"]
                 .as_u64()

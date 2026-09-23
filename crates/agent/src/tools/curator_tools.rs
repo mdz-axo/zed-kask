@@ -120,6 +120,29 @@ fn read_regulation_acceptance_rate(snapshot: &serde_json::Value) -> Option<f64> 
         .filter(|rate| (0.0..=1.0).contains(rate))
 }
 
+fn status_line(
+    memory_degraded: Option<bool>,
+    loop_reading: Option<&str>,
+    alert_log_approaching_cap: Option<bool>,
+) -> String {
+    if let Some(reading @ ("broken" | "wiring-closed")) = loop_reading {
+        return format!("degraded (regulation loop {reading})");
+    }
+    if memory_degraded == Some(true) {
+        "degraded (curator memory store down; self-healing re-open in progress)".to_string()
+    } else if loop_reading.is_none()
+        || loop_reading == Some("unobserved")
+        || memory_degraded.is_none()
+    {
+        "partial (loop or memory health not monitored)".to_string()
+    } else if alert_log_approaching_cap == Some(true) {
+        "snapshot available (in-memory alert log approaching cap; review durable backlog)"
+            .to_string()
+    } else {
+        "snapshot available (inspect health fields)".to_string()
+    }
+}
+
 #[cfg(test)]
 mod status_snapshot_tests {
     use super::*;
@@ -145,9 +168,23 @@ mod status_snapshot_tests {
     }
 
     #[test]
+    fn status_line_never_calls_a_broken_or_unobserved_loop_healthy() {
+        assert_eq!(
+            status_line(Some(false), Some("broken"), Some(false)),
+            "degraded (regulation loop broken)"
+        );
+        assert!(status_line(None, None, None).starts_with("partial"));
+        assert!(status_line(Some(false), Some("unobserved"), Some(false)).starts_with("partial"));
+        assert!(
+            status_line(Some(false), Some("turning"), Some(true))
+                .contains("alert log approaching cap")
+        );
+    }
+
+    #[test]
     fn status_serializes_only_the_measured_rate_name() {
         let output = CuratorStatusOutput {
-            status: "ok".to_string(),
+            status: status_line(None, None, None),
             regulation_acceptance_rate: Some(0.75),
             escalation_count: None,
             critical_alerts: None,
@@ -300,18 +337,13 @@ impl AgentTool for CuratorStatusTool {
                         .collect()
                 })
                 .unwrap_or_default();
-            // A degraded curator memory store is a health signal in its own
-            // right — surface it in `status` so a caller reading only the
-            // status line (not the structured fields) still sees it.
-            let status = if memory_degraded == Some(true) {
-                "degraded (curator memory store down; self-healing re-open in progress)".to_string()
-            } else if loop_reading.is_none() || memory_degraded.is_none() {
-                "partial (loop or memory health not monitored)".to_string()
-            } else if alert_log_approaching_cap == Some(true) {
-                "ok (in-memory alert log approaching cap; review the durable backlog)".to_string()
-            } else {
-                "ok".to_string()
-            };
+            // The status line never promotes an available snapshot into a
+            // healthy loop reading; the named observations remain authoritative.
+            let status = status_line(
+                memory_degraded,
+                loop_reading.as_deref(),
+                alert_log_approaching_cap,
+            );
             Ok(CuratorStatusOutput {
                 status,
                 regulation_acceptance_rate: acceptance_rate,
