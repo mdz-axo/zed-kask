@@ -642,6 +642,12 @@ struct ReductProjectItemsRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductReelRequest {
+    project_id: String,
+    reel_id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ReductCreateRecordingRequest {
     project_id: String,
     title: String,
@@ -744,6 +750,22 @@ impl MediaServer {
         execute_tool(self, "reduct_reels_snapshot", async {
             project_titled_snapshot(self.reduct_api_key.as_deref(), &project_id, "reels", limit)
                 .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read an existing Reduct reel's title and provider-native blocks (up to 4 MiB). Recursively removes share_token fields; never publishes, changes, or renders the reel."
+    )]
+    pub async fn reduct_reel_detail(
+        &self,
+        Parameters(ReductReelRequest {
+            project_id,
+            reel_id,
+        }): Parameters<ReductReelRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_reel_detail", async {
+            reel_detail(self.reduct_api_key.as_deref(), &project_id, &reel_id).await
         })
         .await
     }
@@ -1062,11 +1084,12 @@ mod tests {
             "https://app.reduct.video/api/v3/project/p1/reel/reel1"
         );
         assert!(reel_detail_url("p1", "../other").is_err());
-        let body = br#"{"reel1":{"title":"Clip reel","share_token":"private-token","block":{"b1":{"type":"doc-range","start":1.0}}}}"#;
+        let body = br#"{"reel1":{"title":"Clip reel","share_token":"private-token","block":{"b1":{"type":"doc-range","start":1.0,"share_token":"nested-private"}}}}"#;
         let result = parse_reel_detail(body, "reel1")?;
         assert_eq!(result["title"], "Clip reel");
         assert_eq!(result["blocks"]["b1"]["type"], "doc-range");
         assert!(!result.to_string().contains("private-token"));
+        assert!(!result.to_string().contains("nested-private"));
         assert!(parse_reel_detail(br#"{"wrong":{"title":"X"}}"#, "reel1").is_err());
         let empty = parse_reel_detail(br#"{"reel1":{"title":"New"}}"#, "reel1")?;
         assert_eq!(empty["block_state"], "not_present_in_provider_response");
