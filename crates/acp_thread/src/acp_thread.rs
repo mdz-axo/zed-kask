@@ -2846,21 +2846,19 @@ impl AcpThread {
         indented: bool,
         cx: &mut Context<Self>,
     ) {
-        let path_style = self.project.read(cx).path_style(cx);
-
-        // For text chunks going to an existing Markdown block, buffer for smooth
-        // streaming instead of appending all at once which may feel more choppy.
+        // Text appended to an existing Markdown block is not visible until the
+        // reveal timer runs. Do not force a list remeasure for every incoming
+        // model chunk before its content has changed.
         if let acp::ContentBlock::Text(text_content) = &chunk {
             if let Some(markdown) =
                 self.streaming_markdown_target(message_id.as_ref(), is_thought, indented)
             {
-                let entries_len = self.entries.len();
-                cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
                 self.buffer_streaming_text(&markdown, text_content.text.clone(), cx);
                 return;
             }
         }
 
+        let path_style = self.project.read(cx).path_style(cx);
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
@@ -3056,6 +3054,11 @@ impl AcpThread {
                             markdown.append(&buffer.pending[..byte_boundary], cx);
                             buffer.pending.drain(..byte_boundary);
                         });
+                        // The visible text has changed: now the list needs one
+                        // remeasure, regardless of how many model chunks arrived.
+                        if let Some(index) = this.entries.len().checked_sub(1) {
+                            cx.emit(AcpThreadEvent::EntryUpdated(index));
+                        }
 
                         true
                     })
@@ -10399,6 +10402,44 @@ mod tests {
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
         );
+    }
+
+    #[gpui::test]
+    async fn test_buffered_text_does_not_emit_premature_entry_update(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let updates = updates.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::EntryUpdated(index) = event {
+                        updates.borrow_mut().push(*index);
+                    }
+                }
+            })
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block("first".into(), false, cx);
+            thread.push_assistant_content_block(" second".into(), false, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            updates.borrow().is_empty(),
+            "buffering text must not remeasure a structurally unchanged entry"
+        );
+
+        thread.update(cx, |thread, cx| {
+            AcpThread::flush_streaming_text(&mut thread.streaming_text_buffer, cx);
+            let Some(AgentThreadEntry::AssistantMessage(message)) = thread.entries.last() else {
+                panic!("expected assistant message");
+            };
+            let Some(AssistantMessageChunk::Message { block, .. }) = message.chunks.last() else {
+                panic!("expected assistant text");
+            };
+            assert_eq!(block.to_markdown(cx), "first second");
+        });
     }
 
     /// D14: the streaming text reveal timer interval must be 50ms, not the
