@@ -430,6 +430,21 @@ Lean/lake were unavailable during the 2026-09-18 review; no proof was attempted 
 
 **Stop criteria:** P6 is complete when P6a–P6e checkpoints are observed, a live Curator session shows `record_skill_feedback` while a native session does not, and one algedonic review with the operator records at least one skill verdict through the new phase. A structurally green corpus is not completion.
 
+### P7 — Editor responsiveness: remove measured foreground loops
+
+**Operator requirement (2026-09-23/24):** eliminate roughly five-second existing-thread opens, sustained lag while threads run, and spontaneous force-quit prompts. Only live, user-visible measurements count as evidence. No backward compatibility is required; prefer removing fork divergence over adding code (take away, never add).
+
+**Measured live (2026-09-24, build `a4434afc`, one process and project):** the foreground thread ran at about 100% of one core (about 495 of 500 ticks per 5 s) whether or not threads ran; draw took 3.1–3.9 s per 5 s at 70–160 frames; about 1,000 model-picker notifies and about 12 model-discovery completions per 5 s; 420–730 cursor-blink ticks per 5 s; one running-thread spinner requested about 520 animation frames per 5 s. Six existing-thread opens took 0.7–2.2 s from construction to first frame, dominated by load (0.54–2.0 s), not rendering (17–99 ms).
+
+| Slice | Change (no compatibility path) | Checkpoint (falsifiable) |
+| --- | --- | --- |
+| P7a — discovery loop (D76) | Discovery success notifies only its own entity; providers subscribe the registry to it | `successful_discovery_does_not_restart_itself`: 998 `/models` requests without the fix, 1 with it; live discovery completions drop to 0 per 5 s after startup |
+| P7b — retire D15 | `crates/editor/src/blink_manager.rs` restored byte-identical to upstream; its fork-only settings handler re-enabled blinking in unfocused editors | Upstream retirement probe: blurred editor 0 blink notifies per 5 s after settings updates; live blink ticks drop to about 10 per 5 s per focused editor |
+| P7c — remeasure | Same process shape, same project, idle and running | Foreground ticks, draw time, notify-caller and animation readings before and after P7a/P7b; probes removed only after the reading |
+| P7d — thread open | Decompose the 0.5–2.0 s load phase (threads-DB lock, deserialization, replay) with the existing open probe before changing code | Click-to-first-frame for the same slow thread, before and after |
+
+**Not yet explained:** whether draw cost and the running-thread spinner remain dominant once P7a/P7b remove their notify sources, and the force-quit prompts (no hang over 100 ms was logged in the measured interval).
+
 ### Kata experiment table
 
 | Order | Current condition | Target | Next experiment | Success criterion |

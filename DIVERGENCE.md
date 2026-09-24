@@ -437,7 +437,7 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (see the numbered table; D4, D10, D17, D19, D30, D38, D49, D50 and D53 are retired — numbers are never reused)
+   - The D-seam files listed above (see the numbered table; D4, D10, D15, D17, D19, D30, D38, D49, D50 and D53 are retired — numbers are never reused)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
      and `crates/zed/Cargo.toml` (kask deps + upstream's crate renames, e.g.
      `csv_preview` → `tabular_data_preview`).
