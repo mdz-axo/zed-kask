@@ -2,7 +2,7 @@
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
 last_updated: 2026-09-23
-version: "0.39.1"
+version: "0.39.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -386,17 +386,19 @@ keychain fallback for API keys, and a missing credential surfaces as
 
 ### Restart-on-keychain-write
 
-A keychain write through the settings UI (`write_credential` / `delete_credential`
-in `crates/settings_ui/src/pages/kask_page.rs`) does **not** by itself restart
-running MCP servers — they have already captured the env at spawn time. To close
-this gap, those handlers call `nudge_mcp_servers(cx)` after a `kask://credentials/...`
-write/delete. The nudge re-writes `kask.mcp.load_default` to itself via
-`update_settings_file`, firing the `SettingsStore` observer →
-`sync_kask_mcp_runtime_servers` → env diff → server restart with a fresh keychain
-read. The nudge fires inside the async spawn, after the keychain write completes,
-so the restart reads the new key. It only fires for `kask://credentials/...` URLs,
-not for inference-provider `api_url` writes (those go through zed's provider
-registry, which has its own reload path).
+A keychain write or deletion through the settings UI (`write_credential` /
+`delete_credential` in `crates/settings_ui/src/pages/kask_page.rs`) does **not**
+by itself restart running MCP servers — their env was captured at spawn time.
+After a successful keychain change, `credential_url_feeds_mcp_servers` checks
+whether the URL occurs in `credential_urls_for_mcp`. Only then does
+`nudge_mcp_servers(cx)` call `SettingsStore::notify_observers` directly (no
+settings-file rewrite). The observer runs `sync_kask_mcp_runtime_servers`:
+`build_mcp_server_env` re-reads the keychain, and affected servers restart when
+their env differs. This covers data-service `kask://credentials/...` slots and
+inference-provider `api_url` slots used by MCP children (for example,
+OpenRouter/DeepInfra media keys). Native KiloCode chat has no MCP child-key
+consumer, so rotating its provider slot does not nudge MCP servers. A failed
+keychain write/delete does not trigger a restart.
 
 ### `HKASK_DB_PASSPHRASE` resolution
 

@@ -2687,7 +2687,25 @@ impl App {
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
+    #[track_caller]
     pub fn notify(&mut self, entity_id: EntityId) {
+        thread_local! {
+            static NOTIFY_CALLER_PROBE: std::cell::RefCell<(std::time::Instant, std::collections::HashMap<(&'static str, u32), u64>)> =
+                std::cell::RefCell::new((std::time::Instant::now(), std::collections::HashMap::new()));
+        }
+        let caller = std::panic::Location::caller();
+        NOTIFY_CALLER_PROBE.with(|probe| {
+            let mut probe = probe.borrow_mut();
+            *probe.1.entry((caller.file(), caller.line())).or_default() += 1;
+            if probe.0.elapsed() >= std::time::Duration::from_secs(2) {
+                log::warn!(
+                    "[DIAG-thread-perf] gpui notify callers={:?} interval_ms={}",
+                    probe.1,
+                    probe.0.elapsed().as_millis()
+                );
+                *probe = (std::time::Instant::now(), std::collections::HashMap::new());
+            }
+        });
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)

@@ -160,9 +160,9 @@ fn render_server_list(
 // (single spawn authority — they are deliberately NOT in the per-project
 // `ContextServerStore` this page reads for "Configured Servers"), so they
 // render here from `BUILT_IN_MCP_SERVERS` + the `kask.mcp` settings instead.
-// Status is live: the process-global `KaskToolSource` (wired to the runtime
-// in `main.rs`, cache rebuilt on runtime tool-surface changes) reports which
-// servers have registered tools. The toggle writes the same `kask.mcp.overrides` key the
+// The tool surface is live: the process-global `KaskToolSource` (wired to
+// the runtime in `main.rs`, cache rebuilt on surface changes) reports which
+// servers have registered tools. A zero tool count is not a health verdict. The toggle writes the same `kask.mcp.overrides` key the
 // Kask settings page writes; the `SettingsStore` observer
 // (`sync_kask_mcp_runtime_servers`) then starts/stops the governed server
 // through the runtime's own primitives, preserving the self-healing
@@ -176,11 +176,10 @@ fn kask_server_loaded(mcp: &kask_bridge::KaskMcpSettings, server_id: &str) -> bo
     mcp.load_default && *mcp.overrides.get(server_id).unwrap_or(&true)
 }
 
-/// Row status for a kask managed server: not loaded → `Stopped`; loaded
-/// with live registered tools → `Running`; loaded without tools yet →
-/// `Starting` (the runtime launches loaded servers and keeps them alive —
-/// a loaded server with no registered tools is mid-launch or reconnecting,
-/// which is exactly what the animated `Starting` state communicates).
+/// Row status from the load flag and registered tool count: not loaded →
+/// `Stopped`; loaded with tools → `Running`; loaded without tools → `Starting`.
+/// The last case is only a UI fallback: it also includes failed launches or
+/// unavailable servers, because this function has no runtime health signal.
 fn kask_managed_server_status(loaded: bool, live_tool_count: usize) -> AiSettingItemStatus {
     if !loaded {
         AiSettingItemStatus::Stopped
