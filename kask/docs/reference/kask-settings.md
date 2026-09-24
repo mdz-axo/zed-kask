@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-19
-version: "0.39.0"
+last_updated: 2026-09-23
+version: "0.39.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -496,8 +496,6 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 | `HKASK_SERPAPI_API_KEY` | SerpAPI |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl |
 | `RUNPOD_API_KEY` | RunPod |
-| `RUNPOD_S3_ACCESS_KEY` | RunPod S3 |
-| `RUNPOD_S3_SECRET` | RunPod S3 |
 | `RUNPOD_TEMPLATE_ID` | RunPod template |
 | `NEBIUS_PROJECT_ID` | Nebius |
 | `NEBIUS_SUBNET_ID` | Nebius |

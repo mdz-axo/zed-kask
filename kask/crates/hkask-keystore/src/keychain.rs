@@ -484,6 +484,17 @@ pub fn purge_legacy_hkask_entries() -> Result<usize, KeychainError> {
     Keychain.purge_legacy_entries()
 }
 
+/// Delete the two retired RunPod S3 credential slots. The live RunPod API key
+/// is stored at its provider URL and is never touched. Idempotent on restart:
+/// if one deletion fails, the next startup retries both exact keys.
+pub fn purge_obsolete_runpod_s3_credentials() -> Result<(), KeychainError> {
+    let keychain = Keychain;
+    for key in ["runpod_s3_access_key", "runpod_s3_secret"] {
+        keychain.delete_by_key(key)?;
+    }
+    Ok(())
+}
+
 /// Resolve a SecretRef to actual secret bytes.
 ///
 /// Resolution priority:
@@ -586,6 +597,33 @@ mod integration_tests {
             "retrieve_by_key after delete must return NotFound, got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn obsolete_runpod_s3_purge_preserves_provider_and_other_keys() -> Result<(), KeychainError> {
+        let kc = Keychain;
+        kc.store_by_key("runpod_s3_access_key", TEST_VALUE)?;
+        kc.store_by_key("runpod_s3_secret", TEST_VALUE)?;
+        kc.store_by_key("exa", TEST_VALUE)?;
+        kc.store_by_url("https://api.runpod.io", "kask", TEST_VALUE)?;
+
+        purge_obsolete_runpod_s3_credentials()?;
+        purge_obsolete_runpod_s3_credentials()?;
+
+        for key in ["runpod_s3_access_key", "runpod_s3_secret"] {
+            assert!(matches!(
+                kc.retrieve_by_key(key),
+                Err(KeychainError::NotFound(_))
+            ));
+        }
+        assert_eq!(kc.retrieve_by_key("exa")?.as_str(), TEST_VALUE);
+        assert_eq!(
+            kc.retrieve_by_url("https://api.runpod.io")?.as_str(),
+            TEST_VALUE
+        );
+        kc.delete_by_key("exa")?;
+        kc.delete_by_url("https://api.runpod.io")?;
+        Ok(())
     }
 
     #[test]

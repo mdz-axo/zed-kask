@@ -1614,6 +1614,14 @@ fn main() {
                             );
                         }
                     }
+                    // Retired RunPod S3 keys have no consumer. Delete their
+                    // exact keychain entries without touching the provider API
+                    // key; a failed deletion is visible and retried next launch.
+                    if let Err(error) = hkask_keystore::purge_obsolete_runpod_s3_credentials() {
+                        log::error!(
+                            "RunPod S3 credential purge failed; will retry at next startup: {error}"
+                        );
+                    }
                     kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 

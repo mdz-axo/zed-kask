@@ -1,6 +1,6 @@
 ---
 name: gradient-hunter
-description: "Investigate violated or vague expectations by selecting discriminating observations; when neighboring observations form a measured boundary, diagnose the gradient and its cause in code, telemetry, or tests."
+description: "Establish a task-relevant expectation before a substantive inquiry; investigate surprises or vague predictions with discriminating probes, and diagnose measured gradients in code, telemetry, or tests."
 ---
 
 # Gradient Hunter
@@ -17,7 +17,8 @@ The seven surface ontologies (below, in `gradient-shapes.yaml`) describe the *sh
 
 ## When to Use
 
-- **Self-trigger during other work** when a tool result, code path, test outcome, or missing answer conflicts with a prior expectation, or when a consequential expectation is too vague to predict what an observation would show. Say what was expected and why before selecting another probe; do not wait for an explicit audit request.
+- **At intake for a nontrivial, uncertain inquiry:** before the first substantive evidence probe, state one task-relevant expected observation, its source and what would falsify it; if no grounded expectation exists, say `unknown` and use a scoping probe. Skip this overhead for trivial mechanical tasks. Do not wait for an anomaly to start forming expectations.
+- **Self-trigger during other work** when a tool result, code path, test outcome, or missing answer conflicts with the declared expectation, or when a consequential expectation is too vague to predict what an observation would show. Say what was expected and why before selecting another probe; do not wait for an explicit audit request.
 - Audit a crate for missing tests, but only where neighboring code has tests (test-coverage gradient)
 - Audit a subsystem for missing telemetry, but only where sibling subsystems emit spans (telemetry cliff)
 - Audit a config for missing failure signals, but only where sibling configs have them (silent-failure asymmetry)
@@ -55,9 +56,9 @@ Feedback loop closure: convergence emits `next_prior_focus` (consumed by next it
 
 ### Expectation-led inquiry when no gradient has yet been measured
 
-Use this route **instead of forcing a shape or reason class** when a single observation contradicts an expectation, or the expectation cannot make a discriminating prediction. It also supplies the next probe for the ordinary gradient route. A surprise nominates an inquiry; it does not authorize spending the user's time on it. If the operator has already dismissed this line of inquiry, apply step 3 immediately, before any more tool calls.
+Start this route at intake for a substantive uncertain inquiry by selecting a question whose possible answer matters to the active user goal, stating a falsifiable expectation **before** the first evidence probe. A routine check that meets the expectation needs no investigation; a contradiction or a consequentially vague expectation opens the next-probe loop. Use this route **instead of forcing a shape or reason class** when a single observation contradicts an expectation, or the expectation cannot make a discriminating prediction. It also supplies the next probe for the ordinary gradient route. A surprise nominates an inquiry; it does not authorize spending the user's time on it. If the operator has already dismissed this line of inquiry, apply step 3 immediately, before any more tool calls.
 
-1. **Commit a checkable expectation.** Before inspecting the target, state the expected observation, source (sibling, convention, principle, model), scope, comparable measure, and what result would contradict it. Render `gradient-hunter/gradient-prior` when an expected field must be constructed. If the discrepancy was noticed first, label the reconstructed expectation `retrospective`; never claim a before-the-fact prediction. If no grounded expectation can be formed, record `unknown` and, only when the task relevance gate passes, select a probe to establish one, not a surprise score.
+1. **Commit a checkable expectation.** At task intake, select one uncertainty whose resolution changes the active goal; before inspecting the target, state the expected observation, source (sibling, convention, principle, model), scope, comparable measure, and what result would contradict it. Render `gradient-hunter/gradient-prior` when an expected field must be constructed. If the discrepancy was noticed first, label the reconstructed expectation `retrospective`; never claim a before-the-fact prediction. If no grounded expectation can be formed, record `unknown` and, only when the task relevance gate passes, select a probe to establish one, not a surprise score.
 2. **Sense and compare.** Fetch direct evidence with `grep`/`read_file` or the relevant read-only tool; render `gradient-hunter/gradient-map` when mapping a field. Record observation, source and comparability. An unobserved region is `unmeasured`, not an empty region. A mismatch in units, scope, measurement or authorization is a measurement problem, not yet evidence the world violates the prior.
 3. **Gate relevance before inquiry.** Compare the discrepancy with the active user goal: what decision, capability assessment, or user experience could resolving it change? Is the expectation actually uncertain and potentially learnable, or merely surprising to this agent? Use explicit operator feedback as the priority signal. If the operator calls it uninteresting or no consequence for the active goal can be named, stop this branch and return to the goal; do not ask for permission to continue chasing it. If it exposes a mandatory correctness or safety risk, surface that risk once with evidence rather than silently burying it, but do not extend an unrelated investigation without authorization.
 4. **Choose a question, not a spectacle.** Only after the relevance gate passes, render `gradient-hunter/expectation-inquiry` with the expectation and observation. Form at least two live explanations (including a bad prior or bad measurement), each with a differing prediction for an authorized next probe. Pick the smallest probe whose possible outcomes discriminate them; state expected outcomes **before** invoking it. Repeated unexplained noise without learnable structure is not a reason to revisit indefinitely.
@@ -136,6 +137,7 @@ Template context variables (from each template's [inference] contract):
 - The prior must be explicit before gradient detection. A reconstructed prior is labeled retrospective, not scored as a pre-registered forecast.
 - Do not claim a spatial gradient without measured neighbors and an explicit comparison rule; do not claim learnability from prediction error alone.
 - Operator-declared irrelevance stops an agent-initiated inquiry even if the discrepancy surprises the agent; user priority is not inferred from error magnitude.
+- The intake expectation is a one-question checkpoint for consequential uncertainty, not an open-ended research license; when evidence agrees, return to the task rather than looking for a more entertaining anomaly.
 - The fractal recurrence check is mandatory.
 - Do not collapse the eight ontologies into one — each shape implies a different intervention.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

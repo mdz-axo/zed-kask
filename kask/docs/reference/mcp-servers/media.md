@@ -290,9 +290,10 @@ composition/edit, not playback, rendering, export, or publication state.
 The post-restart read-only probe now returns HTTP 200 and
 `cloud_editing: not_checked`. The v3 reference says a nonempty share token in
 GET reel detail identifies publication; a new token-redacted
-`publication_state` projection is fixture-tested, pending deployment and live
-verification. The PDF documents publishing, but no private Reel render or
-download endpoint.
+`publication_state` projection is fixture-tested and the restarted MCP
+reported the Axolotl throwaway Reel as `unpublished` with all sixteen blocks
+intact and no token returned. The PDF documents publishing, but no private
+Reel render or download endpoint.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations

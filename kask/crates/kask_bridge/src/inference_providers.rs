@@ -272,24 +272,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://runpod.io/",
         shows_in_ui: true,
     },
-    // RunPod S3 credentials — not read by any MCP server (no allowlist
-    // references them). Not shown in the UI (dead surface); kept in the
-    // registry so `credential_urls_for_mcp` can inject them if set via
-    // the keychain, preserving the option for a future consumer.
-    DataServiceDescriptor {
-        env_var: "RUNPOD_S3_ACCESS_KEY",
-        credential_key: "runpod_s3_access_key",
-        label: "RunPod S3 Access Key (adapter storage)",
-        dashboard_url: "https://runpod.io/",
-        shows_in_ui: false,
-    },
-    DataServiceDescriptor {
-        env_var: "RUNPOD_S3_SECRET",
-        credential_key: "runpod_s3_secret",
-        label: "RunPod S3 Secret (adapter storage)",
-        dashboard_url: "https://runpod.io/",
-        shows_in_ui: false,
-    },
     // RUNPOD_TEMPLATE_ID was here as a Secret, but it is architecturally a
     // non-secret config value (a RunPod template ID). It has been moved to
     // the training server's `config_env` allowlist and is read via
@@ -553,12 +535,6 @@ mod tests {
             "kask://credentials/exa",
             "non-provider credential keys must stay in the kask namespace"
         );
-        // RunPod's S3 credentials are data-service keys, NOT the provider key —
-        // they must not be swept into the provider slot.
-        assert_eq!(
-            super::credential_url_for_key("runpod_s3_access_key"),
-            "kask://credentials/runpod_s3_access_key"
-        );
     }
 
     #[test]
@@ -595,6 +571,12 @@ mod tests {
             "https://api.kilo.ai/api/gateway"
         );
         assert!(!urls.iter().any(|(var, _)| var == "KILOCODE_API_KEY"));
+        for retired in ["RUNPOD_S3_ACCESS_KEY", "RUNPOD_S3_SECRET"] {
+            assert!(
+                !urls.iter().any(|(var, _)| var == retired),
+                "retired RunPod S3 credentials must not be requested for MCP children"
+            );
+        }
 
         // The legacy kask slots must feed NOTHING — a consumer reintroducing
         // them re-creates the split-brain (stale key → 401).

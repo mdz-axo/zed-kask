@@ -326,9 +326,10 @@ The post-restart read-only probe now reports `cloud_editing: not_checked`
 with HTTP 200; this fixes the prior false `not_available` claim without
 asserting a Reel edit. The v3 PDF documents publication via `POST .../publish`
 but provides no private Reel render/download contract. The
-`publication_state` projection is fixture-tested but not yet deployed or
-observed against the live throwaway Reel. Never publish by default: a share
-token creates a publicly accessible link.
+`publication_state` projection is fixture-tested and was observed on the
+running child as `unpublished` for the Axolotl throwaway Reel; its sixteen
+ordered blocks remained intact, and no token value was returned. Never
+publish by default: a share token creates a publicly accessible link.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough
