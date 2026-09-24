@@ -1,6 +1,6 @@
 ---
 name: upstream-rebase
-description: "Manage upstream Zed rebases for zed-kask. Decides per-D-seam-file strategy (git merge vs. mapped re-application vs. destroy-and-rebuild), executes it, pins every kask-wiring deviation with a test, and updates DIVERGENCE.md."
+description: "Manage upstream Zed merges for zed-kask. Decides per D-seam whether its user-visible purpose still needs fork divergence (retire, simplify, retain), then per retained file whether to git-merge or mapped-re-apply, verifies the result against both parents, and updates DIVERGENCE.md."
 ---
 
 # Upstream Rebase
@@ -32,6 +32,30 @@ kask-wiring changes without carrying forward accumulated cruft.
 **Decision rule:** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge.
 
 ## Instructions
+
+### Step 0 — Decide whether each affected seam should survive
+
+Before choosing a merge strategy, write one decision record per D-row whose
+files upstream changed in this merge (`git diff --name-only <base> upstream/main`
+intersected with the row's file column):
+
+- **Purpose** — the user-visible outcome the seam protects and the failure
+  the user sees without it.
+- **Current authority** — the operator's current requirement, not the row's
+  history. A row describing a capability the operator has since deprecated
+  (e.g. a token budget after the max-token deprecation) is not authority.
+- **Upstream evidence** — the specific function at the new upstream tip that
+  does or does not deliver the purpose. A same-named function, a clean
+  conflict resolution, or a green compile is not equivalence.
+- **Counterexample** — one input where upstream and fork behavior differ.
+- **Decision** — RETIRE (upstream delivers it, or the operator deprecated it),
+  SIMPLIFY (keep only the part upstream still lacks), RETAIN, or NEEDS
+  OPERATOR DECISION (the requirement itself is ambiguous; ask in functional
+  terms). Do not default to RETAIN.
+
+RETIRE removes the coupled code, settings, tests, dependencies, comments, and
+D-row in the same merge, and adds the number to `DIVERGENCE.md`'s retired-seam
+list (numbers are never reused). Only surviving seams continue to Steps 1–7.
 
 **Scope:** Steps 1–7 apply to D-seam *files* — rows whose `DIVERGENCE.md` file
 column names an existing file. Deletion D-seams (file column `—` or
@@ -76,9 +100,15 @@ Take clean upstream's file and insert each functional unit at its mapped inserti
 - Ensure `let` bindings are placed before any use.
 - Ensure no duplicate definitions.
 
-### Step 6 — Pin every deviation with a test
+### Step 6 — Pin surviving behavior at the smallest meaningful boundary
 
-Per the `.rules` trap "Tests must pin deliberate zed-kask deviations from upstream": every `// zed-kask:` marker must have a corresponding test. For process-global hooks (e.g., `main.rs` wirings), the pinning test is typically a compile-time + symbol-existence pin asserting the key types/functions are accessible.
+Each retained or simplified seam needs one behavior test that fails when its
+purpose is lost. Put it at the cheapest boundary that exercises that purpose:
+prefer a `kask/` crate or an existing fork-owned test module over adding a test
+to an upstream-owned Zed file. A seam retired in Step 0 takes its pins with it;
+an obsolete pin (one that tests a replaced upstream API rather than the
+purpose) is removed, not ported. For process-global hooks (e.g., `main.rs`
+wirings), a compile-time + symbol-existence pin is acceptable.
 
 ### Step 7 — Update DIVERGENCE.md
 
@@ -105,6 +135,12 @@ list updates independently of this skill.
 
 ## Verification gate (before committing)
 
+0. Compare the merged tree against **both** parents. For every path changed on
+   both sides, the merged blob must not equal the fork parent's blob unless
+   Step 0 retired upstream's change deliberately, and upstream-added functions
+   and tests must be present or accounted for (renamed, retired, or replaced).
+   `-X ours`, `checkout --ours`, and marker-free indexes can silently drop
+   upstream work.
 1. `cargo check -p <crate>` — the file compiles.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
@@ -139,7 +175,6 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 | `decide.j2` | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
 | `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
-| `document.j2` | Update DIVERGENCE.md and produce the final report. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
 
@@ -149,7 +184,7 @@ Between LLM steps, call `lisp_eval` for verification gates (cargo check/test, is
 
 - Do NOT modify any upstream file outside the D-seam surface. Consult `DIVERGENCE.md`'s divergence-surface table for the current D-seam rows — the table is authoritative; do not rely on a hardcoded range label (the count drifts as seams are added). If an upstream edit seems necessary, propose a new D-seam entry in `DIVERGENCE.md`.
 - Do NOT rename or reformat upstream files to "fix" them.
-- Every `// zed-kask:` deviation preserved or introduced must have a corresponding test.
+- Every retained or simplified seam must have a behavior test at the smallest meaningful boundary (Step 6); retired seams lose their pins.
 - The re-application order must be a topological sort of the dependency DAG (no use-before-def).
 - Prefer surgical marking + pinning over full re-application when the fork's file already compiles and is correctly ordered (essentialist G1: identical end state, lower risk).
 
@@ -215,7 +250,19 @@ invariants first, then compile, then tests.
 
 ### Recovery
 
-- **Mid-merge, uncommitted:** `git merge --abort` — returns to pre-merge HEAD.
+A resolved but uncommitted merge exists only in the index and worktree;
+`git merge --abort` and `git reset --hard` destroy it. Before any of them:
+
+1. Check who owns the in-flight work (`git status`, `git worktree list`). Do
+   not abort or reset work you did not create.
+2. Snapshot it: `git stash create` or `git commit-tree $(git write-tree) -p HEAD`
+   and pin the result under `refs/recovery/<date>/…`.
+3. If it is already lost, search Zed's automatic `Checkpoint` commits and
+   `git fsck --no-reflogs --unreachable` for commits whose tree differs from
+   both parents, and pin any candidate before reporting what is and is not
+   recoverable. A new merge is not a restoration.
+
+- **Mid-merge, uncommitted, snapshot pinned:** `git merge --abort` — returns to pre-merge HEAD.
 - **Merge committed, not pushed:** `git reset --hard <pre-merge-sha>` (find via
   `git reflog`, the `HEAD@{1}` before the merge).
 - **Mapped re-application in progress, merge already committed:** `git checkout

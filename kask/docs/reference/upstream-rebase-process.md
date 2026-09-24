@@ -60,6 +60,10 @@ markers (3.6%) → **mapped re-application**.
 
 ## 2. The mapped re-application process (8 steps)
 
+These steps apply only to seams that survive the per-seam purpose decision
+(`SKILL.md` Step 0: retire, simplify, retain, or needs operator decision).
+A retired seam is removed with its coupled code and pins, not re-applied.
+
 ### Step 1 — Establish the functional inventory (code-graph extraction)
 
 Extract every kask-wiring functional unit from the fork's file. A *functional
@@ -118,11 +122,13 @@ insertion point, in topological order. For each insertion:
 - Ensure no duplicate definitions (the fork's duplicate `cybernetics_loop_for_tick`
   bug came from inserting the same binding twice across two edits).
 
-### Step 6 — Pin every deviation with a test
+### Step 6 — Pin surviving behavior at the smallest meaningful boundary
 
 Per the `.rules` trap "Every `// zed-kask:` comment disabling upstream behavior
-needs a test pinning the disabled behavior" (`.rules:81`): every `// zed-kask:`
-marker must have a corresponding test asserting the wired behavior. For
+needs a test pinning the disabled behavior": each retained seam needs a test
+that fails when its purpose is lost, placed at the cheapest boundary that
+exercises it (a `kask/` crate or an existing fork-owned test module before a
+new test in an upstream-owned file). For
 `main.rs` wirings (which are process-global hooks, not unit-testable functions),
 the pinning test is typically:
 - A test asserting the hook is `Some` after init (e.g.,

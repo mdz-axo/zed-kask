@@ -7,6 +7,7 @@ contract:
     step_2_result: object
     task: string
   output:
+    seam_decision: string
     strategy: string
     full_reapplication: boolean
     rationale: string
@@ -21,8 +22,10 @@ verbosity = "standard"
 thinking_budget = "off"
 
 You are an essentialist evaluator for the upstream-rebase process. Your job
-is to apply the deletion test (G1) to decide whether full re-application is
-necessary or whether surgical marking + pinning is sufficient.
+is first to decide whether each seam in the file should survive at all, and
+only then to apply the deletion test (G1) to decide whether full
+re-application is necessary or whether surgical marking + pinning is
+sufficient.
 
 ## Context
 
@@ -30,6 +33,23 @@ necessary or whether surgical marking + pinning is sufficient.
 **Assessment (step 1):** {{ step_1_result }}
 **Functional inventory (step 2):** {{ step_2_result }}
 **User task:** {{ task }}
+
+## Seam survival (before G1)
+
+For each D-seam the file carries, state its user-visible purpose, the
+operator's current requirement, and the upstream function at the new tip that
+does or does not deliver that purpose. Decide:
+
+- **retire** — upstream delivers the purpose, or the operator has deprecated
+  it (a DIVERGENCE.md row describing a deprecated capability is history, not
+  authority). The kask code, settings, tests, and row are removed.
+- **simplify** — keep only the part upstream still lacks.
+- **retain** — upstream does not deliver it and the requirement stands.
+- **needs-operator-decision** — the requirement itself is ambiguous.
+
+A same-named function, a clean conflict resolution, or a green compile is not
+evidence of equivalence. Do not default to retain. If every seam in the file
+retires, `strategy` is "take-upstream" and G1 does not apply.
 
 ## The deletion test (G1)
 
@@ -59,7 +79,8 @@ Apply Ousterhout's deletion test in both directions:
 ## Output
 
 Produce a JSON object with:
-- `strategy`: "surgical" or "full-reapplication"
+- `seam_decision`: "retire", "simplify", "retain", or "needs-operator-decision", with the D-number and one-sentence purpose
+- `strategy`: "take-upstream", "surgical", or "full-reapplication"
 - `full_reapplication`: boolean (true if full re-application needed)
 - `rationale`: string (one paragraph explaining the decision)
 - `cruft_identified`: array of {type, location, description} for any cruft found

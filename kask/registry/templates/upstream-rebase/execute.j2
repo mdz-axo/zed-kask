@@ -38,25 +38,38 @@ re-application) on the target D-seam file.
 
 ## What to do
 
+### If strategy is "take-upstream" (every seam in the file retired):
+
+1. Replace the file with the upstream version, then remove every coupled
+   kask symbol, setting, test, dependency, and comment the retired seam owned
+   (`git grep` each removed identifier across code and docs).
+2. Run `cargo check -p <crate>`.
+
 ### If strategy is "surgical":
 
 1. For each functional unit in the inventory that lacks a `// zed-kask:` marker,
    add one at the unit's section header: `// zed-kask: D<N> — F<ID>: <purpose>`
-2. Add a pinning test (`kask_wiring_symbols_exist` or similar) that asserts
-   the key types/functions from every Prohibition-force unit are accessible.
+2. Ensure each retained seam has one behavior test that fails when its
+   purpose is lost, placed at the smallest meaningful boundary (prefer a
+   `kask/` crate or existing fork-owned test module over a new test in an
+   upstream-owned file).
 3. Run `cargo check -p <crate>` to verify compilation.
 4. Run `cargo test -p <crate> --features test-support -- <pinning_test>` to verify the test passes.
 
 ### If strategy is "full-reapplication":
 
-1. `git checkout {{ upstream_ref }} -- {{ target_file }}` to get clean upstream.
+1. Save the fork's current version first (`git show HEAD:{{ target_file }} > <scratch path>`),
+   then take clean upstream with `git show {{ upstream_ref }}:{{ target_file }} > {{ target_file }}`.
+   Never overwrite an unsaved resolution.
 2. For each functional unit in topological order (from step 2's
    `topological_order`), insert the unit at its mapped insertion point in
    clean upstream. Add a `// zed-kask: D<N>` marker for each.
 3. Ensure `let` bindings are placed before any use (DAG-compliant ordering).
 4. Ensure no duplicate definitions.
-5. Add pinning tests for every Prohibition-force unit.
+5. Ensure each retained seam has one behavior test at the smallest meaningful boundary.
 6. Run `cargo check -p <crate>` and `cargo test`.
+7. Diff the result against both `HEAD` and `{{ upstream_ref }}`: every upstream-added
+   function and test must be present or accounted for.
 
 ## Coding guardrails (from coding-guidelines)
 
@@ -82,7 +95,7 @@ Produce a JSON object with:
 
 ## Constraints
 
-- Do NOT modify any upstream file outside the D1–D21 seams.
-- Every `// zed-kask:` deviation must have a corresponding test.
+- Do NOT modify any upstream file outside the D-seams listed in DIVERGENCE.md's divergence-surface table.
+- Every retained or simplified seam must have a behavior test; retired seams lose theirs.
 - The re-application order must be a topological sort of the dependency DAG.
 - Run the verification commands and report actual results — do not fabricate.

@@ -38,15 +38,24 @@ update DIVERGENCE.md and produce the final report for the re-application.
 ### Update DIVERGENCE.md
 
 1. Find the D-seam row(s) that list `{{ target_file }}`.
-2. Update the file list to reflect the re-applied file.
-3. Document every functional unit's constraint force and pinning test.
-4. If a new D-seam was introduced (a new file outside existing D1–D21),
-   add a new D-row with: Surface, file, what's wired, pinning test.
+2. For a **retired** seam: delete its row and append the number to the
+   retired-seam list with the reason and date (numbers are never reused).
+   Grep for the number and its pin names across code and docs; none may
+   remain outside the retired-seam record.
+3. For a **retained or simplified** seam: update the file list and document
+   the surviving purpose, the upstream evidence, and its behavior test.
+4. If a new D-seam was introduced, add a new D-row using the next unused
+   number (check the table and the retired-seam list): Surface, file, what's
+   wired, behavior test.
+5. Record the merge in one short section: fork parent, upstream tip, and one
+   line per affected seam with its decision. Completion is the merge commit
+   hash, not this section.
 
 ### Produce the final report
 
 Summarize:
-- Strategy chosen (surgical or full-reapplication) and why
+- Seam decision (retire, simplify, retain, needs-operator-decision) and the functional consequence for the user
+- Strategy chosen (take-upstream, surgical, or full-reapplication) and why
 - Number of functional units re-applied / marked
 - Markers added (before → after count)
 - Tests added (names)
