@@ -273,7 +273,15 @@ but subsequently reported `error`, while the indexed video upload reached
 credentials no longer echo user-info in the shared MCP validator, and POST
 429/5xx plus unusable acknowledgements warn that a write may have succeeded:
 inspect before retrying; no automatic retry or local fallback is introduced.
-These changes are fixture-tested but not yet observed in a restarted child.
+The new `reduct_upload_local_media` accepts an absolute path to a nonempty
+regular file with an ffprobe-decodable audio/video stream, without a gallery
+requirement. It streams the opened file with its byte length rather than buffering
+it in memory; the provider receives the filename and bytes, not the local path.
+The existing hash-checked gallery upload remains unchanged. Reduct remains the
+final authority on supported formats, and unsupported media may fail at the
+provider; no live local-path upload was attempted. The earlier safety fixes
+were fixture-tested before the child restart; the current running tool surface
+must be checked again after this new tool is built and installed.
 Project and recording and reel snapshots describe provider-returned subsets,
 not complete
 pagination. Reel read results do not authorize writes: Reduct reel/block payload

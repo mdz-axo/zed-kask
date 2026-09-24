@@ -291,9 +291,15 @@ The same excerpt specifies `POST /project/{project_id}/recording` with JSON
 with JSON `{"url": ...}` returning `media_ids`. `reduct_create_recording` and
 `reduct_import_media` implement those calls, and `reduct_upload_gallery_media`
 uses the specified raw `POST .../media-upload?filename=...` contract returning
-`media_id`. Upload requires an indexed audio/video Asset with an unchanged
-SHA-256 and a nonempty regular file at most 128 MiB; the provider receives
-no arbitrary local path. POST transport failures, HTTP 429/5xx, and unreadable
+`media_id`. The gallery tool requires an indexed audio/video Asset with an unchanged
+SHA-256 and a nonempty regular file at most 128 MiB. Separately,
+`reduct_upload_local_media` accepts any absolute local path to a nonempty regular
+file with a decodable audio or video stream, without requiring a gallery; it
+streams the opened file instead of buffering it under the gallery tool's 128 MiB
+limit. Reduct determines final format support; unsupported files may be refused
+by the provider. The provider receives only the filename and bytes, never the
+local path. A local upload intentionally transfers the selected file to Reduct.
+POST transport failures, HTTP 429/5xx, and unreadable
 or unusable acknowledgements state that the mutation **may have succeeded**
 and require inspection before retry, while preserving provider error kinds
 (`rate_limited`/`unavailable`). The shared URL validator rejects embedded

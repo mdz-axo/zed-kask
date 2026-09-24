@@ -158,7 +158,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "reduct_recordings_snapshot"
         | "reduct_create_recording"
         | "reduct_import_media"
-        | "reduct_upload_gallery_media" => Some(CAPTURE),
+        | "reduct_upload_gallery_media"
+        | "reduct_upload_local_media" => Some(CAPTURE),
         "reduct_recording_status" => Some(STATE),
         "reduct_recording_transcript" => Some(CAPTURE),
         "reduct_recording_highlights" => Some(VERSION_INFO),
