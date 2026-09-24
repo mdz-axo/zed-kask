@@ -432,4 +432,81 @@ mod tests {
             .context("set LEAN_CHECK_TEST_LAKE to a Lean 4 Lake binary to run this test")?;
         let dir = tempfile::tempdir()?;
         let root = dir.path();
-        std::fs::}
+        std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v4.34.0\n")?;
+        std::fs::write(
+            root.join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\npackage lean_check_test\n",
+        )?;
+        let file = root.join("Proof.lean");
+        let lake = Path::new(&lake);
+        std::fs::write(&file, "theorem clean : True := by trivial\n")?;
+        let clean = check_saved(root.into(), file.clone(), Some("clean".into()), lake).await?;
+        assert_eq!(
+            clean.completion_status, "axiom_free",
+            "{:?}",
+            clean.diagnostics
+        );
+        assert!(clean.lean_version.contains("4.34.0"));
+        assert!(
+            clean
+                .axioms
+                .as_deref()
+                .is_some_and(|a| a.contains("does not depend on any axioms"))
+        );
+
+        std::fs::write(&file, "theorem false_claim : 1 = 2 := by decide\n")?;
+        let bad = check_saved(root.into(), file.clone(), None, lake).await?;
+        assert_eq!(bad.completion_status, "failed");
+        assert!(bad.diagnostics.iter().any(|v| v["severity"] == "error"));
+
+        std::fs::write(&file, "theorem hole : False := by sorry\n")?;
+        let hole = check_saved(root.into(), file.clone(), Some("hole".into()), lake).await?;
+        assert_eq!(hole.completion_status, "axioms_present");
+        assert!(
+            hole.axioms
+                .as_deref()
+                .is_some_and(|a| a.contains("sorryAx"))
+        );
+        let unaudited = check_saved(root.into(), file.clone(), None, lake).await?;
+        assert_ne!(unaudited.completion_status, "axiom_free");
+        std::fs::write(&file, "theorem compiled : 2 + 2 = 4 := by native_decide\n")?;
+        let native = check_saved(root.into(), file, Some("compiled".into()), lake).await?;
+        assert_eq!(native.completion_status, "axioms_present");
+        assert!(
+            native
+                .axioms
+                .as_deref()
+                .is_some_and(|a| a.contains("native_decide"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_toolchain_and_symlink_escape_fail_closed() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let file = dir.path().join("Proof.lean");
+        std::fs::write(&file, "theorem t : True := by trivial\n")?;
+        std::fs::write(
+            dir.path().join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\npackage missing\n",
+        )?;
+        let missing = check_saved(dir.path().into(), file.clone(), None, Path::new("lake")).await;
+        assert!(format!("{:#}", missing.unwrap_err()).contains("lean-toolchain"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&file, outside.path().join("link.lean"))?;
+            assert!(
+                validate_saved_path(outside.path(), &outside.path().join("link.lean")).is_err()
+            );
+        }
+        std::fs::write(
+            dir.path().join("lean-toolchain"),
+            "leanprover/lean4:v4.34.0\n",
+        )?;
+        let missing_lake =
+            check_saved(dir.path().into(), file, None, Path::new("/no/such/lake")).await;
+        assert!(format!("{:#}", missing_lake.unwrap_err()).contains("install elan/Lake"));
+        Ok(())
+    }
+}
