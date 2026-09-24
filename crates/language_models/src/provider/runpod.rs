@@ -154,21 +154,20 @@ impl DiscoveryState {
             return;
         };
 
-        let state_for_notify = state.clone();
         let task = cx.spawn(async move |this, cx| {
             let result =
                 fetch_runpod_endpoints(http_client.as_ref(), &api_url, &api_key, &extra_headers)
                     .await;
             match result {
                 Ok(models) => {
+                    // The registry observes this entity directly (see
+                    // `subscribe`), so the shared state is left untouched:
+                    // notifying it re-triggered discovery (D76).
                     this.update(cx, |this, cx| {
                         this.fetched_models = models;
                         cx.notify();
                     })
                     .ok();
-                    // Notify the shared state so the LanguageModelRegistry
-                    // re-reads `provided_models` and the picker updates.
-                    state_for_notify.update(cx, |_, cx| cx.notify());
                 }
                 Err(error) => {
                     // `{error:#}` (anyhow's alternate format) includes the
@@ -300,6 +299,20 @@ impl LanguageModelProviderState for RunpodLanguageModelProvider {
 
     fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
+    }
+
+    /// zed-kask (D76): observe discovered endpoints as well as the shared state.
+    fn subscribe<T: 'static>(
+        &self,
+        cx: &mut gpui::Context<T>,
+        callback: impl Fn(&mut T, &mut gpui::Context<T>) + 'static,
+    ) -> Option<gpui::Subscription> {
+        let callback = std::rc::Rc::new(callback);
+        let on_state = callback.clone();
+        Some(gpui::Subscription::join(
+            cx.observe(&self.state, move |this, _, cx| on_state(this, cx)),
+            cx.observe(&self.discovery_state, move |this, _, cx| callback(this, cx)),
+        ))
     }
 }
 

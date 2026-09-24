@@ -103,7 +103,6 @@ impl DiscoveryState {
             return;
         };
 
-        let state_for_notify = state.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
                 .await
@@ -139,14 +138,14 @@ impl DiscoveryState {
                 });
             match result {
                 Ok(models) => {
+                    // The registry observes this entity directly (see
+                    // `subscribe`), so the shared state is left untouched:
+                    // notifying it re-triggered discovery (D76).
                     this.update(cx, |this, cx| {
                         this.fetched_models = models;
                         cx.notify();
                     })
                     .ok();
-                    // Notify the shared state so the LanguageModelRegistry
-                    // re-reads `provided_models` and the picker updates.
-                    state_for_notify.update(cx, |_, cx| cx.notify());
                 }
                 Err(e) => {
                     // zed-kask (D48): `{e:#}` (anyhow's alternate format)
@@ -251,6 +250,20 @@ impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
 
     fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
+    }
+
+    /// zed-kask (D76): observe discovered models as well as the shared state.
+    fn subscribe<T: 'static>(
+        &self,
+        cx: &mut Context<T>,
+        callback: impl Fn(&mut T, &mut Context<T>) + 'static,
+    ) -> Option<gpui::Subscription> {
+        let callback = std::rc::Rc::new(callback);
+        let on_state = callback.clone();
+        Some(gpui::Subscription::join(
+            cx.observe(&self.state, move |this, _, cx| on_state(this, cx)),
+            cx.observe(&self.discovery_state, move |this, _, cx| callback(this, cx)),
+        ))
     }
 }
 
@@ -936,7 +949,7 @@ mod tests {
         }
     }
 
-    /// D70 pin: a successful discovery must not re-trigger discovery. The
+    /// D76 pin: a successful discovery must not re-trigger discovery. The
     /// fetch task notifies the shared provider state so the model registry
     /// re-reads `provided_models`; discovery also observes that state, so
     /// without a guard every success started the next fetch — a continuous
@@ -997,19 +1010,27 @@ mod tests {
                 cx,
             )
         });
-        provider
-            .state
-            .update(cx, |state, cx| {
-                state.set_api_key(Some("key".to_string()), cx)
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
+        let store = provider.state.update(cx, |state, cx| {
+            state.set_api_key(Some("key".to_string()), cx)
+        });
+        // Bounded ticks, not `run_until_parked`: a self-restarting discovery
+        // loop never parks, which would hang the test instead of failing it.
+        for _ in 0..500 {
+            if !cx.executor().tick() {
+                break;
+            }
+        }
+        store.await.unwrap();
+        for _ in 0..500 {
+            if !cx.executor().tick() {
+                break;
+            }
+        }
 
-        let settled = requests.load(Ordering::SeqCst);
-        assert!(
-            settled >= 1,
-            "storing a key must discover models at least once"
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "storing a key must discover models exactly once, not poll /models"
         );
         cx.update(|cx| {
             assert!(
@@ -1021,14 +1042,33 @@ mod tests {
             );
         });
 
-        for _ in 0..5 {
-            cx.run_until_parked();
-        }
+        cx.run_until_parked();
         assert_eq!(
             requests.load(Ordering::SeqCst),
-            settled,
+            1,
             "a completed discovery must not start another /models request"
         );
+
+        // The registry learns about discovered models through `subscribe`,
+        // which must fire on discovery completion now that the shared state
+        // is no longer notified.
+        let notified = Arc::new(AtomicUsize::new(0));
+        let observer = cx.update(|cx| {
+            cx.new(|cx: &mut Context<()>| {
+                let notified = notified.clone();
+                provider
+                    .subscribe(cx, move |_, _| {
+                        notified.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .expect("provider exposes a subscription")
+                    .detach();
+            })
+        });
+        provider.discovery_state.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(notified.load(Ordering::SeqCst), 1);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        drop(observer);
     }
 
     /// D48 pin: the discovery-failure warn must format the error with
