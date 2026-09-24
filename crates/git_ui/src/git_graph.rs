@@ -599,26 +599,11 @@ pub struct OpenAtCommit {
     pub sha: String,
 }
 
-// zed-kask: `time::format_description::parse` is `#[deprecated]` in time 0.3.54+
-// (the workspace-resolved version; lower versions break `plist`/`project`).
-// Upstream `git_graph.rs` calls `parse` directly. This helper centralizes the
-// `#[allow(deprecated)]` for the timestamp format parser. Remove this
-// (and call `parse_borrowed` directly) when upstream migrates.
-// See DIVERGENCE.md D11.
-#[allow(deprecated)]
-fn parse_time_format(
-    s: &'static str,
-) -> Result<Vec<BorrowedFormatItem<'static>>, time::error::InvalidFormatDescription> {
-    time::format_description::parse(s)
-}
-
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
     FORMAT.get_or_init(|| {
-        // zed-kask: `time::format_description::parse` is deprecated in time 0.3.54+
-        // (replaced by `parse_borrowed`). Upstream uses `parse`; we allow the
-        // deprecation until upstream migrates. See DIVERGENCE.md D11.
-        parse_time_format("[day] [month repr:short] [year] [hour]:[minute]").unwrap_or_default()
+        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+            .unwrap_or_default()
     })
 }
 

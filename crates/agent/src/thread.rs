@@ -2314,7 +2314,7 @@ impl Thread {
     /// This is stored separately from `agent_static_context` (on
     /// `KaskThreadState`) because it is a
     /// routing key, not a prompt fragment. The memory port (D6) and context
-    /// injector dispatch (D11) both read it to select the correct
+    /// injector dispatch (D8) both read it to select the correct
     /// perspective-scoped store.
     pub fn set_agent_id(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
         self.kask.set_agent_id(agent_id);
@@ -3293,7 +3293,7 @@ impl Thread {
                 anyhow::Ok((model, request))
             })??;
 
-            // D11: Context injection — retrieve salient memories and inject
+            // D8: Context injection — retrieve salient memories and inject
             // them into the prompt after the system prompt, before the
             // conversation history. Only for UserPrompt and Subagent intents
             // (not for ThreadSummarization — would cause infinite recursion).

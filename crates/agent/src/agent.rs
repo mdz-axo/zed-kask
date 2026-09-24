@@ -928,7 +928,7 @@ impl NativeAgent {
                 thread.set_static_context(curator_context.clone(), cx);
                 // Tag the thread with the Curator agent ID so the memory
                 // ingestion path (D6) routes Curator turns to the curator's
-                // sovereign DB, and the context injector dispatch (D11)
+                // sovereign DB, and the context injector dispatch (D8)
                 // selects the curator's recall store. Without this, Curator
                 // turns would be ingested as user-perspective records and the
                 // curator would have no automatic recall.
@@ -3138,7 +3138,7 @@ pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
     THREADS_DB_PATH_OVERRIDE.get()
 }
 
-/// Context injector — enriches prompts with retrieved context (D11).
+/// Context injector — enriches prompts with retrieved context (D8).
 ///
 /// Called from `build_request_messages_until` after the system prompt and
 /// before the conversation history. Returns additional messages to insert
@@ -3163,7 +3163,7 @@ pub trait ContextInjector: Send + Sync {
     >;
 }
 
-/// Global hook for the context injector (D11).
+/// Global hook for the context injector (D8).
 ///
 /// Set by the zed-kask composition root at startup. When set, prompts are
 /// enriched with retrieved memories before inference. When `None`
@@ -3171,7 +3171,7 @@ pub trait ContextInjector: Send + Sync {
 static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
     std::sync::OnceLock::new();
 
-/// Global hook for the **Curator's** context injector (D11 — curator mirror).
+/// Global hook for the **Curator's** context injector (D8 — curator mirror).
 ///
 /// Set by the zed-kask composition root alongside `set_context_injector`.
 /// When set, Curator threads get their prompts enriched with memories
@@ -3182,7 +3182,7 @@ static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
 static CURATOR_CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
     std::sync::OnceLock::new();
 
-/// Set the global context injector (D11 composition root).
+/// Set the global context injector (D8 composition root).
 ///
 /// Uses `OnceLock` — a second call (e.g. deferred task re-firing after a
 /// model change) is silently dropped. The warn names the hook so operators
@@ -3200,7 +3200,7 @@ pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
     }
 }
 
-/// Set the Curator's context injector (D11 composition root — curator mirror).
+/// Set the Curator's context injector (D8 composition root — curator mirror).
 ///
 /// Called by the composition root alongside `set_context_injector`. The
 /// curator injector recalls from the curator's sovereign DB so the Curator
@@ -3222,7 +3222,7 @@ pub(crate) fn context_injector() -> Option<&'static Arc<dyn ContextInjector>> {
     CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
 }
 
-/// Get the context injector for a given agent ID (D11 per-agent dispatch).
+/// Get the context injector for a given agent ID (D8 per-agent dispatch).
 ///
 /// Returns the Curator's injector when `agent_id` is `CURATOR_AGENT_ID`,
 /// falling back to the user injector when the curator injector is not set
