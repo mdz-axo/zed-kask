@@ -57,6 +57,90 @@ fi
 # System bin path for optional symlink.
 SYSTEM_BIN="/usr/local/bin"
 
+# One pinned baseline for the Lean checker. Elan still honors each checked
+# project's own lean-toolchain; this version makes first-run checks ready.
+LEAN_CHECK_TOOLCHAIN='leanprover/lean4:v4.34.0'
+ELAN_RELEASE_VERSION='v4.2.4'
+
+# Provision the shared, per-user Lean version manager without changing PATH or
+# the user's existing Elan default. Both source and verified-binary installs
+# call this; plain cargo build does not touch the network or the user's home.
+install_lean_toolchain() {
+    local elan_home="${ELAN_HOME:-${HOME:?HOME is required}/.elan}"
+    if [[ "$elan_home" != /* ]]; then
+        log_error "ELAN_HOME must be an absolute path: $elan_home"
+        return 1
+    fi
+    assert_not_zed_owned_path "$elan_home" "Lean toolchain installation" || return 1
+
+    local elan_bin="$elan_home/bin/elan"
+    if [ -e "$elan_bin" ] && [ ! -x "$elan_bin" ]; then
+        log_error "Elan exists but is not executable: $elan_bin"
+        return 1
+    fi
+    if [ ! -x "$elan_bin" ]; then
+        local target digest
+        case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)
+                target='x86_64-unknown-linux-gnu'
+                digest='42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63'
+                ;;
+            Linux-aarch64)
+                target='aarch64-unknown-linux-gnu'
+                digest='05febd124d84ebf994b2e7479922a5650b1e950c17ae3bd1ddd776b65bb72bf9'
+                ;;
+            *) log_error 'Automatic Lean installation supports Linux x86_64 and aarch64'; return 1 ;;
+        esac
+        for tool in tar sha256sum; do
+            command -v "$tool" >/dev/null 2>&1 || { log_error "Lean installation requires $tool"; return 1; }
+        done
+        local scratch archive listing
+        scratch=$(mktemp -d) || return 1
+        archive="$scratch/elan.tar.gz"
+        local url="https://github.com/leanprover/elan/releases/download/${ELAN_RELEASE_VERSION}/elan-${target}.tar.gz"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL --retry 2 -o "$archive" "$url" || { rm -rf "$scratch"; return 1; }
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$archive" "$url" || { rm -rf "$scratch"; return 1; }
+        else
+            log_error 'Lean installation requires curl or wget'
+            rm -rf "$scratch"
+            return 1
+        fi
+        if ! (cd "$scratch" && printf '%s  %s\n' "$digest" elan.tar.gz | sha256sum -c - >/dev/null); then
+            log_error "Elan ${ELAN_RELEASE_VERSION} archive checksum mismatch"
+            rm -rf "$scratch"
+            return 1
+        fi
+        listing=$(tar -tzf "$archive") || { rm -rf "$scratch"; return 1; }
+        if [ "$listing" != 'elan-init' ]; then
+            log_error 'Elan archive contains unexpected entries'
+            rm -rf "$scratch"
+            return 1
+        fi
+        tar -xzf "$archive" -C "$scratch" --no-same-owner --no-same-permissions elan-init || { rm -rf "$scratch"; return 1; }
+        chmod 700 "$scratch/elan-init"
+        log "Installing verified Elan ${ELAN_RELEASE_VERSION} into $elan_home..."
+        if ! ELAN_HOME="$elan_home" "$scratch/elan-init" -y --no-modify-path --default-toolchain none; then
+            rm -rf "$scratch"
+            return 1
+        fi
+        rm -rf "$scratch"
+        [ -x "$elan_bin" ] || { log_error "Elan installer did not create $elan_bin"; return 1; }
+    fi
+
+    log "Installing Lean ${LEAN_CHECK_TOOLCHAIN} (cached on subsequent runs)..."
+    ELAN_HOME="$elan_home" "$elan_bin" toolchain install "$LEAN_CHECK_TOOLCHAIN" || return 1
+    local expected="${LEAN_CHECK_TOOLCHAIN#leanprover/lean4:v}" version
+    version=$(ELAN_HOME="$elan_home" "$elan_bin" run "$LEAN_CHECK_TOOLCHAIN" lean --version) || return 1
+    case "$version" in
+        "Lean (version $expected,"*) ;;
+        *) log_error "Expected Lean $expected but Elan returned: $version"; return 1 ;;
+    esac
+    ELAN_HOME="$elan_home" "$elan_bin" run "$LEAN_CHECK_TOOLCHAIN" lake --version || return 1
+    log_success "Lean/Lake ready at $elan_home/bin (project pins remain authoritative)"
+}
+
 # Reject every destination owned by upstream Zed. This is the installer
 # membrane: zed-kask may coexist with Zed, but may never write into Zed's app,
 # data, config, launcher, or command paths. `readlink -m` resolves existing

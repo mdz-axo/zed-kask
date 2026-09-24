@@ -137,6 +137,38 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_establishes_expectation_before_substantive_inquiry() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render system prompt");
+        let checkpoint = rendered
+            .find("Before a substantive inquiry")
+            .expect("agent must form an expectation before probing");
+        let tools = rendered.find("## Tool Use").expect("tool guidance present");
+        assert!(
+            checkpoint < tools,
+            "checkpoint must precede tool instructions"
+        );
+        assert!(rendered.contains("what would falsify it"));
+        assert!(rendered.contains("state unknown"));
+        assert!(rendered.contains("gradient-hunter"));
+        assert!(rendered.contains("Skip this for trivial mechanical tasks"));
+    }
+
+    #[test]
     fn test_system_prompt_renders_session_context_without_rules_or_agents_md() {
         // Regression: the `static_context` (Session Context) block was nested
         // inside `{{#if (or user_agents_md has_rules)}}`, so it was silently

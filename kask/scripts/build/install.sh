@@ -2,9 +2,10 @@
 # zed-kask Installation Script for Linux
 #
 # Builds zed-kask and the kask MCP servers from source and installs them to
-# $HOME/.local/bin (or a custom dir). System dependencies are installed via
-# the canonical ./script/linux (shared with CI); Rust toolchain pinning is
-# delegated to rust-toolchain.toml.
+# $HOME/.local/bin (or a custom dir). Source install and --build-only also
+# provision the pinned Lean/Lake toolchain via verified Elan; raw cargo build
+# remains offline. System dependencies come from ./script/linux; Rust toolchain
+# pinning is delegated to rust-toolchain.toml.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
@@ -600,6 +601,12 @@ verify_installation() {
         return 1
     fi
 
+    local elan_home="${ELAN_HOME:-$HOME/.elan}"
+    if [ ! -x "$elan_home/bin/lake" ]; then
+        log_error "Pinned Lean/Lake toolchain launcher missing: $elan_home/bin/lake"
+        return 1
+    fi
+
     # Check symlink in /usr/local/bin
     if [ -L "$SYSTEM_BIN/zed-kask" ]; then
         log "Symlink: $SYSTEM_BIN/zed-kask → $(readlink "$SYSTEM_BIN/zed-kask")"
@@ -788,6 +795,7 @@ main() {
             fi
 
             build_hkask
+            install_lean_toolchain
             prepare_install_dir
             install_binary
             install_updater_bundle
@@ -832,6 +840,7 @@ main() {
                 install_rust
             fi
             build_hkask
+            install_lean_toolchain
             ;;
     esac
 }

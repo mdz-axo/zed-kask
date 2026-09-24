@@ -76,6 +76,29 @@ impl LeanCheckTool {
     }
 }
 
+// Resolve the per-user Elan launcher directly: a GUI-launched editor need not
+// inherit the shell's PATH. A manually provided Lake on PATH remains supported.
+fn lake_executable(elan_home: Option<&Path>, home: Option<&Path>) -> Result<PathBuf> {
+    let elan_home = match elan_home {
+        Some(path) if !path.is_absolute() => bail!("ELAN_HOME must be an absolute path"),
+        Some(path) => Some(path.to_path_buf()),
+        None => home.map(|path| path.join(".elan")),
+    };
+    if let Some(elan_home) = elan_home {
+        let lake = elan_home.join("bin/lake");
+        if lake.is_file() {
+            return Ok(lake);
+        }
+        if std::env::var_os("ELAN_HOME").is_some() {
+            bail!(
+                "ELAN_HOME is set but Lake is missing at {}; run the supported zed-kask installer",
+                lake.display()
+            );
+        }
+    }
+    Ok(PathBuf::from("lake"))
+}
+
 fn validate_name(name: &str) -> Result<()> {
     if name.split('.').all(|part| {
         let mut chars = part.chars();
@@ -436,9 +459,12 @@ impl AgentTool for LeanCheckTool {
                     )
                 });
                 prompt.await?;
+                let elan_home = std::env::var_os("ELAN_HOME").map(PathBuf::from);
+                let home = std::env::var_os("HOME").map(PathBuf::from);
+                let lake = lake_executable(elan_home.as_deref(), home.as_deref())?;
                 let task = cx.update(|cx| {
                     gpui_tokio::Tokio::spawn(cx, async move {
-                        check_saved(root, file, input.theorem, Path::new("lake")).await
+                        check_saved(root, file, input.theorem, &lake).await
                     })
                 });
                 task.await.map_err(|e| anyhow!("{e}"))?
@@ -541,6 +567,21 @@ mod tests {
             ))
             .map_err(|_| anyhow!("permission response channel closed"))?;
         assert!(task.await.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn uses_installed_elan_launcher_without_shell_path() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let elan = dir.path().join(".elan");
+        std::fs::create_dir_all(elan.join("bin"))?;
+        std::fs::write(elan.join("bin/lake"), "test launcher")?;
+        assert_eq!(
+            lake_executable(None, Some(dir.path()))?,
+            elan.join("bin/lake")
+        );
+        assert_eq!(lake_executable(Some(&elan), None)?, elan.join("bin/lake"));
+        assert!(lake_executable(Some(Path::new("relative/elan")), None).is_err());
         Ok(())
     }
 

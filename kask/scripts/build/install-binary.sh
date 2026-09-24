@@ -222,6 +222,8 @@ install_binaries() {
 verify_installation() {
     [ -x "$BIN_DIR/zed-kask" ] || { log_error "zed-kask was not installed"; return 1; }
     [ -x "$UPDATER_DIR/update-zed-kask.sh" ] || { log_error "safe updater was not installed"; return 1; }
+    local elan_home="${ELAN_HOME:-$HOME/.elan}"
+    [ -x "$elan_home/bin/lake" ] || { log_error "Pinned Lake launcher missing: $elan_home/bin/lake"; return 1; }
 }
 
 main() {
@@ -235,6 +237,7 @@ main() {
     [ -n "$tag" ] || { log_error "Could not determine a zed-kask release tag"; exit 1; }
     temporary_directory=$(download_and_extract "$target" "$tag") || exit 1
     trap 'rm -rf "$temporary_directory"' EXIT
+    install_lean_toolchain
     install_binaries "$temporary_directory/extracted"
     add_to_path
     write_mcp_server_settings
