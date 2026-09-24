@@ -1,7 +1,7 @@
 ---
 name: skill-maintenance
 core: true
-description: "Skill lifecycle management. SKILL.md is the canonical source of truth; .j2 templates are companion resources. Audit staleness, coverage gaps, and quality. Validate, build, translate, and prune skills."
+description: "Skill lifecycle management: validate canonical SKILL.md instructions and companion .j2 templates, audit staleness and coverage, and compare distinct skill designs on fixed tasks before claiming improvement."
 ---
 
 # Skill Maintenance
@@ -9,7 +9,8 @@ description: "Skill lifecycle management. SKILL.md is the canonical source of tr
 Skill lifecycle management and maintenance. SKILL.md is the canonical source
 of truth — the process instructions the agent reads and follows. .j2 templates
 are companion resources that define prompt structure. Audit staleness,
-coverage gaps, and quality. Validate, build, translate, and prune skills.
+coverage gaps, and task outcomes. Validate, build, translate, and compare
+candidate designs before changing skills.
 
 ## The skill model
 
