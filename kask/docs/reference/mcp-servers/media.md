@@ -278,8 +278,10 @@ The operator's 55-page v3 PDF supplies the previously missing write schemas:
 Reel creation (page 31), doc-range/title block creation (pages 36–38) and
 partial block editing (pages 38–39). Four explicitly cloud-named tools now
 create a Reel, add clip/title blocks, and edit a clip range. Their loopback
-fixtures pin POST path/body, acknowledgement and refusal; no live mutation,
-release deployment, or completed cloud composition has yet been observed.
+fixtures pin POST path/body, acknowledgement and refusal. A `release-mcp`
+binary is installed on disk, but the running child still exposes the older
+12-tool Reduct subset; no live mutation, running-tool deployment, or completed
+cloud composition has yet been observed.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations

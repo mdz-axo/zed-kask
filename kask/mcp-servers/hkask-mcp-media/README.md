@@ -306,8 +306,11 @@ scoped contracts. Clip edits read back the block type before POST; every
 acknowledgement means submission, not verified composition/rendering. Loopback
 fixtures exercise request path/body, X-Auth-Key header, parsed acknowledgement,
 and HTTP refusal. The PDF's embedded text was cross-checked because corpus OCR
-flagged eleven pages for quality; no PDF text is committed. These four tools
-have **not** been deployed to the running MCP child or live-mutated in Reduct.
+flagged eleven pages for quality; no PDF text is committed. These four tools passed focused source tests, clippy and the Zed check;
+the `release-mcp` binary was installed to `~/.local/bin/hkask-mcp-media`,
+but the running child retained its older inode and still advertises twelve
+Reduct tools. They have **not** executed in the running MCP child or
+live-mutated in Reduct.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough
