@@ -1341,6 +1341,7 @@ impl MediaServer {
             self.reduct_api_key.as_deref(),
             &url,
             bytes.into(),
+            metadata.len(),
             "media upload",
         )
         .await?;
@@ -1860,6 +1861,7 @@ mod tests {
             Some("fixture-key"),
             &url,
             b"fixture-binary".to_vec().into(),
+            b"fixture-binary".len() as u64,
             "media upload",
         )
         .await
@@ -1926,7 +1928,11 @@ mod tests {
                 "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
                 response_body.len()
             )?;
-            String::from_utf8(request).map_err(std::io::Error::other)
+            let end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .ok_or_else(|| std::io::Error::other("missing request headers"))?;
+            String::from_utf8(request[..end].to_vec()).map_err(std::io::Error::other)
         });
         let url = format!(
             "http://{address}/project/p_fixture/recording/r_fixture/media-upload?filename=sample+clip.wav"
@@ -1944,6 +1950,12 @@ mod tests {
                 .contains("x-auth-key: fixture-key")
         );
         assert!(!request.contains(&path.to_string_lossy().to_string()));
+        assert!(request.to_ascii_lowercase().contains("content-length: 46"));
+        assert!(
+            !request
+                .to_ascii_lowercase()
+                .contains("transfer-encoding: chunked")
+        );
         let invalid_path = dir.path().join("not-media.wav");
         tokio::fs::write(&invalid_path, b"not audio").await?;
         let invalid = upload_local_media(Some("fixture-key"), &url, &invalid_path)
