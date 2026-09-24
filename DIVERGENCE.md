@@ -391,6 +391,8 @@ primary divergence seams:
 - `crates/remote_server/src/remote_editing_tests.rs` — test accommodations only: telemetry metrics disabled by default in the remote-editing test harness; skills execute via body injection (D1's mechanism) in the remote tests.
 - `crates/marketplace_ui_common/src/marketplace_ui_common.rs` — the marketplace chrome crate survives the D30 marketplace retirement: its shared card/list UI is reused by kask catalog pages (the in-file marker documents why the crate is still compiled).
 
+**Temporary foreground timing probes removed (2026-09-23):** the `[DIAG-thread-perf]` probes in `crates/gpui/src/{window.rs,elements/animation.rs}`, `crates/agent_ui/src/conversation_view.rs`, `crates/sidebar/src/sidebar.rs`, and `crates/agent/src/{agent.rs,tools/edit_file_tool.rs}` were investigative instrumentation, not a lasting fork behavior. They logged ordinary frame, event and tool activity as warnings, flooding the operational log. The counters, hot-path clocks and call-site formatting are removed; animation scheduling and actual failure logging are unchanged. High frame counts observed in the captured log alone do not establish an animation defect or a measured improvement from this removal. A source-wide prefix sweep and scoped compilation check the cleanup; live performance still requires separate measurement.
+
 ## hKask workspace members (additive — upstream never touches)
 
 The following are added to the root `Cargo.toml` `[workspace.members]` array.

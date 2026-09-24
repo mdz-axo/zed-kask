@@ -2549,25 +2549,7 @@ impl Window {
     /// which automatically respects [`App::reduce_motion`]. When using this
     /// method directly for decorative motion, check [`App::reduce_motion`]
     /// and skip the frame request when it is set.
-    #[track_caller]
     pub fn request_animation_frame(&self) {
-        thread_local! {
-            static ANIMATION_PROBE: RefCell<(std::time::Instant, FxHashMap<(&'static str, u32), u64>)> =
-                RefCell::new((std::time::Instant::now(), FxHashMap::default()));
-        }
-        let caller = std::panic::Location::caller();
-        ANIMATION_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            *probe.1.entry((caller.file(), caller.line())).or_default() += 1;
-            if probe.0.elapsed() >= Duration::from_secs(2) {
-                log::warn!(
-                    "[DIAG-thread-perf] gpui animation requests={:?} interval_ms={}",
-                    probe.1,
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), FxHashMap::default());
-            }
-        });
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
@@ -3105,7 +3087,6 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        let diagnostic_started = std::time::Instant::now();
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3143,7 +3124,6 @@ impl Window {
                 self.rendered_frame.input_handlers.push(Some(input_handler));
             }
         }
-        let roots_started = std::time::Instant::now();
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
             #[cfg(feature = "profiler")]
@@ -3157,7 +3137,6 @@ impl Window {
                 );
             }
         }
-        let roots_elapsed = roots_started.elapsed();
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -3258,26 +3237,6 @@ impl Window {
             self.debug_frame_overlay.record_frame(draw_duration);
         }
 
-        thread_local! {
-            static DRAW_PROBE: RefCell<(std::time::Instant, u64, Duration, Duration)> =
-                RefCell::new((std::time::Instant::now(), 0, Duration::ZERO, Duration::ZERO));
-        }
-        DRAW_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            probe.1 += 1;
-            probe.2 += diagnostic_started.elapsed();
-            probe.3 += roots_elapsed;
-            if probe.0.elapsed() >= Duration::from_secs(2) {
-                log::warn!(
-                    "[DIAG-thread-perf] gpui draw frames={} draw_ms={} roots_ms={} interval_ms={}",
-                    probe.1,
-                    probe.2.as_millis(),
-                    probe.3.as_millis(),
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), 0, Duration::ZERO, Duration::ZERO);
-            }
-        });
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
         arena_scope.exit(&cx.element_arena)
@@ -3307,7 +3266,6 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
-        let diagnostic_started = std::time::Instant::now();
         #[cfg(feature = "profiler")]
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
@@ -3322,24 +3280,6 @@ impl Window {
         );
         self.needs_present.set(false);
         profiling::finish_frame!();
-        thread_local! {
-            static PRESENT_PROBE: RefCell<(std::time::Instant, u64, Duration)> =
-                RefCell::new((std::time::Instant::now(), 0, Duration::ZERO));
-        }
-        PRESENT_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            probe.1 += 1;
-            probe.2 += diagnostic_started.elapsed();
-            if probe.0.elapsed() >= Duration::from_secs(2) {
-                log::warn!(
-                    "[DIAG-thread-perf] gpui present frames={} ms={} interval_ms={}",
-                    probe.1,
-                    probe.2.as_millis(),
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), 0, Duration::ZERO);
-            }
-        });
     }
 
     /// Presents the most recently drawn frame if it hasn't been presented yet.

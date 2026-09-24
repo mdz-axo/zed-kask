@@ -1381,7 +1381,6 @@ impl ConversationView {
         list_state.set_follow_mode(gpui::FollowMode::Tail);
 
         let is_root_thread = thread.read(cx).parent_session_id().is_none();
-        let entries_started = std::time::Instant::now();
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
                 if is_root_thread {
@@ -1396,10 +1395,6 @@ impl ConversationView {
                 (0..count).map(|ix| view_state.entry(ix)?.focus_handle(cx)),
             );
         });
-        log::warn!(
-            "[DIAG-thread-perf] initial_entries id={session_id:?} count={count} root={is_root_thread} ms={}",
-            entries_started.elapsed().as_millis()
-        );
 
         if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
             list_state.scroll_to(scroll_position);
@@ -1694,7 +1689,6 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let diagnostic_started = std::time::Instant::now();
         let session_id = thread.read(cx).session_id().clone();
         let has_thread = self
             .as_connected()
@@ -1987,24 +1981,6 @@ impl ConversationView {
             }
         }
         cx.notify();
-        thread_local! {
-            static EVENT_PROBE: std::cell::RefCell<(std::time::Instant, u64, std::time::Duration)> =
-                std::cell::RefCell::new((std::time::Instant::now(), 0, std::time::Duration::ZERO));
-        }
-        EVENT_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            probe.1 += 1;
-            probe.2 += diagnostic_started.elapsed();
-            if probe.0.elapsed() >= std::time::Duration::from_secs(2) {
-                log::warn!(
-                    "[DIAG-thread-perf] conversation events={} cpu_ms={} interval_ms={}",
-                    probe.1,
-                    probe.2.as_millis(),
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), 0, std::time::Duration::ZERO);
-            }
-        });
     }
 
     fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {

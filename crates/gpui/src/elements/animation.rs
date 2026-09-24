@@ -1,10 +1,5 @@
 use scheduler::Instant;
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use crate::{
     AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
@@ -470,22 +465,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                                 .detach();
                         }
                     }
-                    _ => {
-                        thread_local! {
-                            static ELEMENT_PROBE: RefCell<(std::time::Instant, HashMap<String, u64>)> =
-                                RefCell::new((std::time::Instant::now(), HashMap::new()));
-                        }
-                        ELEMENT_PROBE.with(|probe| {
-                            let mut probe = probe.borrow_mut();
-                            let id = format!("{:?} type={}", self.id, std::any::type_name::<E>());
-                            *probe.1.entry(id).or_default() += 1;
-                            if probe.0.elapsed() >= Duration::from_secs(2) {
-                                log::warn!("[DIAG-thread-perf] gpui animation elements={:?} interval_ms={}", probe.1, probe.0.elapsed().as_millis());
-                                *probe = (std::time::Instant::now(), HashMap::new());
-                            }
-                        });
-                        window.request_animation_frame();
-                    },
+                    _ => window.request_animation_frame(),
                 }
             }
 

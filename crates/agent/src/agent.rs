@@ -1828,19 +1828,11 @@ impl NativeAgent {
     ) -> Task<Result<Entity<Thread>>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
-            let started = std::time::Instant::now();
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            let connected = started.elapsed();
             let db_thread = database
                 .load_thread(id.clone())
                 .await?
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
-            let loaded = started.elapsed();
-            log::warn!(
-                "[DIAG-thread-perf] load id={id:?} connect_ms={} db_ms={}",
-                connected.as_millis(),
-                (loaded - connected).as_millis()
-            );
 
             let result = this.update(cx, |this, cx| {
                 let project_id = this.get_or_create_project_state(&project, cx);
@@ -1866,11 +1858,6 @@ impl NativeAgent {
                     thread
                 }))
             })?;
-            log::warn!(
-                "[DIAG-thread-perf] load id={id:?} from_db_ms={} total_ms={}",
-                (started.elapsed() - loaded).as_millis(),
-                started.elapsed().as_millis()
-            );
             result
         })
     }
@@ -1900,7 +1887,6 @@ impl NativeAgent {
             .spawn({
                 let id = id.clone();
                 async move |this, cx| {
-                    let started = std::time::Instant::now();
                     let thread = match task.await {
                         Ok(thread) => thread,
                         Err(err) => {
@@ -1911,7 +1897,6 @@ impl NativeAgent {
                             return Err(Arc::new(err));
                         }
                     };
-                    let loaded = started.elapsed();
                     let acp_thread = this
                         .update(cx, |this, cx| {
                             let project_id = this.get_or_create_project_state(&project, cx);
@@ -1919,9 +1904,7 @@ impl NativeAgent {
                             this.register_session(thread.clone(), project_id, cx)
                         })
                         .map_err(Arc::new)?;
-                    let registered = started.elapsed();
                     let events = thread.update(cx, |thread, cx| thread.replay(cx));
-                    let replayed = started.elapsed();
                     cx.update(|cx| {
                         NativeAgentConnection::handle_thread_events(
                             events,
@@ -1932,11 +1915,9 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
-                    let drained = started.elapsed();
                     acp_thread.update(cx, |thread, cx| {
                         thread.snapshot_completed_plan(cx);
                     });
-                    log::warn!("[DIAG-thread-perf] open id={id:?} load_ms={} register_ms={} replay_ms={} drain_ms={} total_ms={}", loaded.as_millis(), (registered - loaded).as_millis(), (replayed - registered).as_millis(), (drained - replayed).as_millis(), started.elapsed().as_millis());
                     Ok(acp_thread)
                 }
             })

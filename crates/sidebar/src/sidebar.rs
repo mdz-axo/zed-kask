@@ -2020,7 +2020,6 @@ impl Sidebar {
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
     fn update_entries(&mut self, cx: &mut Context<Self>) {
-        let diagnostic_started = std::time::Instant::now();
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -2048,24 +2047,6 @@ impl Sidebar {
         }
 
         cx.notify();
-        thread_local! {
-            static SIDEBAR_PROBE: std::cell::RefCell<(std::time::Instant, u64, std::time::Duration)> =
-                std::cell::RefCell::new((std::time::Instant::now(), 0, std::time::Duration::ZERO));
-        }
-        SIDEBAR_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            probe.1 += 1;
-            probe.2 += diagnostic_started.elapsed();
-            if probe.0.elapsed() >= std::time::Duration::from_secs(2) {
-                log::warn!(
-                    "[DIAG-thread-perf] sidebar updates={} cpu_ms={} interval_ms={}",
-                    probe.1,
-                    probe.2.as_millis(),
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), 0, std::time::Duration::ZERO);
-            }
-        });
     }
 
     /// Splices only the changed entry range, leaving unchanged item measurements intact.
