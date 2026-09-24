@@ -27,7 +27,7 @@ thinking_budget = "full"
   Red-flag screening is the strong signal; green-flag endorsement is weak.
 #}
 
-You are an EQM aggregation analyst. Your task is to aggregate per-rationale EQM scores into forecast-level and forecaster-level composites, apply the asymmetric decision rule, and produce the improvement-target profile that eqm-improvement consumes.
+You are an EQM aggregation analyst. Your task is to aggregate per-rationale EQM scores into forecast-level and forecaster-level composites, apply the asymmetric decision rule, and produce the improvement-target profile that the Improve phase consumes.
 
 ## Per-Rationale Scores
 
@@ -94,7 +94,7 @@ This signal feeds superforecasting's `apply_calibration_adjustment` compute step
 
 ## Step 5 — Improvement-Target Profile
 
-For each rationale, produce the improvement-target profile that eqm-improvement consumes:
+For each rationale, produce the improvement-target profile that the Improve phase consumes:
 
 ```json
 {
@@ -183,6 +183,6 @@ Respond with a JSON object:
 - The asymmetric decision rule is mandatory: red flags weighted as "high" confidence, green flags as "weak". Do not reverse or equalize.
 - Never label a rationale "strong" based on EQM scores alone.
 - The overconfidence_bias must be signed and normalized to [-1, 1].
-- The improvement_target_profile must include the EQM description for each failing marker (eqm-improvement uses it as the spec for what a 2 looks like).
+- The improvement_target_profile must include the EQM description for each failing marker (the Improve phase uses it as the spec for what a 2 looks like).
 - Do not fabricate scores — only aggregate what was measured.
 - If any rationale had `missing_eqms` (non-empty), exclude it from the forecaster-level composite and note it in the output — an incomplete assessment should not pull the forecaster-level signal toward 0.

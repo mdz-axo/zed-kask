@@ -1,9 +1,9 @@
 ---
 name: eqm
-description: "Explanation Quality Markers measurement instrument. Scores forecast rationales against 60 EQMs via the market_score_rationale MCP tool, aggregates to composites, validates against realized outcomes (Brier), and emits an overconfidence_bias signal."
+description: "Explanation Quality Markers: measure forecast rationales against 60 EQMs via market_score_rationale, aggregate to composites, validate against realized outcomes (Brier), emit overconfidence_bias, and improve a rationale with an in-session PDCA loop that preserves its probability and grounds evidence in real sources."
 ---
 
-# EQM — Explanation Quality Markers (Measurement Instrument)
+# EQM — Explanation Quality Markers (Measure and Improve)
 
 Measurement instrument for forecast-rationale quality, grounded in Karvetski,
 Huang, Kučinskas et al. (2026), "Measuring Judgment Quality in Natural-Language
@@ -21,13 +21,13 @@ validates against realized outcomes, and emits calibration feedback.
   realized outcomes).
 - When you need to emit an overconfidence_bias signal back to superforecasting's
   calibration-adjustment step.
-- When eqm-improvement needs a score profile to drive rationale improvement.
+- When you need to improve a rationale's EQM passage rate by reverse-engineering what each marker's score of 2 looks like (the Improve phase), with gaming detection.
 
 ## When NOT to Use
 
 - To *produce* a forecast — use `superforecasting`.
-- To *improve* a rationale — use `eqm-improvement` (which calls this skill).
 - To self-assess forecast quality — use superforecasting's `forecast-quality-gate`.
+- To self-assess without an external instrument — use `metacognition`.
 
 ## Ontological Anchors
 
@@ -85,14 +85,58 @@ skill's decision rule encodes this asymmetry:
 1. If realized_outcomes are present: correlate EQM composite with accuracy
    (Brier). Check directional-hypothesis match (paper's >90% finding).
 2. If EQM scores rose but accuracy didn't improve → emit `gaming_suspected`
-   verdict (halts eqm-improvement's loop).
+   verdict (halts the Improve loop).
 3. If realized_outcomes absent → return `Undetermined` (not Ready-with-empty —
    per the advertised-invariants rule).
+
+### Improve (optional) — in-session PDCA on one rationale
+
+Run only when asked to improve a rationale. The EQM descriptions are the
+failing tests, the rationale is the code, the rewrite is the green phase and
+re-scoring is the test run (Karvetski et al. 2026; Improvement Kata). The loop
+runs within this session and improves the *rationale*; it never evaluates the
+skill itself.
+
+**Gaming the scorer is the central risk.** When an LLM rewrites text to score
+higher on an LLM-scored instrument, the score can rise without better
+reasoning. All three mitigations are required:
+
+1. **Evidence grounding.** For `fact_based` / `statistical_reasoning`, find a
+   real base rate via `superforecasting` (stage_2_outside_view) or `web_search`;
+   for `confirmation_bias`, get genuine opposing hypotheses from
+   `falsifiability/falsifiability-hypothesize`. With no real evidence, record
+   the gap instead of writing a plausible sentence.
+2. **Probability preservation.** The rewrite supports the same
+   `forecast_probability`; `forecast_rationale_align` checks it on re-score.
+3. **Outcome validation.** `eqm-validate`'s `gaming_suspected` verdict halts the
+   loop.
+
+Steps:
+
+1. **Direction** — render `eqm/eqm-imp-direction`: raise EQM passage rate,
+   red-flag elimination before green-flag polish; confirm the probability to
+   preserve and the evidence sources available.
+2. **Current condition** — render `eqm/eqm-imp-current` over a fresh
+   `market_score_rationale` result (failing markers, red-flag screen, composite).
+3. **Target** — render `eqm/eqm-imp-target`: marker-level targets from each
+   EQM description, red flags first, one step beyond the current condition.
+4. **Predict** — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
+   from A to B", with a confidence. Record it with `kanban_goal_create`
+   (`goal_text` `eqm: <prediction>`, the confidence as `prediction`) so the
+   operator can score it.
+5. **Experiment** — render `eqm/eqm-imp-experiment` and produce the rewrite
+   under the three mitigations.
+6. **Check** — re-score via `market_score_rationale`; `lisp_eval`
+   `(abs (- target_score current_score))` per marker for the gap; judge the
+   goal (`kanban_goal_judge`) with the measured marker level. The Brier score
+   arrives when the operator scores the goal.
+7. **Act** — stop at gap ≤ epsilon, a `gaming_suspected` verdict, or 8
+   iterations; otherwise re-enter step 2 with the new rationale.
 
 ### Convergence
 
 Cauchy criterion on the forecaster-level composite across iterations. The
-The convergence signal is the marker-space gap (distance from current composite to
+convergence signal is the marker-space gap (distance from current composite to
 target composite), computed deterministically via lisp_eval:
 
 ```lisp
@@ -109,6 +153,11 @@ env: `{ "target_composite": <target>, "current_composite": <latest iteration>, "
 | `eqm-score.j2` | Score rationales via the market_score_rationale MCP tool. Collect per-rationale EqmResult: composite_score, scores, red_flags, green_flags. The MCP tool is the single source of truth for 12-EQM LLM scoring. |
 | `eqm-aggregate.j2` | Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. |
 | `eqm-validate.j2` | If realized_outcomes present: correlate EQM composite with accuracy (Brier), check directional-hypothesis match. If scores rose but accuracy didn't improve → gaming_suspected verdict. If outcomes absent → Undetermined (not Ready-with-empty). |
+| `eqm-imp-direction.j2` | Improve step 1: direction — raise passage rate, red flags first; confirm the probability to preserve. |
+| `eqm-imp-current.j2` | Improve step 2: current condition from a fresh `market_score_rationale` result. |
+| `eqm-imp-target.j2` | Improve step 3: marker-level targets from EQM descriptions, red flags first. |
+| `eqm-imp-predict.j2` | Improve step 4: a specific intervention-to-marker prediction with confidence. |
+| `eqm-imp-experiment.j2` | Improve step 5: rewrite the rationale for each failing marker with real evidence, preserving the probability. |
 | `eqm-catalog.yaml` | Reference: the full 60 EQM definitions from Karvetski et al. (2026), organized by category (good_habits / warning_signs). The 12 most predictive are marked predictive: true. Single source of truth for EQM definitions; the MCP tool's KEY_EQMS const carries the predictive 12. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
@@ -116,12 +165,14 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `eqm-aggregate.j2`: `per_rationale_scores`,`forecaster_groups`
 - `eqm-score.j2`: `scoring_batch`,`selected_subset`
+- `eqm-imp-predict.j2`: `target_condition`,`prioritized_markers` `current_composite`,`target_composite_score`
 
 
 ## Constraints
 
 - All flow templates have Public visibility.
-- Maximum 10 iterations.
+- Maximum 10 measurement iterations; the Improve loop stops at 8 (each iteration re-scores and rewrites).
+- The Improve loop preserves the forecast probability and never fabricates evidence; each prediction names a specific intervention and marker.
 - The convergence decision is deterministic (lisp_eval compute step) — no LLM convergence-check template.
 - The MCP tool `market_score_rationale` is the single source of truth for 12-EQM scoring; this skill adds the measurement procedure around it.
 - Never fabricate EQM scores — if the MCP tool call fails, propagate the error (do not default to 0).

@@ -25,7 +25,7 @@ thinking_budget = "full"
   The paper validated EQMs against realized outcomes (Brier scores). This
   step replicates that validation: if realized_outcomes are present, correlate
   EQM composite with accuracy. If scores rose but accuracy didn't improve →
-  gaming_suspected (halts eqm-improvement's loop).
+  gaming_suspected (halts the Improve loop).
 
   If realized_outcomes are absent, return verdict=Undetermined with an Info
   finding — NOT Ready-with-empty-findings. Per the advertised-invariants rule,
@@ -87,7 +87,7 @@ Gaming is suspected when:
 - EQM composite scores rose (across iterations or across forecasters), BUT
 - Accuracy (Brier) did not improve correspondingly.
 
-This is the core gaming detection: if the rewriter learned to emit marker-keywords the scorer rewards (without genuine reasoning improvement), scores rise but accuracy stays flat. If gaming is suspected, emit `gaming_suspected: true` — this halts eqm-improvement's loop.
+This is the core gaming detection: if the rewriter learned to emit marker-keywords the scorer rewards (without genuine reasoning improvement), scores rise but accuracy stays flat. If gaming is suspected, emit `gaming_suspected: true` — this halts the Improve loop.
 
 ## Output
 

@@ -841,7 +841,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // Used by convergence-gap forms that need a symmetric delta.
         ("abs", abs_fn),
         // Square root. (sqrt x) returns the principal root of a numeric arg.
-        // Used by marker-space hypotenuse computations (eqm-improvement step 7).
+        // Used by marker-space hypotenuse computations (eqm Improve step 6).
         // Returns a Float.
         ("sqrt", sqrt_fn),
         // Generic equality. (eq a b) returns true iff a and b are structurally

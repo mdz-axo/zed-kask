@@ -278,8 +278,7 @@ invariants first, then compile, then tests.
 2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (`DIV`
    L100–101).
 3. `./script/clippy` — `.rules` build guidelines: "Use `./script/clippy` instead
-   of `cargo clippy`." Runs under `--deny warnings` (D22 exists because two pins
-   failed this gate).
+   of `cargo clippy`." Runs under `--deny warnings`.
 4. `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` — `DIV`
    runbook step 5 (intent is
    "verify the bridge + foundation still compile").
