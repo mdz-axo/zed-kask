@@ -54,7 +54,7 @@ outputs must feed the phase that consumes them.
 
 ### logic-compose-proposal
 
-1. If a candidate wins, render `logic-compose-proposal` with the winning artifact and comparison evidence, then provide its full diff. The change need not be minimal relative to the old wording; it must be the simplest passing candidate that attains the better measured outcome. If baseline wins or results are inconclusive, report that and leave the artifact unchanged.
+1. If a candidate wins, render `logic-compose-proposal` with the winning candidate's actual content and comparison evidence, then provide its full diff. The change need not be minimal relative to the old wording; it must be the simplest passing candidate that attains the better measured outcome. If baseline wins or results are inconclusive, report that and leave the artifact unchanged.
 2. Recheck goal annotation, `[inference]` contract and rendering for the proposed .j2. Never claim a legacy manifest edit changes skill execution.
 
 ### logic-user-choice
@@ -80,7 +80,7 @@ Template context variables (from each template's [inference] contract):
 - `logic-load-goal.j2`: `target_path`,`target_content`
 - `logic-critique-template.j2`: `goal`,`target_path`,`target_content`,`template_type`,`invoking_phase`,`acceptance_cases`
 - `logic-compare-candidates.j2`: `goal`,`invoking_phase`,`acceptance_cases`,`candidates`,`observations`
-- `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`user_counter_proposal`
+- `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`winning_content`,`user_counter_proposal`
 - `logic-user-choice.j2`: `target_path`,`goal`,`proposal`,`diff`,`rationale`,`confidence` (presentation inputs only; no user decision input)
 
 ## Constraints

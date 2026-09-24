@@ -37,6 +37,9 @@ Compare candidates for this template step, not the surrounding SKILL.md process.
 
 ## Candidates (include the unchanged baseline)
 
+Pass IDs and artifact paths, not full prompt bodies in a large tool call; read
+candidate content from those paths when running the fixed cases.
+
 ```json
 {{ candidates | tojson }}
 ```

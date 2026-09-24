@@ -7,6 +7,7 @@ contract:
     original_content: string
     valid_concerns: array
     comparison: object
+    winning_content: string
     user_counter_proposal: string|null
   output:
     revised_content: string
@@ -52,6 +53,12 @@ You are a template proposal composer. Only a winner supported by the candidate c
 {{ comparison | tojson }}
 ```
 
+## Selected candidate artifact (empty unless a verified non-baseline winner)
+
+```
+{{ winning_content }}
+```
+
 {% if user_counter_proposal %}
 ## User Counter-Proposal
 
@@ -64,7 +71,7 @@ The user has provided edits or constraints to incorporate:
 
 ## Composition Rules
 
-1. Use the best verified passing candidate; do not invent a winner from critique alone. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
+1. Use only the supplied winning artifact when the comparison identifies a verified non-baseline winner. Confirm its ID and recorded evidence agree; do not invent a winner from critique alone. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
 2. Prefer the simplest candidate that attains the measured improvement; a replacement design can win even if its diff is large.
 3. Keep the `[inference]` contract structure intact if revising a `.j2` file.
 4. If the target is a legacy manifest, treat it as inert text; never claim its edits change skill execution.
