@@ -54,9 +54,17 @@ prediction calibration.
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
-1. Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment.
+1. Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, strategy adjustment, or an **inquiry experiment** for a problem that needs branching, revision and deep-dive delegation (below).
 2. Re-measure the current condition after the experiment (the experiment changed the system).
 3. Produce new current_artifacts and current_procedure for the gap computation. Carry the Step 3 `gap_before` and reduction threshold unchanged; never recompute the starting gap from post-experiment data.
+
+### Inquiry experiment (branching chain of thought with delegation)
+
+Use when the gap is in understanding a problem that needs several dependent reasoning steps, not in calibrating a known one. It runs inside Step 4; the Kata steps around it are unchanged.
+
+1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts`, `thinking_budget` and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries`.
+2. For each `delegation_requests` entry, render the matching delegation template with it: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). For `skill_match_queries`, render `skill-router/skill-router-match` for up to three follow-up skills.
+3. Feed the delegation and skill-match results back into the next engine render. The engine's `final_answer` and `hypothesis_verified` become the post-experiment current condition.
 
 ### Convergence (Steps 5-9: Check + Act — model-evaluated)
 
@@ -74,6 +82,11 @@ prediction calibration.
 | `meta-establish-target.j2` | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
 | `meta-predict.j2` | Predict which calibration will close the gap and by how much. Carry a confidence in [0,1]. The Brier score tracks whether the confidence is calibrated. |
 | `meta-experiment.j2` | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
+| `inquiry-engine.j2` | Inquiry experiment: branching, revising chain of thought that emits deep-dive delegation requests and skill-match queries. |
+| `inquiry-delegate-hypothesis-framer.j2` | Delegation: frame a research question and testable hypothesis (FINER + PICO). |
+| `inquiry-delegate-mcda.j2` | Delegation: weigh and rank alternatives with sensitivity. |
+| `inquiry-delegate-diagnose.j2` | Delegation: structured root-cause diagnosis of a bug or regression. |
+| `inquiry-delegate-falsifiability.j2` | Delegation: eliminative inference for a counterfactual or an untestable claim. |
 | `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and surface what is not inferable. Used by the experiment step for ellipsis perspective. |
 
 To render a template, call `render_template` with the template ref and these **top-level** context keys (not nested under `variables`). Pass the prior step's result as the named condition, not as `current_grasp` or `predicted_calibration`:
@@ -85,6 +98,8 @@ To render a template, call `render_template` with the template ref and these **t
 | `metacognition/meta-predict` | `goal`, `current_condition` (Step 1 result), `target_condition` (Step 2 result), measured `gap_before` (>0) | `prev_prediction` |
 | `metacognition/meta-experiment` | `goal`, `current_condition` (Step 1 result), `prediction` (Step 3 result) | `perspectives`, `context_text`, `prev_experiment` |
 | `metacognition/ellipsis-analysis` | `text`, `expectations`, `biases`, `assumptions`, `domain` | — |
+| `metacognition/inquiry-engine` | `problem`, `domain`, `constraints`, `max_thoughts`, `thinking_budget` | `prior_chain`, `prior_delegation_results`, `prior_skill_match_results` |
+| `metacognition/inquiry-delegate-*` | `delegation_requests` | — |
 
 A `render_template` call renders the prompt; it does not execute the inference step or produce that step's result. Use the measured result of each step when supplying the next step's condition.
 

@@ -18,9 +18,8 @@ contract:
     notes: string
 visibility: Public
 ---
-{# Canonical source for composition guidance — consumed by the swarm-compose-guide #}
-{# skill process (invoked from the swarm_ai_assist MCP tool) #}
-{# and referenceable by the swarm-intelligence DECIDE phase. #}
+{# Canonical source for composition guidance — rendered by swarm-intelligence #}
+{# (its authoring aid and DECIDE author_agent moves). #}
 {# hKask v0.39.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Composition authoring and validation guidance for the hKask swarm system.
@@ -30,10 +29,9 @@ visibility: Public
 
   The DECIDE phase (swarm-decide.j2) may propose an `author_agent` move when
   no catalogue agent covers a required transform; this template is the
-  canonical authoring guidance that move can reference. The `swarm_ai_assist`
-  MCP tool runs the `swarm-compose-guide` skill process, which renders this
-  template — the panel and the process share this single source of truth for
-  field definitions and backend considerations.
+  canonical authoring guidance that move can reference. The swarm panel's
+  `swarm_ai_assist` tool uses its own inline prompt plus deterministic ABW
+  contract checks; it does not render this template.
 #}
 
 [inference]

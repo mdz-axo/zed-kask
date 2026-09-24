@@ -5,7 +5,7 @@ description: "Domain-agnostic eliminative inference engine. Rules out untestable
 
 # Falsifiability
 
-Domain-agnostic eliminative inference engine anchored to Popper (falsifiability), Platt (strong inference), and Chamberlin (multiple working hypotheses), with Pearl/Halpern counterfactual reasoning as the alternative generator. Rules out what is not testable at the question level (admissibility gate), generates multiple falsifiable hypotheses, constructs minimal counterfactuals, designs discriminating tests, and eliminates the hypotheses that fail — corroborating the survivors, never confirming them. A delegation target: diagnose, hypothesis-framer, and superforecasting delegate their falsification stages here; sequential-inquiry may delegate when a counterfactual scenario must be explored.
+Domain-agnostic eliminative inference engine anchored to Popper (falsifiability), Platt (strong inference), and Chamberlin (multiple working hypotheses), with Pearl/Halpern counterfactual reasoning as the alternative generator. Rules out what is not testable at the question level (admissibility gate), generates multiple falsifiable hypotheses, constructs minimal counterfactuals, designs discriminating tests, and eliminates the hypotheses that fail — corroborating the survivors, never confirming them. A delegation target: diagnose, hypothesis-framer, and superforecasting delegate their falsification stages here; metacognition's inquiry experiment delegates here when a counterfactual scenario must be explored.
 
 ## When to Use
 
@@ -17,7 +17,7 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 - When `diagnose` generates falsifiable hypotheses and needs the shared elimination method rather than its bug-specific reimplementation.
 - When `hypothesis-framer` assesses testability and needs the shared admissibility gate rather than its PICO-specific reimplementation.
 - When `superforecasting` stage_3 (inside view) generates necessary conditions and evidence for/against each causal hypothesis and needs the shared counterfactual + elimination engine.
-- When `sequential-inquiry` branches on "a counterfactual scenario must be explored" and needs a delegation target — currently a dead reference this skill wires up.
+- When `metacognition`'s inquiry experiment branches on "a counterfactual scenario must be explored" and needs a delegation target (`metacognition/inquiry-delegate-falsifiability`).
 - When evaluating whether an elimination cycle has converged — one corroborated survivor with all alternatives ruled out — or has plateaued with an irreducible remainder.
 
 ## When NOT to Use
@@ -57,9 +57,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 This skill is designed as a **delegation target**, mirroring the architectural
 role of `mcda` and `diagnose`:
 
-- **sequential-inquiry** gains `falsifiability` as a fourth delegation target
-  (its engine already branches when "a counterfactual scenario must be
-  explored" — currently a dead reference this skill wires up).
+- **metacognition** (inquiry experiment) has `falsifiability` as one of its
+  four delegation targets, for counterfactual branches.
 - **diagnose** step 3 (generate 3–5 falsifiable hypotheses) and its elimination
   logic delegate to `falsifiability-hypothesize` + `falsifiability-discriminate`
 + `falsifiability-eliminate`, keeping its bug-specific ontological anchoring (Dublin Core + PKO).

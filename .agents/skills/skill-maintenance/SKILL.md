@@ -108,8 +108,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      loop lives in the body (composition law).
      Exempt classes (operator ratification 2026-09-09, DR-S13a): role
      guides (product-manager), documented single-pass skills
-     (skill-bundler, sankey-flow, prompt-enhance, swarm-steering,
-     swarm-compose-guide), and doc-style handbooks (gpui-bench) are
+     (skill-bundler, sankey-flow, prompt-enhance, swarm-steering), and
+     doc-style handbooks (gpui-bench) are
      exempt. An exempt body must carry a one-line marker naming the
      exemption so future audits do not re-litigate the design.
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists

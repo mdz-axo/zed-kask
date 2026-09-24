@@ -90,6 +90,19 @@ feedback loop, so the skill is a feedback loop. Maintain the cybernetic
 plan's guards (FILTER, CONVERGE) across iterations — track running sets/sums
 consistently in your reasoning across loop iterations.
 
+### Authoring aid (single pass, outside the loop)
+
+When the operator is filling the swarm panel's agent or swarm form, or DECIDE
+proposes an `author_agent` move, render `swarm-intelligence/swarm-compose-guide`
+with the partial fields and the `surface` (agent|swarm), `mode` (abw|local) and
+`action` (suggest|validate) selectors. `suggest` returns field completions;
+`validate` returns a verdict over the supplied fields. It is read-only: no
+ledger debit, no consent. "Local" is an execution location, not a model tier —
+leave the card model unset to inherit Settings → Kask → Models; never invent a
+cheaper or smaller local model. The panel's own `swarm_ai_assist` tool runs
+the deterministic ABW contract checks in code and its own inline prompt; it
+does not render this template.
+
 ## Target condition (measurable)
 
 A swarm is well-composed for a task when three conditions hold simultaneously:
@@ -252,8 +265,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
   swarm_get_swarm + swarm_get_local_swarm (call directly) → SENSE → ORIENT → DECIDE →
   FILTER (swarm.filter_proposed_moves) → ACT → re-measure (call directly ×2) → CHECK →
   converge_accumulate → second_order_monitor → `lisp_eval` convergence signal → re-enter the cycle)
-- `swarm-compose-guide.j2` is also invoked standalone by the `swarm-compose-guide`
-  skill (its own process manifest renders the same template).
+
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   the swarm compute primitives)
