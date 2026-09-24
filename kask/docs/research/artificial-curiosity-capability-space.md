@@ -1,8 +1,8 @@
 ---
 title: "Artificial Curiosity as Capability-Space Exploration"
 audience: [researchers, architects, agents]
-last_updated: 2026-09-22
-version: "1.0.0"
+last_updated: 2026-09-23
+version: "1.1.0"
 status: "Research decision — orchestration proposed, not implemented"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -20,7 +20,7 @@ mds_categories: [composition, trust]
 | **H2: Curiosity preferentially detects and investigates unexpected gradients in capability space.** | **Not established as a mechanism.** Temporal improvement of a predictor, Bayesian belief change, and regional learnability differ from a spatial derivative or discontinuity over neighboring capabilities. Regional learning progress is a potentially useful *probe-selection heuristic*, but no inspected source measures selection by an unexpected capability-gradient residual. [S2–S3, S5–S6] | **0.88** that the inspected mechanisms do **not** establish H2; **0.45** that the proposed heuristic will help | **Metaphorical** as an account of Schmidhuber's mechanism; **partial** only for the *new, testable design analogy* from regional learning progress. The claimed exact mapping is **unsupported**. |
 | **Distinct curiosity skill now?** | **No.** Compose installed skills in a bounded, human-triggered probe-selection loop. Promote a separate skill only after it has a repeatable, uniquely valuable input/output contract in a cost-matched test. | **0.80** provisional design judgment | Literature motivates a policy experiment, not a ready-made zed-kask contract. |
 
-The starting [Schmidhuber retrospective][S1] was available and inspected directly; no archive substitution was needed. It is the author's roadmap, **not independent corroboration** of his historical or effectiveness claims. This report uses **exactly ten substantive sources** [S1–S10]: primary works on the relevant mechanisms, one independent review, and an alternative hard-exploration method. Search stopped when both hypotheses had supporting and challenging evidence and no further source was needed to distinguish the mechanisms; it does **not** claim a systematic review of all curiosity research. Research ledger: `5392379f8a595691` (valid manifest; source annotations record verification limits). The research tool's PDF extraction returned binary, so author-hosted and arXiv PDFs were downloaded and locally converted with `pdftotext`; [S10] is limited to its visible publisher abstract and extended-data captions because the main article prose was paywalled.
+The starting [Schmidhuber retrospective][S1] was available and inspected directly; no archive substitution was needed. It is the author's roadmap, **not independent corroboration** of his historical or effectiveness claims. The original synthesis uses **exactly ten substantive sources** [S1–S10]: primary works on the relevant mechanisms, one independent review, and an alternative hard-exploration method. A separately bounded seven-source follow-up [F1–F7] and a renderer-only pilot are recorded below; [F6] and [S10] are the same substantive work, not independent corroboration. Search stopped when both hypotheses had supporting and challenging evidence and no further source was needed to distinguish the mechanisms; it does **not** claim a systematic review of all curiosity research. Research ledger: `5392379f8a595691` (valid manifest; source annotations record verification limits). The research tool's PDF extraction returned binary, so author-hosted and arXiv PDFs were downloaded and locally converted with `pdftotext`; [S10] is limited to its visible publisher abstract and extended-data captions because the main article prose was paywalled.
 
 ### Ontology and mapping discipline
 
@@ -106,9 +106,9 @@ The distinction is **what is measured and rewarded**, not whether the author cal
 
 **Proposed test, not run.** Construct one *externally scored, reproducible* capability-task graph with: a learned/easy region, a stochastic/flaky distractor with persistently high raw error, a learnable but initially obscure region, and an informative task behind a multi-step prerequisite barrier. Include held-out tasks to test transfer. Freeze the graph, probe costs, initial state, evaluator, allowed actions, and random seeds **before** comparing policies. This is one compact landscape deliberately containing the three competing failure explanations; replication on additional landscapes is needed before a general skill claim.
 
-Run three arms with the **same verified-outcome oracle and total probe-cost ceiling**: (A) systematic coverage with fixed ordering and explicit frontier checkpointing; (B) currently installed `capabilities-reasoner` → `falsifiability` → `gradient-hunter` → `metacognition` orchestration with human-chosen next probes; (C) the same orchestration plus the proposed learning-progress/information-gain **selection rule**, holding frontier retention constant. Preregister the selection rule, its treatment of missing history, systematic and negative-control quotas, and the stop condition. Record outcomes at every probe, not just a favorable final anecdote.
+Run four arms with the **same verified-outcome oracle and total probe-cost ceiling**: (A) systematic fixed-order coverage; (B) installed `capabilities-reasoner` → `falsifiability` → `gradient-hunter` → `metacognition` orchestration with human-chosen next probes; (U) the same orchestration with a simple uncertainty-sampling selector; (C) the same orchestration with the proposed learning-progress/information-gain **selection rule**. Hold frontier checkpoint/return, permissions, architecture, and negative controls constant across A/B/U/C; price the archive separately with an ablation. Predeclare two functional adjacency rules (prerequisites versus independently documented shared behavior/test contracts), a no-history cold start, an external held-out oracle, costs, seeds, tie-breaking, stop condition, and treatment of missing history. Record failures, unknowns, and outcomes at every probe. A comparison to random alone is insufficient. [F4, F6–F7]
 
-**Primary discriminator:** verified new capability distinctions per unit cost in C versus **both** A and B, with uncertainty across repeated seeds. **Safety/failure constraints:** C must not overselect the stochastic distractor, lose previously reachable frontiers, miss the barrier-dependent capability, or suppress safety-critical negative controls. **Secondary measures:** held-out task transfer and stability under two metrics/partitions. An ablation dropping the expected-progress term while retaining all other orchestration distinguishes the *score* from the surrounding process. An additional residual-gradient term must beat the no-residual version before H2 can be promoted from metaphor to mechanism. If C does not improve the primary discriminator and failure constraints under identical costs, **delete the curiosity label** and retain B. If it does, investigate whether the stable contract is genuinely probe selection rather than an existing inquiry parameter before considering a skill.
+**Primary discriminator:** verified new capability distinctions per unit cost in C versus **B and U** (with A as a fixed-order baseline), with uncertainty across repeated seeds. **Safety/failure constraints:** C must not overselect the stochastic distractor, lose previously reachable frontiers, miss the barrier-dependent capability, or suppress safety-critical negative controls. **Secondary measures:** held-out task transfer and stability under two metrics/partitions. An ablation dropping the expected-progress term while retaining all other orchestration distinguishes the *score* from the surrounding process. An additional residual-gradient term (C+R) must beat C under both prespecified graph constructions without increasing noise attraction before H2 can be promoted from metaphor to mechanism. If C does not improve over B and U under identical costs and failure constraints, **delete the curiosity label** and retain the existing orchestration. If it does, investigate whether the stable contract is genuinely probe selection rather than an existing inquiry parameter before considering a skill.
 
 
 **Metacognition check.** The largest hidden assumption is not that curiosity exists in RL—it does in multiple incompatible formulations—but that improvement of a model of *software capabilities* predicts useful discoveries and is not merely the evaluator agreeing with itself. The alternative explanation for a positive result is the archived frontier or better external oracle, not curiosity. The experiment holds both fixed and scores held-out outcomes. The provisional no-new-skill judgment is **0.80**; no Brier calibration history was available for this question, and no target-system run supports a stronger claim.
@@ -119,14 +119,44 @@ Run three arms with the **same verified-outcome oracle and total probe-cost ceil
 |---|---|
 | Does a typed capability graph have a defensible neighborhood/metric, or is “gradient” representation-dependent? | Preregister two graph constructions; show a stable measured local value contrast and selection effect under both. |
 | Does expected model improvement predict externally useful capability discovery rather than self-consistent evaluator updates? | Cost-matched probe trace plus independent held-out task outcomes and blinded oracle review. |
-| Can a progress/IG policy beat existing-skill orchestration without a new stable contract? | Run A/B/C above; delete the scoring stage and test whether unique value disappears. |
+| Can a progress/IG policy beat existing-skill orchestration without a new stable contract? | Run A/B/U/C above with the same architecture and external oracle; delete the scoring stage and test whether unique value disappears. |
 | Can it cross barriers and preserve useful frontiers under realistic budgets and permissions? | Replayable prerequisite-chain tasks, measured archive/return costs and failures, and permission-denied paths; no credit for unobserved states. |
 | Does any benefit transfer outside the designed test graph? | Replicate with fixed oracles and budgets across unrelated software capability families; report negative results and metric sensitivity. |
 | Should the coarse ontology anchors be upgraded? | An operator ruling naming a published concept, its exact scope and authority, then registration in the derived/domain vocabulary; do not retrofit this study as an ontology definition. |
 
 **Banked learning:** a temporal change in learnability can be useful for choosing the next probe, but it is not an unexpected spatial gradient; frontier memory and a trustworthy external oracle are independent parts of a working exploration capability.
 
-## Sources (ten substantive works)
+## 8. Follow-up evidence and open questions (separate seven-source review)
+
+The follow-up inspected six full works and one abstract-only source in a separate research ledger (`8e5ebaf54b494313`). These are observations in the cited experiments, **not** measurements of zed-kask capability discovery. [F6] is the full author preprint of the original synthesis's partially accessible [S10], not an independent seventh corroboration. The decision remains: orchestrate existing skills; do not create a curiosity skill without an independently scored advantage. [^followup]
+
+| Follow-up question | Evidence and remaining discriminator |
+|---|---|
+| Is capability adjacency intrinsic? | Learned goal representations and dimensions change exploration coverage [F1–F2]; Cully's behavior map uses designer-chosen descriptors and measured robot performance [F3]. Preregister two defensible software-task graphs and test whether local contrasts change sign. Embedding similarity alone is not a functional edge. |
+| Does internal progress imply useful discovery? | CURIOUS compares progress-guided and random module selection within a modular architecture and reports better recovery under a controlled perturbation [F4]; model-learning progress has restricted assumptions and nonstationarity [F5]. Neither establishes held-out software-task transfer. Hold architecture fixed, score externally, and reject a proxy-only win. |
+| Can selection beat a simple alternative? | The tabular active-learning benchmark [F7] motivates uncertainty sampling as a baseline **from its abstract only**, not a software-domain performance claim. Compare A/B/U/C above with identical costs and independent outcomes; separately ablate the archive [F6]. |
+| Do boundaries and frontiers survive representation and permissions? | Go-Explore's return mechanism [F6] is distinct from curiosity selection. Register reachable checkpoints, restoration failures and costs; do not label an unobserved barrier a measured gradient. Cully's prior-informed behavior map is another experimental-design alternative, not evidence of a spatial curiosity derivative [F3]. |
+
+[F1] Péré et al. (2018), [Unsupervised learning of goal spaces for intrinsically motivated goal exploration](https://arxiv.org/abs/1803.00781), full paper. [F2] Laversanne-Finot et al. (2021), [Intrinsically motivated exploration of learned goal spaces](https://www.frontiersin.org/journals/neurorobotics/articles/10.3389/fnbot.2020.555271/full), full article; overlapping authors, not an independent replication of [F1]. [F3] Cully et al. (2015), [Robots that can adapt like animals](https://arxiv.org/abs/1407.3501), full author preprint. [F4] Colas et al. (2019), [CURIOUS](https://proceedings.mlr.press/v97/colas19a.html), full paper. [F5] Lopes et al. (2012), [Empirically estimating learning progress](https://proceedings.neurips.cc/paper_files/paper/2012/hash/a0a080f42e6f13b3a2df133f073095dd-Abstract.html), full paper and publisher abstract. [F6] Ecoffet et al. (2021), [First return, then explore](https://arxiv.org/abs/2004.12919), full author preprint of [S10]. [F7] Lu et al. (2025), [Uncertainty-sampling benchmark](https://arxiv.org/abs/2306.08954), **abstract and metadata only**. Source scope and full original protocol are recoverable in git at `aa7f6ce4eb:kask/docs/research/artificial-curiosity-open-questions-followup.md`.
+
+[^followup]: Colas et al. (2019), [CURIOUS: Intrinsically motivated modular multi-goal reinforcement learning](https://proceedings.mlr.press/v97/colas19a.html). An experiment in modular robotic goals, not a software-capability discovery result.
+
+## 9. Read-only capability-probe pilot (executed, narrow oracle)
+
+The earlier pilot used `render_template` to test whether four installed skills accepted task-specific handoffs and refused one omitted required field each. **Four of four** positive renders carried the supplied task context; **four of four** negative controls returned a missing-field error naming the omitted input. The oracle was prompt rendering and contract validation, not a selected probe's usefulness or an external capability outcome. The original report's matched `agent` test ran one test and passed; it did not validate a curiosity selector. [^pilot]
+
+| Installed template | Omitted field rejected | What the positive render established |
+|---|---|---|
+| `capabilities-reasoner/capability-register` | `target_system` | Task-specific registry-construction prompt. |
+| `falsifiability/falsifiability-admit` | `target` | Task-specific admissibility prompt, not an independent admissibility verdict. |
+| `gradient-hunter/gradient-prior` | `target_region` | Task-specific prior prompt, not a measured gradient. |
+| `metacognition/meta-grasp-current` | `goal` | Missing-history-aware current-condition prompt, not a completed PDCA experiment. |
+
+The pilot eliminates only the claim that these four handoffs cannot be rendered or reject none of the tested omissions. It **does not** establish a comparison among systematic selection (A), human-guided orchestration (B), uncertainty sampling (U), and progress-based selection (C): no common task set, per-probe cost history, before/after competence observations, or held-out oracle was available. That comparison is **blocked, not zero**. The next empirical step is an authorized replayable task family with two functional adjacency rules, independent pass/fail tests, held-out tasks, identical budget and frontier handling across arms, and a separate C-versus-C+R residual-gradient ablation. The full historical pilot is recoverable at `aa7f6ce4eb:kask/docs/research/artificial-curiosity-probe-pilot.md`.
+
+[^pilot]: [The original pilot record in git history](https://github.com/mdz-axo/zed-kask/blob/aa7f6ce4eb6af4f681280b2594a78a96a34f5ff5/kask/docs/research/artificial-curiosity-probe-pilot.md) gives all eight renderer outcomes and their limits; `crates/agent/src/tools/render_template_tool.rs` contains the matched contract test.
+
+## Sources (ten original substantive works)
 
 - **[S1]** Schmidhuber, J. (2025 update). [Artificial curiosity & creativity since 1990–91](https://people.idsia.ch/~juergen/artificial-curiosity-since-1990.html). Author retrospective, used as starting roadmap, **not** independent confirmation.
 - **[S2]** Schmidhuber, J. (1991). [Adaptive confidence and adaptive curiosity](https://people.idsia.ch/~juergen/FKI-149-91ocr.pdf). TUM Technical Report FKI-149-91, §§3, 5 and conclusion. Full primary PDF locally parsed.
@@ -149,3 +179,10 @@ Run three arms with the **same verified-outcome oracle and total probe-cost ceil
 [S8]: https://arxiv.org/abs/1808.04355
 [S9]: https://arxiv.org/abs/1908.06976
 [S10]: https://www.nature.com/articles/s41586-020-03157-9
+[F1]: https://arxiv.org/abs/1803.00781
+[F2]: https://www.frontiersin.org/journals/neurorobotics/articles/10.3389/fnbot.2020.555271/full
+[F3]: https://arxiv.org/abs/1407.3501
+[F4]: https://proceedings.mlr.press/v97/colas19a.html
+[F5]: https://proceedings.neurips.cc/paper_files/paper/2012/hash/a0a080f42e6f13b3a2df133f073095dd-Abstract.html
+[F6]: https://arxiv.org/abs/2004.12919
+[F7]: https://arxiv.org/abs/2306.08954

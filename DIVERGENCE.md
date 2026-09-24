@@ -228,7 +228,7 @@ worktree/provider/MCP-process smoke test or implementation of P2.
 
 **D33 shared local swarm conversation extension (2026-09-23):** `crates/swarm_panel/src/member_turns.rs` and the selection/Steer wiring in `swarm_panel.rs`, `card.rs`, `compose.rs`, and `fetch.rs` show the server-owned encrypted member conversation beside—not inside—the Curator `ConversationView`. The panel reads `swarm_thread_local` for the selected local swarm; `swarm_list_local_threads` supplies an archived-history selector after deletion and restart without making a deleted swarm executable. The server enforces roster membership and commits turns through `SwarmThreadStore`; standalone local calls remain separate. Pins: `thread_tests::scoped_thread_is_structured_durable_isolated_and_archived`, `scoped_dispatch_tests::scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board`, and `member_turns::tests` (seven state/shape tests). The 201 swarm tests, seven focused panel tests, scoped `./script/clippy`, and `cargo check -p zed` passed; no live visual or deployed MCP member-to-member test is claimed. The full panel suite still has one unrelated Kanban tool-count pin expecting 26 instead of the current 27.
 
-## The divergence surface (D1–D73)
+## The divergence surface (D1–D74)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
 are the _only_ edits to zed-kask's tree outside `kask/`. Any hKask behavior

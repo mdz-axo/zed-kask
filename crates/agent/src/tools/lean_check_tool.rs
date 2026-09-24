@@ -50,6 +50,7 @@ pub enum LeanCheckToolOutput {
 pub struct LeanCheckResult {
     pub lean_version: String,
     pub diagnostics: Vec<serde_json::Value>,
+    pub messages: Vec<String>,
     pub goal_text: Vec<String>,
     pub completion_status: String,
     pub axioms: Option<String>,
@@ -99,12 +100,15 @@ fn validate_relative(path: &str) -> Result<()> {
 }
 
 fn validate_saved_path(root: &Path, path: &Path) -> Result<PathBuf> {
+    let relative = path
+        .strip_prefix(root)
+        .context("file is not inside the worktree root")?;
     let root = std::fs::canonicalize(root).context("cannot resolve local worktree root")?;
     let file = std::fs::canonicalize(path).context("saved Lean file is missing or inaccessible")?;
-    if !file.starts_with(&root) || !file.is_file() {
-        bail!(
-            "Lean file must be a saved regular file inside the local worktree (no symlink escape)"
-        )
+    // Reject even internal symlink aliases: otherwise a non-private alias can
+    // expose a private/excluded target to the process after the settings check.
+    if file != root.join(relative) || !file.is_file() {
+        bail!("Lean file must be a saved regular file inside the local worktree without symlinks")
     }
     if file.metadata()?.len() > MAX_SOURCE {
         bail!("Lean file exceeds 1 MiB limit")
@@ -239,22 +243,31 @@ async fn check_saved(
     let file = validate_saved_path(&root, &file)?;
     let root = std::fs::canonicalize(root)?;
     let project = project_root(&root, &file)?;
+    let pin = std::fs::read_to_string(project.join("lean-toolchain"))?;
+    let pin = pin.trim();
+    let expected = pin.strip_prefix("leanprover/lean4:v")
+        .filter(|version| !version.is_empty() && version.len() < 64 && version.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .ok_or_else(|| anyhow!("Unsupported Lean toolchain pin {pin:?}; use a pinned leanprover/lean4:v<version> toolchain"))?;
     let (version_code, version, version_err) =
         invoke_lake(lake, &project, &["--version"], None).await?;
     if version_code != Some(0) {
         bail!("Lake could not select the pinned Lean toolchain: {version_err}")
     }
     let version = version.trim().to_string();
-    if version.is_empty() {
-        bail!("Lake returned no Lean version")
+    if !version.contains(&format!("version {expected},")) {
+        bail!(
+            "Lake selected {version:?}, but lean-toolchain pins v{expected}; install the pinned toolchain via elan"
+        )
     }
     let relative = file.strip_prefix(&project)?;
     let relative = relative
         .to_str()
         .ok_or_else(|| anyhow!("Lean file path is not UTF-8"))?;
+    let mut audit_line = None;
     let (code, stdout, stderr) = if let Some(name) = theorem.as_deref() {
         validate_name(name)?;
         let mut source = tokio::fs::read(&file).await?;
+        audit_line = Some(source.iter().filter(|&&b| b == b'\n').count() + 2);
         source.extend_from_slice(format!("\n#print axioms {name}\n").as_bytes());
         invoke_lake(lake, &project, &["--json", "--stdin"], Some(&source)).await?
     } else {
@@ -264,8 +277,8 @@ async fn check_saved(
     let audit = theorem.as_deref().and_then(|name| {
         diagnostics
             .iter()
+            .filter(|v| v["pos"]["line"].as_u64() == audit_line.map(|n| n as u64))
             .filter_map(|v| v.get("data")?.as_str())
-            .chain(text.iter().map(String::as_str))
             .find(|s| {
                 s.contains(&format!("'{name}' does not depend on any axioms"))
                     || s.contains(&format!("'{name}' depends on axioms:"))
@@ -289,6 +302,8 @@ async fn check_saved(
         "warnings"
     } else if audit.is_some() {
         "axiom_free"
+    } else if theorem.is_some() {
+        "audit_unconfirmed"
     } else {
         "checked_not_axiom_audited"
     };
@@ -301,6 +316,7 @@ async fn check_saved(
     Ok(LeanCheckResult {
         lean_version: version,
         diagnostics,
+        messages: text,
         goal_text,
         completion_status: completion_status.into(),
         axioms: audit,
@@ -410,6 +426,94 @@ impl AgentTool for LeanCheckTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn public_tool_rejects_invalid_path_without_prompt_and_requires_approval(
+        cx: &mut TestAppContext,
+    ) {
+        if let Err(error) = run_public_tool_permission_test(cx).await {
+            panic!("{error:#}");
+        }
+    }
+
+    async fn run_public_tool_permission_test(cx: &mut TestAppContext) -> Result<()> {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        let dir = tempfile::tempdir()?;
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            dir.path(),
+            json!({ "Proof.lean": "theorem t : True := by trivial" }),
+        )
+        .await;
+        let project = Project::test(fs, [dir.path()], cx).await;
+        let tool = Arc::new(LeanCheckTool::new(project));
+        let (stream, mut events) = ToolCallEventStream::test();
+        let invalid = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(LeanCheckToolInput {
+                        path: "../Proof.lean".into(),
+                        theorem: None,
+                    }),
+                    stream,
+                    cx,
+                )
+            })
+            .await;
+        assert!(matches!(invalid, Err(LeanCheckToolOutput::Error { .. })));
+        assert!(
+            events.try_recv().is_err(),
+            "invalid paths must not ask for execution permission"
+        );
+
+        // A real saved file reaches the mandatory prompt, not the Lean process.
+        std::fs::write(
+            dir.path().join("Proof.lean"),
+            "theorem t : True := by trivial\n",
+        )?;
+        let root_name = dir
+            .path()
+            .file_name()
+            .context("temp root has no name")?
+            .to_string_lossy();
+        let (stream, mut events) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(LeanCheckToolInput {
+                    path: format!("{root_name}/Proof.lean"),
+                    theorem: None,
+                }),
+                stream,
+                cx,
+            )
+        });
+        let request = events.expect_authorization().await;
+        assert!(
+            request
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|s| s.contains("may execute project code"))
+        );
+        request
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .map_err(|_| anyhow!("permission response channel closed"))?;
+        assert!(task.await.is_err());
+        Ok(())
+    }
+
     #[test]
     fn refuses_non_project_paths_and_injected_theorem() -> Result<()> {
         for path in [

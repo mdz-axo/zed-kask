@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-23
-version: "2.4.2"
+version: "2.5.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 72 files under `kask/docs/` on 2026-09-23 (measured with `find kask/docs -type f`), exceeding the fewer-than-70 cap. The document-condensation gate remains open; this divergence-range correction adds no files.
+**Corpus size:** 70 files under `kask/docs/` on 2026-09-23: 69 Markdown documents and one YAML file. The formal document-count gate (`find kask/docs -name '*.md' | wc -l`, fewer than 70) passes after folding the two empty research shells into the active report. The all-file count is still 70, not below 70; do not delete another document solely to lower that number.
 
 ## Repair and improvement plans
 
@@ -78,6 +78,7 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 | Document | Description |
 | --- | --- |
+| [`research/artificial-curiosity-capability-space.md`](research/artificial-curiosity-capability-space.md) | Source-grounded curiosity mechanism study, separate seven-source follow-up, and bounded renderer-only capability-probe pilot; no tested curiosity selection capability. |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 | [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator. |
@@ -85,6 +86,13 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, reports the current count and the open condensation gate.
+
+### Folded 2026-09-23 (research and pilot evidence)
+
+| Artifact | Successor |
+| --- | --- |
+| `research/artificial-curiosity-open-questions-followup.md` | `research/artificial-curiosity-capability-space.md` §§6, 8: distinct seven-source follow-up, limits and four-arm experiment design; full original remains in git at `aa7f6ce4eb`. |
+| `research/artificial-curiosity-probe-pilot.md` | `research/artificial-curiosity-capability-space.md` §9: four positive/negative renderer controls, measured boundary and unresolved experiment; full original remains in git at `aa7f6ce4eb`. |
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 

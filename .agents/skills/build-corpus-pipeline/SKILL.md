@@ -600,17 +600,23 @@ for bounded synthetic controls in scratch; preserve real controls read-only.
 The checker loads inputs in memory: bound controls before full-artifact audits
 and disclose coverage. No synthetic controls belong in production input paths.
 
-**Semantic gate before pilot expansion, full generation or ingestion:** the
-`corpus-qa-grounding-v1` gate is mechanical — it admits only byte-exact
-answers and citations. Before pilot expansion or full generation, run the
-canonical `grounding-verify` skill decoupled from generation to review
-boilerplate, actual cognitive difficulty and subject matter, and reconcile
-its findings with the gate's `model_inference` records. Its model-mediated
-judgments are observations for operator review, never authority: they do not
-open ingestion, and no compensatory score can lift a `model_inference` answer
-to verified. Record genuinely inapplicable checks explicitly. A partial
-mechanical audit cannot open this gate. Retain current verification evidence
-and correction findings, not duplicate corpus versions.
+**Separate checks before pilot expansion, full generation or ingestion:**
+`corpus-qa-grounding-v1` is a mechanical ingestion gate: at least one citation
+must be byte-exact in its identified canonical chunk, and every citation must
+pass that check. A non-byte-exact answer can still be ingested with
+`answer_provenance=model_inference`; the gate does not establish answer
+entailment. Before pilot expansion or full generation, run the canonical
+`grounding-verify` skill decoupled from generation against retained sources.
+Use its factual grounding findings as evidence, not as a certificate of
+answer entailment, actual cognitive difficulty or subject diversity. Review
+those semantic questions and boilerplate contamination separately against the
+sources; record the outcome or an explicit unperformed check for operator
+acceptance before proceeding. Neither a reviewer judgment nor a compensatory
+score can lift a `model_inference` answer to verified or override the server's
+citation gate. A partial mechanical audit or missing applicable semantic
+review leaves process approval incomplete; the ingestion tool itself enforces
+the mechanical gate, not operator approval. Retain current verification
+evidence and correction findings, not duplicate corpus versions.
 
 ## Stage 9 — Ground, ingest, assemble and seek training approval
 
