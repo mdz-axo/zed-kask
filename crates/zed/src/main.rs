@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod reliability;
+mod watcher_debug;
 mod zed;
 
 // Ensure the binary name stays in sync with APP_NAME so that the paths used
@@ -378,6 +379,9 @@ fn main() {
     // variables. The keychain is the single source of truth — keys set
     // via the settings UI are mirrored to each provider's `api_url` so
     // the `ApiKeyState` keychain read finds them.
+
+    #[cfg(unix)]
+    util::increase_open_file_limit().log_err();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -2676,6 +2680,7 @@ fn main() {
         // zed-kask does not initialize upstream Zed's in-app updater. Its Linux
         // installer writes `zed*.app` bundles into `~/.local` and can replace
         // the user's real Zed installation. Updates are CLI-installer-only.
+        watcher_debug::init(app_state.clone(), cx);
         dap_adapters::init(cx);
         reliability::init(
             client.clone(),

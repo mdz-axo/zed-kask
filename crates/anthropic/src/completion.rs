@@ -290,6 +290,15 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let requires_adaptive_thinking = model == "claude-opus-5-5";
+    let mode = if requires_adaptive_thinking {
+        AnthropicModelMode::AdaptiveThinking
+    } else {
+        mode
+    };
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -426,6 +435,14 @@ pub fn into_anthropic(
         None
     };
 
+    // Opus 5.5 always uses adaptive thinking, which does not accept sampling controls.
+    // <https://platform.claude.com/docs/en/models/opus-5-5/overview>
+    let temperature = if requires_adaptive_thinking {
+        None
+    } else {
+        request.temperature.or(Some(default_temperature))
+    };
+
     Ok(crate::Request {
         model,
         messages: new_messages,
@@ -470,7 +487,7 @@ pub fn into_anthropic(
         },
         stop_sequences: Vec::new(),
         speed: request.speed.map(Into::into),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
@@ -893,6 +910,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -908,6 +926,7 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(1024),
         };
 
         let anthropic_request = into_anthropic(
@@ -921,6 +940,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            1024
+        );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
         assert_eq!(anthropic_request.messages.len(), 1);
@@ -1001,6 +1024,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1016,6 +1040,7 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(8192),
         };
 
         let anthropic_request = into_anthropic(
@@ -1029,6 +1054,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1066,6 +1095,7 @@ mod tests {
                 reasoning_details: None,
             }],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1076,6 +1106,7 @@ mod tests {
             reasoning_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1104,6 +1135,7 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
             ("claude-mythos-5-1", false),
@@ -1117,6 +1149,7 @@ mod tests {
                     reasoning_details: None,
                 }],
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 stop: vec![],
@@ -1127,6 +1160,7 @@ mod tests {
                 reasoning_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1171,10 +1205,11 @@ mod tests {
         // (model, expects_explicit_opt_out): Claude Opus 5 thinks by default
         // when the `thinking` field is omitted, so suppressing thinking
         // requires sending `{"type": "disabled"}`. Earlier Opus models treat
-        // omission as "off", and Fable rejects `disabled` outright, so both
-        // must keep omitting the field.
+        // omission as "off", while Opus 5.5 and Fable reject `disabled`
+        // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
         ] {
@@ -1186,6 +1221,7 @@ mod tests {
                     reasoning_details: None,
                 }],
                 thread_id: None,
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: None,
                 stop: vec![],
@@ -1196,6 +1232,7 @@ mod tests {
                 reasoning_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             };
 
             let anthropic_request = into_anthropic(
@@ -1226,6 +1263,12 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
+            if model == "claude-opus-5-5" {
+                assert!(
+                    anthropic_request.temperature.is_none(),
+                    "{model} must omit temperature because adaptive thinking is always on"
+                );
+            }
         }
     }
 
@@ -1247,6 +1290,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1262,6 +1306,7 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1275,6 +1320,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1293,6 +1342,7 @@ mod tests {
             }],
             reasoning_effort: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1302,6 +1352,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

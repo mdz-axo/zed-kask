@@ -234,7 +234,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
-                max_output_tokens: model.max_output_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode,
@@ -472,6 +471,7 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> Result<open_router::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("OpenRouter does not support custom tools");
     }
@@ -788,121 +788,6 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_max_completion_tokens_from_api_becomes_request_budget() {
-        // zed-kask: OpenRouter reserves the model's full default output size
-        // against the key's credit limit when `max_tokens` is omitted, and
-        // rejects with 402 on limited keys. The models endpoint advertises
-        // `top_provider.max_completion_tokens`; it must flow through to the
-        // request as an explicit budget.
-        let entry = open_router::ModelEntry {
-            id: "anthropic/claude-haiku-4.5".into(),
-            name: "Anthropic: Claude Haiku 4.5".into(),
-            created: 0,
-            description: String::new(),
-            context_length: Some(200000),
-            supported_parameters: vec!["tools".into()],
-            architecture: None,
-            reasoning: None,
-            top_provider: Some(open_router::TopProvider {
-                max_completion_tokens: Some(64000),
-            }),
-        };
-        let models = open_router::parse_models_response_for_test(entry)
-            .await
-            .unwrap();
-        let model = &models[0];
-        assert_eq!(model.max_output_tokens(), Some(64000));
-
-        let request = LanguageModelRequest {
-            messages: vec![language_model::LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".to_string())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            ..Default::default()
-        };
-        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
-        assert_eq!(result.max_tokens, Some(64000));
-    }
-
-    #[gpui::test]
-    async fn test_max_output_tokens_capped_at_half_context_length() {
-        // zed-kask: GLM 5.2 advertises `max_completion_tokens` equal to its
-        // `context_length` (1048576). That value is mathematically impossible
-        // (input + output can never exceed the context window), so sending it
-        // as `max_tokens` makes OpenRouter reject every non-empty request with
-        // 400, and it also breaks compaction math (`max_input_tokens =
-        // context - max_output_tokens` collapses to 0). The output budget is
-        // capped at half the context window so sane models (advertised cap
-        // already < 50%) are unaffected while broken models leave room for
-        // both input and output.
-        let entry = open_router::ModelEntry {
-            id: "z-ai/glm-5.2".into(),
-            name: "Z.ai: GLM 5.2".into(),
-            created: 0,
-            description: String::new(),
-            context_length: Some(1048576),
-            supported_parameters: vec!["tools".into()],
-            architecture: None,
-            reasoning: None,
-            top_provider: Some(open_router::TopProvider {
-                max_completion_tokens: Some(1048576),
-            }),
-        };
-        let models = open_router::parse_models_response_for_test(entry)
-            .await
-            .unwrap();
-        let model = &models[0];
-        assert_eq!(model.max_token_count(), 1048576);
-        assert_eq!(
-            model.max_output_tokens(),
-            Some(524288),
-            "max_output_tokens must be capped at half the context window so \
-             input + output never exceeds context_length"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_model_output_limit_becomes_request_budget() {
-        // The API-derived model budget is capped at half the context window.
-        let entry = open_router::ModelEntry {
-            id: "z-ai/glm-5.2".into(),
-            name: "Z.ai: GLM 5.2".into(),
-            created: 0,
-            description: String::new(),
-            context_length: Some(1048576),
-            supported_parameters: vec!["tools".into()],
-            architecture: None,
-            reasoning: None,
-            top_provider: Some(open_router::TopProvider {
-                max_completion_tokens: Some(1048576),
-            }),
-        };
-        let models = open_router::parse_models_response_for_test(entry)
-            .await
-            .unwrap();
-        let model = &models[0];
-        assert_eq!(model.max_output_tokens(), Some(524288));
-
-        let request = LanguageModelRequest {
-            messages: vec![language_model::LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("Hello".to_string())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            ..Default::default()
-        };
-        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
-        assert_eq!(
-            result.max_tokens,
-            Some(524288),
-            "the capped model output budget must reach the request"
-        );
-    }
-
-    #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
         let model = open_router::Model::new(
             "openai/gpt-4o",
@@ -917,8 +802,9 @@ mod tests {
             None,
         );
         let thread_id = "internal-thread-id";
-        let request = LanguageModelRequest {
+        let request = |max_output_tokens| LanguageModelRequest {
             thread_id: Some(thread_id.to_string()),
+            max_output_tokens,
             messages: vec![language_model::LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".to_string())],
@@ -928,17 +814,27 @@ mod tests {
             ..Default::default()
         };
 
-        let result = into_open_router(request, &model, None).unwrap();
-
-        assert_eq!(
-            result.session_id,
-            open_router_session_id(Some(thread_id.into()))
-        );
-        assert_ne!(result.session_id.as_deref(), Some(thread_id));
-        assert_ne!(
-            result.session_id,
-            open_router_session_id(Some("another-thread-id".into()))
-        );
+        for (requested, maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+        ] {
+            let result = into_open_router(request(requested), &model, maximum).unwrap();
+            assert_eq!(
+                result.session_id,
+                open_router_session_id(Some(thread_id.into()))
+            );
+            assert_ne!(result.session_id.as_deref(), Some(thread_id));
+            assert_ne!(
+                result.session_id,
+                open_router_session_id(Some("another-thread-id".into()))
+            );
+            assert_eq!(
+                serde_json::to_value(result).unwrap()["max_tokens"].as_u64(),
+                expected
+            );
+        }
     }
 
     #[gpui::test]
@@ -991,9 +887,11 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1133,9 +1031,11 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1199,9 +1099,11 @@ mod tests {
             reasoning_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

@@ -10,6 +10,8 @@
 # script/clippy) override this and stay authoritative.
 # Pinned by kask/scripts/build/check-build-profile.sh.
 jobs = 16
+
+[target.'cfg(all())']
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 
@@ -35,11 +37,10 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 # /usr/bin/mold and accepted by the system gcc (15.2). Several times faster
 # than the default bfd linker on this workspace's link steps (the zed
 # binary's LTO link and every MCP server binary); no runtime cost.
-# Target-level rustflags REPLACE the [build] rustflags, so the two build-level
-# flags are re-listed here: dropping symbol-mangling-version would break
-# symbol consistency across crates, and tokio_unstable is load-bearing.
+# Cargo joins this with the `cfg(all())` rustflags above, so the shared
+# mangling and tokio_unstable flags are not repeated here.
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable", "-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"

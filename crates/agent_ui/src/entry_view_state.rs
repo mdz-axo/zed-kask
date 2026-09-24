@@ -334,14 +334,14 @@ impl EntryViewState {
                             // A deferred editor has no content to preserve even if it
                             // was focused before its row rendered. Once loaded, keep
                             // user edits intact until editing is cancelled.
-                            let chunks = message.chunks.clone();
+                            let chunks = message.content.source_blocks().to_vec();
                             editor.update(cx, |editor, cx| {
                                 editor.set_message(chunks, window, cx);
                             });
                         }
                     }
                 } else {
-                    let chunks = hydrate_user.then(|| message.chunks.clone());
+                    let chunks = hydrate_user.then(|| message.content.source_blocks().to_vec());
                     let message_editor = cx.new(|cx| {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
@@ -427,7 +427,11 @@ impl EntryViewState {
                             entry.insert(element);
                         }
                         collections::hash_map::Entry::Occupied(_entry) => {
-                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                            let terminal = terminal.read(cx);
+                            if is_tool_call_completed
+                                && terminal.is_process_backed()
+                                && terminal.output().is_none()
+                            {
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
                                     view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
@@ -514,11 +518,6 @@ impl EntryViewState {
                 };
                 entry.sync(message);
             }
-            AgentThreadEntry::CompletedPlan(_) => {
-                if !matches!(self.entries.get(index), Some(Entry::CompletedPlan)) {
-                    self.set_entry(index, Entry::CompletedPlan);
-                }
-            }
             AgentThreadEntry::ContextCompaction(_) => {
                 if !matches!(self.entries.get(index), Some(Entry::ContextCompaction)) {
                     self.set_entry(index, Entry::ContextCompaction);
@@ -570,7 +569,6 @@ impl EntryViewState {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
                 | Entry::Elicitation { .. }
-                | Entry::CompletedPlan
                 | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
@@ -646,7 +644,6 @@ pub enum Entry {
     Elicitation {
         focus_handle: FocusHandle,
     },
-    CompletedPlan,
     ContextCompaction,
 }
 
@@ -657,7 +654,7 @@ impl Entry {
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
-            Self::CompletedPlan | Self::ContextCompaction => None,
+            Self::ContextCompaction => None,
         }
     }
 
@@ -667,7 +664,6 @@ impl Entry {
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
     }
@@ -698,7 +694,6 @@ impl Entry {
             Self::UserMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
     }
@@ -717,7 +712,6 @@ impl Entry {
             Self::UserMessage { .. }
             | Self::AssistantMessage(_)
             | Self::Elicitation { .. }
-            | Self::CompletedPlan
             | Self::ContextCompaction => false,
         }
     }
@@ -736,7 +730,7 @@ impl Focusable for Entry {
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
-            Self::CompletedPlan | Self::ContextCompaction => cx.focus_handle(),
+            Self::ContextCompaction => cx.focus_handle(),
         }
     }
 }
@@ -749,6 +743,7 @@ fn create_terminal(
     cx: &mut App,
 ) -> Entity<TerminalView> {
     cx.new(|cx| {
+        let read_only = !terminal.read(cx).is_process_backed();
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
             workspace,
@@ -756,7 +751,8 @@ fn create_terminal(
             project,
             window,
             cx,
-        );
+        )
+        .with_read_only(read_only);
         view.set_embedded_mode(Some(1000), cx);
         view
     })

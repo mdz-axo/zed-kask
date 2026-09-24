@@ -23,6 +23,7 @@ pub mod opencode;
 pub mod runpod;
 pub mod vercel_ai_gateway;
 pub mod x_ai;
+pub mod x_ai_subscribed;
 
 const COMMON_RESERVED_HEADER_NAMES: &[&str] = &["Authorization", "Content-Type", "Accept"];
 

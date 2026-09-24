@@ -14,7 +14,6 @@ crates/edit_prediction_cli/src/lib.rs:1
 crates/edit_prediction_cli/src/openai_client.rs:2
 crates/edit_prediction_cli/src/split_commit.rs:1
 crates/edit_prediction_context/src/editable_context.rs:1
-crates/edit_prediction_context/src/git_log_context.rs:4
 crates/edit_prediction_metrics/src/kept_rate.rs:1
 crates/edit_prediction_metrics/src/patch_metrics.rs:3
 crates/extension_host/src/wasm_host/wit/since_v0_0_6.rs:1
@@ -25,12 +24,12 @@ crates/extension_host/src/wasm_host/wit/since_v0_5_0.rs:1
 crates/extension_host/src/wasm_host/wit/since_v0_6_0.rs:1
 crates/extension_host/src/wasm_host/wit/since_v0_8_0.rs:1
 crates/git_ui/src/git_panel.rs:1
-crates/gpui_linux/src/linux/platform.rs:1
+crates/gpui_linux/src/linux/platform.rs:2
 crates/gpui_linux/src/linux/x11/window.rs:4
 crates/gpui_linux/src/linux/xdg_desktop_portal.rs:2
 crates/gpui_macros/tests/derive_inspector_reflection.rs:3
 crates/gpui/src/app/test_app.rs:1
-crates/gpui/src/platform.rs:28
+crates/gpui/src/platform.rs:27
 crates/gpui/src/platform/scap_screen_capture.rs:2
 crates/gpui/src/queue.rs:1
 crates/gpui/src/scene.rs:6
@@ -38,7 +37,7 @@ crates/gpui/src/taffy.rs:3
 crates/gpui_wgpu/src/wgpu_renderer.rs:4
 crates/gpui_windows/src/direct_write.rs:1
 crates/hkask-kanban-widget/src/view.rs:1
-crates/kanban_panel/src/kanban_panel.rs:4
+crates/kanban_panel/src/kanban_panel.rs:1
 crates/language_models/src/provider/runpod.rs:1
 crates/lmstudio/src/lmstudio.rs:1
 crates/open_ai/src/open_ai.rs:1
@@ -51,7 +50,6 @@ crates/settings_ui/src/pages/external_agents_page.rs:3
 crates/sum_tree/src/sum_tree.rs:1
 crates/tabular_data_preview/src/settings.rs:1
 crates/title_bar/src/onboarding_banner.rs:1
-crates/title_bar/src/update_version.rs:1
 crates/zed/src/visual_test_runner.rs:1
 kask/crates/hkask-types/src/tool_schema.rs:1
 tooling/xtask/src/tasks/workflows/steps.rs:1

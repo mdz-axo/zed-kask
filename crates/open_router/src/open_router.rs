@@ -79,7 +79,6 @@ pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     #[serde(default)]
@@ -125,7 +124,6 @@ impl Model {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
-            max_output_tokens: None,
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
@@ -150,7 +148,7 @@ impl Model {
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
-        self.max_output_tokens
+        None
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -435,15 +433,7 @@ pub struct ModelEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ModelArchitecture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_provider: Option<TopProvider>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ModelReasoning>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-pub struct TopProvider {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_completion_tokens: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -571,32 +561,6 @@ fn model_from_entry(entry: ModelEntry) -> Model {
                 .to_string(),
         ),
         max_tokens: entry.context_length.unwrap_or(2000000),
-        // zed-kask: send the provider's advertised completion cap as the
-        // output budget. When `max_tokens` is omitted, OpenRouter reserves
-        // the model's full default output size against the key's credit
-        // limit before dispatching, and rejects with 402 on limited keys
-        // even for trivial prompts. An explicit budget prices the request
-        // at what a turn actually needs.
-        //
-        // Some providers (e.g. GLM 5.2) advertise `max_completion_tokens`
-        // equal to their full `context_length`, which is mathematically
-        // impossible: input + output can never exceed the context window.
-        // Sending that value as `max_tokens` makes OpenRouter reject every
-        // non-empty request with 400 "maximum context length exceeded" (146
-        // input + 1048576 output > 1048576 context), and it also breaks the
-        // compaction math (`max_input_tokens = context - max_output_tokens`
-        // collapses to 0, triggering auto-compact on every turn). Cap the
-        // output budget at half the context window so sane models (whose
-        // advertised cap is already < 50%) are unaffected, while broken
-        // models leave real room for both input and output.
-        max_output_tokens: {
-            let context_length = entry.context_length.unwrap_or(2_000_000);
-            let half_context = context_length / 2;
-            entry
-                .top_provider
-                .and_then(|provider| provider.max_completion_tokens)
-                .map(|tokens| tokens.min(half_context))
-        },
         supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
         supports_images: Some(
             entry
