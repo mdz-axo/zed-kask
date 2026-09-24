@@ -289,7 +289,9 @@ and nine ordered clips, then edited and read back one clip range. That verifies
 persisted cloud composition/edit, not Reel playback, rendering, export, or
 publishing. The deployed read-only probe still returns
 `cloud_editing: not_available` despite the active tools; source corrects
-read-only status to `not_checked` (focused tests passed), pending runtime deployment and verification.
+read-only status to `not_checked` (focused tests, clippy and Zed check passed);
+the corrected `release-mcp` binary is installed, pending child restart and
+runtime verification.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations

@@ -320,8 +320,10 @@ title cards and nine `doc-range` blocks, edited once to adjust a clip range,
 and independently read back; its plan totals 10:29. This proves cloud
 composition/edit persistence, **not** a rendered export or published link.
 The deployed read-only probe still describes cloud editing as `not_available`;
-source changes that to `not_checked` and the focused Reduct tests pass;
-the correction remains undeployed and unverified against the running child.
+source changes that to `not_checked`, 20 focused Reduct tests pass, and
+a corrected `release-mcp` binary was installed atomically. The running child
+still returns the old response, so the correction awaits a child restart
+and live read-only recheck.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough

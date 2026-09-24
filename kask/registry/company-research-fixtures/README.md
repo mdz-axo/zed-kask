@@ -34,7 +34,13 @@ summaries. A quote found only in generated prose cannot become an observation
 or tool_verified through any of those handoffs. Any new summary belongs in the
 final verification target.
 
-Report separately: rendered-contract checks, deterministic gate cases, and
-independent semantic/grounding exercises. A render or grep pass is not evidence
-that a model followed the workflow, and these fixtures are not an end-to-end
-live equity research run.
+Run the deterministic gate and final publication cases (steps 2 and 4) with
+`cargo test -p hkask-mcp-companies --test company_verification_gate`. The test
+extracts both current Lisp forms instead of maintaining copies of their rules.
+The `missing_source_packet` case supplies `checks_complete=false` as the
+caller's recorded preflight result; these scalar gate fixtures do not prove
+that a caller computed that flag honestly from retained source bytes.
+Rendered-contract checks, independent semantic/grounding exercises, and
+correction/retry behavior (steps 1, 3 and 5) remain separate checks. A passing
+fixture test does not show that an agent ran the verifier or followed the
+workflow, and these fixtures are not an end-to-end live equity research run.

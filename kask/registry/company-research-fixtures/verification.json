@@ -10,6 +10,7 @@
     {"name":"missing_count", "fact_score":1, "claims_checked":null, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
     {"name":"self_check", "fact_score":1, "claims_checked":3, "decoupling":"in_thread", "checks_complete":true, "material_failure":false, "expected":"incomplete"},
     {"name":"omitted_report_section", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":false, "material_failure":false, "expected":"incomplete"},
+    {"name":"missing_source_packet", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":false, "material_failure":false, "expected":"incomplete"},
     {"name":"missing_materiality_check", "fact_score":1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":null, "expected":"incomplete"},
     {"name":"invalid_score", "fact_score":1.1, "claims_checked":3, "decoupling":"spawn_agent", "checks_complete":true, "material_failure":false, "expected":"incomplete"}
   ],
