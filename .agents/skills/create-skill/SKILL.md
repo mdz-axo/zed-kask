@@ -200,11 +200,40 @@ Generate the skill artifacts:
      `kask/registry/templates/my-skill/analyze.j2`) for the expected output
      format"
 
-2. **.j2 templates** in `kask/registry/templates/<name>/` with:
-   - A comment header describing the template's purpose and phase
-   - Jinja2 variables for context injection (`{{ task }}`, `{{ step_1_result }}`)
-   - The prompt structure (what the agent should analyze/synthesize)
-   - The expected JSON output shape (as a comment or schema description)
+2. **.j2 templates** in `kask/registry/templates/<name>/`, one per reasoning
+   phase. Render `create-skill/scaffold` with `skill_description` and
+   `scope` to produce both artifacts. Every template must meet the artifact
+   contract that `skill-maintenance-validate` (T2–T5) and the corpus tests
+   enforce:
+   - **First line `{# goal: ... #}`, copied verbatim from that template's row
+     in the generated SKILL.md's Registry Templates table** — the row IS the
+     goal, so the two cannot drift. One goal block per template: a long goal
+     is one long line, never several consecutive `{# ... #}` blocks (a
+     wrapped goal parses only partly).
+   - An `[inference]` contract header (typed `input`/`output` fields and
+     `visibility`) terminated by a lone `---` line; at most one body
+     `[inference]` parameter stanza after it.
+   - Jinja2 variables matching the contract inputs, and only those; every
+     declared output named in the output instructions.
+   - The expected JSON output shape.
+3. **Pre-check before handing over:** write the templates, then run
+   `bash kask/scripts/audit/skill-corpus-prescreen.sh` and
+   `bash kask/scripts/audit/skill-corpus-contract-audit.sh` via `terminal`.
+   A new template that either script flags is a scaffold defect: fix it and
+   re-run, at most twice, before Phase 4.
+
+### From a source skill (translation entry)
+
+When the starting point is a skill from another agent system rather than a
+description, replace Phases 2–3 with translation: render
+`create-skill/translate` with the classified `source_skill` and
+`target_domain`. Map source steps to numbered SKILL.md instructions and source
+tool calls to kask tools (deterministic computation → `lisp_eval`, data
+retrieval → the MCP tool, composition → `skill`, prompts →
+`render_template`, files → `read_file`/`write_file`/`edit_file`). Mark any
+source concept with no kask equivalent `[unresolved: no kask equivalent for
+<source_ref>]` instead of inventing one. The artifact contract and pre-check
+above apply unchanged; then continue at Phase 4.
 
 #### How to write SKILL.md instructions that use tools
 
@@ -295,6 +324,17 @@ Call the `skill` tool:
 
 Check that validation passed. If validation failed, identify the specific
 failures and re-enter at Phase 1 with the failure report as prior context.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `scaffold.j2` | Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows, typed `[inference]` contracts, and a prescreen-ready validation block. |
+| `translate.j2` | Translate a classified source skill from another agent system into a SKILL.md body plus .j2 templates under the same artifact contract, marking concepts with no kask equivalent as unresolved. |
+
+To render a template, call `render_template` with the ref (e.g. `create-skill/scaffold`):
+- `scaffold.j2`: `skill_description`, `scope`
+- `translate.j2`: `source_skill`, `target_domain`
 
 ## Constraints
 

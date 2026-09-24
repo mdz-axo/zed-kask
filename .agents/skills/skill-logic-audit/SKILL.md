@@ -30,7 +30,7 @@ outputs must feed the phase that consumes them.
 
 - SKILL.md bodies — not valid audit targets (this skill's own constraint); use `skill-maintenance`.
 - Skill health scoring, staleness signals, retirement thresholds — `skill-maintenance-audit`.
-- Coverage-gap mapping against the corpus — `skill-maintenance-coverage`.
+- Coverage-gap mapping against the corpus — `skill-discovery` (its detect-gap phase).
 
 ## Instructions
 

@@ -1,16 +1,17 @@
 ---
 name: skill-maintenance
 core: true
-description: "Skill lifecycle management: validate canonical SKILL.md instructions and companion .j2 templates, audit staleness and coverage, and compare distinct skill designs on fixed tasks before claiming improvement."
+description: "Maintain existing skills: validate canonical SKILL.md instructions and companion .j2 templates, audit staleness, and compare distinct skill designs on fixed tasks, filing the result as a proposal for the operator's algedonic review."
 ---
 
 # Skill Maintenance
 
 Skill lifecycle management and maintenance. SKILL.md is the canonical source
 of truth — the process instructions the agent reads and follows. .j2 templates
-are companion resources that define prompt structure. Audit staleness,
-coverage gaps, and task outcomes. Validate, build, translate, and compare
-candidate designs before changing skills.
+are companion resources that define prompt structure. Maintains skills that
+already exist: validate them, audit their staleness, and compare candidate
+designs (filed as proposals) before they change. Creating and translating
+skills belongs to `create-skill`; finding coverage gaps to `skill-discovery`.
 
 ## The skill model
 
@@ -34,18 +35,14 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 ## When to Use
 
 - When you need to validate a skill's SKILL.md structure and template quality.
-- When you need to scaffold a new skill (SKILL.md + templates) from a
-  natural-language description.
-- When you need to translate a classified source skill into the kask format.
 - When you need to audit the canonical SKILL.md and referenced templates for staleness signals and health scoring.
-- When you need to map task patterns against the skill corpus for coverage gaps.
 - When you need to improve a skill's actual task performance, not merely its structural health score.
 
 ## When NOT to Use
 
 - Auditing `.j2` template or `manifest.yaml` logic — use `skill-logic-audit` (its target class; SKILL.md bodies are not valid logic-audit targets).
-- Authoring a new skill from scratch — use `create-skill` (it delegates validation back here at Phase 4).
-- Matching tasks to installed skills — use `skill-router`; acquiring new ones — `skill-discovery`.
+- Authoring a new skill, or translating one from another agent system — use `create-skill` (it delegates validation back here at Phase 4).
+- Mapping task patterns for coverage gaps — use `skill-discovery` (its detect-gap phase); matching tasks to installed skills — `skill-router`.
 
 ## Instructions
 
@@ -146,53 +143,6 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 4. Provide actionable fix suggestions for any failures.
 5. Respond with a JSON object containing validation results and fix suggestions.
 
-### skill-maintenance-build
-
-1. Generate a complete skill (SKILL.md + .j2 templates) from the user's
-   natural-language description.
-2. Ensure the skill name is lowercase, hyphenated, 2-40 characters,
-   verb-noun or noun-noun, and lacks reserved prefixes.
-3. Create the SKILL.md with:
-   - Frontmatter: `name`, `description`
-   - "When to Use" / "When NOT to Use" sections
-   - "Instructions" section with numbered, tool-oriented steps
-   - "Constraints" section
-4. Create .j2 templates for each reasoning phase:
-   - `{# goal: ... #}` annotation as the first line, derived verbatim from
-     the Registry Templates row this build writes into the generated
-     SKILL.md — the row IS the goal (single source, no drift between the
-     table and the annotation). One `{# goal: ... #}` block per template:
-     a long goal is one long line, never consecutive `{# ... #}` blocks
-     (wrapped goals parse partially under logic-load-goal and the
-     prescreen).
-   - `[inference]` contract header (input/output fields, `visibility`),
-     terminated by a lone `---` line
-   - Jinja2 variables for context, matching the contract inputs
-   - Expected JSON output shape
-5. Run the generated templates through
-   `kask/scripts/audit/skill-corpus-prescreen.sh` before responding — every
-   generated template must pass (goal presence, length, overlap). A
-   generated template that fails the prescreen is a build defect, not a
-   triage candidate.
-6. Derive the PDCA shape from the skill's ontological anchors (see create-skill).
-7. Respond with the SKILL.md content, template contents, and validation status.
-
-### skill-maintenance-translate
-
-1. Convert a classified source skill (e.g., from another agent system) into
-   the kask format: SKILL.md + .j2 templates.
-2. Map source process steps to SKILL.md instruction steps.
-3. Map source tool calls to kask tools:
-   - Deterministic computation → `lisp_eval`
-   - Data retrieval → appropriate MCP tool
-   - Skill composition → `skill` tool
-   - Prompt rendering → `render_template`
-   - File operations → `read_file`, `write_file`, `edit_file``
-4. Create .j2 templates for reasoning steps that need structured prompts.
-5. Mark any source concepts with no kask equivalent as
-   `[unresolved: no kask equivalent for <source_ref>]`.
-6. Respond with the SKILL.md, templates, and a translation summary.
-
 ### skill-maintenance-audit
 
 1. Read `.agents/skills/<name>/SKILL.md` as the canonical process; if it is missing, report that as a critical loss of the skill. Inspect only the `.j2` templates the body references under `kask/registry/templates/<name>/`. Manifests do not dispatch skills and must not supply health penalties, retirements, or a substitute for a missing SKILL.md.
@@ -211,16 +161,6 @@ This loop runs within one session and ends in a **proposal**, never an applied c
 4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
 5. **Act (file or drop):** A candidate that satisfies hard constraints and has measured evidence is written as a proposal — full diff, predeclared tasks, measured before/after (or `unverified`), open falsifiers — via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Otherwise drop it and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement; the operator decides the proposal in the gemba walk, and only an accepted proposal is applied.
 
-### skill-maintenance-coverage
-
-1. Map task patterns against the existing skill corpus.
-2. Classify each task pattern: covered, uncovered, or partial coverage.
-3. For uncovered patterns, assess impact (critical/high/medium/low) and
-   recommend action (create skill, extend skill, discover external, ignore).
-4. For partial coverage, identify the missing aspects and the extension needed.
-5. Respond with covered patterns, uncovered patterns, partial coverage, and
-   recommendations.
-
 ## Registry Templates
 
 | Template | Purpose |
@@ -228,18 +168,12 @@ This loop runs within one session and ends in a **proposal**, never an applied c
 | `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
 | `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. |
-| `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
-| `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |
-| `skill-maintenance-coverage.j2` | Map task patterns against the skill corpus: covered, uncovered, partial — with impact and action recommendations. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-maintenance/skill-maintenance-validate`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `skill-maintenance-audit.j2`: `skill_name`,`workspace_context`
-- `skill-maintenance-build.j2`: `skill_description`,`scope`
 - `skill-maintenance-optimize.j2`: `skill_name`,`objective`,`baseline`,`tasks`,`candidates`,`observations`
-- `skill-maintenance-coverage.j2`: `skill_catalog`,`task_patterns`
-- `skill-maintenance-translate.j2`: `source_skill`,`target_domain`
 
 
 ## Constraints
