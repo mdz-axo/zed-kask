@@ -525,6 +525,41 @@ mod tests {
         validate_contract_inputs(&template, &context).expect("goal-carrying inquiry admits");
     }
 
+    /// Skill verdicts come only from the operator's words during the
+    /// algedonic review (operator ruling 2026-09-24): the verdict recorder
+    /// cannot render without a nonblank operator decision.
+    #[test]
+    fn skill_verdict_recorder_requires_operator_decisions() {
+        let path = registry_template_base().join("algedonic-review/record-skill-verdicts.j2");
+        let template = std::fs::read_to_string(path).expect("shipped verdict template");
+        let mut context = std::collections::HashMap::from([
+            (
+                "briefing".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({"per_skill": []})),
+            ),
+            (
+                "review_date".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!("2026-09-24")),
+            ),
+        ]);
+        for decisions in [serde_json::json!(""), serde_json::json!("  \n")] {
+            context.insert(
+                "operator_decisions".to_string(),
+                hkask_types::AnyJsonValue::from(decisions),
+            );
+            let error = validate_contract_inputs(&template, &context)
+                .expect_err("no operator decision, no verdict");
+            assert!(error.contains("operator_decisions"), "got: {error}");
+        }
+        context.insert(
+            "operator_decisions".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!(
+                "reject program-manager: over-escalated staging (feedback record 2026-09-17)"
+            )),
+        );
+        validate_contract_inputs(&template, &context).expect("an operator decision admits");
+    }
+
     #[test]
     fn contract_validation_allows_optional_and_defaulted_inputs() {
         let input = "[inference]\ncontract:\n  input:\n    required_value: string\n    nullable_value: string|null\n    defaulted_value:\n      type: string\n      default: fallback\n    explicitly_optional:\n      type: string\n      required: false\n---\n{{ required_value }}";

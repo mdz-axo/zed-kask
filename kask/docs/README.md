@@ -138,7 +138,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 | Deleted artifact | Named successor |
 | --- | --- |
 | `reports/prediction-markets/` (5 files) | Current implementation and tool surface in `reference/mcp-servers/prediction-markets.md`; git history remains the research archive. |
-| `reports/gemba-loop-specification.md` | Active procedures in `.agents/skills/gemba-walk/SKILL.md` and `.agents/skills/algedonic-review/SKILL.md`; git history remains the design archive. |
+| `reports/gemba-loop-specification.md` | Active procedure in `.agents/skills/algedonic-review/SKILL.md` (its gemba walk phase; `gemba-walk` merged into it 2026-09-24); git history remains the design archive. |
 
 ### Deleted 2026-09-19 (doc-update realignment)
 

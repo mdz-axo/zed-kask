@@ -2,7 +2,9 @@
 [inference]
 contract:
   input:
-    operator_decisions: string
+    operator_decisions:
+      type: string
+      non_blank: true
     briefing: object
     review_date: string
   output:

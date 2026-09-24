@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **77 skills** ship. **329 Jinja2 templates across 67
+> plus a markdown body of process instructions. **77 skills** ship. **334 Jinja2 templates across 67
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -48,12 +48,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-15)
+## Registry counts (verified 2026-09-24)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
 | `SKILL.md` directories (`.agents/skills/*/`, repo root) | **77** | Every counted directory contains a `SKILL.md`; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **67** (**329** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
+| Template namespaces (`kask/registry/templates/*/`) | **67** (**334** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -116,7 +116,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Meta & Maintenance (10 skills)
+## Meta & Maintenance (11 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -130,6 +130,7 @@ read-only resources the skill body may reference via `render_template`.
 | `skill-logic-audit` | Bounded dual-layer logic audit of `.j2` templates and `manifest.yaml` files against their stated goals |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `therapy` | Memory therapy session — scan a memory DB (curator, replica/corpus, or swarm) for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
+| `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
 
 ---
 
@@ -177,12 +178,11 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Cross-Cutting & Audit (11 skills)
+## Cross-Cutting & Audit (10 skills)
 
 | Skill | Purpose |
 |-------|---------|
-| `algedonic-review` | Human-in-the-loop review and triage of the algedonic alert backlog |
-| `gemba-walk` | Human-in-the-loop guided review of the cybernetic regulation system |
+| `algedonic-review` | Human-in-the-loop review with the operator and Curator: alert triage, then the gemba walk — the only place skills are evaluated |
 | `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast: inventory ontologies, build prior, map recombination field, detect gradients, select seeds |
 | `principle-constraints` | Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers |
@@ -203,14 +203,15 @@ read-only resources the skill body may reference via `render_template`.
 | Core Development | 12 |
 | Reasoning & Analysis | 10 |
 | Kata & Coaching | 3 |
-| Meta & Maintenance | 10 |
+| Meta & Maintenance | 11 |
 | Specialized | 25 |
 | Research & Corpus | 5 |
-| Cross-Cutting & Audit | 11 |
+| Cross-Cutting & Audit | 10 |
 | **Total** | **77** |
 
-> **Filesystem reality (verified 2026-09-19):** `.agents/skills/` contains 77
-> `SKILL.md` directories, including `onto-anchor` and `writing-style`.
-> `kask/registry/templates/` contains 67 template namespaces holding 329 `.j2`
-> files. The registry counts are filesystem observations, not inferred from the
+> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 77
+> `SKILL.md` directories, including `onto-anchor`, `writing-style` and
+> `verification-compression`; `gemba-walk` was merged into `algedonic-review`
+> (operator ruling 2026-09-24). `kask/registry/templates/` contains 67 template
+> namespaces holding 334 `.j2` files. The registry counts are filesystem observations, not inferred from the
 > category table.

@@ -17,7 +17,7 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 ## When NOT to Use
 
 - Classifying statements (IS/OUGHT, constraint force) — use `pragmatic-semantics`; this skill analyzes loops and variety, not sentences.
-- Operating the regulation loops — `gemba-walk` and `algedonic-review` run them; this skill diagnoses their design.
+- Operating the regulation loops — `algedonic-review` (alert triage and its gemba walk) runs them; this skill diagnoses their design.
 - Implementing control systems — it is an analysis lens (VSM, Ashby, loop properties), not a builder.
 
 ## Instructions
