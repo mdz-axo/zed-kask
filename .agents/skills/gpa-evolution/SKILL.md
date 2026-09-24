@@ -1,4 +1,5 @@
 ---
+shipped: false
 
 name: gpa-evolution
 description: "GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. Samples execution trajectories, reflects in natural language to diagnose failures and surface rules, and recombines lessons from the Pareto frontier of (quality, cost)."

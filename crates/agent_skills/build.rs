@@ -58,6 +58,7 @@ fn main() {
     // compile error, catching the regression before it ships.
     let mut failures = Vec::new();
     let mut core_names = Vec::new();
+    let mut developer_only = Vec::new();
     for (name, path) in &entries {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -67,6 +68,20 @@ fn main() {
             }
         };
         match validate_embedded_skill_frontmatter(name, &content) {
+            // zed-kask: `shipped: false` marks a skill used only to develop
+            // zed-kask itself. It stays in the checkout (loaded there as a
+            // project skill) but is not embedded, so installed builds never
+            // show it to users (operator ruling 2026-09-24).
+            Ok(frontmatter)
+                if extract_raw_yaml_scalar(frontmatter, "shipped").as_deref() == Some("false") =>
+            {
+                if extract_raw_yaml_scalar(frontmatter, "core").as_deref() == Some("true") {
+                    failures.push(format!(
+                        "{name}: a `shipped: false` skill cannot declare `core: true`"
+                    ));
+                }
+                developer_only.push(name.clone());
+            }
             Ok(frontmatter) => {
                 // The core list is DERIVED from the same frontmatter the
                 // validator already parsed — the frontmatter is the single
@@ -90,6 +105,7 @@ fn main() {
             failures.join("\n  - "),
         );
     }
+    entries.retain(|(name, _)| !developer_only.contains(name));
 
     let mut code = String::new();
     code.push_str(

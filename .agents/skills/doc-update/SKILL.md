@@ -1,4 +1,5 @@
 ---
+shipped: false
 name: doc-update
 description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <70-document condensation cap, with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
 ---

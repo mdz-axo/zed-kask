@@ -1,4 +1,5 @@
 ---
+shipped: false
 name: kask-seam-audit
 description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D52, D4/D10/D17/D19/D30 retired). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
 ---

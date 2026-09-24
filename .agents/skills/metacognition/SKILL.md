@@ -23,7 +23,7 @@ prediction calibration.
 ## When NOT to Use
 
 - Coaching a human or agent through the kata — use `kata-coaching`; this skill is the practitioner's own reflection loop.
-- Executing a specific improvement — `kata-improvement` / `self-improvement` own the act; this skill measures the gap and scores the prediction.
+- Executing a specific improvement — `kata-improvement` owns the act; this skill measures the gap and scores the prediction.
 - Forecast-calibration tracking in the prediction-market domain — `calibration-stewardship` and `superforecasting`'s stage 6 own that loop.
 
 ## Instructions

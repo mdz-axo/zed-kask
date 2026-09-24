@@ -46,7 +46,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 
 ## When NOT to Use
 
-- Prompt optimization — use `gpa-evolution` / `prompt-enhance`; this skill governs weight-space training configs.
+- Prompt optimization — use `prompt-enhance`; this skill governs weight-space training configs.
 - Executing the training run — the training server and `adapter-lifecycle` own execution; this skill recommends and audits configs.
 - Security findings — out of scope by its own template note; this skill owns training-config recommendation and contract evidence.
 

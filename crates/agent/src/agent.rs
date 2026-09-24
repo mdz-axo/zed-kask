@@ -5219,6 +5219,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         }
     }
 
@@ -5575,6 +5576,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         }
     }
 
@@ -5607,11 +5609,11 @@ mod internal_tests {
     // post: the core skill wins; non-core ties keep the first entry.
     #[test]
     fn unqualified_skill_winner_matches_core_aware_catalog() {
-        let mut core = make_global_skill("create-skill", "Core instructions");
+        let mut core = make_global_skill("metacognition", "Core instructions");
         core.core = true;
-        let project = make_project_skill("create-skill", "Project instructions", "project");
+        let project = make_project_skill("metacognition", "Project instructions", "project");
         for skills in [vec![core.clone(), project.clone()], vec![project, core]] {
-            let slash = select_unqualified_skill(&skills, "create-skill")
+            let slash = select_unqualified_skill(&skills, "metacognition")
                 .expect("skill available for slash command");
             let catalog = apply_skill_overrides(&skills);
             assert_eq!(slash.description, "Core instructions");
@@ -5677,9 +5679,9 @@ mod internal_tests {
         // A core skill cannot be shadowed by a project-local skill of the
         // same name — core skills are unshadowable to prevent a compromised
         // project from bypassing consent/trust/quality controls.
-        let mut core = make_global_skill("create-skill", "Core version");
+        let mut core = make_global_skill("metacognition", "Core version");
         core.core = true;
-        let project = make_project_skill("create-skill", "Project override", "my-project");
+        let project = make_project_skill("metacognition", "Project override", "my-project");
 
         let resolved = apply_skill_overrides(&[core, project]);
 
@@ -5692,9 +5694,9 @@ mod internal_tests {
     fn test_apply_skill_overrides_core_skill_unshadowable_by_user_global() {
         // A core skill cannot be shadowed by a user (non-core) global skill
         // of the same name.
-        let mut core = make_global_skill("create-skill", "Core version");
+        let mut core = make_global_skill("metacognition", "Core version");
         core.core = true;
-        let user_global = make_global_skill("create-skill", "User override");
+        let user_global = make_global_skill("metacognition", "User override");
 
         let resolved = apply_skill_overrides(&[core, user_global]);
 
@@ -5712,8 +5714,8 @@ mod internal_tests {
         // comparison would let the project skill shadow the core skill
         // (3 > 2), defeating the guarantee. This is the reverse-order
         // counterpart of `..._unshadowable_by_project_local`.
-        let project = make_project_skill("create-skill", "Project override", "my-project");
-        let mut core = make_global_skill("create-skill", "Core version");
+        let project = make_project_skill("metacognition", "Project override", "my-project");
+        let mut core = make_global_skill("metacognition", "Core version");
         core.core = true;
 
         let resolved = apply_skill_overrides(&[project, core]);
@@ -5728,8 +5730,8 @@ mod internal_tests {
         // Same as above but with a user global skill first — the core
         // global skill arriving second must replace it despite equal
         // precedence (both Global).
-        let user_global = make_global_skill("create-skill", "User override");
-        let mut core = make_global_skill("create-skill", "Core version");
+        let user_global = make_global_skill("metacognition", "User override");
+        let mut core = make_global_skill("metacognition", "Core version");
         core.core = true;
 
         let resolved = apply_skill_overrides(&[user_global, core]);
@@ -5743,8 +5745,8 @@ mod internal_tests {
     fn test_apply_skill_overrides_project_wins_over_user_global() {
         // Project-local still wins over user (non-core) global — the
         // normal precedence order applies when no core skill is involved.
-        let global = make_global_skill("create-skill", "Global");
-        let project = make_project_skill("create-skill", "Project", "my-project");
+        let global = make_global_skill("metacognition", "Global");
+        let project = make_project_skill("metacognition", "Project", "my-project");
 
         let resolved = apply_skill_overrides(&[global, project]);
 
@@ -5923,13 +5925,13 @@ mod internal_tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
-        let core_dir = global_skills_dir().join("create-skill");
+        let core_dir = global_skills_dir().join("metacognition");
         fs.create_dir(&core_dir)
             .await
             .expect("core skill directory");
         fs.insert_file(
             &core_dir.join("SKILL.md"),
-            b"---\nname: create-skill\ndescription: Canonical\ncore: true\n---\n\nCANONICAL_CORE_BODY".to_vec(),
+            b"---\nname: metacognition\ndescription: Canonical\ncore: true\n---\n\nCANONICAL_CORE_BODY".to_vec(),
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
@@ -5954,10 +5956,10 @@ mod internal_tests {
             thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
             agent.update(cx, |agent, _cx| {
                 if let Some(state) = agent.projects.get_mut(&project.entity_id()) {
-                    let mut core = make_global_skill("create-skill", "Canonical");
+                    let mut core = make_global_skill("metacognition", "Canonical");
                     core.core = true;
                     state.skills = Arc::new(vec![
-                        make_project_skill("create-skill", "Project override", "a"),
+                        make_project_skill("metacognition", "Project override", "a"),
                         core,
                     ]);
                 }
@@ -5968,7 +5970,7 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["/create-skill inline request".into()]),
+                acp::PromptRequest::new(session_id, vec!["/metacognition inline request".into()]),
                 cx,
             )
         });
@@ -6953,6 +6955,7 @@ mod internal_tests {
                 disable_model_invocation: false,
                 dependencies: Vec::new(),
                 core: false,
+                shipped: true,
             });
         }
 
@@ -7031,6 +7034,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -7042,6 +7046,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -7053,6 +7058,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -7112,6 +7118,7 @@ mod internal_tests {
             disable_model_invocation: true,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -7123,6 +7130,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);
@@ -7244,6 +7252,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
         let project_skill = Skill {
             name: "project-skill".into(),
@@ -7258,6 +7267,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
 
         cx.update(|cx| {
@@ -7409,11 +7419,11 @@ mod internal_tests {
     async fn stale_installed_core_is_excluded_from_active_project(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
-        let core_dir = global_skills_dir().join("create-skill");
+        let core_dir = global_skills_dir().join("metacognition");
         fs.create_dir(&core_dir).await.expect("core dir");
         fs.insert_file(
             core_dir.join("SKILL.md"),
-            b"---\nname: create-skill\ndescription: Stale core\ncore: true\n---\nstale body"
+            b"---\nname: metacognition\ndescription: Stale core\ncore: true\n---\nstale body"
                 .to_vec(),
         )
         .await;
@@ -7438,7 +7448,7 @@ mod internal_tests {
                 state
                     .skills
                     .iter()
-                    .all(|skill| skill.name != "create-skill")
+                    .all(|skill| skill.name != "metacognition")
             );
         });
     }

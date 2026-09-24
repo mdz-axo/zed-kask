@@ -45,8 +45,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 - For routine memory consolidation (that runs automatically on the timer).
 - For adding new memories (use `memory_insert` directly).
 - For single-memory updates (use `memory_update` directly).
-- For creating a skill from scratch with no memory basis (use `create-skill` directly).
-- For skill refinement — `skill-maintenance` diagnoses and proposes; `algedonic-review`'s gemba walk is where the operator evaluates skills and decides proposals.
+- For evaluating a skill — `algedonic-review`'s gemba walk is where the operator evaluates skills and decides proposals.
 - For mechanical pruning without diagnosis — `curator_memory_prune` is the tool; therapy is for contradictions, miscalibration, and reification.
 
 ## Grounding
@@ -181,7 +180,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
    - **Reset to floor**: if confidence is clearly wrong, `memory_update` to 0.5 (the floor).
 
    **For reification candidates** — propose:
-   - **Create skill**: if the pattern is a repeatable process that could guide future action, propose creating a skill (SKILL.md + templates) via the `create-skill` skill. The skill captures the lesson as proactive contextualized guidance.
+   - **Create skill**: if the pattern is a repeatable process that could guide future action, propose a skill: a `.agents/skills/<name>/SKILL.md` in the user's project with the lesson as proactive contextualized guidance, shown to the user as a draft before it is written.
    - **Create template**: if the pattern is a prompt structure or output format that could guide future generation, propose creating a .j2 template.
    - **Create rule**: if the pattern is a simple constraint or guideline (e.g., "always check X before Y"), propose adding it to the project `.rules` file or the agent's system prompt.
    - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "forget" to purge them (cognitive load shedding).

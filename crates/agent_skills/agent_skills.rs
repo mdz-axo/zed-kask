@@ -130,6 +130,9 @@ pub struct Skill {
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
     pub core: bool,
+    /// `false` for a skill used only to develop zed-kask (`shipped: false`).
+    /// See `SkillMetadata::shipped`.
+    pub shipped: bool,
 }
 
 /// Indicates where a skill was loaded from.
@@ -348,6 +351,23 @@ pub struct SkillMetadata {
     /// skills cannot be shadowed by project-local skills of the same name.
     #[serde(default)]
     pub core: bool,
+    /// `false` marks a skill used only to develop zed-kask itself: `build.rs`
+    /// leaves it out of the embedded payload, so installed builds never show it
+    /// and a development checkout loads it as a project skill. Absent means
+    /// shipped.
+    #[serde(
+        default = "default_shipped",
+        skip_serializing_if = "is_shipped_default"
+    )]
+    pub shipped: bool,
+}
+
+fn default_shipped() -> bool {
+    true
+}
+
+fn is_shipped_default(shipped: &bool) -> bool {
+    *shipped
 }
 
 /// Minimal skill info for system prompt.
@@ -431,6 +451,7 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         dependencies: metadata.dependencies,
         core: metadata.core,
+        shipped: metadata.shipped,
     })
 }
 
@@ -976,8 +997,15 @@ async fn load_global_skills_from_source(
     global_dir: &Path,
     source: Option<&Path>,
 ) -> Vec<Result<Skill, SkillLoadError>> {
+    // zed-kask: a `shipped: false` developer skill in the checkout is not a
+    // global skill; it loads as a project skill, so it appears only while
+    // zed-kask itself is open (operator ruling 2026-09-24).
     let mut loaded = if let Some(source) = source {
-        load_skills_from_directory(fs, source, SkillSource::Global).await
+        load_skills_from_directory(fs, source, SkillSource::Global)
+            .await
+            .into_iter()
+            .filter(|result| !matches!(result, Ok(skill) if !skill.shipped))
+            .collect()
     } else {
         Vec::new()
     };
@@ -1024,7 +1052,23 @@ pub fn is_development_shipped_skill(path: &Path) -> bool {
             .file_name()
             .is_some_and(|name| name == SKILL_FILE_NAME)
             && resolved.parent().and_then(Path::parent) == Some(source.as_path())
+            && !is_developer_only_skill_file(&resolved)
     })
+}
+
+/// Whether the SKILL.md at `path` declares `shipped: false` (a skill used only
+/// to develop zed-kask). Such a skill loads as a project skill, never as a
+/// global one. Unreadable or unparsable files are treated as shipped so the
+/// normal loader reports their error.
+fn is_developer_only_skill_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| {
+            extract_skill_frontmatter(&content)
+                .ok()
+                .map(|(metadata, _)| !metadata.shipped)
+        })
+        .unwrap_or(false)
 }
 
 /// In a development checkout, remove redundant shipped global copies and
@@ -1713,15 +1757,15 @@ Body.
     #[test]
     fn test_parse_accepts_core_true_on_reserved_name() {
         let content = r"---
-name: create-skill
-description: The canonical core skill authoring tool.
+name: metacognition
+description: The core self-reflection skill.
 core: true
 ---
 
 Body.
 ";
         let skill = parse_skill_frontmatter(
-            Path::new("/skills/create-skill/SKILL.md"),
+            Path::new("/skills/metacognition/SKILL.md"),
             content,
             SkillSource::Global,
         )
@@ -1737,8 +1781,8 @@ Body.
     #[test]
     fn project_skill_cannot_claim_core_status() {
         let content =
-            "---\nname: create-skill\ndescription: Project impostor\ncore: true\n---\nBody";
-        let path = Path::new("/project/.agents/skills/create-skill/SKILL.md");
+            "---\nname: metacognition\ndescription: Project impostor\ncore: true\n---\nBody";
+        let path = Path::new("/project/.agents/skills/metacognition/SKILL.md");
         let result = parse_skill_frontmatter(
             path,
             content,
@@ -1760,8 +1804,8 @@ Body.
     #[test]
     fn project_skill_with_core_name_without_core_status_remains_loadable() {
         let skill = parse_skill_frontmatter(
-            Path::new("/project/.agents/skills/create-skill/SKILL.md"),
-            "---\nname: create-skill\ndescription: Explicitly scoped project skill\n---\nBody",
+            Path::new("/project/.agents/skills/metacognition/SKILL.md"),
+            "---\nname: metacognition\ndescription: Explicitly scoped project skill\n---\nBody",
             SkillSource::ProjectLocal {
                 worktree_id: SkillScopeId(1),
                 worktree_root_name: "project".into(),
@@ -2741,6 +2785,7 @@ description: A skill with no body content
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            shipped: true,
         };
 
         let summary = SkillSummary::from(&skill);
@@ -3099,11 +3144,17 @@ description: A skill with no body content
             "metacognition",
             "pragmatic-semantics",
             "pragmatic-cybernetics",
-            "self-improvement",
             "tdd",
         ];
         let parsed_names: std::collections::HashSet<&str> =
             seed.iter().map(|(name, _)| *name).collect();
+        // Developer-only skills (`shipped: false`) never reach the payload.
+        for developer_only in ["create-skill", "skill-maintenance", "gpui-bench"] {
+            assert!(
+                !parsed_names.contains(developer_only),
+                "developer-only skill '{developer_only}' must not ship to users"
+            );
+        }
         for name in known_skills {
             assert!(
                 parsed_names.contains(name),
@@ -3170,14 +3221,14 @@ description: A skill with no body content
         // reserved name must pass — it is the only kind of skill allowed
         // to use a reserved name.
         let content =
-            "---\nname: create-skill\ncore: true\ndescription: Legitimate core skill\n---\nbody\n";
+            "---\nname: metacognition\ncore: true\ndescription: Legitimate core skill\n---\nbody\n";
         let skill = parse_skill_frontmatter(
-            Path::new("/skills/create-skill/SKILL.md"),
+            Path::new("/skills/metacognition/SKILL.md"),
             content,
             SkillSource::Global,
         )
         .expect("core skill with reserved name must be accepted");
-        assert_eq!(skill.name, "create-skill");
+        assert_eq!(skill.name, "metacognition");
         assert!(skill.core);
     }
 
@@ -3185,8 +3236,10 @@ description: A skill with no body content
     fn test_is_reserved_skill_name_matches_core_skill_names() {
         // `is_reserved_skill_name` is an alias for `is_core_skill` — the
         // reserved-name set is exactly the core-skill-name set.
-        assert!(is_reserved_skill_name("create-skill"));
+        assert!(is_reserved_skill_name("metacognition"));
         assert!(is_reserved_skill_name("bug-hunt"));
+        // A developer-only skill (`shipped: false`) is not core and not reserved.
+        assert!(!is_reserved_skill_name("create-skill"));
         assert!(!is_reserved_skill_name("my-user-skill"));
         assert!(!is_reserved_skill_name(""));
     }
@@ -3202,24 +3255,24 @@ description: A skill with no body content
 
         // Seed once — the core skill lands on disk.
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
-        let create_skill = Path::new("/skills/create-skill/SKILL.md");
+        let metacognition_skill = Path::new("/skills/metacognition/SKILL.md");
         assert!(
-            fs.is_file(create_skill).await,
-            "core skill 'create-skill' should be seeded to disk"
+            fs.is_file(metacognition_skill).await,
+            "core skill 'metacognition' should be seeded to disk"
         );
-        let original = fs.load(create_skill).await.unwrap();
+        let original = fs.load(metacognition_skill).await.unwrap();
 
         // A user edit (or corruption) is written over the core skill.
         fs.write(
-            create_skill,
-            b"---\nname: create-skill\ndescription: TAMPERED\n---\n",
+            metacognition_skill,
+            b"---\nname: metacognition\ndescription: TAMPERED\n---\n",
         )
         .await
         .unwrap();
 
         // Re-seed — the core skill must be overwritten with the shipped copy.
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
-        let after = fs.load(create_skill).await.unwrap();
+        let after = fs.load(metacognition_skill).await.unwrap();
         assert_eq!(
             after, original,
             "core skill must be overwritten on re-seed; user edits are not sovereign \
@@ -3306,13 +3359,29 @@ description: A skill with no body content
         )
         .await
         .expect("stale copy");
+        // A developer-only skill in the checkout is not a global skill: it
+        // loads as a project skill while zed-kask itself is open.
+        let developer = root.join("developer-tool");
+        fs.create_dir(&developer)
+            .await
+            .expect("developer skill directory");
+        fs.write(
+            &developer.join(SKILL_FILE_NAME),
+            b"---\nname: developer-tool\nshipped: false\ndescription: Dev only\n---\nDEV_BODY",
+        )
+        .await
+        .expect("developer skill body");
         let fs_dyn: Arc<dyn Fs> = fs.clone();
         let loaded = load_global_skills_from_source(&fs_dyn, global, Some(root)).await;
         let skills: Vec<_> = loaded.into_iter().filter_map(|entry| entry.ok()).collect();
+        assert!(
+            skills.iter().all(|skill| skill.name != "developer-tool"),
+            "a shipped: false skill must not load as a global skill"
+        );
         assert_eq!(
             skills.len(),
             3,
-            "each authored skill once plus one global-only user skill"
+            "each shipped authored skill once plus one global-only user skill"
         );
         let shipped = skills
             .iter()
@@ -3340,6 +3409,11 @@ description: A skill with no body content
         let source = development_skills_dir().expect("checkout skills");
         assert!(is_development_shipped_skill(
             &source.join("metacognition/SKILL.md")
+        ));
+        // A developer-only skill in the checkout is loaded as a project skill,
+        // so it must not be skipped as a duplicate of a global entry.
+        assert!(!is_development_shipped_skill(
+            &source.join("create-skill/SKILL.md")
         ));
         assert!(!is_development_shipped_skill(Path::new(
             "/other/.agents/skills/metacognition/SKILL.md"

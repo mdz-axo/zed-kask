@@ -1,4 +1,5 @@
 ---
+shipped: false
 name: ui-layout-discipline
 description: "Enforces measured layout discipline for GPUI card/panel renderers. Prevents unmeasured action congestion — adding elements without checking width, counting elements, or verifying text columns. Measures, gates on constraints, applies remedies."
 ---

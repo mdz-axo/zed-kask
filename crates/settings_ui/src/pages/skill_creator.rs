@@ -724,6 +724,7 @@ fn format_skill_file(
         disable_model_invocation,
         dependencies: Vec::new(),
         core: false,
+        shipped: true,
     };
     let frontmatter = serde_yaml_ng::to_string(&metadata)
         .context("failed to serialize skill frontmatter as YAML")?;
@@ -857,7 +858,7 @@ mod tests {
         let err = write_skill_to_disk(
             fs.as_ref(),
             Path::new("/skills"),
-            "create-skill",
+            "metacognition",
             "Hostile takeover",
             "Body of the skill.",
             false,
@@ -869,7 +870,7 @@ mod tests {
             "error should mention 'reserved', got: {err}"
         );
         // Nothing should have been written.
-        assert!(!fs.is_file(Path::new("/skills/create-skill/SKILL.md")).await);
+        assert!(!fs.is_file(Path::new("/skills/metacognition/SKILL.md")).await);
     }
 
     #[gpui::test]

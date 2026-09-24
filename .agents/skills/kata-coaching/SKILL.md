@@ -22,7 +22,6 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 
 - Practicing the kata yourself — use `kata-improvement`; coaching questions guide a learner, they are not the practitioner's loop.
 - Executing the improvement task — the five questions structure thinking; the task runs through its own skill.
-- Conversational coaching outside the kata — `improv`'s coaching modes (Plussing, Yes But) cover that.
 
 ## Instructions
 

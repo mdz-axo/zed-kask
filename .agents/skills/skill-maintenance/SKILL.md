@@ -1,6 +1,6 @@
 ---
+shipped: false
 name: skill-maintenance
-core: true
 description: "Maintain existing skills: validate canonical SKILL.md instructions and companion .j2 templates, audit staleness, and compare distinct skill designs on fixed tasks, filing the result as a proposal for the operator's algedonic review."
 ---
 

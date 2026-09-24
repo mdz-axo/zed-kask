@@ -1,6 +1,6 @@
 ---
+shipped: false
 name: skill-bundler
-core: true
 description: "Run peer-level skills concurrently and merge their outputs into a single unified report. The bundler does not compose or iterate — it dispatches each skill in parallel, collects results, and synthesizes them with per-skill summaries, cross-skill insights, conflicts, and prioritized recommendations."
 ---
 

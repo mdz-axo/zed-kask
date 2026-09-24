@@ -1,6 +1,6 @@
 ---
+shipped: false
 name: skill-logic-audit
-core: true
 description: "Goal- and callsite-grounded audit of .j2 templates and legacy manifests. Compares distinct candidate designs on fixed tasks and files a proposal for the operator's algedonic review; never edits its target or treats a formal check as proof of prompt quality."
 ---
 

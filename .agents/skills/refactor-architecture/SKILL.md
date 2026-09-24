@@ -32,7 +32,6 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 - Reviewing a change against its stated spec — use `code-review`.
 - Diagnosing a specific bug or regression — use `diagnose`; refactoring presupposes working code.
 - Greenfield interface design — use `deep-module`'s design step; this skill deepens what exists.
-- Upstream rebases — use `upstream-rebase` (per-D-seam strategy is its own discipline).
 
 ## Instructions
 

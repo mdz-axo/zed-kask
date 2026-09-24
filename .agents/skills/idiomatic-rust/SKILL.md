@@ -40,7 +40,7 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 
 ## When NOT to Use
 
-- Non-Rust languages — use the language's own idiomatic skill (`idiomatic-lisp` for Lisp).
+- Non-Rust languages — this skill's oracles are rust-analyzer and clippy.
 - Machine-checked proof — use `lean-prover`.
 - Reviewing a change against its spec — use `code-review`; this skill designs, it does not adjudicate diffs.
 

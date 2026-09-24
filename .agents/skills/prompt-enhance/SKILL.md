@@ -19,8 +19,6 @@ Single-pass by design (DR-S13a exempt class: documented single-pass) — the ver
 
 ## When NOT to Use
 
-- Evolving a prompt through execution feedback — use `gpa-evolution`; enhancement is a single typed rewrite, not an optimization loop.
-- Authoring new skill templates wholesale — use `create-skill`.
 - Training-config prompts — `lora-training` owns that domain.
 
 ## Inputs
