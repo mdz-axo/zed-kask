@@ -5,8 +5,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// The operator's direct skill-feedback control (T15, channel b): explicitly
-/// rate a skill's output — acceptance or rejection with an optional reason.
+/// Record the operator's evaluation of a skill's output during the algedonic
+/// review with the Curator — acceptance or rejection with the evidence-backed
+/// reason. Registered only in Curator sessions: evaluation is separated from
+/// execution, so the session that ran a skill never rates it (Goodhart).
 ///
 /// The rating is persisted as a `reg.skill.<id>.operator_feedback` record in
 /// the curator's `RegulationArchive`, then added to the shared
@@ -96,7 +98,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    /// T15 (channel b): the direct tool fires the operator-feedback hook
+    /// The review's rating tool fires the operator-feedback hook
     /// with the operator's disposition and reason — the explicit rating
     /// reaches the durable archive writer before the live ledger view.
     #[gpui::test]

@@ -256,7 +256,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
   `reg.skill.lora-training.outcome` and `reg.skill.lora-training.operator_feedback`
   spans when training completes/fails or the operator reacts to a recommendation.
   Both producers are wired (2026-09-09): the operator's reaction is recorded via
-  the `record_skill_feedback` tool (direct rating) or a confirmed
+  the `record_skill_feedback` tool (the operator's rating during the Curator's algedonic review) or a confirmed
   `curator_advice_mark_applied` naming this skill. These become `prior_outcome`
   (τ_t) and `prior_operator_feedback` (e_t) on subsequent invocations.
 - Security review of training infrastructure is a separate concern owned by

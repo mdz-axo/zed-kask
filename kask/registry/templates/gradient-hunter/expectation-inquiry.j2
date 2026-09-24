@@ -2,7 +2,9 @@
 [inference]
 contract:
   input:
-    active_goal: string
+    active_goal:
+      type: string
+      non_blank: true
     operator_feedback: string|null
     expectation: object
     observation: object

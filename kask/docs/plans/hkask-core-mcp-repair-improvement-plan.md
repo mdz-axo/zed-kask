@@ -1,8 +1,8 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-19
-version: "0.2.2"
+last_updated: 2026-09-24
+version: "0.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -408,7 +408,27 @@ Candidate formal invariants:
 3. Successful charges within a fixed tick without overrides do not exceed the ceiling.
 4. An operation identity maps to one committed result or an explicit uncertain state.
 
-Lean/lake were unavailable during review; no proof was attempted and no tools installed. A model proof would not establish that Rust checks every IPC variant, that a filesystem survives power loss, or that a remote process handles cancellation. Prefer implementation-level tests first; attempt formalization only with explicit assumptions, practical tooling, and a mapping from the model to implementation.
+Lean/lake were unavailable during the 2026-09-18 review; no proof was attempted and no tools installed. A model proof would not establish that Rust checks every IPC variant, that a filesystem survives power loss, or that a remote process handles cancellation. Prefer implementation-level tests first; attempt formalization only with explicit assumptions, practical tooling, and a mapping from the model to implementation.
+
+### P6 — Separate skill evaluation from skill execution
+
+**Operator ruling (2026-09-24):** skill evaluation runs as part of the algedonic review with the human operator and the Curator — never in the executing thread, a project-bound evaluation thread, or the agent as it runs. Evaluation must be logically separated from execution; otherwise the measure becomes the executor's target and stops measuring (Goodhart's law, Wikidata Q2575082). This was always the specification; no backward compatibility is required. Build to the functional specification, minimally, and delete the superseded self-evaluation paths rather than keeping them alongside.
+
+**Spec provenance:** the ruling above; `gemba-walk` design reference ("kask's separation of skill execution from regulation"); `functional-interaction-spec.md` §7.4 (outcome quality is resolved against named instruments, the operator supplies final ground truth); PRINCIPLES §9.2 (the loop measures activation reliability and operator acceptance, and does not infer work quality from activation). The 2026-09-24 skill-system audit found the violation: `self-improvement`, `skill-maintenance-optimize`, `skill-logic-audit` and `gpa-evolution` instruct the executing agent to evaluate and commit its own skill changes, and `record_skill_feedback` was registered in every native session.
+
+**Invariant:** an executing session can *record what happened* (activation outcome, predictions via `kanban_goal_create`, skill-use issue reports) and can *propose* a change; it cannot *evaluate* a skill or *accept* a skill change. Evaluation verdicts and acceptance are operator decisions taken in the algedonic review with the Curator.
+
+| Slice | Change (no compatibility path) | Checkpoint (falsifiable) |
+| --- | --- | --- |
+| P6a — evaluation tool authority | `record_skill_feedback` registered only in Curator sessions (`NativeAgent::new_session`); removed from `register_session` | Native model request lacks the tool, Curator request carries it; the native pin fails when the tool is re-registered in `register_session` |
+| P6b — review owns evaluation | `algedonic-review` gains a skill-evaluation phase: sense (skill outcomes, operator-feedback history, skill-use issue reports, resolved goal outcomes, pending proposals) → evidence-backed per-skill briefing → operator verdict → `record_skill_feedback` / accept-reject of proposals, receipts retained | A review run over a fixture backlog produces verdicts only from operator decisions with cited evidence; no verdict is recorded without an operator decision |
+| P6c — executing skills stop self-evaluating | Delete self-judged commit/select steps from `self-improvement` (`si-commit-or-rollback` Act becomes propose-and-queue), `skill-maintenance-optimize`, `skill-logic-audit` compare/compose/user-choice, `gpa-evolution` self-scored selection, and `metacognition`/`logo-builder` self-judged loops; each ends by filing a proposal for the review. Within-session PDCA loops remain for work *on the task* (operator ruling 2026-09-24: PDCA self-improvement loops are within a session), bounded by iterations, not calendar horizons | Grep of the skill corpus finds no instruction for an executing agent to commit, accept, or score its own skill change; `si-kata-target`/`improvement-step3-target` carry an in-session bound instead of "1 week to 3 months" |
+| P6d — ontology anchors | Derived entries for `pdca_cycle` (Wikidata Q820214; LEI lexicon PDCA; Shewhart/Deming), `improvement_kata` and `coaching_kata` (LEI lexicon Kata; Rother 2010, Wikidata Q7830807), `goodharts_law` (Wikidata Q2575082), each citing the 2026-09-24 ruling | `onto_anchor` returns tier `derived` with identity and authority for each; resolver tests pin them. No published lean/kata OWL vocabulary was found in the bundled fixtures or a web search, so the derived rung is the correct ladder rung |
+| P6e — docs and seams | DIVERGENCE D1/D59, PRINCIPLES §9.2, skills-and-composition regulation-feedback rows, skill docs that describe direct rating from executing sessions | Full-repo sweep for the old registration and self-evaluation phrasing returns only historical records |
+
+**Open operator decision:** `gemba-walk` and `algedonic-review` both sense the algedonic log, escalations, and skill-performance signals and both brief the operator. With evaluation now owned by the review, the deletion test recommends folding `gemba-walk`'s per-skill digest into P6b and deleting `gemba-walk`. That removes an invocable skill, so it waits for the operator.
+
+**Stop criteria:** P6 is complete when P6a–P6e checkpoints are observed, a live Curator session shows `record_skill_feedback` while a native session does not, and one algedonic review with the operator records at least one skill verdict through the new phase. A structurally green corpus is not completion.
 
 ### Kata experiment table
 
@@ -517,6 +537,7 @@ At save time all packages were **not started**. The following execution record s
 | P3 persistence/recovery | Partial; R2 facade removed (uncommitted) | R2: unused connectionless transaction API deleted, connection-owned commit-failure/reopen test passes. R3/H1 recovery remains open; R1 decision-gated. |
 | P4 packaging/CI/docs | Partial — F8 repaired, fixture suite now executed; O1 closed | F8 inventory/install checks repaired (commit `429812b116`); the reconnect fixture suite was subsequently executed by the independent Gödel stream (16 passed; see P1b update). O1 docs drift closed 2026-09-19 by the kask/docs realignment |
 | P5 optional simplification/formalization | Deferred | O2; only after behavior is pinned |
+| P6 skill evaluation separated from execution | P6a implemented, uncommitted; P6b–P6e open | P6a: `record_skill_feedback` moved from `register_session` to the Curator overlay in `NativeAgent::new_session` (`crates/agent/src/agent.rs`); `test_native_session_reads_curator_status_without_curator_mutations` observed RED with the tool re-registered in `register_session` and GREEN after the move; `test_curator_session_registers_directive_tool` asserts the Curator model request carries it (2 passed). DIVERGENCE D1/D59 updated. The orphan media templates (audit Q4) were removed by another actor in `4acadc4ac2` |
 
 For each completed package record: current-source finding disposition; exact changed files; old paths deleted; test command and counts; failures/limitations; functional outcome; and commit hash if committed, otherwise explicitly “uncommitted.” Do not commit automatically or include another actor's staged work.
 

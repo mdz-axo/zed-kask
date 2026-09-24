@@ -466,6 +466,21 @@ mod tests {
             .expect_err("an inquiry without the user's goal cannot pass admission");
         assert!(error.contains("active_goal"), "got: {error}");
 
+        for invalid_goal in [
+            serde_json::json!(""),
+            serde_json::json!(" \t\n "),
+            serde_json::json!(null),
+            serde_json::json!(42),
+        ] {
+            context.insert(
+                "active_goal".to_string(),
+                hkask_types::AnyJsonValue::from(invalid_goal),
+            );
+            let error = validate_contract_inputs(&template, &context)
+                .expect_err("an inquiry with a blank or non-string goal cannot render");
+            assert!(error.contains("active_goal"), "got: {error}");
+        }
+
         context.insert(
             "active_goal".to_string(),
             hkask_types::AnyJsonValue::from(serde_json::json!("Investigate meaningful surprises")),

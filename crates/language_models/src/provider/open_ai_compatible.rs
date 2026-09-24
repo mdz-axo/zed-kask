@@ -904,6 +904,133 @@ mod tests {
         assert_eq!(request.reasoning_effort, None);
     }
 
+    struct NoCredentialsProvider;
+
+    impl CredentialsProvider for NoCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// D70 pin: a successful discovery must not re-trigger discovery. The
+    /// fetch task notifies the shared provider state so the model registry
+    /// re-reads `provided_models`; discovery also observes that state, so
+    /// without a guard every success started the next fetch — a continuous
+    /// `/models` polling loop that kept the foreground thread and every model
+    /// picker busy (live 2026-09-24: ~12 discovery completions per 5 s and
+    /// ~1,000 model-picker notifies per 5 s while idle).
+    #[gpui::test]
+    async fn successful_discovery_does_not_restart_itself(cx: &mut gpui::TestAppContext) {
+        use gpui::UpdateGlobal as _;
+        use http_client::{AsyncBody, FakeHttpClient, Response};
+        use settings::SettingsStore;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |request| {
+                let requests = requests.clone();
+                async move {
+                    if request.uri().path().ends_with("/models") {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"data":[{"id":"discovered-model"}]}"#))?)
+                }
+            }
+        });
+
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            crate::AllLanguageModelSettings::register(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .openai_compatible = Some(
+                        [(
+                            Arc::from("TestDiscovery"),
+                            settings::OpenAiCompatibleSettingsContent {
+                                api_url: "https://example.test/v1".to_string(),
+                                available_models: Vec::new(),
+                                custom_headers: None,
+                                auto_discover: true,
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
+                    );
+                });
+            });
+            OpenAiCompatibleLanguageModelProvider::new(
+                Arc::from("TestDiscovery"),
+                http_client,
+                Arc::new(NoCredentialsProvider),
+                cx,
+            )
+        });
+        provider
+            .state
+            .update(cx, |state, cx| {
+                state.set_api_key(Some("key".to_string()), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let settled = requests.load(Ordering::SeqCst);
+        assert!(
+            settled >= 1,
+            "storing a key must discover models at least once"
+        );
+        cx.update(|cx| {
+            assert!(
+                provider
+                    .provided_models(cx)
+                    .iter()
+                    .any(|model| model.id().0.as_ref() == "discovered-model"),
+                "the discovered model must reach provided_models"
+            );
+        });
+
+        for _ in 0..5 {
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            settled,
+            "a completed discovery must not start another /models request"
+        );
+    }
+
     /// D48 pin: the discovery-failure warn must format the error with
     /// anyhow's alternate Display (`{e:#}`) so the source chain (connect
     /// vs DNS vs TLS vs timeout) is logged. The plain `{e}` left transport

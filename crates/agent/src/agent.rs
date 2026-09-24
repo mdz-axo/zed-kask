@@ -935,6 +935,11 @@ impl NativeAgent {
                 thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
                 thread.add_tool(CuratorDirectiveTool);
                 thread.add_tool(CuratorClearAlgedonicLogTool);
+                // zed-kask: D59 — skill evaluation is separated from skill
+                // execution (Goodhart): the operator's rating is recorded
+                // during the algedonic review with the Curator, never by the
+                // session that executed the skill.
+                thread.add_tool(RecordSkillFeedbackTool::new());
             });
         }
 
@@ -1003,15 +1008,12 @@ impl NativeAgent {
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
             // zed-kask: D1 — use upstream's project-aware body resolver while
-            // retaining the skill outcome hook and direct-feedback tool.
+            // retaining the skill outcome hook. The operator's evaluation tool
+            // is Curator-only (see `new_session`).
             thread.add_tool(SkillTool::with_body_resolver(
                 skills_resolver_for_project(weak.clone(), project_id),
                 skill_body_resolver_for_project(project.clone(), self.fs.clone()),
             ));
-            // zed-kask: T15 (channel b) — the operator's direct skill-feedback
-            // control. Stateless (fires the process-global hook wired in
-            // `main.rs`), so one instance serves every thread.
-            thread.add_tool(RecordSkillFeedbackTool::new());
             // `lisp_eval` and `render_template` are already registered via
             // `add_default_tools` — they are stateless tools available to all
             // threads. Only `SkillTool` needs per-session registration because
@@ -4804,14 +4806,11 @@ pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) 
     }
 }
 
-/// Records the operator's evaluative reaction to a skill's output — the
-/// e_t intrinsic feedback signal of the self-improvement loop (T15).
-/// Two channels fire it, both specified in the skill docs: the explicit
-/// `record_skill_feedback` tool (the operator's direct rating —
-/// task-breakdown: "overridden tasks, rejection reasons, corrected_fields")
-/// and the advice-apply bridge (the operator confirming application of a
-/// skill's recommendation — lora-training: "the operator reacts to a
-/// recommendation"). Production persists the spans in the curator's
+/// Records the operator's evaluation of a skill's output. Evaluation is
+/// separated from execution (Goodhart): both channels are operator actions
+/// outside the executing session — the Curator-only `record_skill_feedback`
+/// tool used during the algedonic review, and the advice-apply bridge (the
+/// operator confirming application of a skill's recommendation). Production persists the spans in the curator's
 /// `RegulationArchive`, then feeds the shared `RegulationLedger` working view
 /// as `reg.skill.<id>.operator_feedback`, which the metacognition loop's drift
 /// sensing trends ("declining operator acceptance" — outputs that
@@ -10007,6 +10006,10 @@ mod internal_tests {
                 assert!(thread.has_registered_tool("curator_status"));
                 assert!(!thread.has_registered_tool("curator_directive"));
                 assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    !thread.has_registered_tool("record_skill_feedback"),
+                    "an executing session must not evaluate skills (Goodhart)"
+                );
             });
         });
         let prompt_task = cx.update(|cx| {
@@ -10039,6 +10042,13 @@ mod internal_tests {
                 .tools
                 .iter()
                 .any(|tool| tool.name == "curator_clear_algedonic_log")
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "record_skill_feedback"),
+            "skill evaluation is separated from execution"
         );
         drop(prompt_task);
     }
@@ -10127,6 +10137,15 @@ mod internal_tests {
                 .count(),
             1,
             "Curator must see the same status tool exactly once"
+        );
+        // Skill evaluation belongs to the algedonic review with the Curator:
+        // the rating tool must reach the Curator model, not merely register.
+        assert!(
+            request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "record_skill_feedback"),
+            "the Curator review must be able to record the operator's skill evaluation"
         );
         drop(prompt_task);
     }
