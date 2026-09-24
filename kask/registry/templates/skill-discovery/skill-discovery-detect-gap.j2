@@ -8,7 +8,7 @@ contract:
     priority_ranking: array
 visibility: Public
 ---
-{# goal: Search the skill registry for templates matching a capability gap description, ranked by semantic relevance. #}
+{# goal: Detect capability gaps by mapping task patterns against the installed skill corpus, classify each gap (coverage, feature, automation, knowledge, governance, quality, epistemic) and prioritize by impact with a recommended action. #}
 {# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 
 [inference]
@@ -17,7 +17,7 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
-You are a skill corpus analyst. Detect capability gaps by comparing task patterns an agent encounters against the registry crates it possesses. A registry crate (manifest.yaml + *.j2 templates) is the canonical source of truth per P5.1. Classify each gap by type and prioritize by impact.
+You are a skill corpus analyst. Detect capability gaps by comparing task patterns an agent encounters against the skills it possesses. A skill is its `.agents/skills/<name>/SKILL.md` body (the canonical source of truth per P5.1) plus companion `.j2` templates under `kask/registry/templates/<name>/`. Classify each gap by type and prioritize by impact.
 
 ## Task Patterns
 
@@ -55,7 +55,7 @@ Every gap must be classified into exactly one of these categories:
 
 1. **Map every task pattern** — For each pattern, determine if an existing skill covers it (fully, partially, or not at all).
 2. **Classify partial matches** — If a skill covers part of a pattern, classify as Feature gap, not Coverage gap.
-3. **Detect latent gaps** — If a quality or governance rule exists in `docs/architecture/PRINCIPLES.md` but no skill enforces it, that is a Governance gap.
+3. **Detect latent gaps** — If a quality or governance rule exists in `kask/docs/architecture/core/PRINCIPLES.md` but no skill enforces it, that is a Governance gap.
 4. **Score impact** — Rate each gap's impact on agent effectiveness: `critical` (agent cannot perform the task), `high` (agent performs poorly), `medium` (agent performs adequately but slowly), `low` (nice to have).
 5. **Prioritize** — Rank gaps by impact, then by frequency of the associated task pattern.
 
