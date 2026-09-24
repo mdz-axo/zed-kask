@@ -161,8 +161,8 @@ fn render_server_list(
 // `ContextServerStore` this page reads for "Configured Servers"), so they
 // render here from `BUILT_IN_MCP_SERVERS` + the `kask.mcp` settings instead.
 // Status is live: the process-global `KaskToolSource` (wired to the runtime
-// in `main.rs`, cache refreshed every 2s) reports which servers have
-// registered tools. The toggle writes the same `kask.mcp.overrides` key the
+// in `main.rs`, cache rebuilt on runtime tool-surface changes) reports which
+// servers have registered tools. The toggle writes the same `kask.mcp.overrides` key the
 // Kask settings page writes; the `SettingsStore` observer
 // (`sync_kask_mcp_runtime_servers`) then starts/stops the governed server
 // through the runtime's own primitives, preserving the self-healing

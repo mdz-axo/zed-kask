@@ -4427,18 +4427,21 @@ impl Thread {
                     }
                 }
                 Err(output) => {
-                    // Record failure — increments the failure counter for this key.
-                    // After 3, the next call will carry a warning. After 5, the
-                    // next call will be hard-refused before tool.run() is called.
+                    // Record one failure per assistant message. Parallel sibling
+                    // failures must not consume every retry before the model can
+                    // correct its input; repeated failed messages still warn at
+                    // 3 and refuse at 5 before tool.run() is called.
                     // zed-kask: authorization failures (missing credential,
                     // `[permission_denied]` prefix) are deterministic — no
                     // identical retry can fix them, so counting them only
                     // produces bogus Bayesian "switch tools" statistics while
                     // the model already sees the named env var to set.
                     if !crate::tool_retry_tracker::is_authorization_error(&output) {
-                        retry_tracker
-                            .borrow()
-                            .record_failure(&tool_name_for_tracking, &input_for_tracking);
+                        retry_tracker.borrow().record_failure_for_message(
+                            &tool_name_for_tracking,
+                            &input_for_tracking,
+                            owning_message_ix,
+                        );
                     }
                     (true, output)
                 }

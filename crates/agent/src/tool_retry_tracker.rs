@@ -5,15 +5,16 @@
 //! zero-gain loop. Two tracking dimensions:
 //!
 //! 1. **Per-input tracker** — `(tool_name, input_hash) → failure_count`. Catches
-//!    identical retries (same tool, same input). After `WARN_THRESHOLD` identical
-//!    failures, the tool result carries a warning with the Bayesian probability
-//!    of success. After `HARD_CAP`, the tool hard-refuses.
+//!    identical retries (same tool, same input). Parallel failures from one
+//!    assistant message count once; repeated messages still reach the warning
+//!    and hard cap.
 //!
 //! 2. **Per-tool consecutive-failure tracker** — `tool_name → consecutive_failure_count`.
 //!    Catches "trivially different" loops where the agent changes the input
-//!    slightly but keeps failing with the same tool. After `WARN_THRESHOLD`
-//!    consecutive failures on the same tool (regardless of input), the warning
-//!    fires. After `HARD_CAP`, the tool hard-refuses for *any* input.
+//!    slightly but keeps failing with the same tool. Sibling tool calls in one
+//!    assistant message count as one failed attempt, so one parallel batch
+//!    cannot prevent a corrected request. Repeated failed messages still warn
+//!    and hard-refuse at the existing thresholds.
 //!
 //! A successful call resets both trackers for that tool/input.
 //!
@@ -110,12 +111,25 @@ pub enum RefuseReason {
 #[derive(Default)]
 pub struct ToolRetryTracker {
     /// `(tool_name, input_hash) → failure_count` — per-input tracker.
-    per_input: Mutex<HashMap<(String, u64), u32>>,
+    per_input: Mutex<HashMap<(String, u64), FailureCount>>,
     /// `tool_name → consecutive_failure_count` — per-tool tracker.
-    /// Incremented on every failure (any input), reset on any success.
-    /// Catches "trivially different" loops where the input changes but the
-    /// tool keeps failing.
-    per_tool: Mutex<HashMap<String, u32>>,
+    /// Incremented once per failed assistant message, reset on success.
+    per_tool: Mutex<HashMap<String, FailureCount>>,
+}
+
+#[derive(Default)]
+struct FailureCount {
+    count: u32,
+    last_message_ix: Option<usize>,
+}
+
+impl FailureCount {
+    fn record(&mut self, message_ix: Option<usize>) {
+        if message_ix.is_none() || self.last_message_ix != message_ix {
+            self.count = self.count.saturating_add(1);
+            self.last_message_ix = message_ix;
+        }
+    }
 }
 
 /// Maximum entries retained in the `per_input` map before oldest are evicted.
@@ -135,11 +149,11 @@ impl ToolRetryTracker {
         let input_key = (tool_name.to_string(), input_hash(input));
         let per_input_count = {
             let per_input = self.per_input.lock().expect("retry tracker mutex poisoned");
-            per_input.get(&input_key).copied().unwrap_or(0)
+            per_input.get(&input_key).map_or(0, |failure| failure.count)
         };
         let consecutive_count = {
             let per_tool = self.per_tool.lock().expect("retry tracker mutex poisoned");
-            per_tool.get(tool_name).copied().unwrap_or(0)
+            per_tool.get(tool_name).map_or(0, |failure| failure.count)
         };
 
         let effective_cap = hard_cap_for(tool_name);
@@ -177,8 +191,28 @@ impl ToolRetryTracker {
         RetryVerdict::Allow
     }
 
-    /// Record that a tool call failed. Call this when `tool.run()` returns `Err`.
+    /// Record a sequential failure without an owning-message identity.
     pub fn record_failure(&self, tool_name: &str, input: &serde_json::Value) {
+        self.record_failure_inner(tool_name, input, None);
+    }
+
+    /// Record a failed call from an assistant message. Multiple sibling failures
+    /// on the same input/tool in that message count as one retry episode.
+    pub fn record_failure_for_message(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        owning_message_ix: usize,
+    ) {
+        self.record_failure_inner(tool_name, input, Some(owning_message_ix));
+    }
+
+    fn record_failure_inner(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        message_ix: Option<usize>,
+    ) {
         let input_key = (tool_name.to_string(), input_hash(input));
         {
             let mut per_input = self.per_input.lock().expect("retry tracker mutex poisoned");
@@ -196,11 +230,14 @@ impl ToolRetryTracker {
                     per_input.remove(&key);
                 }
             }
-            *per_input.entry(input_key).or_default() += 1;
+            per_input.entry(input_key).or_default().record(message_ix);
         }
         {
             let mut per_tool = self.per_tool.lock().expect("retry tracker mutex poisoned");
-            *per_tool.entry(tool_name.to_string()).or_default() += 1;
+            per_tool
+                .entry(tool_name.to_string())
+                .or_default()
+                .record(message_ix);
         }
     }
 
@@ -345,6 +382,77 @@ mod tests {
             }
             other => panic!("expected Refuse via consecutive tracker, got {other:?}"),
         }
+    }
+
+    /// expect: one assistant-message batch of failed searches must not use up
+    /// every retry before the model can submit a corrected next-message input.
+    #[test]
+    fn failed_parallel_batch_allows_corrected_request() {
+        let tracker = ToolRetryTracker::default();
+        for i in 0..9 {
+            tracker.record_failure_for_message(
+                "web_search",
+                &serde_json::json!({"query": format!("title {i}"), "strategy": "hybrid"}),
+                42,
+            );
+        }
+        let corrected = serde_json::json!({"query": "title 0", "strategy": "deep"});
+        assert!(matches!(
+            tracker.check("web_search", &corrected),
+            RetryVerdict::Allow
+        ));
+
+        let duplicate = serde_json::json!({"query": "title 0", "strategy": "hybrid"});
+        assert!(matches!(
+            tracker.check("web_search", &duplicate),
+            RetryVerdict::Allow
+        ));
+    }
+
+    /// expect: retries across separate assistant messages still warn and stop,
+    /// even when every message fans out many distinct failed tool calls.
+    #[test]
+    fn repeated_failed_batches_still_reach_hard_cap() {
+        let tracker = ToolRetryTracker::default();
+        let same_input = serde_json::json!({"query": "same", "strategy": "hybrid"});
+        for message_ix in 0..HARD_CAP as usize {
+            for i in 0..9 {
+                tracker.record_failure_for_message(
+                    "web_search",
+                    &serde_json::json!({"query": format!("title {message_ix}-{i}"), "strategy": "hybrid"}),
+                    message_ix,
+                );
+                tracker.record_failure_for_message("web_search", &same_input, message_ix);
+            }
+            if message_ix + 1 == WARN_THRESHOLD as usize {
+                assert!(matches!(
+                    tracker.check("web_search", &serde_json::json!({"strategy": "deep"})),
+                    RetryVerdict::AllowWithWarning {
+                        consecutive: WARN_THRESHOLD,
+                        ..
+                    }
+                ));
+            }
+        }
+        assert!(matches!(
+            tracker.check("web_search", &serde_json::json!({"strategy": "deep"})),
+            RetryVerdict::Refuse {
+                reason: RefuseReason::ConsecutiveFailures,
+                ..
+            }
+        ));
+        assert!(matches!(
+            tracker.check("web_search", &same_input),
+            RetryVerdict::Refuse {
+                reason: RefuseReason::IdenticalInput,
+                ..
+            }
+        ));
+        tracker.record_success("web_search", &same_input);
+        assert!(matches!(
+            tracker.check("web_search", &serde_json::json!({"strategy": "deep"})),
+            RetryVerdict::Allow
+        ));
     }
 
     #[test]
