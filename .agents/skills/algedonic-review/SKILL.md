@@ -1,7 +1,7 @@
 ---
 name: algedonic-review
 core: true
-description: "Human-in-the-loop review of the regulation system with the operator and the Curator: triage the algedonic alert backlog, then walk the gemba of skill execution — observed outcomes, operator feedback, skill-use issues and queued skill-change proposals — so the operator evaluates skills and decides proposals. The only place skills are evaluated; executing sessions never evaluate themselves. Invoked when the algedonic log approaches its cap, for a skill-performance review, or on operator demand."
+description: "Human-in-the-loop review of the regulation system with the operator and the Curator: triage the algedonic alert backlog, then walk the gemba of skill execution (outcomes, operator feedback, skill-use issues, queued proposals) so the operator evaluates skills and decides proposals. The only place skills are evaluated. Invoked when the algedonic log nears its cap, for a skill-performance review, or on demand."
 ---
 
 # Algedonic Review
