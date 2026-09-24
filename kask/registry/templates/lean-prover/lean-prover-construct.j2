@@ -127,7 +127,7 @@ theorem append_nil_demo (xs : List Nat) : xs ++ [] = xs := by
 #print axioms append_nil_demo
 ```
 
-Run `lean <file>` (or the project's `lake env lean <file>`), record `lean --version`, exit code, warnings and axiom output. This example is exercised by `kask/scripts/test-lean-prover-skill.sh`.
+In agent chat, use `lean_check` with `path` set to the saved local project-relative `.lean` file and `theorem` set to the named declaration when that tool is exposed; it requires operator approval. `completion_status: "axiom_free"` requires a confirmed `#print axioms` for that name, whereas `checked_not_axiom_audited` is only a successful file check. Read its `lean_version`, `exit_code`, `diagnostics`, `goal_text` and `axioms`. When not exposed, run `lean <file>` (or the project's `lake env lean --json <file>`) through `terminal`, record version, exit code, warnings and axiom output. This example is exercised by `kask/scripts/test-lean-prover-skill.sh`; the tool's saved-file and permission behavior is exercised by `crates/agent/src/tools/lean_check_tool.rs` tests.
 
 ## Output
 
@@ -151,4 +151,4 @@ Run `lean <file>` (or the project's `lake env lean <file>`), record `lean --vers
 }
 ```
 
-`construct_score`: 1.0 only after the exact proof checks with no holes and its `#print axioms` dependencies satisfy the declared policy. Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected. A generated proof or code action is not a checked theorem.
+`construct_score`: 1.0 only after the exact proof checks with no holes and its `#print axioms` dependencies satisfy the declared policy. Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected; a tool status of `checked_not_axiom_audited` does not meet this gate. A generated proof or code action is not a checked theorem.
