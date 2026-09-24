@@ -27,7 +27,7 @@ Files that auto-merge cleanly with all markers preserved (`markdown.rs`,
 **Companion skill:** this process is encoded in the installed
 `upstream-rebase` skill (`.agents/skills/upstream-rebase/SKILL.md`), which adds
 the merge & rebase protocol (fetch/merge strategy, conflict classes, commit
-hygiene, recovery) on top of the 8 steps below. Note: the skill's "Process
+hygiene, recovery) on top of Steps 1–8 below. Note: the skill's "Process
 Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
 is this file, `kask/docs/reference/upstream-rebase-process.md`.
 
@@ -58,7 +58,7 @@ markers (3.6%) → **mapped re-application**.
 
 ---
 
-## 2. The mapped re-application process (8 steps)
+## 2. The mapped re-application process (Steps 1–8; Step 0 and Step 9 are in `SKILL.md`)
 
 These steps apply only to seams that survive the per-seam purpose decision
 (`SKILL.md` Step 0: retire, simplify, retain, or needs operator decision).
@@ -124,11 +124,11 @@ insertion point, in topological order. For each insertion:
 
 ### Step 6 — Pin surviving behavior at the smallest meaningful boundary
 
-Per the `.rules` trap "Every `// zed-kask:` comment disabling upstream behavior
-needs a test pinning the disabled behavior": each retained seam needs a test
-that fails when its purpose is lost, placed at the cheapest boundary that
-exercises it (a `kask/` crate or an existing fork-owned test module before a
-new test in an upstream-owned file). For
+Each retained seam needs a test that fails when its purpose is lost, placed at
+the cheapest boundary that exercises it (a `kask/` crate or an existing
+fork-owned test module). Do not add a test to an upstream-owned file without
+operator approval; if no other boundary exists, record "pinned by review only"
+in the D-row. For
 `main.rs` wirings (which are process-global hooks, not unit-testable functions),
 the pinning test is typically:
 - A test asserting the hook is `Some` after init (e.g.,
@@ -162,11 +162,8 @@ running either is sufficient; do not run both.
 2. If it fails, re-delete every path it names and re-run.
 3. Repeat until it passes.
 
-Run it locally as the fast loop. (The skill references a CI wiring in
-`.github/workflows/kask-ci.yml`; no such workflow currently exists in the
-repository — `.github/workflows/` contains only upstream's
-`community_pr_cleanup.yml` and `maintainer_edits_nudge.yml` — so the local run
-is the gate.)
+Run it locally as the fast loop; CI runs the same script in
+`.github/workflows/kask-invariants.yml`.
 
 ---
 
@@ -380,7 +377,7 @@ It encodes this process plus:
   `./script/clippy` → `cargo check -p kask_bridge -p hkask-types -p
   hkask-mcp-server` (`DIVERGENCE.md:129`) → pinning tests.
 - **Registry templates:** `assess.j2`, `map.j2`, `decide.j2`, `execute.j2`,
-  `document.j2` under `kask/registry/templates/upstream-rebase/`, rendered
+  `document.j2`, `reflect.j2` under `kask/registry/templates/upstream-rebase/`, rendered
   via the `render_template` tool, with `lisp_eval` verification gates between
   LLM steps.
 
@@ -578,3 +575,19 @@ complexity + G2 reachability assertion). Co-occurrence resolution:
 > review that eliminated two candidate `.rules` additions as pass-through
 > restatements. The full derivation is in git history
 > (`upstream-removal-principles.md`, folded 2026-09-09).
+
+## 10. Held-out cases for the next sync
+
+`SKILL.md` Step 9 uses these. They are **not** reading material for the agent
+running a merge: score them with a fresh sub-agent that sees only the skill
+text and the pre-merge tree, then compare its decisions with the recorded
+outcome at the cited commit. An amendment's case must fail on the pre-amendment
+skill text and pass on the amended text.
+
+| Case | Origin commit | Situation | Outcome recorded at |
+| --- | --- | --- | --- |
+| C1 | `d2f29c3827` | Operator deprecated a capability; upstream changed the seam's files (D13). | `DIVERGENCE.md` retired list |
+| C2 | seam-audit commit | A row's premise is false; upstream never touched its file (D11). | `DIVERGENCE.md` retired list |
+| C3 | `d2f29c3827` | Upstream rewrote a seam's code; one fork parameter still needed (D14). | D14 row |
+| C4 | 2026-09-24 recovery | A resolved, uncommitted merge is about to be aborted. | This doc, `SKILL.md` Recovery |
+| C5 | 2026-09-24 attempt | `-X ours` leaves a both-changed file identical to the fork parent. | Verification gate step 0 |

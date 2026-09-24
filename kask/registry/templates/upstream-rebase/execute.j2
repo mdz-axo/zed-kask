@@ -44,6 +44,7 @@ re-application) on the target D-seam file.
    kask symbol, setting, test, dependency, and comment the retired seam owned
    (`git grep` each removed identifier across code and docs).
 2. Run `cargo check -p <crate>`.
+3. Diff against both `HEAD` and `{{ upstream_ref }}`: upstream additions must be present.
 
 ### If strategy is "surgical":
 
@@ -55,6 +56,8 @@ re-application) on the target D-seam file.
    upstream-owned file).
 3. Run `cargo check -p <crate>` to verify compilation.
 4. Run `cargo test -p <crate> --features test-support -- <pinning_test>` to verify the test passes.
+5. Diff against both `HEAD` and `{{ upstream_ref }}`: if the file equals the fork
+   parent while upstream changed it, upstream work was dropped (e.g. by `-X ours`); stop.
 
 ### If strategy is "full-reapplication":
 

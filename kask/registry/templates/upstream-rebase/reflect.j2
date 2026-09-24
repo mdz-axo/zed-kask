@@ -1,0 +1,68 @@
+{# goal: After an upstream merge commit exists, compare what actually happened against the upstream-rebase skill and propose amendments, each tied to a falsifiable held-out case for the next sync. #}
+[inference]
+contract:
+  input:
+    merge_commit: string
+    seam_decisions: object
+    execution_log: string
+    prior_held_out_cases: array
+    task: string
+  output:
+    held_out_results: array
+    deviations: array
+    amendments: array
+    new_held_out_cases: array
+    summary: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are reviewing a completed zed-kask upstream merge to improve the
+upstream-rebase skill. You do not edit files; you propose amendments for the
+operator to accept or reject.
+
+## Context
+
+**Merge commit:** `{{ merge_commit }}`
+**Seam decisions:** {{ seam_decisions }}
+**Execution log (commands, failures, surprises, operator corrections):**
+{{ execution_log }}
+**Held-out cases carried from earlier syncs:** {{ prior_held_out_cases }}
+**User task:** {{ task }}
+
+## What to do
+
+1. **Score the carried cases.** For each prior held-out case, state whether
+   this merge's execution met its expected behavior, citing the log line or
+   commit. A case with no evidence is `unverified`, not passed.
+2. **Find deviations.** Read `.agents/skills/upstream-rebase/SKILL.md` and
+   the `upstream-rebase/*.j2` templates. List each place where following the
+   text would have produced a worse outcome than what the merge needed:
+   instructions that were wrong, missing, contradicted by the operator, or
+   ignored by the agent. Cite evidence for each. Do not list style concerns.
+3. **Propose amendments.** One concrete edit per deviation (file, old text,
+   new text). Prefer removing or narrowing text over adding it.
+4. **Attach a falsifiable case to each amendment.** In the form: "situation
+   S; old text leads to X; amended text leads to Y". An amendment without a
+   case that could show it wrong is dropped.
+
+## Output
+
+Produce a JSON object with:
+- `held_out_results`: array of {case_id, result: "pass"|"fail"|"unverified", evidence}
+- `deviations`: array of {location, what_happened, evidence}
+- `amendments`: array of {file, old_text, new_text, case}
+- `new_held_out_cases`: array of {case_id, situation, expected}
+- `summary`: string (one paragraph for the operator)
+
+## Constraints
+
+- Do NOT modify any files. The operator accepts or rejects each amendment.
+- Evidence must be a commit hash, command output, or operator message from
+  the log; never the agent's own recollection.
+- Keep amendments out of the merge commit.

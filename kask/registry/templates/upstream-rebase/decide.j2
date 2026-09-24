@@ -7,7 +7,7 @@ contract:
     step_2_result: object
     task: string
   output:
-    seam_decision: string
+    seam_decisions: array
     strategy: string
     full_reapplication: boolean
     rationale: string
@@ -19,7 +19,7 @@ visibility: Public
 temperature = 0.2
 work_effort = "medium"
 verbosity = "standard"
-thinking_budget = "off"
+thinking_budget = "full"
 
 You are an essentialist evaluator for the upstream-rebase process. Your job
 is first to decide whether each seam in the file should survive at all, and
@@ -79,7 +79,7 @@ Apply Ousterhout's deletion test in both directions:
 ## Output
 
 Produce a JSON object with:
-- `seam_decision`: "retire", "simplify", "retain", or "needs-operator-decision", with the D-number and one-sentence purpose
+- `seam_decisions`: array of {d_number, purpose, decision: "retire"|"simplify"|"retain"|"needs-operator-decision", upstream_evidence, counterexample} — one entry per D-row the file carries
 - `strategy`: "take-upstream", "surgical", or "full-reapplication"
 - `full_reapplication`: boolean (true if full re-application needed)
 - `rationale`: string (one paragraph explaining the decision)

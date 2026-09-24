@@ -35,14 +35,28 @@ kask-wiring changes without carrying forward accumulated cruft.
 
 ### Step 0 — Decide whether each affected seam should survive
 
-Before choosing a merge strategy, write one decision record per D-row whose
-files upstream changed in this merge (`git diff --name-only <base> upstream/main`
-intersected with the row's file column):
+Before choosing a merge strategy, review **every live D-row**, not only rows
+whose files upstream changed. A seam can go stale without any upstream edit:
+the operator can deprecate it, or its premise (a dependency version, a bug) can
+stop being true. Two tiers:
+
+- **Upstream-touched rows** (`git diff --name-only <base> upstream/main`
+  intersected with the row's file column): a full decision record below.
+- **Untouched rows**: a short check. Is the purpose still wanted under the
+  operator's current requirements? Is the row's stated premise still true in
+  the tree (versions, callers, the upstream bug it fixes)? For a version
+  premise, quote the row next to `grep -A1 'name = "<crate>"' Cargo.lock`;
+  for an upstream bug, cite the upstream function that still has it. Do its cited pins
+  still exist? Any "no" promotes the row to a full record.
+
+The full record:
 
 - **Purpose** — the user-visible outcome the seam protects and the failure
   the user sees without it.
 - **Current authority** — the operator's current requirement, not the row's
-  history. A row describing a capability the operator has since deprecated
+  history. Sources: `.rules`, operator rulings recorded in `DIVERGENCE.md`,
+  and `curator_semantic_search` for deprecations; if none settles it, the
+  decision is NEEDS OPERATOR DECISION. A row describing a capability the operator has since deprecated
   (e.g. a token budget after the max-token deprecation) is not authority.
 - **Upstream evidence** — the specific function at the new upstream tip that
   does or does not deliver the purpose. A same-named function, a clean
@@ -107,7 +121,9 @@ purpose is lost. Put it at the cheapest boundary that exercises that purpose:
 prefer a `kask/` crate or an existing fork-owned test module over adding a test
 to an upstream-owned Zed file. A seam retired in Step 0 takes its pins with it;
 an obsolete pin (one that tests a replaced upstream API rather than the
-purpose) is removed, not ported. For process-global hooks (e.g., `main.rs`
+purpose) is removed, not ported. If the only boundary is an upstream-owned file,
+record "pinned by review only" in the row and ask the operator before adding a
+test there. For process-global hooks (e.g., `main.rs`
 wirings), a compile-time + symbol-existence pin is acceptable.
 
 ### Step 7 — Update DIVERGENCE.md
@@ -120,7 +136,7 @@ Update the D-seam row to reflect the re-applied file: list the file, document ev
 D7/D16 (icons, `.desktop` templates, `script/bundle-mac`, Flatpak/Snap resources,
 release workflows). `kask/scripts/build/check-zed-isolation.sh` is the enforcement
 point — it enumerates every forbidden path (L24–89) and is wired into CI
-(`.github/workflows/kask-ci.yml` invariants job, L196–197). Running it locally
+(`.github/workflows/kask-invariants.yml`). Running it locally
 closes a fast loop (seconds) instead of waiting for the CI round-trip.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh`
@@ -132,6 +148,28 @@ closes a fast loop (seconds) instead of waiting for the CI round-trip.
 
 Do not re-list the forbidden paths here — the script is the authority and its
 list updates independently of this skill.
+
+### Step 9 — Reflect and amend this skill
+
+After the merge commit exists and before closing the task, render
+`upstream-rebase/reflect` with the merge commit, the seam decisions, and a
+log of what actually happened (commands that failed, surprises, operator
+corrections, time lost). It compares that log against what this skill told
+the agent to do and returns:
+
+- **Deviations** — each place the skill was wrong, silent, or ignored, with
+  the evidence (commit, command, or operator message).
+- **Amendments** — one concrete edit per deviation to `SKILL.md`, a template,
+  or `upstream-rebase-process.md`, each tied to a falsifiable case
+  ("on merge N, an agent following the old text would do X; the new text makes
+  it do Y").
+- **Held-out case** — the case from this merge the amended skill must pass on
+  the next sync.
+
+Present the amendments to the operator; apply only the accepted ones, in a
+commit separate from the merge. Record the held-out cases in
+`kask/docs/reference/upstream-rebase-process.md` §10 so the next sync starts
+by checking them. A lesson that no case can falsify is not an amendment.
 
 ## Verification gate (before committing)
 
@@ -145,7 +183,7 @@ list updates independently of this skill.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit count.
-5. `git diff upstream/main -- <file>` — the diff is _only_ kask additions (no upstream code modified outside the D-seam).
+5. `git diff upstream/main -- <file>` — no upstream line is modified except under a live D-row (retire/simplify work may remove fork lines).
 
 ## Composed Skills
 
@@ -175,10 +213,11 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 | `decide.j2` | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
 | `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
+| `reflect.j2` | After the merge commit: compare what happened against this skill, and propose amendments each tied to a falsifiable held-out case. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
 
-Between LLM steps, call `lisp_eval` for verification gates (cargo check/test, isolation script, marker density) after execute, `shell.exec` for collision-surface cleanup after document, and `lisp_eval` for a convergence signal before re-entering the cycle.
+Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0 survival over all D-rows (`decide.j2`), then `assess` → `map` → `execute` → `document` for surviving seam files only, then `reflect` after the merge commit.
 
 ## Constraints
 
@@ -192,14 +231,13 @@ Between LLM steps, call `lisp_eval` for verification gates (cargo check/test, is
 
 ### Fetch & merge strategy
 
-The project convention is **merge, not rebase** (`DIVERGENCE.md` runbook step 1,
-L95: `git fetch upstream && git merge upstream/main`). A long-lived fork tracking
+The project convention is **merge, not rebase** (`DIVERGENCE.md` "Upstream-sync runbook" step 1: `git fetch upstream && git merge upstream/main`). A long-lived fork tracking
 upstream `main` merges — rebasing would rewrite fork history and force-push,
 breaking collaborator branches. Preserve upstream history; do not squash.
 
 ### Conflict classes
 
-`DIVERGENCE.md` L96–98 names three classes (D-seam files, workspace `Cargo.toml`
+The `DIVERGENCE.md` runbook names three classes (D-seam files, workspace `Cargo.toml`
 arrays, and the additive `kask/` tree that never conflicts). The table below
 adds the two modify/delete classes the runbook omits:
 
@@ -221,7 +259,7 @@ trail for what changed.
 
 ### Branch & PR strategy
 
-Not found in `DIVERGENCE.md` or `.rules` (the runbook `DIV` L93–102 does not name
+Not found in `DIVERGENCE.md` or `.rules` (the `DIVERGENCE.md` runbook does not name
 a branch). **Proposal:** land on `main` via a PR from a short-lived
 `upstream-sync-<YYYY-MM-DD>` branch, created fresh per sync. Do not maintain a
 long-lived `upstream-sync` branch — it would accumulate conflicts against both
@@ -243,7 +281,7 @@ invariants first, then compile, then tests.
    of `cargo clippy`." Runs under `--deny warnings` (D22 exists because two pins
    failed this gate).
 4. `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` — `DIV`
-   runbook step 5 (L102; the runbook sentence is truncated there — intent is
+   runbook step 5 (intent is
    "verify the bridge + foundation still compile").
 5. `cargo test -p <affected-crates> -- <pinning-tests>` — per-file pinning tests
    from Step 6.
@@ -255,14 +293,14 @@ A resolved but uncommitted merge exists only in the index and worktree;
 
 1. Check who owns the in-flight work (`git status`, `git worktree list`). Do
    not abort or reset work you did not create.
-2. Snapshot it: `git stash create` or `git commit-tree $(git write-tree) -p HEAD`
-   and pin the result under `refs/recovery/<date>/…`.
+2. Snapshot it with both parents: `git commit-tree $(git write-tree) -p HEAD -p MERGE_HEAD`
+   (`git stash create` drops `MERGE_HEAD`) and pin the result under `refs/recovery/<date>/…`.
 3. If it is already lost, search Zed's automatic `Checkpoint` commits and
    `git fsck --no-reflogs --unreachable` for commits whose tree differs from
    both parents, and pin any candidate before reporting what is and is not
    recoverable. A new merge is not a restoration.
 
-- **Mid-merge, uncommitted, snapshot pinned:** `git merge --abort` — returns to pre-merge HEAD.
+- **Mid-merge, uncommitted:** `git merge --abort` only after `git rev-parse refs/recovery/<date>/…` shows the snapshot exists.
 - **Merge committed, not pushed:** `git reset --hard <pre-merge-sha>` (find via
   `git reflog`, the `HEAD@{1}` before the merge).
 - **Mapped re-application in progress, merge already committed:** `git checkout
@@ -273,7 +311,3 @@ A resolved but uncommitted merge exists only in the index and worktree;
   rejects if someone else pushed.
 - **Merged to `main`:** do not force-push `main`. Revert with
   `git revert -m 1 <merge-sha>` and open a follow-up PR.
-
-`git stash` is not appropriate for mid-re-application recovery — mapped
-re-application is a deliberate multi-file edit, not an interruptible stashable
-change. Use `git reset --hard` or `git checkout --`.
