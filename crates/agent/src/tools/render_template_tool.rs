@@ -212,12 +212,35 @@ fn validate_contract_inputs(
         .collect::<Vec<_>>();
     missing.sort();
 
-    if missing.is_empty() {
+    if !missing.is_empty() {
+        return Err(format!(
+            "missing required input field(s): {}",
+            missing.join(", ")
+        ));
+    }
+
+    let mut blank = inputs
+        .iter()
+        .filter_map(|(name, specification)| {
+            let name = name.as_str()?;
+            let non_blank = specification
+                .get("non_blank")
+                .and_then(serde_yaml::Value::as_bool)
+                == Some(true);
+            (non_blank
+                && context
+                    .get(name)
+                    .is_some_and(|value| value.as_str().is_none_or(|text| text.trim().is_empty())))
+            .then(|| name.to_string())
+        })
+        .collect::<Vec<_>>();
+    blank.sort();
+    if blank.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "missing required input field(s): {}",
-            missing.join(", ")
+            "non-blank input field(s) required: {}",
+            blank.join(", ")
         ))
     }
 }
@@ -442,6 +465,19 @@ mod tests {
 
         assert!(error.contains("grill_ratings"), "got: {error}");
         assert!(error.contains("grill_verdict"), "got: {error}");
+
+        let present_but_blank = std::collections::HashMap::from([
+            (
+                "grill_ratings".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!([])),
+            ),
+            (
+                "grill_verdict".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!("")),
+            ),
+        ]);
+        validate_contract_inputs(input, &present_but_blank)
+            .expect("required strings without non_blank retain presence-only validation");
     }
 
     #[test]
@@ -479,6 +515,7 @@ mod tests {
             let error = validate_contract_inputs(&template, &context)
                 .expect_err("an inquiry with a blank or non-string goal cannot render");
             assert!(error.contains("active_goal"), "got: {error}");
+            assert!(error.contains("non-blank"), "got: {error}");
         }
 
         context.insert(
