@@ -445,6 +445,35 @@ mod tests {
     }
 
     #[test]
+    fn expectation_inquiry_requires_active_user_goal() {
+        let path = registry_template_base().join("gradient-hunter/expectation-inquiry.j2");
+        let template = std::fs::read_to_string(path).expect("shipped inquiry template");
+        let mut context = std::collections::HashMap::from([
+            (
+                "expectation".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({"statement": "expected"})),
+            ),
+            (
+                "observation".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({"statement": "observed"})),
+            ),
+            (
+                "probe_results".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!([])),
+            ),
+        ]);
+        let error = validate_contract_inputs(&template, &context)
+            .expect_err("an inquiry without the user's goal cannot pass admission");
+        assert!(error.contains("active_goal"), "got: {error}");
+
+        context.insert(
+            "active_goal".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!("Investigate meaningful surprises")),
+        );
+        validate_contract_inputs(&template, &context).expect("goal-carrying inquiry admits");
+    }
+
+    #[test]
     fn contract_validation_allows_optional_and_defaulted_inputs() {
         let input = "[inference]\ncontract:\n  input:\n    required_value: string\n    nullable_value: string|null\n    defaulted_value:\n      type: string\n      default: fallback\n    explicitly_optional:\n      type: string\n      required: false\n---\n{{ required_value }}";
         let context = std::collections::HashMap::from([(

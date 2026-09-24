@@ -2,6 +2,8 @@
 [inference]
 contract:
   input:
+    active_goal: string
+    operator_feedback: string|null
     expectation: object
     observation: object
     probe_results: array
@@ -26,6 +28,12 @@ inquiry record that a second pass can update without silently rewriting the
 original expectation. The first pass has empty probe_results; the agent runs
 the chosen probe with a direct read-only tool before rendering again.
 
+## Active user goal (must name the outcome this inquiry serves)
+{{ active_goal }}
+
+## Operator feedback on this line of inquiry
+{% if operator_feedback %}{{ operator_feedback }}{% else %}No explicit feedback; do not infer interest from surprise alone.{% endif %}
+
 ## Expectation (include source, scope, timing and a falsifier)
 {{ expectation | tojson }}
 
@@ -35,11 +43,13 @@ the chosen probe with a direct read-only tool before rendering again.
 ## Results of probes chosen on a preceding pass (empty on first pass)
 {{ probe_results | tojson }}
 
-First check the active user goal and any operator feedback carried in the
-expectation or observation. State which decision, understanding, or experience
+First check the explicit active_goal and operator_feedback above. If
+active_goal is blank, set priority_status to stop and next_probe to null;
+never invent a user goal from the discrepancy. State which decision,
+understanding, or experience
 resolving this discrepancy would change. Unexpectedness alone is not relevance:
-if the operator says this issue is uninteresting, or there is no identifiable
-consequence for the active goal, set priority_status to stop, next_probe to null,
+if operator_feedback dismisses this issue, or there is no identifiable
+consequence for active_goal, set priority_status to stop, next_probe to null,
 and do not request another observation. An urgent correctness or safety concern
 may be surfaced once with its evidence, not pursued as an unrelated inquiry.
 Do not infer the user's interest from the size of the error. When feedback is
