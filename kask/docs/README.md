@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-23
-version: "2.5.0"
+last_updated: 2026-09-24
+version: "2.5.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 70 files under `kask/docs/` on 2026-09-23: 69 Markdown documents and one YAML file. The formal document-count gate (`find kask/docs -name '*.md' | wc -l`, fewer than 70) passes after folding the two empty research shells into the active report. The all-file count is still 70, not below 70; do not delete another document solely to lower that number.
+**Corpus size:** 69 Markdown documents under `kask/docs/` on 2026-09-24, satisfying the formal fewer-than-70 document gate (`find kask/docs -name '*.md' | wc -l`). The 70th file is the active [`principle-constraints.yaml`](architecture/principle-constraints.yaml) governance inventory, consumed by `kask/scripts/check-principle-constraints.sh`; it is not a Markdown document. Do not delete that live inventory to lower the all-file count.
 
 ## Repair and improvement plans
 
@@ -85,7 +85,7 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, distinguishes the satisfied Markdown-document gate from the still-open all-file count.
+Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the Markdown-document gate and identifies the separate live YAML inventory.
 
 ### Folded 2026-09-23 (research and pilot evidence)
 

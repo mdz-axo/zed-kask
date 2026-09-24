@@ -62,8 +62,13 @@ in actual_field.
 ## Step 3 — Record the Actual Field
 
 Produce a structured actual_field object matching the prior's schema. For
-each element the prior expects, record whether it is present, absent, or
-partially present (with evidence: file:line, span name, manifest entry).
+each expected element, record observed value or coverage and its evidence
+(file:line, source passage, method, supplement, span, or manifest). Keep
+`observed`, `partially measured`, `explicitly not measured`, `not reported
+in inspected scope`, and `not retrieved` distinct. A low nonzero quantity
+is not absence; an empty retrieval is not proof of a missing study. In a rich
+source, name the populated neighboring fields that made the missing slot
+unexpected, and specify the inspected boundary before proposing a wider claim.
 
 ## Output
 

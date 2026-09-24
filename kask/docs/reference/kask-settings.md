@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-23
-version: "0.39.2"
+last_updated: 2026-09-24
+version: "0.39.3"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -79,7 +79,11 @@ take precedence. Set `load_default: false` to disable all kask MCP servers.
 Load/unload toggles take effect at runtime: the `SettingsStore` observer
 (`sync_kask_mcp_runtime_servers`, D45) stops/starts the governed server
 through the `McpRuntime`'s own primitives. The servers also appear in
-Settings → AI → MCP Servers as managed rows (D45).
+Settings → AI → MCP Servers as managed rows (D45). A loaded server with no
+registered tools is shown as neutral `Unknown`, not as actively `Starting` or
+failed: the row has no runtime health signal. `Running` reports a registered
+tool surface, not an independent health check; changes may not appear until
+the page next re-renders.
 
 ### Delegated tools: parent authority (D1, 2026-09-04)
 
