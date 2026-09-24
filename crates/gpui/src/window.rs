@@ -3255,7 +3255,6 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        let diagnostic_started = std::time::Instant::now();
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -3406,24 +3405,6 @@ impl Window {
             self.debug_frame_overlay.record_frame(draw_duration);
         }
 
-        thread_local! {
-            static DRAW_PROBE: RefCell<(std::time::Instant, u64, Duration)> =
-                RefCell::new((std::time::Instant::now(), 0, Duration::ZERO));
-        }
-        DRAW_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            probe.1 += 1;
-            probe.2 += diagnostic_started.elapsed();
-            if probe.0.elapsed() >= Duration::from_secs(5) {
-                log::warn!(
-                    "[DIAG-thread-perf] gpui draw frames={} ms={} interval_ms={}",
-                    probe.1,
-                    probe.2.as_millis(),
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), 0, Duration::ZERO);
-            }
-        });
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
         arena_scope.exit(&cx.element_arena)

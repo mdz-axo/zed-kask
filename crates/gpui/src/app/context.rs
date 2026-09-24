@@ -219,22 +219,6 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Tell GPUI that this entity has changed and observers of it should be notified.
     pub fn notify(&mut self) {
-        thread_local! {
-            static NOTIFY_PROBE: std::cell::RefCell<(std::time::Instant, std::collections::HashMap<&'static str, u64>)> =
-                std::cell::RefCell::new((std::time::Instant::now(), std::collections::HashMap::new()));
-        }
-        NOTIFY_PROBE.with(|probe| {
-            let mut probe = probe.borrow_mut();
-            *probe.1.entry(std::any::type_name::<T>()).or_default() += 1;
-            if probe.0.elapsed() >= std::time::Duration::from_secs(5) {
-                log::warn!(
-                    "[DIAG-thread-perf] gpui context notify={:?} interval_ms={}",
-                    probe.1,
-                    probe.0.elapsed().as_millis()
-                );
-                *probe = (std::time::Instant::now(), std::collections::HashMap::new());
-            }
-        });
         self.app.notify(self.entity_state.entity_id);
     }
 

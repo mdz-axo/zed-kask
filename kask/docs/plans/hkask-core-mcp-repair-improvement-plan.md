@@ -449,6 +449,21 @@ Lean/lake were unavailable during the 2026-09-18 review; no proof was attempted 
 
 **Not yet explained:** whether draw cost and the running-thread spinner remain dominant once P7a/P7b remove their notify sources, and the force-quit prompts (no hang over 100 ms was logged in the measured interval).
 
+**P7c observed (2026-09-24 15:47–15:49, build `f310bb05` at `067d836a89`, same project):**
+
+| Reading per 5 s | Before (build `a4434afc`) | After, quiet | After, threads running |
+| --- | --- | --- | --- |
+| Foreground ticks (of about 500) | 481–499 | 100–168 | 226–352 |
+| Draw frames / draw time | 70–160 / 3.1–4.1 s | 88–114 / 1.1–1.3 s | 358–779 / 1.8–2.7 s |
+| Foreground runnables time | 0.7–1.5 s | 19–21 ms | 42–63 ms |
+| Model-discovery notifies | about 12 | 0 | 0 |
+| Cursor-blink runs | 420–1,317 | 0–19 | up to 55 |
+| Running-thread spinner frame requests | about 520 | — | 1,426–1,550 |
+
+The self-sustaining loops are gone: with no thread running the editor no longer pins a core. The remaining cost while threads run is draw work driven by the sidebar's running-thread spinner (`crates/ui/src/components/ai/thread_item.rs:346`, upstream code unchanged), which requests a frame every frame and redraws the window. Three opens on this build: 963 entries in 670 ms (load 635 ms), 381 entries in 90 ms, empty in 12 ms, versus 0.7–2.2 s before. The probes were removed after this reading.
+
+**Next (P7e):** measure whether bounding the spinner's frame rate (the existing `Animation::max_fps` facility) reduces running-thread draw cost, before changing upstream code; decompose the remaining 635 ms load for the largest thread under P7d.
+
 ### Kata experiment table
 
 | Order | Current condition | Target | Next experiment | Success criterion |
