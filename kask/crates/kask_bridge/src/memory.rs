@@ -218,7 +218,7 @@ pub struct RealMemoryPort {
     embedding_port: Option<LanguageModelEmbeddingPort>,
     embedding_model: String,
     external_passphrase: String,
-    external_sources: std::sync::Mutex<Option<Arc<ExternalSourceCache>>>,
+    external_sources: Arc<std::sync::Mutex<Option<Arc<ExternalSourceCache>>>>,
     /// The classifier model used for write-time chunk tagging
     /// (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`).
     /// `None` = not configured — chunks get structural tags only. The
@@ -307,7 +307,7 @@ impl RealMemoryPort {
             embedding_port,
             embedding_model,
             external_passphrase: passphrase.to_string(),
-            external_sources: std::sync::Mutex::new(None),
+            external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model,
             template_root,
             curator_webid,
@@ -606,30 +606,6 @@ impl RealMemoryPort {
         if ids.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err("External source selection contains duplicate IDs".to_string());
         }
-        let registry = {
-            let mut cache = self
-                .external_sources
-                .lock()
-                .map_err(|error| format!("External source cache lock poisoned: {error}"))?;
-            if let Some(existing) = cache.as_ref()
-                && existing.manifest_path == manifest_path
-                && existing.selected_ids == ids
-                && existing.unchanged()?
-            {
-                // Keep the same sealed handles without hashing the DB again.
-            } else {
-                *cache = None;
-                *cache = Some(Arc::new(ExternalSourceCache::load(
-                    manifest_path,
-                    ids,
-                    &self.external_passphrase,
-                )?));
-            }
-            cache
-                .as_ref()
-                .cloned()
-                .ok_or("External source cache is empty after admission".to_string())?
-        };
         let embedding_port = self
             .embedding_port
             .clone()
@@ -643,25 +619,57 @@ impl RealMemoryPort {
             .map_err(|error| format!("External query embedding task failed: {error}"))?
             .map_err(|error| format!("External query embedding failed: {error}"))?;
         let vector = vectors
-            .first()
+            .into_iter()
+            .next()
             .ok_or("External query embedding returned no vector".to_string())?;
-        let results = registry
-            .sources
-            .iter()
-            .map(|source| {
-                source
-                    .search(&self.embedding_model, vector, limit)
-                    .map_err(|error| {
-                        format!("External source '{}': {error}", source.identity().source_id)
+        let cache = Arc::clone(&self.external_sources);
+        let manifest_path = manifest_path.to_path_buf();
+        let passphrase = self.external_passphrase.clone();
+        let model = self.embedding_model.clone();
+        self.tokio_handle
+            .spawn_blocking(move || {
+                let registry = {
+                    let mut cache = cache
+                        .lock()
+                        .map_err(|error| format!("External source cache lock poisoned: {error}"))?;
+                    if let Some(existing) = cache.as_ref()
+                        && existing.manifest_path == manifest_path
+                        && existing.selected_ids == ids
+                        && existing.unchanged()?
+                    {
+                        // Reuse unchanged sealed handles without rehashing the DB.
+                    } else {
+                        *cache = None;
+                        *cache = Some(Arc::new(ExternalSourceCache::load(
+                            &manifest_path,
+                            ids,
+                            &passphrase,
+                        )?));
+                    }
+                    cache
+                        .as_ref()
+                        .cloned()
+                        .ok_or("External source cache is empty after admission".to_string())?
+                };
+                let results = registry
+                    .sources
+                    .iter()
+                    .map(|source| {
+                        source.search(&model, &vector, limit).map_err(|error| {
+                            format!("External source '{}': {error}", source.identity().source_id)
+                        })
                     })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !registry.unchanged()? {
+                    return Err(
+                        "External source identity changed during retrieval; retry search"
+                            .to_string(),
+                    );
+                }
+                Ok(results)
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        if !registry.unchanged()? {
-            return Err(
-                "External source identity changed during retrieval; retry search".to_string(),
-            );
-        }
-        Ok(results)
+            .await
+            .map_err(|error| format!("External source search task failed: {error}"))?
     }
 
     /// Memory-store health for the curator's status surface — the
@@ -1232,7 +1240,7 @@ pub(crate) mod tests {
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
             external_passphrase: String::new(),
-            external_sources: std::sync::Mutex::new(None),
+            external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
@@ -1278,7 +1286,7 @@ pub(crate) mod tests {
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
             external_passphrase: String::new(),
-            external_sources: std::sync::Mutex::new(None),
+            external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
@@ -1336,7 +1344,7 @@ pub(crate) mod tests {
         sealed_fixture_digest(file.path()).await
     }
 
-    async fn sealed_external_fixture(directory: &Path) -> anyhow::Result<PathBuf> {
+    pub(crate) async fn sealed_external_fixture(directory: &Path) -> anyhow::Result<PathBuf> {
         let database_path = directory.join("reference.db");
         let database = database_path
             .to_str()
@@ -1427,6 +1435,16 @@ pub(crate) mod tests {
         Ok(manifest_path)
     }
 
+    pub(crate) fn in_memory_port_with_external_fixture() -> RealMemoryPort {
+        let mut port = in_memory_port_with_embed_fn(Arc::new(|_query: &str| {
+            let mut vector = vec![0.0; 1024];
+            vector[0] = 1.0;
+            vector
+        }));
+        port.external_passphrase = "test-passphrase".to_string();
+        port
+    }
+
     /// A selected sealed source returns passage provenance; manifest changes
     /// revoke cached admission, and unselected broken sources are not opened.
     #[tokio::test]
@@ -1442,12 +1460,7 @@ pub(crate) mod tests {
         std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
         let database_path = directory.path().join("reference.db");
         let before = std::fs::read(&database_path)?;
-        let mut port = in_memory_port_with_embed_fn(Arc::new(|_query: &str| {
-            let mut vector = vec![0.0; 1024];
-            vector[0] = 1.0;
-            vector
-        }));
-        port.external_passphrase = "test-passphrase".to_string();
+        let port = in_memory_port_with_external_fixture();
         let selected = ["fixture-reference".to_string()];
         let batches = port
             .search_external_passages_at(&manifest_path, "fixture", &selected, 3)
@@ -3298,7 +3311,7 @@ pub(crate) mod tests {
             embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
             embedding_model: "test-model".to_string(),
             external_passphrase: String::new(),
-            external_sources: std::sync::Mutex::new(None),
+            external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),

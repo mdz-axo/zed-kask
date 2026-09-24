@@ -355,6 +355,10 @@ impl ContextInjector for BridgeContextInjector {
                 && prompt_limit > 0
             {
                 let external = match federated_manifest_path.as_deref() {
+                    _ if federated_source_ids.is_empty() => Err(
+                        "Federated injection enabled without a selected registered source"
+                            .to_string(),
+                    ),
                     Some(path) => {
                         memory_port
                             .search_external_passages(
@@ -474,6 +478,47 @@ mod tests {
     use crate::memory::tests::{in_memory_port, in_memory_port_with_embed_fn};
     use hkask_types::TurnRecord;
     use std::sync::Arc;
+
+    /// expect: A selected, sealed corpus passage reaches Curator chat only
+    /// when enabled, without being attributed to Curator memory.
+    #[tokio::test]
+    async fn curator_chat_injects_selected_sealed_external_passage() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = crate::memory::tests::sealed_external_fixture(directory.path()).await?;
+        let port = Arc::new(crate::memory::tests::in_memory_port_with_external_fixture());
+        let prompt = "Can you find this grounded fixture passage for my question?";
+        let enabled = BridgeContextInjector::new_curator(port.clone(), 3, 0.0, true)
+            .with_federated_sources(
+                true,
+                vec!["fixture-reference".into()],
+                manifest_path.clone(),
+            );
+        let messages = enabled.inject_context("empty-thread", prompt).await;
+        let content = match &messages[0].content[0] {
+            MessageContent::Text(text) => text,
+            _ => anyhow::bail!("expected text content"),
+        };
+        assert!(content.contains("grounded fixture passage"), "{content}");
+        assert!(
+            content.contains("External evidence from selected federated sources"),
+            "{content}"
+        );
+        assert!(content.contains("Run: "), "{content}");
+        assert!(
+            !content.contains("Relevant context from curator memory:"),
+            "{content}"
+        );
+
+        let disabled = BridgeContextInjector::new_curator(port, 3, 0.0, true)
+            .with_federated_sources(false, vec!["fixture-reference".into()], manifest_path);
+        let messages = disabled.inject_context("empty-thread", prompt).await;
+        let content = match &messages[0].content[0] {
+            MessageContent::Text(text) => text,
+            _ => anyhow::bail!("expected text content"),
+        };
+        assert!(!content.contains("grounded fixture passage"), "{content}");
+        Ok(())
+    }
 
     /// expect: Curator opt-in cannot bypass the existing auto-inject kill switch.
     #[tokio::test]

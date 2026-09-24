@@ -337,6 +337,13 @@ pub(crate) fn render_memory_page(
                     "Curator federated chat injection",
                 ))
                 .child(
+                    Label::new(
+                        "Changes to curator chat injection take effect after restarting Zed-Kask.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(
                     Label::new(sources_message)
                         .size(LabelSize::Small)
                         .color(if sources_error {

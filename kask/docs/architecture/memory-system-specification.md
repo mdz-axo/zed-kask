@@ -130,7 +130,9 @@ narrative generation loop.
   `BridgeContextInjector` retrieves selected IDs from the existing sealed-source
   manifest only when `kask.memory.federated_auto_inject` and memory `auto_inject`
   are enabled; it frames, labels, and bounds passages separately from Curator
-  memory. The explicit `curator_federated_search` tool remains independent.
+  memory. Injector settings are captured at startup; a settings change takes
+  effect after restarting the editor. The explicit `curator_federated_search`
+  tool remains independent.
 - No automatic corpus-to-Curator promotion — external evidence remains in its
   sealed source. Reification still requires a separately reviewed memory write.
 - No backward compatibility for federated sources — only the current manifest,
