@@ -319,6 +319,7 @@ dependencies = [
  "language",
  "language_model",
  "language_models",
+ "libc",
  "log",
  "lsp",
  "minijinja",

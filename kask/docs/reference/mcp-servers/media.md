@@ -265,8 +265,11 @@ the stored key; key and response content were not printed in those tests.
 The operator supplied the login-gated API reference's v3 examples and warnings
 in the conversation on 2026-09-23. From those exact contracts, the media server
 also implements cloud recording creation, URL-based media import, and bounded
-SHA-256-verified gallery audio/video upload. Those three POST paths are pinned
-by fixtures but **not live-mutated** in the operator's workspace. Project and
+SHA-256-verified gallery audio/video upload. Those POST paths are pinned by
+fixtures. In an operator-authorized throwaway project, recording creation and
+gallery upload were observed live; a YouTube watch-link import was acknowledged
+but subsequently reported `error`, while the indexed video upload reached
+`transcribed` on a separate recording. Project and
 recording and reel snapshots describe provider-returned subsets, not complete
 pagination. Reel read results do not authorize writes: Reduct reel/block payload
 fields are not supplied by the excerpt. A running MCP inventory on 2026-09-23
@@ -280,11 +283,13 @@ partial block editing (pages 38–39). Four explicitly cloud-named tools now
 create a Reel, add clip/title blocks, and edit a clip range. Their loopback
 fixtures pin POST path/body, acknowledgement and refusal. A `release-mcp`
 binary was installed on disk; after the operator restarted, the running child
-advertised all sixteen `reduct_*` tools and its read-only project probe returned
-HTTP 200. No live mutation or completed cloud composition has been observed.
-That deployed probe still returns `cloud_editing: not_available` despite the
-new tools; source corrects the read-only status to `not_checked`, pending test
-and deployment. This status is not a success signal for cloud writes.
+advertised all sixteen `reduct_*` tools. Authorized live calls subsequently
+created and read back an unpublished throwaway Reel with seven title cards
+and nine ordered clips, then edited and read back one clip range. That verifies
+persisted cloud composition/edit, not Reel playback, rendering, export, or
+publishing. The deployed read-only probe still returns
+`cloud_editing: not_available` despite the active tools; source corrects
+read-only status to `not_checked` (focused tests passed), pending runtime deployment and verification.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations

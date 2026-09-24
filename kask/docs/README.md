@@ -85,7 +85,7 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, reports the current count and the open condensation gate.
+Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, distinguishes the satisfied Markdown-document gate from the still-open all-file count.
 
 ### Folded 2026-09-23 (research and pilot evidence)
 

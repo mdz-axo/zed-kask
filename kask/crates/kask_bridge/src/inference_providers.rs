@@ -110,8 +110,8 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // through an OpenAI-compatible chat-completions API. Registered as an
     // `openai_compatible` provider in default.json; its key lives at the
     // provider `api_url` keychain slot — the same slot zed's `ApiKeyState`
-    // reads — and `credential_urls_for_mcp` injects it into MCP server env
-    // (`KILOCODE_API_KEY`, gated per-server by the `credentials` allowlist).
+    // reads. No MCP server consumes `KILOCODE_API_KEY`, so this provider's
+    // credential is not collected for child-process injection or restart.
     // Chat-only: the gateway has no embeddings endpoint, so it has no
     // `DIRECT_EMBEDDING_PROVIDERS` row in hkask-inference.
     InferenceProviderDescriptor {
@@ -371,8 +371,8 @@ pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
         ));
     }
 
-    // Inference providers — inject every provider's key from its `api_url`
-    // keychain slot, the same slot zed's `ApiKeyState` reads, so the child
+    // Inference providers with current MCP consumers — inject their keys from
+    // the `api_url` keychain slot, the same slot zed's `ApiKeyState` reads, so the child
     // process and zed's provider infrastructure always see the same key.
     // This is the 2026-08-31 401 fix: the child previously read a legacy
     // `kask://credentials/<key>` slot that no update path ever refreshed,
@@ -380,9 +380,11 @@ pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
     // authenticating with the dead key. Providers whose env var a
     // DATA_SERVICES entry already carries (RunPod) are skipped — the loop
     // above emits that pair exactly once, at the same `api_url`. Ollama is
-    // skipped (empty env_var — local, no key needed).
+    // skipped (empty env_var — local, no key needed). KiloCode remains a
+    // native chat provider, but no MCP server reads its key.
     for provider in INFERENCE_PROVIDERS {
         if provider.env_var.is_empty()
+            || provider.id == "KiloCode"
             || DATA_SERVICES
                 .iter()
                 .any(|desc| desc.env_var == provider.env_var)
@@ -563,13 +565,12 @@ mod tests {
     fn credential_urls_for_mcp_injects_provider_keys_from_their_api_url_slot() {
         let urls = super::credential_urls_for_mcp();
 
-        // Every inference-provider env var appears exactly once, resolved to
-        // the provider api_url slot (the same slot ApiKeyState reads).
+        // Every provider with a current MCP consumer appears exactly once,
+        // resolved to the provider api_url slot (the same slot ApiKeyState reads).
         let expected = [
             ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
             ("DEEPINFRA_API_KEY", "https://api.deepinfra.com/v1/openai"),
             ("RUNPOD_API_KEY", "https://api.runpod.io"),
-            ("KILOCODE_API_KEY", "https://api.kilo.ai/api/gateway"),
         ];
         for (env_var, api_url) in expected {
             let matches: Vec<&(String, String)> =
@@ -586,6 +587,14 @@ mod tests {
                 "{env_var} must inject from the provider api_url slot"
             );
         }
+
+        // The native KiloCode key still lives in its provider api_url slot,
+        // but no child process consumes it or needs a restart on rotation.
+        assert_eq!(
+            super::credential_url_for_key("kilocode"),
+            "https://api.kilo.ai/api/gateway"
+        );
+        assert!(!urls.iter().any(|(var, _)| var == "KILOCODE_API_KEY"));
 
         // The legacy kask slots must feed NOTHING — a consumer reintroducing
         // them re-creates the split-brain (stale key → 401).

@@ -730,6 +730,34 @@ async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// expect: A valid earlier QA row cannot be written when a later row fails
+/// source grounding; the whole batch is checked before either action mode.
+#[tokio::test]
+async fn later_ungrounded_citation_blocks_every_batch_write() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let rows = [
+        flat(0, ANSWERS[0]).to_string(),
+        flat(1, ANSWERS[1]).to_string(),
+    ];
+    let chunks = [
+        tagged_chunk_json("corpus:brooks:0", "brooks.txt", ANSWERS[0]),
+        tagged_chunk_json("corpus:brooks:1", "brooks.txt", "An unrelated sentence."),
+    ];
+    write_rows_and_ground_chunks(&server, directory.path(), &rows, &chunks).await?;
+
+    for dry_run in [true, false] {
+        let error = server
+            .corpus_ingest_qa(Parameters(request(directory.path(), dry_run)))
+            .await
+            .expect_err("a later ungrounded citation must reject the entire batch");
+        assert!(error.to_string().contains("citation claim"), "{error}");
+        assert!(!directory.path().join("training.jsonl").exists());
+        assert!(!directory.path().join("memory.db").exists());
+    }
+    Ok(())
+}
+
 /// expect: Every citation must be byte-verified; a row whose only evidence
 /// quote is absent from its canonical chunk fails closed regardless of its
 /// answer.

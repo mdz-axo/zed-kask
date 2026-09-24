@@ -279,9 +279,9 @@ ID-keyed block map without logging or printing private content. The sampled
 highlight map was empty; a live reel-detail request returned a populated block
 map. The original running-tool inventory listed twelve `reduct_*` tools;
 a post-restart inventory now lists sixteen, including the four Reel tools.
-This is deployment evidence for advertisement, not a cloud editing outcome.
-Reading block fields does not
-prove their POST write schema.
+That inventory established deployment only; the subsequent Axolotl throwaway
+session confirmed create/add/edit with separate provider read-backs. GET block
+fields alone were never used as the POST write contract.
 
 The same excerpt specifies `POST /project/{project_id}/recording` with JSON
 `{"title": ...}` returning a `recording` ID, and `POST .../media-import`
@@ -292,8 +292,12 @@ uses the specified raw `POST .../media-upload?filename=...` contract returning
 SHA-256 and a nonempty regular file at most 128 MiB; the provider receives
 no arbitrary local path. POST timeouts or malformed acknowledgements state
 that the mutation **may have succeeded** and require inspection before retry.
-These three cloud mutations have fixture/contract tests but have **not** been
-run against the live workspace. They are never implicit fallbacks from educt.
+In the authorized Axolotl throwaway project, recording creation returned an
+ID. A YouTube watch-link media import returned an ID but later became `error`;
+that acknowledgement did not mean successful ingestion. An indexed 116 MB
+720p MP4 of the same public talk was then uploaded to a separate test recording,
+which reached `transcribed`; no automatic retry, deletion, or fallback from educt
+occurred. These ingest paths also retain their fixture/contract tests.
 
 The operator supplied `Reduct-Video.pdf` (55-page v3 reference): pages 31–32
 specify Reel creation (`POST .../reel`, `{"title": ...}` → `{"reel": id}`);
@@ -310,11 +314,14 @@ and HTTP refusal. The PDF's embedded text was cross-checked because corpus OCR
 flagged eleven pages for quality; no PDF text is committed. These four tools
 passed focused source tests, clippy and the Zed check. The `release-mcp`
 binary was installed to `~/.local/bin/hkask-mcp-media`, and a host restart
-exposed all sixteen Reduct tools. A read-only project probe returned HTTP 200,
-**not** proof of a live Reel POST. That deployed probe still described cloud
-editing as `not_available`; source now uses `not_checked` for read-only calls
-and removes the stale no-contract claim, but this correction is not yet
-validated or deployed. No Reel write has been live-mutated in Reduct.
+exposed all sixteen Reduct tools. A read-only project probe returned HTTP 200, which alone proved no write.
+The authorized throwaway Reel was then created, populated with seven ordered
+title cards and nine `doc-range` blocks, edited once to adjust a clip range,
+and independently read back; its plan totals 10:29. This proves cloud
+composition/edit persistence, **not** a rendered export or published link.
+The deployed read-only probe still describes cloud editing as `not_available`;
+source changes that to `not_checked` and the focused Reduct tests pass;
+the correction remains undeployed and unverified against the running child.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough

@@ -154,6 +154,22 @@ async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[cfg(unix)]
+struct KillProcessGroupOnDrop(Option<i32>);
+
+#[cfg(unix)]
+impl Drop for KillProcessGroupOnDrop {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.take() {
+            // A timed-out Lake wrapper may have spawned a Lean child. Kill the
+            // whole group, not just the wrapper, including on task cancellation.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
 async fn invoke_lake(
     lake: &Path,
     root: &Path,
@@ -168,10 +184,17 @@ async fn invoke_lake(
         .kill_on_drop(true)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.as_std_mut().process_group(0);
+    }
     if input.is_some() {
         command.stdin(std::process::Stdio::piped());
     }
     let mut child = command.spawn().with_context(|| format!("Cannot start Lake; install elan/Lake and the project's lean-toolchain (executable: {})", lake.display()))?;
+    #[cfg(unix)]
+    let mut group = KillProcessGroupOnDrop(child.id().and_then(|pid| i32::try_from(pid).ok()));
     let stdout = child
         .stdout
         .take()
@@ -207,9 +230,16 @@ async fn invoke_lake(
             String::from_utf8_lossy(&err).into_owned(),
         ))
     };
-    tokio::time::timeout(RUN_LIMIT, execution)
+    let result = tokio::time::timeout(RUN_LIMIT, execution)
         .await
-        .context("Lake/Lean timed out after 30 seconds")?
+        .context("Lake/Lean timed out after 30 seconds")?;
+    if result.is_ok() {
+        #[cfg(unix)]
+        {
+            group.0 = None;
+        }
+    }
+    result
 }
 
 // `lake env lean --json` emits one diagnostic per line. Other stdout
@@ -485,7 +515,7 @@ mod tests {
             .to_string_lossy();
         let (stream, mut events) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
-            tool.run(
+            tool.clone().run(
                 ToolInput::resolved(LeanCheckToolInput {
                     path: format!("{root_name}/Proof.lean"),
                     theorem: None,
@@ -544,6 +574,10 @@ mod tests {
         let file = root.join("Proof.lean");
         let lake = Path::new(&lake);
         std::fs::write(&file, "theorem clean : True := by trivial\n")?;
+        std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v0.0.0\n")?;
+        let wrong_pin = check_saved(root.into(), file.clone(), None, lake).await;
+        assert!(format!("{:#}", wrong_pin.unwrap_err()).contains("lean-toolchain pins v0.0.0"));
+        std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v4.34.0\n")?;
         let clean = check_saved(root.into(), file.clone(), Some("clean".into()), lake).await?;
         assert_eq!(
             clean.completion_status, "axiom_free",

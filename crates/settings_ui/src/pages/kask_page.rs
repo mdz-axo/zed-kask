@@ -854,19 +854,24 @@ mod tests {
     /// fails loudly.
     #[test]
     fn nudge_guard_covers_provider_api_urls_and_excludes_legacy_slots() {
-        // Inference-provider api_url slots — MUST nudge (the media server
-        // injects its keys from these).
+        // Provider api_url slots with MCP consumers — MUST nudge when their
+        // keys change, so media and other children cannot keep stale keys.
         for url in [
             "https://openrouter.ai/api/v1",
             "https://api.deepinfra.com/v1/openai",
             "https://api.runpod.io",
-            "https://api.kilo.ai/api/gateway",
         ] {
             assert!(
                 credential_url_feeds_mcp_servers(url),
                 "provider slot {url} feeds MCP server env and must nudge"
             );
         }
+
+        // KiloCode chat reads its native provider key, but no MCP child
+        // consumes it; rotating that slot does not restart MCP servers.
+        assert!(!credential_url_feeds_mcp_servers(
+            "https://api.kilo.ai/api/gateway"
+        ));
 
         // Data-service kask slots — MUST nudge.
         for url in [

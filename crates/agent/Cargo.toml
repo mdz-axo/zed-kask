@@ -54,6 +54,7 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+libc.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
