@@ -1778,6 +1778,10 @@ pub struct KaskMemorySettingsContent {
     pub recall_limit: Option<u32>,
     pub recall_min_confidence: Option<f64>,
     pub auto_inject: Option<bool>,
+    /// Opt in to injecting selected federated sources into curator chat.
+    pub federated_auto_inject: Option<bool>,
+    /// IDs selected from the curator federated sources manifest.
+    pub federated_source_ids: Option<Vec<String>>,
     /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
     /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
     /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets

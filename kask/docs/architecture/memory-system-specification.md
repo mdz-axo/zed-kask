@@ -126,8 +126,11 @@ narrative generation loop.
   `recall_thread` are no-ops returning empty vecs; recall is curator-only
   via the inherent `recall_context_curator` / `recall_thread_curator`
   methods (`memory.rs:499-519`, `memory.rs:568-614`)
-- No automatic external-evidence injection — Phase 1 federation is an explicit
-  Curator tool call, not part of `BridgeContextInjector`.
+- External-evidence injection is opt-in for Curator chat and off by default.
+  `BridgeContextInjector` retrieves selected IDs from the existing sealed-source
+  manifest only when `kask.memory.federated_auto_inject` and memory `auto_inject`
+  are enabled; it frames, labels, and bounds passages separately from Curator
+  memory. The explicit `curator_federated_search` tool remains independent.
 - No automatic corpus-to-Curator promotion — external evidence remains in its
   sealed source. Reification still requires a separately reviewed memory write.
 - No backward compatibility for federated sources — only the current manifest,

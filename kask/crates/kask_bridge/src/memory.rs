@@ -10,16 +10,20 @@
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
 //! wired (at startup), the thread's ingest call site no-ops on `None`.
 
-use hkask_memory::{MemoryConsolidator, MemoryStore};
+use hkask_memory::{
+    ExternalPassageBatch, FederatedSourceSpec, FederatedSourcesManifest, MemoryConsolidator,
+    MemoryStore, ReadOnlyPassageSource,
+};
 use hkask_storage::open_or_repair;
 #[cfg(test)]
 use hkask_storage::{EmbeddingStore, HMemStore};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::inference_embedding::LanguageModelEmbeddingPort;
 
@@ -54,6 +58,126 @@ pub use alert_escalation::{BridgeAlertEscalationSink, open_curator_escalation_qu
 // port's fields via `WriteContext`; `ingest_turn` keeps only the semaphore permit.
 mod ingest;
 pub(crate) use ingest::WriteContext;
+
+// ── Selected, sealed external passage sources ──────────────────────────────
+
+#[derive(PartialEq, Eq)]
+struct ExternalFileStamp {
+    len: u64,
+    modified: SystemTime,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+fn external_file_stamp(path: &Path) -> Result<Option<ExternalFileStamp>, String> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Cannot stat {}: {error}", path.display())),
+    };
+    Ok(Some(ExternalFileStamp {
+        len: metadata.len(),
+        modified: metadata.modified().map_err(|error| {
+            format!(
+                "Cannot read modification time of {}: {error}",
+                path.display()
+            )
+        })?,
+        #[cfg(unix)]
+        device: std::os::unix::fs::MetadataExt::dev(&metadata),
+        #[cfg(unix)]
+        inode: std::os::unix::fs::MetadataExt::ino(&metadata),
+    }))
+}
+
+struct ExternalSourceCache {
+    manifest_path: PathBuf,
+    selected_ids: Vec<String>,
+    sources: Vec<ReadOnlyPassageSource>,
+    watched: Vec<(PathBuf, Option<ExternalFileStamp>)>,
+}
+
+impl ExternalSourceCache {
+    fn paths(manifest_path: &Path, specs: &[&FederatedSourceSpec]) -> Vec<PathBuf> {
+        let mut paths = vec![manifest_path.to_path_buf()];
+        for spec in specs {
+            let mut wal = spec.database_path.as_os_str().to_os_string();
+            wal.push("-wal");
+            paths.extend([
+                spec.database_path.clone(),
+                PathBuf::from(wal),
+                spec.run_identity_path.clone(),
+                spec.representations_manifest_path.clone(),
+            ]);
+        }
+        paths
+    }
+
+    fn snapshot(paths: &[PathBuf]) -> Result<Vec<(PathBuf, Option<ExternalFileStamp>)>, String> {
+        paths
+            .iter()
+            .map(|path| Ok((path.clone(), external_file_stamp(path)?)))
+            .collect()
+    }
+
+    fn unchanged(&self) -> Result<bool, String> {
+        Ok(self.watched
+            == Self::snapshot(
+                &self
+                    .watched
+                    .iter()
+                    .map(|(path, _)| path.clone())
+                    .collect::<Vec<_>>(),
+            )?)
+    }
+
+    fn load(
+        manifest_path: &Path,
+        selected_ids: Vec<String>,
+        passphrase: &str,
+    ) -> Result<Self, String> {
+        let manifest = FederatedSourcesManifest::load(manifest_path)
+            .map_err(|error| format!("Federated source manifest: {error}"))?;
+        let specs = selected_ids
+            .iter()
+            .map(|id| {
+                manifest
+                    .sources
+                    .iter()
+                    .find(|spec| &spec.id == id)
+                    .ok_or_else(|| {
+                        format!(
+                            "External source ID '{id}' is not registered in {}",
+                            manifest_path.display()
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let paths = Self::paths(manifest_path, &specs);
+        let before = Self::snapshot(&paths)?;
+        let sources = specs
+            .iter()
+            .map(|spec| {
+                ReadOnlyPassageSource::open(spec, passphrase)
+                    .map_err(|error| format!("External source '{}': {error}", spec.id))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let watched = Self::snapshot(&paths)?;
+        if before != watched {
+            return Err(
+                "External source identity changed during admission; retry search".to_string(),
+            );
+        }
+        Ok(Self {
+            manifest_path: manifest_path.to_path_buf(),
+            selected_ids,
+            sources,
+            watched,
+        })
+    }
+}
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
@@ -93,6 +217,8 @@ pub struct RealMemoryPort {
     /// episodic memory of conversations is more valuable than vector search.
     embedding_port: Option<LanguageModelEmbeddingPort>,
     embedding_model: String,
+    external_passphrase: String,
+    external_sources: std::sync::Mutex<Option<Arc<ExternalSourceCache>>>,
     /// The classifier model used for write-time chunk tagging
     /// (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`).
     /// `None` = not configured — chunks get structural tags only. The
@@ -180,6 +306,8 @@ impl RealMemoryPort {
             curator_store,
             embedding_port,
             embedding_model,
+            external_passphrase: passphrase.to_string(),
+            external_sources: std::sync::Mutex::new(None),
             classifier_model,
             template_root,
             curator_webid,
@@ -440,6 +568,102 @@ impl MemoryPort for RealMemoryPort {
 }
 
 impl RealMemoryPort {
+    /// Search only user-selected registered sealed sources. An empty selection is
+    /// opt-out; otherwise an invalid ID, unavailable source, incompatible query
+    /// identity, or in-flight source change fails closed. Hits retain source and
+    /// run provenance and are never written to Curator memory or linked to it.
+    pub async fn search_external_passages(
+        &self,
+        manifest_path: &Path,
+        query: &str,
+        selected_source_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<ExternalPassageBatch>, String> {
+        let result = self
+            .search_external_passages_at(manifest_path, query, selected_source_ids, limit)
+            .await;
+        if let Err(error) = &result {
+            tracing::warn!(target: "reg.memory", %error, "External passage search failed");
+        }
+        result
+    }
+
+    async fn search_external_passages_at(
+        &self,
+        manifest_path: &Path,
+        query: &str,
+        selected_source_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<ExternalPassageBatch>, String> {
+        if selected_source_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if limit == 0 {
+            return Err("External passage search limit must be positive".to_string());
+        }
+        let mut ids = selected_source_ids.to_vec();
+        ids.sort();
+        if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err("External source selection contains duplicate IDs".to_string());
+        }
+        let registry = {
+            let mut cache = self
+                .external_sources
+                .lock()
+                .map_err(|error| format!("External source cache lock poisoned: {error}"))?;
+            if let Some(existing) = cache.as_ref()
+                && existing.manifest_path == manifest_path
+                && existing.selected_ids == ids
+                && existing.unchanged()?
+            {
+                // Keep the same sealed handles without hashing the DB again.
+            } else {
+                *cache = None;
+                *cache = Some(Arc::new(ExternalSourceCache::load(
+                    manifest_path,
+                    ids,
+                    &self.external_passphrase,
+                )?));
+            }
+            cache
+                .as_ref()
+                .cloned()
+                .ok_or("External source cache is empty after admission".to_string())?
+        };
+        let embedding_port = self
+            .embedding_port
+            .clone()
+            .ok_or("External passage search requires a configured embedding port".to_string())?;
+        let model = self.embedding_model.clone();
+        let text = query.to_string();
+        let vectors = self
+            .tokio_handle
+            .spawn(async move { embedding_port.embed(&model, &[text]).await })
+            .await
+            .map_err(|error| format!("External query embedding task failed: {error}"))?
+            .map_err(|error| format!("External query embedding failed: {error}"))?;
+        let vector = vectors
+            .first()
+            .ok_or("External query embedding returned no vector".to_string())?;
+        let results = registry
+            .sources
+            .iter()
+            .map(|source| {
+                source
+                    .search(&self.embedding_model, vector, limit)
+                    .map_err(|error| {
+                        format!("External source '{}': {error}", source.identity().source_id)
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if !registry.unchanged()? {
+            return Err(
+                "External source identity changed during retrieval; retry search".to_string(),
+            );
+        }
+        Ok(results)
+    }
+
     /// Memory-store health for the curator's status surface — the
     /// self-awareness half of the self-healing work. The curator's
     /// regulation loop reads this (via `BridgeMetacognitionProvider`) so it
@@ -1007,6 +1231,8 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
+            external_passphrase: String::new(),
+            external_sources: std::sync::Mutex::new(None),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
@@ -1051,6 +1277,8 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
+            external_passphrase: String::new(),
+            external_sources: std::sync::Mutex::new(None),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
@@ -1060,6 +1288,306 @@ pub(crate) mod tests {
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
+    }
+
+    // Match the producer's SHA-256 seal without changing this crate's dependencies.
+    async fn sealed_fixture_digest(path: &Path) -> anyhow::Result<String> {
+        let output = tokio::process::Command::new("sha256sum")
+            .arg(path)
+            .output()
+            .await?;
+        anyhow::ensure!(
+            output.status.success(),
+            "sha256sum failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8(output.stdout)?
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("sha256sum returned no digest"))?
+            .to_string())
+    }
+
+    fn sorted_sealed_fixture(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(object) => {
+                let mut sorted = serde_json::Map::new();
+                let mut keys: Vec<_> = object.keys().collect();
+                keys.sort();
+                for key in keys {
+                    if let Some(value) = object.get(key) {
+                        sorted.insert(key.clone(), sorted_sealed_fixture(value));
+                    }
+                }
+                serde_json::Value::Object(sorted)
+            }
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.iter().map(sorted_sealed_fixture).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
+    async fn sealed_fixture_run_id(identity: &serde_json::Value) -> anyhow::Result<String> {
+        let mut canonical = serde_json::to_vec(&sorted_sealed_fixture(identity))?;
+        canonical.push(b'\n');
+        let file = tempfile::NamedTempFile::new()?;
+        std::fs::write(file.path(), canonical)?;
+        sealed_fixture_digest(file.path()).await
+    }
+
+    async fn sealed_external_fixture(directory: &Path) -> anyhow::Result<PathBuf> {
+        let database_path = directory.join("reference.db");
+        let database = database_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 fixture database path"))?;
+        let dim = 1024;
+        let mut vector = vec![0.0; dim];
+        vector[0] = 1.0;
+        let entity = "calibration:fixture:sealed-v1:reference:utf8-666978747572652e747874:0";
+        {
+            let store = MemoryStore::open(database, "test-passphrase", dim)?;
+            store.store(hkask_storage::HMem::new(
+                entity,
+                "text",
+                serde_json::json!("grounded fixture passage"),
+                WebID::new(),
+            ))?;
+            store.store(hkask_storage::HMem::new(
+                entity,
+                "method_signals",
+                serde_json::json!({"parataxis_ratio": 1.0}),
+                WebID::new(),
+            ))?;
+            store.store_embedding(
+                entity,
+                &vector,
+                "test-model",
+                Some("grounded fixture passage"),
+            )?;
+        }
+        {
+            let database = hkask_storage::open_or_repair(database, "test-passphrase")?;
+            database
+                .sqlite_pool()?
+                .get()?
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+        for suffix in [".maintenance-lock", "-wal", "-shm"] {
+            let sidecar = format!("{database}{suffix}");
+            if Path::new(&sidecar).exists() {
+                std::fs::remove_file(sidecar)?;
+            }
+        }
+        let digest = sealed_fixture_digest(&database_path).await?;
+        let representations_path = directory.join("representations-manifest.json");
+        std::fs::write(
+            &representations_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": 2,
+                "entity_ref_prefix": "calibration:fixture:sealed-v1",
+                "boilerplate_exclusion_reports": {"fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}},
+                "validation": {"accepted_source_count": 1, "boilerplate_filter_applied": true}
+            }))?,
+        )?;
+        let manifest_digest = sealed_fixture_digest(&representations_path).await?;
+        let run_identity_path = directory.join("run-identity.json");
+        let mut identity = serde_json::json!({
+            "schema_version": 3,
+            "preseal_run_id": "a".repeat(64),
+            "accepted_sources_sha256": "b".repeat(64),
+            "run_spec_sha256": "c".repeat(64),
+            "queries_sha256": "d".repeat(64),
+            "requested_embedding_model": "test-model",
+            "actual_embedding_model": "test-model",
+            "policies_sha256": "e".repeat(64),
+            "retriever_sha256": "f".repeat(64),
+            "evaluator_sha256": "0".repeat(64),
+            "representations_manifest_sha256": manifest_digest,
+            "representations": {"reference": "1".repeat(64), "current": "2".repeat(64), "fine": "3".repeat(64), "child_parent_map": "4".repeat(64), "parent": "5".repeat(64)},
+            "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
+        });
+        identity["run_id"] = serde_json::json!(sealed_fixture_run_id(&identity).await?);
+        std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
+        let manifest_path = directory.join("federated-sources.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&FederatedSourcesManifest {
+                schema_version: 1,
+                sources: vec![FederatedSourceSpec {
+                    id: "fixture-reference".to_string(),
+                    display_name: "Fixture research library".to_string(),
+                    database_path,
+                    run_identity_path,
+                    representations_manifest_path: representations_path,
+                    index_name: "reference".to_string(),
+                }],
+            })?,
+        )?;
+        Ok(manifest_path)
+    }
+
+    /// A selected sealed source returns passage provenance; manifest changes
+    /// revoke cached admission, and unselected broken sources are not opened.
+    #[tokio::test]
+    async fn external_search_reads_only_selected_sealed_source_and_revalidates()
+    -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = sealed_external_fixture(directory.path()).await?;
+        let mut manifest = FederatedSourcesManifest::load(&manifest_path)?;
+        let mut broken = manifest.sources[0].clone();
+        broken.id = "unselected-broken".to_string();
+        broken.run_identity_path = directory.path().join("missing-identity.json");
+        manifest.sources.push(broken);
+        std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+        let database_path = directory.path().join("reference.db");
+        let before = std::fs::read(&database_path)?;
+        let mut port = in_memory_port_with_embed_fn(Arc::new(|_query: &str| {
+            let mut vector = vec![0.0; 1024];
+            vector[0] = 1.0;
+            vector
+        }));
+        port.external_passphrase = "test-passphrase".to_string();
+        let selected = ["fixture-reference".to_string()];
+        let batches = port
+            .search_external_passages_at(&manifest_path, "fixture", &selected, 3)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        assert_eq!(
+            batches.len(),
+            1,
+            "unselected broken source must not be opened"
+        );
+        let hit = &batches[0].hits[0];
+        assert_eq!(hit.source_id, "fixture-reference");
+        assert_eq!(hit.display_name, "Fixture research library");
+        assert_eq!(hit.text, "grounded fixture passage");
+        assert_eq!(
+            hit.entity_ref,
+            "calibration:fixture:sealed-v1:reference:utf8-666978747572652e747874:0"
+        );
+        assert_eq!(hit.model, "test-model");
+        assert_eq!(
+            hit.run_id,
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(
+                directory.path().join("run-identity.json")
+            )?)?["run_id"]
+        );
+        assert!(!hit.text.contains("parataxis_ratio"));
+        assert_eq!(batches[0].missing_text, 0);
+        let cached = port
+            .external_sources
+            .lock()
+            .expect("cache lock")
+            .as_ref()
+            .cloned()
+            .expect("admitted source");
+        port.search_external_passages_at(&manifest_path, "fixture again", &selected, 3)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let reused = port
+            .external_sources
+            .lock()
+            .expect("cache lock")
+            .as_ref()
+            .cloned()
+            .expect("cached source");
+        assert!(
+            Arc::ptr_eq(&cached, &reused),
+            "unchanged source should reuse the sealed handle"
+        );
+        manifest
+            .sources
+            .retain(|source| source.id != "fixture-reference");
+        std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+        let error = port
+            .search_external_passages_at(&manifest_path, "fixture", &selected, 3)
+            .await
+            .expect_err("removed source must be revoked");
+        assert!(error.contains("not registered"), "{error}");
+        assert!(
+            port.external_sources.lock().expect("cache lock").is_none(),
+            "stale handle must be evicted"
+        );
+        assert_eq!(
+            std::fs::read(&database_path)?,
+            before,
+            "external database must not be changed"
+        );
+        for suffix in [".maintenance-lock", "-wal", "-shm"] {
+            assert!(
+                !directory
+                    .path()
+                    .join(format!("reference.db{suffix}"))
+                    .exists(),
+                "read-only search must not create a sidecar"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn external_search_rejects_unregistered_ids_before_opening_sources() -> anyhow::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = directory.path().join("federated-sources.json");
+        let registered_path = directory.path().join("never-opened.db");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&FederatedSourcesManifest {
+                schema_version: 1,
+                sources: vec![FederatedSourceSpec {
+                    id: "registered".to_string(),
+                    display_name: "Registered".to_string(),
+                    database_path: registered_path,
+                    run_identity_path: directory.path().join("identity.json"),
+                    representations_manifest_path: directory.path().join("representations.json"),
+                    index_name: "passages".to_string(),
+                }],
+            })?,
+        )?;
+        let port = in_memory_port();
+        let error = port
+            .search_external_passages_at(
+                &manifest_path,
+                "query",
+                &["not-registered".to_string()],
+                2,
+            )
+            .await
+            .expect_err("unregistered IDs cannot authorize arbitrary paths");
+        assert!(error.contains("not registered"), "{error}");
+        assert!(port.external_sources.lock().expect("cache lock").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn external_search_surfaces_sealed_source_failure_without_embedding() -> anyhow::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = directory.path().join("federated-sources.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&FederatedSourcesManifest {
+                schema_version: 1,
+                sources: vec![FederatedSourceSpec {
+                    id: "sealed".to_string(),
+                    display_name: "Sealed".to_string(),
+                    database_path: directory.path().join("source.db"),
+                    run_identity_path: directory.path().join("missing-identity.json"),
+                    representations_manifest_path: directory.path().join("representations.json"),
+                    index_name: "passages".to_string(),
+                }],
+            })?,
+        )?;
+        let port = in_memory_port();
+        let error = port
+            .search_external_passages_at(&manifest_path, "query", &["sealed".to_string()], 2)
+            .await
+            .expect_err("missing sealed identity must fail closed");
+        assert!(error.contains("run identity"), "{error}");
+        assert!(port.external_sources.lock().expect("cache lock").is_none());
+        Ok(())
     }
 
     #[test]
@@ -2769,6 +3297,8 @@ pub(crate) mod tests {
             curator_store: Arc::new(CuratorStore::for_tests(Some(Arc::clone(&store)))),
             embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
             embedding_model: "test-model".to_string(),
+            external_passphrase: String::new(),
+            external_sources: std::sync::Mutex::new(None),
             classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),

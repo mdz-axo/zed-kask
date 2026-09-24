@@ -240,6 +240,12 @@ pub struct KaskMemorySettings {
     /// Whether to automatically inject recalled memories into prompts.
     pub auto_inject: bool,
 
+    /// Opt in to injecting selected federated sources into curator chat.
+    pub federated_auto_inject: bool,
+
+    /// Source IDs selected from the curator federated sources manifest.
+    pub federated_source_ids: Vec<String>,
+
     /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
     /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
     /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
@@ -276,6 +282,8 @@ impl Default for KaskMemorySettings {
             recall_limit: 5,
             recall_min_confidence: 0.3,
             auto_inject: true,
+            federated_auto_inject: false,
+            federated_source_ids: Vec::new(),
             memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
             distillation_cadence_secs: 600,
             distillation_idle_secs: 300,
@@ -760,6 +768,33 @@ impl KaskSettings {
         env
     }
 
+    /// The single curator manifest used by both the settings picker and the
+    /// in-process injector, including the configured data directory override.
+    pub fn federated_sources_manifest_path(&self) -> std::path::PathBuf {
+        let data_dir = resolve_root_dir(
+            &self.data_dir,
+            "HKASK_DATA_DIR",
+            hkask_types::agent_paths::resolve_data_dir,
+        );
+        std::path::Path::new(&data_dir)
+            .join(hkask_types::agent_paths::agent_dir("curator"))
+            .join("federated-sources.json")
+    }
+
+    /// Read only the registered source IDs and names from the curator's manifest.
+    /// An unavailable or invalid manifest is an error, not an empty registry.
+    pub fn federated_sources(
+        &self,
+    ) -> Result<Vec<(String, String)>, hkask_memory::FederatedRecallError> {
+        let manifest =
+            hkask_memory::FederatedSourcesManifest::load(self.federated_sources_manifest_path())?;
+        Ok(manifest
+            .sources
+            .into_iter()
+            .map(|source| (source.id, source.display_name))
+            .collect())
+    }
+
     /// The host-deployed template registry root for in-process consumers
     /// (curator memory chunk tagging renders `tag-passages-batch` from it).
     ///
@@ -864,6 +899,12 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
                 .recall_min_confidence
                 .unwrap_or(default.recall_min_confidence),
             auto_inject: c.auto_inject.unwrap_or(default.auto_inject),
+            federated_auto_inject: c
+                .federated_auto_inject
+                .unwrap_or(default.federated_auto_inject),
+            federated_source_ids: c
+                .federated_source_ids
+                .unwrap_or(default.federated_source_ids),
             memory_life_days: c.memory_life_days.unwrap_or(default.memory_life_days),
             distillation_cadence_secs: c
                 .distillation_cadence_secs
@@ -1213,6 +1254,8 @@ mod tests {
         assert_eq!(settings.curator.algedonic_threshold, 0.8);
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
+        assert!(!settings.memory.federated_auto_inject);
+        assert!(settings.memory.federated_source_ids.is_empty());
         assert_eq!(settings.memory.distillation_cadence_secs, 600);
         assert_eq!(settings.memory.distillation_idle_secs, 300);
         assert!(!settings.condenser.auto_compress_tool_results);
@@ -1265,6 +1308,8 @@ mod tests {
                 recall_limit: None,
                 recall_min_confidence: None,
                 auto_inject: None,
+                federated_auto_inject: None,
+                federated_source_ids: None,
                 memory_life_days: None,
                 distillation_cadence_secs: None,
                 distillation_idle_secs: None,
@@ -1278,6 +1323,56 @@ mod tests {
         assert_eq!(settings.curator.algedonic_threshold, 0.8);
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
+        assert!(!settings.memory.federated_auto_inject);
+        assert!(settings.memory.federated_source_ids.is_empty());
+    }
+
+    #[test]
+    fn federated_settings_content_preserves_multiple_selected_ids() {
+        let content = KaskSettingsContent {
+            memory: Some(KaskMemorySettingsContent {
+                federated_auto_inject: Some(true),
+                federated_source_ids: Some(vec!["alpha".into(), "beta".into()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let settings = KaskSettings::from(content);
+        assert!(settings.memory.federated_auto_inject);
+        assert_eq!(settings.memory.federated_source_ids, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn federated_sources_require_valid_manifest_in_configured_data_dir() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let settings = KaskSettings {
+            data_dir: dir.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        assert!(settings.federated_sources().is_err());
+        let manifest_path = dir
+            .path()
+            .join(hkask_types::agent_paths::agent_dir("curator"))
+            .join("federated-sources.json");
+        std::fs::create_dir_all(
+            manifest_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("no parent"))?,
+        )?;
+        std::fs::write(&manifest_path, "not json")?;
+        assert!(settings.federated_sources().is_err());
+        std::fs::write(
+            &manifest_path,
+            r#"{"schema_version":1,"sources":[{"id":"alpha","display_name":"Alpha corpus","database_path":"a.db","run_identity_path":"a.json","representations_manifest_path":"r.json","index_name":"main"},{"id":"beta","display_name":"Beta corpus","database_path":"b.db","run_identity_path":"b.json","representations_manifest_path":"s.json","index_name":"main"}]}"#,
+        )?;
+        assert_eq!(
+            settings.federated_sources()?,
+            vec![
+                ("alpha".to_string(), "Alpha corpus".to_string()),
+                ("beta".to_string(), "Beta corpus".to_string()),
+            ]
+        );
+        Ok(())
     }
 
     // When `models.embedding_model` is empty, the effective value falls back

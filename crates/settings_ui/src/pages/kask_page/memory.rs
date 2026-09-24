@@ -1,5 +1,5 @@
 //! Memory sub-page — consolidation cadence, confidence floor, recall limit,
-//! recall minimum confidence, and auto-inject toggle.
+//! recall minimum confidence, auto-inject and federated curator sources.
 
 use super::*;
 
@@ -9,18 +9,89 @@ pub(crate) fn render_memory_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
-    let memory: kask_bridge::KaskMemorySettings = raw
-        .and_then(|c| c.memory)
-        .map(Into::into)
-        .unwrap_or_default();
+    let kask: kask_bridge::KaskSettings = raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+    let sources = kask.federated_sources();
+    let memory = kask.memory;
     let cadence = memory.consolidation_cadence_secs.to_string();
     let confidence_floor = memory.confidence_floor.to_string();
     let recall_limit = memory.recall_limit.to_string();
     let recall_min_confidence = memory.recall_min_confidence.to_string();
     let auto_inject = memory.auto_inject;
     let memory_life_days = memory.memory_life_days.to_string();
+    let federated_auto_inject = memory.federated_auto_inject;
+    let selected_ids = memory.federated_source_ids.clone();
+    let source_rows: Vec<AnyElement> = match &sources {
+        Ok(registered) => registered
+            .iter()
+            .map(|(id, display_name)| {
+                let source_id = id.clone();
+                let selected = selected_ids.contains(id);
+                v_flex()
+                    .gap_1()
+                    .child(
+                        SwitchField::new(
+                            format!("kask-federated-source-{id}"),
+                            Some(display_name.clone()),
+                            Some(format!("Source ID: {id}").into()),
+                            selected,
+                            move |state, _window, cx| {
+                                // The manifest may have changed since this row was rendered.
+                                let current: kask_bridge::KaskSettings =
+                                    raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+                                let Ok(registered) = current.federated_sources() else {
+                                    return;
+                                };
+                                if !registered.iter().any(|(id, _)| id == &source_id) {
+                                    return;
+                                }
+                                let source_id = source_id.clone();
+                                let selected = *state == ToggleState::Selected;
+                                SettingsStore::global(cx).update_settings_file(
+                                    <dyn fs::Fs>::global(cx),
+                                    move |settings, _| {
+                                        let ids = settings
+                                            .kask
+                                            .get_or_insert_default()
+                                            .memory
+                                            .get_or_insert_default()
+                                            .federated_source_ids
+                                            .get_or_insert_default();
+                                        ids.retain(|id| {
+                                            id != &source_id
+                                                && registered.iter().any(|(key, _)| key == id)
+                                        });
+                                        if selected {
+                                            ids.push(source_id);
+                                        }
+                                    },
+                                );
+                            },
+                        )
+                        .tab_index(0),
+                    )
+                    .into_any_element()
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let sources_error = sources.is_err();
+    let sources_message = match &sources {
+        Err(error) => format!("Federated sources unavailable or invalid: {error}"),
+        Ok(registered) if registered.is_empty() => {
+            "No federated sources are registered in the curator manifest.".to_string()
+        }
+        Ok(registered)
+            if selected_ids
+                .iter()
+                .any(|id| !registered.iter().any(|(key, _)| key == id)) =>
+        {
+            "Some saved source IDs are not registered; review your selection.".to_string()
+        }
+        Ok(_) => {
+            "Choose one or more registered sources below before enabling injection.".to_string()
+        }
+    };
 
     let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
         .tab_index(0)
@@ -257,6 +328,64 @@ pub(crate) fn render_memory_page(
                 },
             )
             .tab_index(0),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_2()
+                .child(SettingsSectionHeader::new(
+                    "Curator federated chat injection",
+                ))
+                .child(
+                    Label::new(sources_message)
+                        .size(LabelSize::Small)
+                        .color(if sources_error {
+                            Color::Error
+                        } else {
+                            Color::Muted
+                        }),
+                )
+                .child(
+                    SwitchField::new(
+                        "kask-memory-federated-auto-inject",
+                        Some("Auto-Inject Federated Sources"),
+                        Some(
+                            "Opt in to injecting selected registered sources into curator chat."
+                                .into(),
+                        ),
+                        federated_auto_inject,
+                        move |state, _window, cx| {
+                            let enabled = *state == ToggleState::Selected;
+                            if enabled {
+                                let current: kask_bridge::KaskSettings =
+                                    raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+                                if !current.federated_sources().is_ok_and(|registered| {
+                                    !current.memory.federated_source_ids.is_empty()
+                                        && current
+                                            .memory
+                                            .federated_source_ids
+                                            .iter()
+                                            .all(|id| registered.iter().any(|(key, _)| key == id))
+                                }) {
+                                    return;
+                                }
+                            }
+                            SettingsStore::global(cx).update_settings_file(
+                                <dyn fs::Fs>::global(cx),
+                                move |settings, _| {
+                                    settings
+                                        .kask
+                                        .get_or_insert_default()
+                                        .memory
+                                        .get_or_insert_default()
+                                        .federated_auto_inject = Some(enabled);
+                                },
+                            );
+                        },
+                    )
+                    .tab_index(0),
+                )
+                .children(source_rows),
         )
         .into_any_element()
 }

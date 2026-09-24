@@ -55,8 +55,13 @@ Final review transitions use the escalation row as a durable outbox and publish 
 The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
 
 Federated retrieval is configured by the presence of
-`$HKASK_DATA_DIR/agents/curator/federated-sources.json`; there is no separate
-enable toggle. The current schema is version 1. Each source names an ID,
+`$HKASK_DATA_DIR/agents/curator/federated-sources.json`; the explicit search
+has no separate enable toggle. Sources are registered manually: create or edit
+this JSON file with `schema_version: 1` and a `sources` array. For each source,
+provide its unique `id`, `display_name`, `database_path`, `run_identity_path`,
+`representations_manifest_path`, and `index_name` from the sealed corpus run.
+The settings picker reads these IDs; it does not register a database or seal a
+corpus. The current schema is version 1. Each source names an ID,
 display name, database path, sealed `run-identity.json`, representation
 manifest, and index name. The source run identity must be current schema 3,
 and its representation manifest current schema 2. The server re-computes the
@@ -78,8 +83,16 @@ identity (path, size, modification time, and Unix inode) on each search;
 changes trigger re-admission and full hash verification. A source that changes
 during retrieval contributes no hits. This freshness check assumes normal
 filesystem metadata changes; it is not a tamper-proof guarantee against a
-writer able to restore metadata or race the check. Phase 1 is explicit search
-only: no automatic prompt injection and no automatic lesson promotion.
+writer able to restore metadata or race the check. The explicit tool search
+remains available independently of the opt-in Curator chat injection setting.
+The chat injector reads only selected registered sealed sources, labels their
+passages as external evidence, and never promotes them to Curator memory.
+
+**TODO (operator policy decision):** define the global inclusion rules for
+which databases, replicas, and corpus chunks may be registered for federation
+and why. Specify eligibility, consent/access boundaries, source provenance,
+quality and freshness requirements before broadening registration beyond the
+current sealed-corpus contract.
 
 ## Dependencies
 

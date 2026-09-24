@@ -2054,6 +2054,11 @@ fn main() {
                                         kask_settings.memory.recall_limit,
                                         kask_settings.memory.recall_min_confidence,
                                         auto_inject,
+                                    )
+                                    .with_federated_sources(
+                                        kask_settings.memory.federated_auto_inject,
+                                        kask_settings.memory.federated_source_ids.clone(),
+                                        kask_settings.federated_sources_manifest_path(),
                                     ),
                                 );
                                 agent::set_curator_context_injector(Some(curator_injector));
@@ -2061,6 +2066,7 @@ fn main() {
                                     "hKask curator context injector wired \
                                      (agent: {agent_name}, auto_inject={auto_inject}) — \
                                      curator will recall from its own sovereign DB; \
+                                     selected sealed external sources opt in separately; \
                                      tool warnings always on"
                                 );
 
