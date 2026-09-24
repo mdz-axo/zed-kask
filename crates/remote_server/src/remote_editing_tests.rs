@@ -5,7 +5,7 @@ use crate::headless_project::HeadlessProject;
 use agent::{
     AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
     SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
-    ZED_AGENT_ID, skills_resolver_for_project,
+    ZED_AGENT_ID, skill_body_resolver_for_project, skills_resolver_for_project,
 };
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -4170,9 +4170,9 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
     cx.run_until_parked();
 
-    let skill_tool = Arc::new(SkillTool::new(
+    let skill_tool = Arc::new(SkillTool::with_body_resolver(
         skills_resolver_for_project(agent.downgrade(), project.entity_id()),
-        fs.clone(),
+        skill_body_resolver_for_project(project.clone(), fs.clone()),
     ));
     let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();
 

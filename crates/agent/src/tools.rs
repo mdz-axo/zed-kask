@@ -17,6 +17,7 @@ mod find_references_tool;
 mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
+mod lean_check_tool;
 mod lisp_eval_tool;
 mod list_agents_and_models_tool;
 mod list_directory_tool;
@@ -145,6 +146,7 @@ pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
+pub use lean_check_tool::*;
 pub use lisp_eval_tool::*;
 pub use list_agents_and_models_tool::*;
 pub use list_directory_tool::*;
@@ -277,6 +279,7 @@ tools! {
     GetCodeActionsTool,
     GoToDefinitionTool,
     GrepTool,
+    LeanCheckTool,
     ListAgentsAndModelsTool,
     ListDirectoryTool,
     ListMcpToolsTool,
@@ -350,10 +353,13 @@ mod tests {
     fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
         assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
         assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
+        assert!(!tool_allowed_in_restricted_mode(LeanCheckTool::NAME));
 
         // Every other built-in tool, and unknown (e.g. MCP) tools, are allowed.
         for name in ALL_TOOL_NAMES {
-            let expected = *name != FetchTool::NAME && *name != TerminalTool::NAME;
+            let expected = *name != FetchTool::NAME
+                && *name != TerminalTool::NAME
+                && *name != LeanCheckTool::NAME;
             assert_eq!(
                 tool_allowed_in_restricted_mode(name),
                 expected,

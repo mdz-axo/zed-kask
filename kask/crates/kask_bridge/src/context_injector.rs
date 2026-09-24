@@ -355,8 +355,8 @@ impl ContextInjector for BridgeContextInjector {
                 && prompt_limit > 0
             {
                 let external = match federated_manifest_path.as_deref() {
-                    _ if federated_source_ids.is_empty() => Err(
-                        "Federated injection enabled without a selected registered source"
+                    _ if federated_source_ids.len() != 1 => Err(
+                        "Federated injection requires exactly one selected registered source"
                             .to_string(),
                     ),
                     Some(path) => {
@@ -508,6 +508,20 @@ mod tests {
             !content.contains("Relevant context from curator memory:"),
             "{content}"
         );
+
+        let multiple = BridgeContextInjector::new_curator(port.clone(), 3, 0.0, true)
+            .with_federated_sources(
+                true,
+                vec!["fixture-reference".into(), "other".into()],
+                manifest_path.clone(),
+            );
+        let messages = multiple.inject_context("empty-thread", prompt).await;
+        let content = match &messages[0].content[0] {
+            MessageContent::Text(text) => text,
+            _ => anyhow::bail!("expected text content"),
+        };
+        assert!(content.contains("Selected federated sources were unavailable"));
+        assert!(!content.contains("grounded fixture passage"));
 
         let disabled = BridgeContextInjector::new_curator(port, 3, 0.0, true)
             .with_federated_sources(false, vec!["fixture-reference".into()], manifest_path);

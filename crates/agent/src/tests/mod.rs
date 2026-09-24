@@ -7465,10 +7465,14 @@ async fn default_constructed_tools_and_macro_list_are_in_sync(cx: &mut TestAppCo
             .collect()
     });
 
-    // Session-registered tools (SkillTool, RecordSkillFeedbackTool) are
-    // added by NativeAgent::register_session, not add_default_tools — the
-    // only legitimate absentees from the construction set.
-    const SESSION_TOOLS: &[&str] = &[SkillTool::NAME, RecordSkillFeedbackTool::NAME];
+    // These tools are registered outside add_default_tools: status in
+    // NativeAgent::new_session, the others in register_session. Their separate
+    // session-path tests pin that they actually reach model-visible requests.
+    const SESSION_TOOLS: &[&str] = &[
+        CuratorStatusTool::NAME,
+        SkillTool::NAME,
+        RecordSkillFeedbackTool::NAME,
+    ];
 
     for name in crate::ALL_TOOL_NAMES {
         if SESSION_TOOLS.contains(name) {

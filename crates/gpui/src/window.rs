@@ -2549,7 +2549,25 @@ impl Window {
     /// which automatically respects [`App::reduce_motion`]. When using this
     /// method directly for decorative motion, check [`App::reduce_motion`]
     /// and skip the frame request when it is set.
+    #[track_caller]
     pub fn request_animation_frame(&self) {
+        thread_local! {
+            static ANIMATION_PROBE: RefCell<(std::time::Instant, FxHashMap<(&'static str, u32), u64>)> =
+                RefCell::new((std::time::Instant::now(), FxHashMap::default()));
+        }
+        let caller = std::panic::Location::caller();
+        ANIMATION_PROBE.with(|probe| {
+            let mut probe = probe.borrow_mut();
+            *probe.1.entry((caller.file(), caller.line())).or_default() += 1;
+            if probe.0.elapsed() >= Duration::from_secs(2) {
+                log::warn!(
+                    "[DIAG-thread-perf] gpui animation requests={:?} interval_ms={}",
+                    probe.1,
+                    probe.0.elapsed().as_millis()
+                );
+                *probe = (std::time::Instant::now(), FxHashMap::default());
+            }
+        });
         let entity = self.current_view();
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }

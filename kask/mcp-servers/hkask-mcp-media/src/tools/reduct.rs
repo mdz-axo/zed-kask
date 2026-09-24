@@ -363,8 +363,8 @@ async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value
         "probe": "read_only_project_endpoint",
         "http_status": status.as_u16(),
         "provider_connection": "project_read_succeeded",
-        "cloud_editing": "not_available",
-        "evidence": "Project-read URL is shown by Pipedream and was verified against Reduct; no editing API contract is available."
+        "cloud_editing": "not_checked",
+        "evidence": "The project-read request succeeded; this call does not create or edit a Reel."
     }))
 }
 
@@ -429,7 +429,7 @@ fn parse_project_snapshot(body: &[u8], limit: usize) -> Result<serde_json::Value
         "truncated": selected.len() < projects.len(),
         "pagination": "unknown",
         "projects": selected,
-        "cloud_editing": "not_available"
+        "cloud_editing": "not_checked"
     }))
 }
 
@@ -931,15 +931,15 @@ fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolErro
     Ok(serde_json::json!({
         "credential": "configured",
         "provider_connection": "not_checked",
-        "cloud_editing": "not_available",
-        "note": "The API key reached the media MCP child; this call did not contact Reduct. Use the separate read or explicit ingest tools to make cloud requests."
+        "cloud_editing": "not_checked",
+        "note": "The API key reached the media MCP child; this call did not contact Reduct. Use the separate read or explicit cloud tools to make requests."
     }))
 }
 
 #[tool_router(router = reduct_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Check whether the Reduct.video API key reached the media server. Does not contact Reduct or validate the key; cloud editing operations remain unavailable until their API contracts are verified. Never returns the key."
+        description = "Check whether the Reduct.video API key reached the media server. Does not contact Reduct or verify cloud edits; never returns the key."
     )]
     pub async fn reduct_connection_status(&self) -> Result<String, McpToolError> {
         execute_tool(self, "reduct_connection_status", async {
@@ -1614,6 +1614,7 @@ mod tests {
         assert!(!snapshot.to_string().contains("private"));
         assert!(!snapshot.to_string().contains("secret"));
         assert_eq!(snapshot["pagination"], "unknown");
+        assert_eq!(snapshot["cloud_editing"], "not_checked");
         assert!(parse_project_snapshot(br#"{"other": []}"#, 1).is_err());
         assert!(parse_project_snapshot(br#"{"project":{"p1":{}}}"#, 1).is_err());
         assert!(parse_project_snapshot(body, 0).is_err());
@@ -1970,7 +1971,7 @@ mod tests {
                 .is_some_and(|count| count <= 10)
         );
         assert!(snapshot["provider_returned_count"].as_u64().is_some());
-        assert_eq!(snapshot["cloud_editing"], "not_available");
+        assert_eq!(snapshot["cloud_editing"], "not_checked");
         Ok(())
     }
 
@@ -2269,7 +2270,13 @@ mod tests {
         assert!(!status.to_string().contains("fixture-secret-do-not-echo"));
         assert!(!status.to_string().contains("do-not-return"));
         assert_eq!(status["provider_connection"], "project_read_succeeded");
-        assert_eq!(status["cloud_editing"], "not_available");
+        assert_eq!(status["cloud_editing"], "not_checked");
+        assert!(
+            !status["evidence"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no editing API contract")
+        );
         Ok(())
     }
 
@@ -2301,7 +2308,7 @@ mod tests {
         let encoded = status.to_string();
         assert!(!encoded.contains("test-secret-do-not-echo"));
         assert_eq!(status["provider_connection"], "not_checked");
-        assert_eq!(status["cloud_editing"], "not_available");
+        assert_eq!(status["cloud_editing"], "not_checked");
         Ok(())
     }
 }

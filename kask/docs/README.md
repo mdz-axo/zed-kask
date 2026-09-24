@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-23
-version: "2.4.1"
+version: "2.4.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -84,7 +84,7 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 ## Document lifecycle ledger
 
-Git history is the archive of record. Every removed document names its active successor here; the current tree contains 69 files.
+Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, reports the current count and the open condensation gate.
 
 ### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
 

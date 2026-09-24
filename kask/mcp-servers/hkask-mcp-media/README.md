@@ -277,9 +277,10 @@ OS-keychain-based test retrieved a project, project-scoped recordings, recording
 status, JSON/TXT transcripts, the highlight GET path, and an existing reel's
 ID-keyed block map without logging or printing private content. The sampled
 highlight map was empty; a live reel-detail request returned a populated block
-map. A subsequent running-tool inventory lists all twelve `reduct_*` tools,
-including `reduct_reel_detail`; this is deployment evidence for advertisement,
-not a fresh live call or a cloud editing outcome. Reading block fields does not
+map. The original running-tool inventory listed twelve `reduct_*` tools;
+a post-restart inventory now lists sixteen, including the four Reel tools.
+This is deployment evidence for advertisement, not a cloud editing outcome.
+Reading block fields does not
 prove their POST write schema.
 
 The same excerpt specifies `POST /project/{project_id}/recording` with JSON
@@ -306,11 +307,14 @@ scoped contracts. Clip edits read back the block type before POST; every
 acknowledgement means submission, not verified composition/rendering. Loopback
 fixtures exercise request path/body, X-Auth-Key header, parsed acknowledgement,
 and HTTP refusal. The PDF's embedded text was cross-checked because corpus OCR
-flagged eleven pages for quality; no PDF text is committed. These four tools passed focused source tests, clippy and the Zed check;
-the `release-mcp` binary was installed to `~/.local/bin/hkask-mcp-media`,
-but the running child retained its older inode and still advertises twelve
-Reduct tools. They have **not** executed in the running MCP child or
-live-mutated in Reduct.
+flagged eleven pages for quality; no PDF text is committed. These four tools
+passed focused source tests, clippy and the Zed check. The `release-mcp`
+binary was installed to `~/.local/bin/hkask-mcp-media`, and a host restart
+exposed all sixteen Reduct tools. A read-only project probe returned HTTP 200,
+**not** proof of a live Reel POST. That deployed probe still described cloud
+editing as `not_available`; source now uses `not_checked` for read-only calls
+and removes the stale no-contract claim, but this correction is not yet
+validated or deployed. No Reel write has been live-mutated in Reduct.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough

@@ -279,9 +279,12 @@ Reel creation (page 31), doc-range/title block creation (pages 36–38) and
 partial block editing (pages 38–39). Four explicitly cloud-named tools now
 create a Reel, add clip/title blocks, and edit a clip range. Their loopback
 fixtures pin POST path/body, acknowledgement and refusal. A `release-mcp`
-binary is installed on disk, but the running child still exposes the older
-12-tool Reduct subset; no live mutation, running-tool deployment, or completed
-cloud composition has yet been observed.
+binary was installed on disk; after the operator restarted, the running child
+advertised all sixteen `reduct_*` tools and its read-only project probe returned
+HTTP 200. No live mutation or completed cloud composition has been observed.
+That deployed probe still returns `cloud_editing: not_available` despite the
+new tools; source corrects the read-only status to `not_checked`, pending test
+and deployment. This status is not a success signal for cloud writes.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations

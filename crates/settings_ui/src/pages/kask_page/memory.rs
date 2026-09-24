@@ -2,11 +2,19 @@
 //! recall minimum confidence, auto-inject and federated curator sources.
 
 use super::*;
+use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition};
+
+fn federated_source_selection(source_id: Option<String>) -> (Option<bool>, Option<Vec<String>>) {
+    (
+        Some(source_id.is_some()),
+        Some(source_id.into_iter().collect()),
+    )
+}
 
 pub(crate) fn render_memory_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
@@ -19,79 +27,89 @@ pub(crate) fn render_memory_page(
     let recall_min_confidence = memory.recall_min_confidence.to_string();
     let auto_inject = memory.auto_inject;
     let memory_life_days = memory.memory_life_days.to_string();
-    let federated_auto_inject = memory.federated_auto_inject;
-    let selected_ids = memory.federated_source_ids.clone();
-    let source_rows: Vec<AnyElement> = match &sources {
-        Ok(registered) => registered
+    let selected_ids = memory.federated_source_ids;
+    let selected_source = match &sources {
+        Ok(registered) if memory.federated_auto_inject && selected_ids.len() == 1 => registered
             .iter()
-            .map(|(id, display_name)| {
-                let source_id = id.clone();
-                let selected = selected_ids.contains(id);
-                v_flex()
-                    .gap_1()
-                    .child(
-                        SwitchField::new(
-                            format!("kask-federated-source-{id}"),
-                            Some(display_name.clone()),
-                            Some(format!("Source ID: {id}").into()),
-                            selected,
-                            move |state, _window, cx| {
-                                // The manifest may have changed since this row was rendered.
-                                let current: kask_bridge::KaskSettings =
-                                    raw_kask_settings(cx).map(Into::into).unwrap_or_default();
-                                let Ok(registered) = current.federated_sources() else {
-                                    return;
-                                };
-                                if !registered.iter().any(|(id, _)| id == &source_id) {
-                                    return;
-                                }
-                                let source_id = source_id.clone();
-                                let selected = *state == ToggleState::Selected;
-                                SettingsStore::global(cx).update_settings_file(
-                                    <dyn fs::Fs>::global(cx),
-                                    move |settings, _| {
-                                        let ids = settings
-                                            .kask
-                                            .get_or_insert_default()
-                                            .memory
-                                            .get_or_insert_default()
-                                            .federated_source_ids
-                                            .get_or_insert_default();
-                                        ids.retain(|id| {
-                                            id != &source_id
-                                                && registered.iter().any(|(key, _)| key == id)
-                                        });
-                                        if selected {
-                                            ids.push(source_id);
-                                        }
-                                    },
-                                );
-                            },
-                        )
-                        .tab_index(0),
-                    )
-                    .into_any_element()
-            })
-            .collect(),
-        Err(_) => Vec::new(),
+            .find(|(id, _)| selected_ids.first() == Some(id))
+            .cloned(),
+        _ => None,
     };
-    let sources_error = sources.is_err();
+    let sources_error = sources.is_err()
+        || (memory.federated_auto_inject && !selected_ids.is_empty() && selected_source.is_none());
     let sources_message = match &sources {
         Err(error) => format!("Federated sources unavailable or invalid: {error}"),
         Ok(registered) if registered.is_empty() => {
             "No federated sources are registered in the curator manifest.".to_string()
         }
-        Ok(registered)
-            if selected_ids
-                .iter()
-                .any(|id| !registered.iter().any(|(key, _)| key == id)) =>
-        {
-            "Some saved source IDs are not registered; review your selection.".to_string()
+        Ok(_) if memory.federated_auto_inject && selected_source.is_none() => {
+            "Saved federated selection is invalid; choose one source.".to_string()
         }
-        Ok(_) => {
-            "Choose one or more registered sources below before enabling injection.".to_string()
-        }
+        Ok(_) => "Choose one registered source, or Curator memory only.".to_string(),
     };
+    let source_dropdown = sources.as_ref().ok().filter(|registered| !registered.is_empty()).map(|registered| {
+        let selected_id = selected_source.as_ref().map(|(id, _)| id.clone());
+        let menu = ContextMenu::build(window, cx, {
+            let registered = registered.clone();
+            let selected_id = selected_id.clone();
+            move |mut menu, _, _| {
+                menu = menu.toggleable_entry(
+                    "Curator memory only",
+                    selected_id.is_none(),
+                    IconPosition::Start,
+                    None,
+                    move |_, cx| {
+                        SettingsStore::global(cx).update_settings_file(
+                            <dyn fs::Fs>::global(cx),
+                            |settings, _| {
+                                let memory = settings
+                                    .kask
+                                    .get_or_insert_default()
+                                    .memory
+                                    .get_or_insert_default();
+                                (memory.federated_auto_inject, memory.federated_source_ids) =
+                                    federated_source_selection(None);
+                            },
+                        );
+                    },
+                );
+                for (id, name) in registered {
+                    let is_selected = selected_id.as_ref() == Some(&id);
+                    let label = format!("{name} ({id})");
+                    menu = menu.toggleable_entry(label, is_selected, IconPosition::Start, None, move |_, cx| {
+                        let current: kask_bridge::KaskSettings =
+                            raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+                        if !current.federated_sources().is_ok_and(|sources| sources.iter().any(|(key, _)| key == &id)) {
+                            log::warn!("Federated source {id} is no longer registered; selection not saved");
+                            return;
+                        }
+                        let id = id.clone();
+                        SettingsStore::global(cx).update_settings_file(
+                            <dyn fs::Fs>::global(cx),
+                            move |settings, _| {
+                                let memory = settings
+                                    .kask
+                                    .get_or_insert_default()
+                                    .memory
+                                    .get_or_insert_default();
+                                (memory.federated_auto_inject, memory.federated_source_ids) =
+                                    federated_source_selection(Some(id));
+                            },
+                        );
+                    });
+                }
+                menu
+            }
+        });
+        DropdownMenu::new(
+            "kask-federated-source-dropdown",
+            selected_source.map(|(id, name)| format!("{name} ({id})")).unwrap_or_else(|| "Curator memory only".to_string()),
+            menu,
+        )
+        .style(DropdownStyle::Outlined)
+        .full_width(true)
+        .into_any_element()
+    });
 
     let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
         .tab_index(0)
@@ -310,7 +328,7 @@ pub(crate) fn render_memory_page(
             SwitchField::new(
                 "kask-memory-auto-inject",
                 Some("Auto-Inject Memories"),
-                Some("Whether to automatically inject recalled memories into prompts.".into()),
+                Some("Automatically inject curator memories and any selected federated source into prompts.".into()),
                 auto_inject,
                 move |state, _window, cx| {
                     let value = *state == ToggleState::Selected;
@@ -353,46 +371,27 @@ pub(crate) fn render_memory_page(
                         }),
                 )
                 .child(
-                    SwitchField::new(
-                        "kask-memory-federated-auto-inject",
-                        Some("Auto-Inject Federated Sources"),
-                        Some(
-                            "Opt in to injecting selected registered sources into curator chat."
-                                .into(),
-                        ),
-                        federated_auto_inject,
-                        move |state, _window, cx| {
-                            let enabled = *state == ToggleState::Selected;
-                            if enabled {
-                                let current: kask_bridge::KaskSettings =
-                                    raw_kask_settings(cx).map(Into::into).unwrap_or_default();
-                                if !current.federated_sources().is_ok_and(|registered| {
-                                    !current.memory.federated_source_ids.is_empty()
-                                        && current
-                                            .memory
-                                            .federated_source_ids
-                                            .iter()
-                                            .all(|id| registered.iter().any(|(key, _)| key == id))
-                                }) {
-                                    return;
-                                }
-                            }
-                            SettingsStore::global(cx).update_settings_file(
-                                <dyn fs::Fs>::global(cx),
-                                move |settings, _| {
-                                    settings
-                                        .kask
-                                        .get_or_insert_default()
-                                        .memory
-                                        .get_or_insert_default()
-                                        .federated_auto_inject = Some(enabled);
-                                },
-                            );
-                        },
-                    )
-                    .tab_index(0),
+                    Label::new("Federated source (requires Auto-Inject Memories)")
+                        .size(LabelSize::Small),
                 )
-                .children(source_rows),
+                .children(source_dropdown),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::federated_source_selection;
+
+    #[test]
+    fn dropdown_selection_sets_one_source_and_memory_only_disables_federation() {
+        assert_eq!(
+            federated_source_selection(Some("named-source".into())),
+            (Some(true), Some(vec!["named-source".into()]))
+        );
+        assert_eq!(
+            federated_source_selection(None),
+            (Some(false), Some(Vec::new()))
+        );
+    }
 }

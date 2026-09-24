@@ -2,11 +2,11 @@ use crate::{
     ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
-    ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template,
-    Templates, TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    GoToDefinitionTool, GrepTool, LeanCheckTool, LispEvalTool, ListAgentsAndModelsTool,
+    ListDirectoryTool, ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot,
+    ReadFileTool, RenameTool, RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
+    WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
@@ -2459,6 +2459,7 @@ impl Thread {
         ));
         self.add_tool(WebSearchTool);
         self.add_tool(LispEvalTool);
+        self.add_tool(LeanCheckTool::new(self.project.clone()));
         self.add_tool(OntoAnchorTool);
         self.add_tool(RenderTemplateTool);
 
