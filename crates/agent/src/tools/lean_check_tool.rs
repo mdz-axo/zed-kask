@@ -79,6 +79,7 @@ impl LeanCheckTool {
 // Resolve the per-user Elan launcher directly: a GUI-launched editor need not
 // inherit the shell's PATH. A manually provided Lake on PATH remains supported.
 fn lake_executable(elan_home: Option<&Path>, home: Option<&Path>) -> Result<PathBuf> {
+    let explicit_elan_home = elan_home.is_some();
     let elan_home = match elan_home {
         Some(path) if !path.is_absolute() => bail!("ELAN_HOME must be an absolute path"),
         Some(path) => Some(path.to_path_buf()),
@@ -89,7 +90,7 @@ fn lake_executable(elan_home: Option<&Path>, home: Option<&Path>) -> Result<Path
         if lake.is_file() {
             return Ok(lake);
         }
-        if std::env::var_os("ELAN_HOME").is_some() {
+        if explicit_elan_home {
             bail!(
                 "ELAN_HOME is set but Lake is missing at {}; run the supported zed-kask installer",
                 lake.display()
@@ -582,6 +583,7 @@ mod tests {
         );
         assert_eq!(lake_executable(Some(&elan), None)?, elan.join("bin/lake"));
         assert!(lake_executable(Some(Path::new("relative/elan")), None).is_err());
+        assert!(lake_executable(Some(&dir.path().join("missing-elan")), None).is_err());
         Ok(())
     }
 
@@ -617,7 +619,13 @@ mod tests {
         std::fs::write(&file, "theorem clean : True := by trivial\n")?;
         std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v0.0.0\n")?;
         let wrong_pin = check_saved(root.into(), file.clone(), None, lake).await;
-        assert!(format!("{:#}", wrong_pin.unwrap_err()).contains("lean-toolchain pins v0.0.0"));
+        let wrong_pin_error = format!("{:#}", wrong_pin.unwrap_err());
+        assert!(
+            wrong_pin_error.contains("v0.0.0")
+                && (wrong_pin_error.contains("Lake could not select the pinned Lean toolchain")
+                    || wrong_pin_error.contains("lean-toolchain pins v0.0.0")),
+            "{wrong_pin_error}"
+        );
         std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v4.34.0\n")?;
         let clean = check_saved(root.into(), file.clone(), Some("clean".into()), lake).await?;
         assert_eq!(

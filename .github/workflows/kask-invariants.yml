@@ -100,6 +100,8 @@ jobs:
         run: bash kask/scripts/build/check-desktop-no-collision.sh
       - name: Build profile seam — MCP servers build cheap, installs are capped and traced
         run: bash kask/scripts/build/check-build-profile.sh
+      - name: Lean dependency — pinned toolchain install is offline-tested and failure-gated
+        run: bash kask/scripts/build/check-lean-toolchain.sh
       - name: Formatting — cargo fmt --check
         run: cargo fmt --all -- --check
       - name: Dead-code allows — no net-new beyond the committed baseline

@@ -269,8 +269,13 @@ SHA-256-verified gallery audio/video upload. Those POST paths are pinned by
 fixtures. In an operator-authorized throwaway project, recording creation and
 gallery upload were observed live; a YouTube watch-link import was acknowledged
 but subsequently reported `error`, while the indexed video upload reached
-`transcribed` on a separate recording. Project and
-recording and reel snapshots describe provider-returned subsets, not complete
+`transcribed` on a separate recording. Rejected import URLs with embedded
+credentials no longer echo user-info in the shared MCP validator, and POST
+429/5xx plus unusable acknowledgements warn that a write may have succeeded:
+inspect before retrying; no automatic retry or local fallback is introduced.
+These changes are fixture-tested but not yet observed in a restarted child.
+Project and recording and reel snapshots describe provider-returned subsets,
+not complete
 pagination. Reel read results do not authorize writes: Reduct reel/block payload
 fields are not supplied by the excerpt. A running MCP inventory on 2026-09-23
 advertised twelve `reduct_*` tools including `reduct_reel_detail`; advertisement

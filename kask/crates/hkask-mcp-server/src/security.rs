@@ -14,8 +14,9 @@ pub(crate) enum SecurityError {
     #[error("Non-HTTP(S) scheme not allowed: {0}")]
     DisallowedScheme(String),
 
-    #[error("URL contains embedded credentials (user:pass@host): {0}")]
-    EmbeddedCredentials(String),
+    // Never retain the rejected URL: this error crosses into the MCP tool result.
+    #[error("URL contains embedded credentials (user:pass@host)")]
+    EmbeddedCredentials,
 
     #[error("Private IP address not allowed: {0}")]
     PrivateIpNotAllowed(String),
@@ -87,7 +88,7 @@ fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
     let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
     let host_part = authority.split('@').next_back().unwrap_or(authority);
     if host_part != authority {
-        return Err(SecurityError::EmbeddedCredentials(raw_url.to_string()));
+        return Err(SecurityError::EmbeddedCredentials);
     }
 
     // Bracketed IPv6 (e.g. `[::1]:8080`) must be extracted before stripping the
@@ -485,11 +486,23 @@ mod tests {
         assert!(parse_url_for_ssrf("http://example.com").is_ok());
     }
 
+    /// expect: Reject a URL with user-info without repeating its credentials in the MCP error. [P1]
+    #[tokio::test]
+    async fn tool_url_rejects_embedded_credentials_without_echoing_them() {
+        let error = validate_tool_url_with_dns("https://alice:synthetic-secret@example.com/clip")
+            .await
+            .expect_err("embedded credentials must be refused before DNS/network");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(error.message.contains("embedded credentials"));
+        assert!(!error.message.contains("alice"));
+        assert!(!error.message.contains("synthetic-secret"));
+    }
+
     #[test]
     fn parse_url_for_ssrf_rejects_embedded_credentials() {
         assert!(matches!(
             parse_url_for_ssrf("https://user:pass@example.com"),
-            Err(SecurityError::EmbeddedCredentials(_))
+            Err(SecurityError::EmbeddedCredentials)
         ));
         // an `@` in the path is not authority credentials
         assert!(parse_url_for_ssrf("https://example.com/path@x").is_ok());

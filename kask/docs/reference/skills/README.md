@@ -102,6 +102,8 @@ read-only resources the skill body may reference via `render_template`.
 | `metacognition` | Master self-reflection: decompose goals, assess progress, calibrate strategy, GEPA self-improvement |
 | `gradient-hunter` | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field |
 
+`lean-prover` can call the consent-gated `lean_check` tool for saved files in a local Lake project. Supported source install (`--install` or `--build-only`) and verified binary update provision per-user Elan and Lean 4.34.0 automatically, using a pinned Elan release SHA-256. An existing Elan default is not changed; each Lean project's own `lean-toolchain` still selects its version. Plain `cargo build` remains offline and does not install Lean. The editor resolves `$ELAN_HOME/bin/lake` (or `$HOME/.elan/bin/lake`) without relying on GUI `PATH`. Automatic provisioning downloads a large Lean release and needs network access on first install. Uninstall does not remove shared Elan toolchains used by other projects.
+
 ---
 
 ## Kata & Coaching (3 skills)

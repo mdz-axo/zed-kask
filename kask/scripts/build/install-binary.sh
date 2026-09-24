@@ -236,8 +236,11 @@ main() {
     tag=$(resolve_tag)
     [ -n "$tag" ] || { log_error "Could not determine a zed-kask release tag"; exit 1; }
     temporary_directory=$(download_and_extract "$target" "$tag") || exit 1
-    trap 'rm -rf "$temporary_directory"' EXIT
-    install_lean_toolchain
+    # EXIT runs after main returns, when its local variable is out of scope.
+    # Keep the staging path alive for cleanup on both success and failure.
+    _HKASK_BINARY_STAGING_DIR="$temporary_directory"
+    trap 'if [ -n "${_HKASK_BINARY_STAGING_DIR:-}" ]; then rm -rf -- "$_HKASK_BINARY_STAGING_DIR"; fi' EXIT
+    install_lean_toolchain || return 1
     install_binaries "$temporary_directory/extracted"
     add_to_path
     write_mcp_server_settings

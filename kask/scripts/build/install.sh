@@ -795,7 +795,7 @@ main() {
             fi
 
             build_hkask
-            install_lean_toolchain
+            install_lean_toolchain || return 1
             prepare_install_dir
             install_binary
             install_updater_bundle
@@ -840,7 +840,7 @@ main() {
                 install_rust
             fi
             build_hkask
-            install_lean_toolchain
+            install_lean_toolchain || return 1
             ;;
     esac
 }

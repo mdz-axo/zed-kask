@@ -293,8 +293,11 @@ with JSON `{"url": ...}` returning `media_ids`. `reduct_create_recording` and
 uses the specified raw `POST .../media-upload?filename=...` contract returning
 `media_id`. Upload requires an indexed audio/video Asset with an unchanged
 SHA-256 and a nonempty regular file at most 128 MiB; the provider receives
-no arbitrary local path. POST timeouts or malformed acknowledgements state
-that the mutation **may have succeeded** and require inspection before retry.
+no arbitrary local path. POST transport failures, HTTP 429/5xx, and unreadable
+or unusable acknowledgements state that the mutation **may have succeeded**
+and require inspection before retry, while preserving provider error kinds
+(`rate_limited`/`unavailable`). The shared URL validator rejects embedded
+user-info without returning the supplied credentials. No POST is retried.
 In the authorized Axolotl throwaway project, recording creation returned an
 ID. A YouTube watch-link media import returned an ID but later became `error`;
 that acknowledgement did not mean successful ingestion. An indexed 116 MB

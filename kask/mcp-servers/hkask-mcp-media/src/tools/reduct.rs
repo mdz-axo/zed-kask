@@ -189,7 +189,7 @@ fn parse_media_upload_response(body: &[u8]) -> Result<serde_json::Value, McpTool
         McpToolError::failed_precondition("Reduct media upload may have succeeded but omitted media_id; inspect before retrying")
     })?;
     validate_reduct_id("media_id", id).map_err(|_| {
-        McpToolError::failed_precondition("Reduct media upload returned an unusable media ID")
+        McpToolError::failed_precondition("Reduct media upload may have succeeded but returned an unusable media ID; inspect before retrying")
     })?;
     Ok(
         serde_json::json!({"source": "reduct_cloud", "media_id": id, "upload_state": "submitted; check recording status"}),
@@ -225,10 +225,10 @@ fn parse_media_import_response(body: &[u8]) -> Result<serde_json::Value, McpTool
     }
     for id in media_ids {
         let id = id.as_str().ok_or_else(|| {
-            McpToolError::failed_precondition("Reduct media import returned an unusable media ID")
+            McpToolError::failed_precondition("Reduct media import may have succeeded but returned an unusable media ID; inspect before retrying")
         })?;
         validate_reduct_id("media_id", id).map_err(|_| {
-            McpToolError::failed_precondition("Reduct media import returned an unusable media ID")
+            McpToolError::failed_precondition("Reduct media import may have succeeded but returned an unusable media ID; inspect before retrying")
         })?;
     }
     Ok(
@@ -284,6 +284,22 @@ fn classify_reduct_status(
         _ => Err(McpToolError::failed_precondition(format!(
             "Reduct {operation} returned unexpected HTTP {status}; no success claimed."
         ))),
+    }
+}
+
+/// A provider error after POST is not proof the mutation was rolled back.
+fn classify_reduct_mutation_status(
+    status: reqwest::StatusCode,
+    operation: &str,
+) -> Result<(), McpToolError> {
+    match status.as_u16() {
+        429 => Err(McpToolError::rate_limited(format!(
+            "Reduct {operation} returned HTTP 429; request may have succeeded; inspect before retrying"
+        ))),
+        code if (500..600).contains(&code) => Err(McpToolError::unavailable(format!(
+            "Reduct {operation} returned HTTP {status}; request may have succeeded; inspect before retrying"
+        ))),
+        _ => classify_reduct_status(status, operation),
     }
 }
 
@@ -345,7 +361,30 @@ async fn post_json_response(
             error.without_url()
         )))?;
     if !matches!(response.status().as_u16(), 200 | 201) {
-        classify_reduct_status(response.status(), operation)?;
+        classify_reduct_mutation_status(response.status(), operation)?;
+        return Err(McpToolError::failed_precondition(format!(
+            "Reduct {operation} returned HTTP {}; inspect before retrying",
+            response.status()
+        )));
+    }
+    Ok(response)
+}
+
+async fn post_binary_response(
+    key: Option<&str>,
+    url: &str,
+    bytes: Vec<u8>,
+    operation: &str,
+) -> Result<reqwest::Response, McpToolError> {
+    let (client, header) =
+        authorized_client_with_timeout(key, std::time::Duration::from_secs(300))?;
+    let response = client.post(url).header("x-auth-key", header).body(bytes).send().await
+        .map_err(|error| McpToolError::unavailable(format!(
+            "Reduct {operation} transport failed: {}; upload may have succeeded; inspect before retrying",
+            error.without_url()
+        )))?;
+    if !matches!(response.status().as_u16(), 200 | 201) {
+        classify_reduct_mutation_status(response.status(), operation)?;
         return Err(McpToolError::failed_precondition(format!(
             "Reduct {operation} returned HTTP {}; inspect before retrying",
             response.status()
@@ -1222,22 +1261,9 @@ impl MediaServer {
             .await
             .map_err(|_| McpToolError::unavailable("Indexed media file could not be read"))?;
         validate_indexed_upload_bytes(&asset.hash, metadata.len(), &bytes)?;
-        let (client, header) = authorized_client_with_timeout(
-            self.reduct_api_key.as_deref(),
-            std::time::Duration::from_secs(300),
-        )?;
-        let response = client.post(url).header("x-auth-key", header).body(bytes).send().await
-            .map_err(|error| McpToolError::unavailable(format!(
-                "Reduct media upload transport failed: {}; upload may have succeeded; inspect before retrying",
-                error.without_url()
-            )))?;
-        if !matches!(response.status().as_u16(), 200 | 201) {
-            classify_reduct_status(response.status(), "media upload")?;
-            return Err(McpToolError::failed_precondition(format!(
-                "Reduct media upload returned HTTP {}; inspect before retrying",
-                response.status()
-            )));
-        }
+        let response =
+            post_binary_response(self.reduct_api_key.as_deref(), &url, bytes, "media upload")
+                .await?;
         let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
             McpToolError::failed_precondition(format!(
                 "Reduct upload may have succeeded, but its acknowledgement was unreadable: {error}"
@@ -1511,6 +1537,64 @@ mod tests {
         Ok(())
     }
 
+    /// expect: An unsuccessful cloud POST never invites a blind retry after an uncertain provider outcome. [P1]
+    #[tokio::test]
+    async fn reel_post_429_and_5xx_preserve_kind_and_warn_to_inspect()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        for (status_line, kind) in [
+            (
+                "429 Too Many Requests",
+                hkask_types::McpErrorKind::RateLimited,
+            ),
+            (
+                "503 Service Unavailable",
+                hkask_types::McpErrorKind::Unavailable,
+            ),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let root = format!("http://{}/", listener.local_addr()?);
+            let peer = std::thread::spawn(move || -> std::io::Result<()> {
+                let (mut stream, _) = listener.accept()?;
+                stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+                let mut buffer = [0_u8; 4096];
+                let mut request = String::new();
+                loop {
+                    let n = stream.read(&mut buffer)?;
+                    if n == 0 || request.len() > 16 * 1024 {
+                        return Err(std::io::Error::other("incomplete POST fixture"));
+                    }
+                    request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                    if request.contains("\r\n\r\n") && request.contains("Fixture reel") {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )?;
+                Ok(())
+            });
+            let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel")
+                .await
+                .expect_err("non-successful POST must not claim Reel creation");
+            peer.join()
+                .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+            assert_eq!(error.kind, kind, "{status_line}");
+            assert!(
+                error.message.contains("may have succeeded"),
+                "{status_line}: {}",
+                error.message
+            );
+            assert!(
+                error.message.contains("inspect before retrying"),
+                "{status_line}: {}",
+                error.message
+            );
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn reel_post_http_error_is_classified_and_never_reported_as_created()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1638,6 +1722,59 @@ mod tests {
         Ok(())
     }
 
+    /// expect: A binary cloud upload that receives HTTP 5xx stays an uncertain, visible failure. [P1]
+    #[tokio::test]
+    async fn binary_upload_post_5xx_keeps_uncertain_write_warning()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut request = String::new();
+            let mut buffer = [0_u8; 4096];
+            while !request.contains("fixture-binary") {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete binary fixture"));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+            write!(
+                stream,
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+            Ok(request)
+        });
+        let url = format!(
+            "http://{address}/project/p_fixture/recording/r_fixture/media-upload?filename=fixture.mp4"
+        );
+        let error = post_binary_response(
+            Some("fixture-key"),
+            &url,
+            b"fixture-binary".to_vec(),
+            "media upload",
+        )
+        .await
+        .expect_err("HTTP 503 cannot claim successful upload");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+        assert!(error.message.contains("may have succeeded"));
+        assert!(error.message.contains("inspect before retrying"));
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(request.starts_with(
+            "POST /project/p_fixture/recording/r_fixture/media-upload?filename=fixture.mp4 HTTP/1.1"
+        ));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        Ok(())
+    }
+
     #[test]
     fn documented_binary_upload_contract_encodes_filename_and_requires_media_id()
     -> Result<(), McpToolError> {
@@ -1653,6 +1790,10 @@ mod tests {
             "submitted; check recording status"
         );
         assert!(parse_media_upload_response(br#"{}"#).is_err());
+        let invalid_id = parse_media_upload_response(br#"{"media_id":"bad/id"}"#)
+            .expect_err("invalid upload acknowledgement is an uncertain write");
+        assert!(invalid_id.message.contains("may have succeeded"));
+        assert!(invalid_id.message.contains("inspect before retrying"));
         Ok(())
     }
 
@@ -1675,6 +1816,10 @@ mod tests {
         assert!(parse_recording_create_response(br#"{"recording":{}}"#).is_err());
         assert!(parse_media_import_response(br#"{"media_ids":"m1"}"#).is_err());
         assert!(parse_media_import_response(br#"{"media_ids":[]}"#).is_err());
+        let invalid_id = parse_media_import_response(br#"{"media_ids":["bad/id"]}"#)
+            .expect_err("invalid import acknowledgement is an uncertain write");
+        assert!(invalid_id.message.contains("may have succeeded"));
+        assert!(invalid_id.message.contains("inspect before retrying"));
         Ok(())
     }
 
