@@ -2278,22 +2278,6 @@ impl Thread {
         }
     }
 
-    /// Set a custom system prompt that overrides the default template.
-    /// When set, `render_system_prompt` returns this string directly instead of
-    /// rendering `system_prompt.hbs`. The project context, tools list, and other
-    /// dynamic sections are NOT included — the override is the complete system
-    /// prompt. Delegates to `KaskThreadState::set_system_prompt_override`.
-    ///
-    /// Note: no production caller currently uses this — the Curator agent uses
-    /// `set_static_context` (overlay appended to the template), not this override
-    /// (which bypasses the template entirely). The override mechanism is
-    /// retained for potential future use (e.g., a custom agent persona that
-    /// replaces the base prompt). Pinned by `test_system_prompt_override_bypasses_template`.
-    pub fn set_system_prompt_override(&mut self, prompt: SharedString, cx: &mut Context<Self>) {
-        self.kask.set_system_prompt_override(prompt);
-        cx.notify();
-    }
-
     /// Set static context appended to the system prompt's `## Session Context`
     /// section (e.g., Curator overlay, Steer panel overlay). This is NOT an
     /// override — the system prompt template is still rendered. Delegates to
@@ -2310,8 +2294,8 @@ impl Thread {
     /// default (Zed Agent) state — the memory ingestion path treats `None` as
     /// the user agent and writes to the user's `memory.db`.
     ///
-    /// This is stored separately from `system_prompt_override` and
-    /// `agent_static_context` (both on `KaskThreadState`) because it is a
+    /// This is stored separately from `agent_static_context` (on
+    /// `KaskThreadState`) because it is a
     /// routing key, not a prompt fragment. The memory port (D6) and context
     /// injector dispatch (D11) both read it to select the correct
     /// perspective-scoped store.
@@ -5337,13 +5321,6 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> SharedString {
-        // If a system prompt override is set (e.g., by the Curator agent),
-        // return it directly — no template rendering.
-        // zed-kask: D2 — system prompt override bypasses template
-        if let Some(override_prompt) = self.kask.system_prompt_override() {
-            return override_prompt.clone();
-        }
-
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let model_name = self.model().map(|m| m.name().0.to_string());
         let date = Local::now().format("%Y-%m-%d").to_string();
@@ -12307,79 +12284,6 @@ mod tests {
         );
     }
 
-    /// Pin B4: `system_prompt_override` bypasses template rendering entirely.
-    /// When set (by the Curator agent), `render_system_prompt` returns the
-    /// override string directly — no handlebars template, no project context,
-    /// no tools list. The override IS the complete system prompt.
-    #[gpui::test]
-    async fn test_system_prompt_override_bypasses_template(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
-
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.set_model(model.clone(), cx);
-            });
-        });
-
-        // Render the default system prompt (no override) — should contain
-        // the template's standard sections.
-        let default_prompt = cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                let messages = thread.build_request_messages(Vec::new(), cx);
-                messages
-                    .first()
-                    .and_then(|m| m.content.first())
-                    .and_then(|c| {
-                        if let language_model::MessageContent::Text(t) = c {
-                            Some(t.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .expect("system prompt message")
-            })
-        });
-        assert!(
-            default_prompt.contains("## Communication"),
-            "default system prompt should contain template sections, got: {default_prompt}"
-        );
-
-        // Set the override — render should return it verbatim.
-        let override_prompt: SharedString = "You are the Curator. Override is active.".into();
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.set_system_prompt_override(override_prompt.clone(), cx);
-            });
-        });
-
-        let overridden = cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                let messages = thread.build_request_messages(Vec::new(), cx);
-                messages
-                    .first()
-                    .and_then(|m| m.content.first())
-                    .and_then(|c| {
-                        if let language_model::MessageContent::Text(t) = c {
-                            Some(t.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .expect("system prompt message")
-            })
-        });
-        assert_eq!(
-            overridden.as_str(),
-            override_prompt.as_ref(),
-            "system_prompt_override should be returned verbatim, not template-rendered"
-        );
-        assert!(
-            !overridden.contains("## Tool Use"),
-            "override should NOT contain template sections"
-        );
-    }
-
     /// Pin B16: `cached_filtered_context` reuses the filtered ProjectContext
     /// when the filtering inputs (open-file paths + mentioned paths) haven't
     /// changed between renders. The cache is populated on the first render
@@ -12559,5 +12463,48 @@ mod tests {
             "check after record_success should return Allow (reset), got {:?}",
             verdict
         );
+    }
+
+    /// The live Thread retry state must admit a corrected call after sibling
+    /// failures, and `run_tool` must pass its owning message index to that state.
+    #[gpui::test]
+    async fn test_parallel_tool_failures_preserve_next_message_retry(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let owning_message_ix = thread.read_with(cx, |thread, _| thread.messages.len());
+        thread.update(cx, |thread, _| {
+            let retry = thread.kask.retry_tracker_handle();
+            for i in 0..9 {
+                retry.borrow().record_failure_for_message(
+                    "web_search",
+                    &serde_json::json!({"query": format!("title {i}"), "strategy": "hybrid"}),
+                    owning_message_ix,
+                );
+            }
+        });
+        let corrected = serde_json::json!({"query": "title 0", "strategy": "deep"});
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry("web_search", &corrected)
+        });
+        assert!(matches!(
+            verdict,
+            crate::tool_retry_tracker::RetryVerdict::Allow
+        ));
+
+        let source = include_str!("thread.rs");
+        let run_tool = source
+            .split("fn run_tool(")
+            .nth(1)
+            .expect("run_tool exists")
+            .split("fn handle_tool_use_json_parse_error_event(")
+            .next()
+            .expect("run_tool body exists");
+        let record_call = run_tool
+            .split(".record_failure_for_message(")
+            .nth(1)
+            .expect("production retry tracker records batch failures")
+            .split(')')
+            .next()
+            .expect("batch failure arguments");
+        assert!(record_call.contains("owning_message_ix,"));
     }
 }

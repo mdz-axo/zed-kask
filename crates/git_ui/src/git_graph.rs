@@ -602,7 +602,7 @@ pub struct OpenAtCommit {
 // zed-kask: `time::format_description::parse` is `#[deprecated]` in time 0.3.54+
 // (the workspace-resolved version; lower versions break `plist`/`project`).
 // Upstream `git_graph.rs` calls `parse` directly. This helper centralizes the
-// `#[allow(deprecated)]` so the two call sites stay minimal. Remove this
+// `#[allow(deprecated)]` for the timestamp format parser. Remove this
 // (and call `parse_borrowed` directly) when upstream migrates.
 // See DIVERGENCE.md D11.
 #[allow(deprecated)]

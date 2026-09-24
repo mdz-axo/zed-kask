@@ -2,7 +2,7 @@
 use std::process::Command;
 
 const ZED_MANIFEST: &str = include_str!("../zed/Cargo.toml");
-// zed-kask: D53 — D7 unifies the app version at the workspace level
+// zed-kask: D56 — D7 unifies the app version at the workspace level
 // (`version.workspace = true` in crates/zed/Cargo.toml). The cargo_toml
 // Manifest parser rejects inherited values ("inherited workspace value"),
 // which broke every build touching this crate. Resolve the version from

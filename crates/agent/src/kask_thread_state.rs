@@ -13,7 +13,6 @@
 //! |-------|--------|---------|
 //! | `agent_id` | D6 | Memory ingestion routing (Curator vs user) |
 //! | `agent_static_context` | D2 | Curator overlay / Steer mode system prompt |
-//! | `system_prompt_override` | D2 | System prompt override (Curator persona) |
 
 //! | `tool_retry_tracker` | .rules | Tool retry death spiral prevention |
 //! | `deferred_tool_results` | — | Deferred tool result delivery across turn boundaries |
@@ -42,7 +41,6 @@ pub(crate) struct KaskThreadState {
 
     // System prompt overlays (D2)
     agent_static_context: Option<SharedString>,
-    system_prompt_override: Option<SharedString>,
 
     // Tool retry cap (.rules)
     tool_retry_tracker: Rc<RefCell<ToolRetryTracker>>,
@@ -66,7 +64,6 @@ impl KaskThreadState {
         Self {
             agent_id: None,
             agent_static_context: None,
-            system_prompt_override: None,
             tool_retry_tracker: Rc::new(RefCell::new(ToolRetryTracker::default())),
             deferred_tool_results: Vec::new(),
             last_completion_truncated: false,
@@ -206,8 +203,7 @@ impl KaskThreadState {
         self.cached_system_prompt = Some(CachedSystemPrompt { digest, prompt });
     }
 
-    /// Bust the system prompt cache. Called when `static_context` or
-    /// `system_prompt_override` changes.
+    /// Bust the system prompt cache when static context changes.
     pub fn bust_system_prompt_cache(&mut self) {
         self.cached_system_prompt = None;
     }
@@ -241,21 +237,6 @@ impl KaskThreadState {
     #[cfg(test)]
     pub fn has_cached_filtered_context(&self) -> bool {
         self.cached_filtered_context.is_some()
-    }
-
-    // ── System prompt override (D2) ──────────────────────────────────
-
-    /// System prompt override — when set, returned directly instead of
-    /// rendering the template. Used by the Curator agent to inject its
-    /// own persona.
-    pub fn system_prompt_override(&self) -> Option<&SharedString> {
-        self.system_prompt_override.as_ref()
-    }
-
-    /// Set the system prompt override. Busts the system prompt cache.
-    pub fn set_system_prompt_override(&mut self, prompt: SharedString) {
-        self.system_prompt_override = Some(prompt);
-        self.bust_system_prompt_cache();
     }
 
     // ── Static context (D2) ──────────────────────────────────────────
