@@ -181,7 +181,7 @@ impl SkillUseFailureOrigin {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReportSkillUseIssueRequest {
-    /// The skill manifest ID (e.g. "superforecasting", "scenario-builder").
+    /// The skill manifest ID (e.g. "superforecasting", "scenario-planning").
     pub skill_name: String,
     /// The MCP tool name that failed or produced unexpected output
     /// (e.g. "market_match", "scenario_score").
