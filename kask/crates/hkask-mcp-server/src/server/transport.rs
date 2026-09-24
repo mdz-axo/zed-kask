@@ -47,6 +47,8 @@ where
         )
         .init();
 
+    super::validation::set_artifact_owner(server_name);
+
     let catalog = match std::env::var(hkask_storage::DATABASE_CATALOG_ENV) {
         Ok(path) => std::path::PathBuf::from(path),
         Err(std::env::VarError::NotPresent) => hkask_types::agent_paths::resolve_under_data_dir(

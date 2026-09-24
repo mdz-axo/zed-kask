@@ -314,11 +314,16 @@ dsymutil target/release-fast/deps/<target>-<hash>
 
 Prefer the `zed-bench` Instruments template, which combines Time Profiler data, CPU counters, and hang or microhang tables. Fall back to `Time Profiler` if it is unavailable:
 
+Traces are user-facing artifacts: keep them under the skill's artifacts route,
+`~/Documents/zk-data/skills/gpui-bench/{date}-{run}/`, not `/tmp`.
+
 ```sh
-rm -rf /tmp/zed-profiles/<name>.trace
+OUT=~/Documents/zk-data/skills/gpui-bench/<date>-<run>
+mkdir -p "$OUT"
+rm -rf "$OUT/<name>.trace"
 xctrace record \
   --template "zed-bench" \
-  --output /tmp/zed-profiles/<name>.trace \
+  --output "$OUT/<name>.trace" \
   --launch -- target/release-fast/deps/<target>-<hash> \
   --bench <workload-filter> --profile-time 10
 ```

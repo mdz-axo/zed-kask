@@ -41,6 +41,7 @@ pub use tool_span::{ToolContext, execute_tool};
 pub use transport::run_stdio_server;
 pub use validation::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped, resolve_max_read_bytes,
+    set_artifact_owner,
 };
 pub use validation::{
     map_infra_error, map_io_error, map_join_error, map_memory_store_error, validate_identifier,

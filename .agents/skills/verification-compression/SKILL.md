@@ -133,7 +133,11 @@ verification code.
 8. Call `skill` for `lean-prover`, then call `read_file` for
    `kask/registry/templates/verification-compression/proof.j2`. From the ONE
    observed inventory and candidate, publish two graph JSON artifacts: the
-   before graph and a candidate graph. Each uses the current schema:
+   before graph and a candidate graph. Write this run's graphs, proof, logs
+   and `manifest.json` under the artifacts route
+   `~/Documents/zk-data/skills/verification-compression/{date}-{run}/`
+   (via `terminal`; the built-in file tools are project-confined), never
+   under `/tmp` or the project tree. Each uses the current schema:
    `schema_version:1`, `required` (all distinct baseline signal keys),
    `before` and `after` (artifact_id + full five-field signal), and
    `removed_mappings` (removed_artifact + retained_artifact + same signal).

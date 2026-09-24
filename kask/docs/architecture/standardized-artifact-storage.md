@@ -1,8 +1,8 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-09-19
-version: "2.2.0"
+last_updated: 2026-09-24
+version: "2.3.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -46,6 +46,43 @@ There are exactly two rooted trees, split by what the artifact IS:
    root name (research, companies, portfolio, corpus, media, ...) with an
    `-mcp` suffix; `{artifact-type}` is the human-readable artifact class
    (reports, screens, transactions, generated, cache).
+
+**Producer-named layout (operator ruling 2026-09-24).** Every artifact folder
+names what produced it, so the user can tell from the folder name alone which
+server, skill, or review wrote a file, what kind of file it is, and which run
+it came from:
+
+| Folder | Producer | Route helper |
+|---|---|---|
+| `{server}-mcp/{artifact-type}/` | an MCP server tool | `mcp_artifacts_subdir` |
+| `skills/{skill-name}/{date}-{run}/` | one skill run; carries `manifest.json` (skill, thread, time, inputs, outputs) | `skill_run_dir` |
+| `curator/reviews/{date}/` | the algedonic review (operator + Curator) — gemba-walk findings, skill verdicts, action receipts | `curator_review_dir` |
+| `curator/proposals/{skill-name}/` | executing skills filing skill-change proposals; only the review accepts or rejects them | `curator_proposals_dir` |
+| `agent-traces/` | the agent's on-demand tool tracing | `crates/agent/src/tool_trace.rs` |
+
+Nothing is written at the top level of the tree or in an agent-invented folder.
+The split between `curator/proposals/` (written by executing skills) and
+`curator/reviews/` (written only by the review) is the storage form of the
+separation of skill evaluation from skill execution (repair plan P6).
+
+**Enforcement.** `contain_for_write` confines an MCP server's writes into the
+artifacts tree to its own `{server}-mcp/` folder: `run_stdio_server` records
+the owner from the binary name via `set_artifact_owner`, and a write to the
+tree's top level or another server's folder is rejected. Reads may use the
+whole tree (one server's output is another's input). Pinned by
+`artifact_writes_are_confined_to_the_owning_server`
+(`kask/crates/hkask-mcp-server/src/server/validation.rs`); the route helpers by
+`skill_and_curator_routes_name_their_producer` (`agent_paths.rs`). Skill bodies
+that write files name their `skills/{name}/` route; skills write there through
+the owning MCP tool or `terminal`, because the built-in file tools are confined
+to the project.
+
+**Existing folders.** `~/Documents/zk-data/INDEX.md` indexes every folder with
+its producer. Corpus runs created before this ruling stay where they are
+(operator decision 2026-09-24, option A): their manifests embed absolute paths
+under SHA-256 seals, and the sealed v13 reference is the Curator's federated
+search source, so moving them would break the seal or the references.
+`INDEX-moves-2026-09-24.log` records every move that was made.
 
 The classification test for any new artifact: **would the user ever want
  to open this file, copy it elsewhere, or back it up by hand?** If yes, it

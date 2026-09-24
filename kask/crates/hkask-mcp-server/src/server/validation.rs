@@ -250,6 +250,41 @@ fn rejection(path: &std::path::Path, root: &std::path::Path, reason: &str) -> Mc
     ))
 }
 
+/// The running server's artifact owner (e.g. `corpus` for `hkask-mcp-corpus`),
+/// recorded once by `run_stdio_server`. Writes into the visible artifacts tree
+/// are confined to that server's own `{server}-mcp/` folder so every file in
+/// `zk-data` names the server that produced it
+/// (`standardized-artifact-storage.md` §0).
+static ARTIFACT_OWNER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the server whose artifacts this process writes. `server_name` is the
+/// binary name (`hkask-mcp-corpus`) or the bare owner (`corpus`).
+pub fn set_artifact_owner(server_name: &str) {
+    let owner = server_name
+        .strip_prefix("hkask-mcp-")
+        .unwrap_or(server_name)
+        .to_string();
+    if let Err(existing) = ARTIFACT_OWNER.set(owner) {
+        tracing::warn!(
+            target: "hkask.mcp.paths",
+            requested = %existing,
+            current = ?ARTIFACT_OWNER.get(),
+            "Artifact owner already recorded; keeping the first owner"
+        );
+    }
+}
+
+/// The artifacts-tree root this process may write under: the owner's
+/// `{server}-mcp/` folder when an owner is recorded, the whole tree otherwise.
+fn artifacts_write_root() -> std::path::PathBuf {
+    match ARTIFACT_OWNER.get() {
+        Some(owner) => hkask_types::agent_paths::resolve_under_artifacts_dir(
+            &hkask_types::agent_paths::mcp_artifacts_subdir(owner, ""),
+        ),
+        None => hkask_types::agent_paths::resolve_artifacts_dir(),
+    }
+}
+
 /// Contain `path` under an allowed root. The allowed roots are:
 /// 1. The process current working directory (the project root when the MCP
 ///    server is launched per-project via `ContextServerStore`, or zed's
@@ -257,8 +292,9 @@ fn rejection(path: &std::path::Path, root: &std::path::Path, reason: &str) -> Mc
 /// 2. The kask data directory (`HKASK_DATA_DIR` or `~/.local/share/zed-kask`)
 ///    — where MCP server DBs and internal artifacts live (D28).
 /// 3. The kask artifacts directory (`~/Documents/zk-data`) — where
-///    user-facing artifacts like corpus files, QA output, and replica configs
-///    are stored (D28).
+///    user-facing artifacts live (D28). Reads may use the whole tree (another
+///    server's output is valid input); writes are confined to the running
+///    server's own `{server}-mcp/` folder (see `set_artifact_owner`).
 ///
 /// Canonicalization collapses symlink escapes. Absolute paths like
 /// `/etc/passwd` and traversals like `../../escape` are rejected unless they
@@ -279,10 +315,23 @@ fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, Mc
     {
         allowed_roots.push(data_dir);
     }
-    if let Some(artifacts_dir) = hkask_types::agent_paths::resolve_artifacts_dir()
-        .canonicalize()
-        .ok()
-    {
+    let artifacts_root = if write {
+        let root = artifacts_write_root();
+        // Self-healing: the owner's folder is recreated before it anchors a
+        // write, so a user deleting it cannot turn valid writes into rejections.
+        if let Err(error) = std::fs::create_dir_all(&root) {
+            tracing::warn!(
+                target: "hkask.mcp.paths",
+                path = %root.display(),
+                %error,
+                "Cannot create the server's artifacts folder; writes under it will be rejected"
+            );
+        }
+        root
+    } else {
+        hkask_types::agent_paths::resolve_artifacts_dir()
+    };
+    if let Some(artifacts_dir) = artifacts_root.canonicalize().ok() {
         allowed_roots.push(artifacts_dir);
     }
 
@@ -379,6 +428,70 @@ mod tests {
             .args([
                 "--exact",
                 "server::validation::tests::relative_write_paths_preserve_containment",
+            ])
+            .current_dir(directory.path().join("work"))
+            .env(CHILD, "1")
+            .env("HKASK_DATA_DIR", directory.path().join("data"))
+            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    /// A server may write only inside its own `{server}-mcp/` folder of the
+    /// visible artifacts tree; the tree's top level and other servers' folders
+    /// are rejected, while reads across the whole tree stay allowed
+    /// (standardized-artifact-storage §0, operator ruling 2026-09-24).
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "isolated synchronous test subprocess; never runs on GPUI"
+    )]
+    fn artifact_writes_are_confined_to_the_owning_server() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const CHILD: &str = "HKASK_ARTIFACT_OWNER_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let artifacts = hkask_types::agent_paths::resolve_artifacts_dir();
+            let other = artifacts.join("media-mcp").join("generated");
+            std::fs::create_dir_all(&other)?;
+            std::fs::write(other.join("input.txt"), "input")?;
+            set_artifact_owner("hkask-mcp-corpus");
+
+            let own = artifacts.join("corpus-mcp").join("qa").join("out.jsonl");
+            assert!(
+                contain_for_write(own.to_str().ok_or("utf-8")?).is_ok(),
+                "the owner's folder accepts writes, and is created on demand"
+            );
+            for path in [
+                artifacts.join("loose-folder").join("out.jsonl"),
+                artifacts.join("out.jsonl"),
+                other.join("out.jsonl"),
+            ] {
+                assert!(
+                    contain_for_write(path.to_str().ok_or("utf-8")?).is_err(),
+                    "write outside corpus-mcp/ must be rejected: {}",
+                    path.display()
+                );
+            }
+            assert!(
+                contain_for_read(other.join("input.txt").to_str().ok_or("utf-8")?).is_ok(),
+                "reads may use another server's output"
+            );
+            return Ok(());
+        }
+        let directory = tempfile::tempdir()?;
+        for name in ["work", "data", "artifacts"] {
+            std::fs::create_dir(directory.path().join(name))?;
+        }
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "server::validation::tests::artifact_writes_are_confined_to_the_owning_server",
             ])
             .current_dir(directory.path().join("work"))
             .env(CHILD, "1")

@@ -217,7 +217,39 @@ pub fn mcp_artifacts_subdir(server_id: &str, subdir: &str) -> PathBuf {
     }
 }
 
-// ── Database paths ───────────────────────────────────────────────────────────
+// ── Skill-run and curator paths (artifacts dir route) ──────────────────────
+
+/// Folder (under the artifacts dir) for files written by skill runs.
+pub const SKILL_ARTIFACTS_DIR: &str = "skills";
+
+/// Folder (under the artifacts dir) owned by the algedonic review
+/// (operator + Curator): review records and queued skill-change proposals.
+pub const CURATOR_ARTIFACTS_DIR: &str = "curator";
+
+/// Returns `skills/{skill_name}/{run_id}` — the folder for one skill run's
+/// output files and its `manifest.json`. `run_id` is `{date}-{short-id}`.
+pub fn skill_run_dir(skill_name: &str, run_id: &str) -> PathBuf {
+    PathBuf::from(SKILL_ARTIFACTS_DIR)
+        .join(sanitize_name(skill_name))
+        .join(sanitize_name(run_id))
+}
+
+/// Returns `curator/reviews/{date}` — one algedonic review's records.
+pub fn curator_review_dir(date: &str) -> PathBuf {
+    PathBuf::from(CURATOR_ARTIFACTS_DIR)
+        .join("reviews")
+        .join(sanitize_name(date))
+}
+
+/// Returns `curator/proposals/{skill_name}` — skill-change proposals filed by
+/// executing skills and awaiting the review's decision.
+pub fn curator_proposals_dir(skill_name: &str) -> PathBuf {
+    PathBuf::from(CURATOR_ARTIFACTS_DIR)
+        .join("proposals")
+        .join(sanitize_name(skill_name))
+}
+
+// ── Database paths ──────────────────────────────────────────────────────────────────────────
 
 /// Agent sovereign database — HMemStore, EmbeddingStore, Regulation events.
 ///
@@ -341,6 +373,29 @@ mod tests {
         assert_eq!(
             mcp_artifacts_subdir("corpus", ""),
             PathBuf::from("corpus-mcp")
+        );
+    }
+
+    /// Skill runs and the algedonic review each own a named folder, so every
+    /// file in zk-data names what produced it (operator ruling 2026-09-24).
+    #[test]
+    fn skill_and_curator_routes_name_their_producer() {
+        assert_eq!(
+            skill_run_dir("verification-compression", "2026-09-24-a1b2c3"),
+            PathBuf::from("skills/verification-compression/2026-09-24-a1b2c3")
+        );
+        assert_eq!(
+            curator_review_dir("2026-09-24"),
+            PathBuf::from("curator/reviews/2026-09-24")
+        );
+        assert_eq!(
+            curator_proposals_dir("self-improvement"),
+            PathBuf::from("curator/proposals/self-improvement")
+        );
+        assert_eq!(
+            skill_run_dir("../escape", ".."),
+            PathBuf::from("skills/..-escape/unnamed"),
+            "traversal is neutralized by sanitize_name"
         );
     }
 
