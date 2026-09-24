@@ -43,6 +43,7 @@ and are not rewritten. This change does not create a release tag or install
 binaries.
 
 ## Upstream merge recovery — 2026-09-10
+## Upstream merge recovery — 2026-09-10
 
 Recovered the interrupted merge from fork `f0e2d97e1f` into upstream
 `595d62863e8a6f2d8353835abe94502ee2a08139` (Zed 1.21.0). Existing staged
