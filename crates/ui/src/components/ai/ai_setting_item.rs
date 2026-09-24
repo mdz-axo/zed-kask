@@ -8,6 +8,7 @@ pub enum AiSettingItemStatus {
     Stopped,
     Starting,
     Running,
+    Unknown,
     Error,
     AuthRequired,
     ClientSecretRequired,
@@ -20,6 +21,7 @@ impl AiSettingItemStatus {
             Self::Stopped => "Server is stopped.",
             Self::Starting => "Server is starting.",
             Self::Running => "Server is active.",
+            Self::Unknown => "Server status is not confirmed.",
             Self::Error => "Server has an error.",
             Self::AuthRequired => "Authentication Required.",
             Self::ClientSecretRequired => "Client Secret Required.",
@@ -32,6 +34,7 @@ impl AiSettingItemStatus {
             Self::Stopped => None,
             Self::Starting | Self::Authenticating => Some(Color::Muted),
             Self::Running => Some(Color::Success),
+            Self::Unknown => Some(Color::Muted),
             Self::Error => Some(Color::Error),
             Self::AuthRequired | Self::ClientSecretRequired => Some(Color::Warning),
         }
@@ -442,6 +445,20 @@ impl Component for AiSettingItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_server_status_is_neutral_and_not_animated() {
+        assert_eq!(
+            AiSettingItemStatus::Unknown.tooltip_text(),
+            "Server status is not confirmed."
+        );
+        assert_eq!(
+            AiSettingItemStatus::Unknown.indicator_color(),
+            Some(Color::Muted)
+        );
+        assert!(!AiSettingItemStatus::Unknown.is_animated());
+        assert!(AiSettingItemStatus::Starting.is_animated());
+    }
 
     /// zed-kask: pins the `BuiltIn` source badge (D45) — the tooltip must name
     /// the kask runtime so the row's provenance reads correctly in the MCP

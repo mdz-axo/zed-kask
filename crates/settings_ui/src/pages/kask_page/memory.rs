@@ -51,7 +51,6 @@ pub(crate) fn render_memory_page(
         let selected_id = selected_source.as_ref().map(|(id, _)| id.clone());
         let menu = ContextMenu::build(window, cx, {
             let registered = registered.clone();
-            let selected_id = selected_id.clone();
             move |mut menu, _, _| {
                 menu = menu.toggleable_entry(
                     "Curator memory only",

@@ -177,16 +177,16 @@ fn kask_server_loaded(mcp: &kask_bridge::KaskMcpSettings, server_id: &str) -> bo
 }
 
 /// Row status from the load flag and registered tool count: not loaded →
-/// `Stopped`; loaded with tools → `Running`; loaded without tools → `Starting`.
-/// The last case is only a UI fallback: it also includes failed launches or
-/// unavailable servers, because this function has no runtime health signal.
+/// `Stopped`; loaded with tools → `Running`; loaded without tools → `Unknown`.
+/// No runtime health signal reaches this row, so zero tools cannot establish
+/// either startup progress or failure. A neutral state avoids claiming either.
 fn kask_managed_server_status(loaded: bool, live_tool_count: usize) -> AiSettingItemStatus {
     if !loaded {
         AiSettingItemStatus::Stopped
     } else if live_tool_count > 0 {
         AiSettingItemStatus::Running
     } else {
-        AiSettingItemStatus::Starting
+        AiSettingItemStatus::Unknown
     }
 }
 
@@ -204,7 +204,7 @@ fn kask_tool_counts_from_descriptors(
 
 /// The live per-server tool counts from the process-global `KaskToolSource`
 /// (absent in tests and lightweight embedders — kask tools then simply do
-/// not surface, and every loaded server reads as `Starting`).
+/// not surface, and every loaded server reads as `Unknown`).
 fn kask_live_tool_counts() -> HashMap<String, usize> {
     agent::kask_tool_source()
         .map(|source| kask_tool_counts_from_descriptors(source.tools()))
@@ -236,8 +236,8 @@ fn render_kask_managed_servers_section(cx: &App) -> AnyElement {
             v_flex().child(Label::new("Kask Managed Servers")).child(
                 Label::new(
                     "Built-in kask MCP servers, launched and governed by the kask \
-                         runtime — their tools are available to the agent. Toggle a server \
-                         to load or unload it; the change takes effect immediately.",
+                         runtime — registered tools appear in the agent when available. \
+                         Toggle a server to load or unload it; the change takes effect immediately.",
                 )
                 .size(LabelSize::Small)
                 .color(Color::Muted),
@@ -1593,11 +1593,9 @@ mod tests {
 
     // ── zed-kask: Kask Managed Servers pins (D45) ───────────────────────
 
-    /// The row status must distinguish all three observable states: unloaded
-    /// (Stopped regardless of tools), loaded with a live tool surface
-    /// (Running), and loaded but not yet serving (Starting — the launch /
-    /// reconnect window). A wrong mapping here makes the settings page lie
-    /// about the governed runtime's state.
+    /// A loaded server with no registered tools has unknown status: that
+    /// signal alone cannot tell whether it is starting, failed, or unavailable.
+    /// Stopped and registered-tool Running states remain unchanged.
     #[test]
     fn kask_managed_server_status_maps_load_and_live_tools() {
         assert_eq!(
@@ -1610,7 +1608,7 @@ mod tests {
         );
         assert_eq!(
             kask_managed_server_status(true, 0),
-            AiSettingItemStatus::Starting
+            AiSettingItemStatus::Unknown
         );
         assert_eq!(
             kask_managed_server_status(true, 1),
