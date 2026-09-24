@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **77 skills** ship. **334 Jinja2 templates across 67
+> plus a markdown body of process instructions. **73 skills** ship. **330 Jinja2 templates across 65
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **77** | Every counted directory contains a `SKILL.md`; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **67** (**334** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **73** | Every counted directory contains a `SKILL.md`; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **65** (**330** `.j2` templates) | Companion Jinja2 resources for `render_template`; namespace and file counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -87,7 +87,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Reasoning & Analysis (10 skills)
+## Reasoning & Analysis (9 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -95,7 +95,6 @@ read-only resources the skill body may reference via `render_template`.
 | `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |
 | `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
 | `grill-me` | Socratic questioning to stress-test understanding |
-| `sequential-inquiry` | Dynamic chain-of-thought with automatic deep-dive delegation |
 | `falsifiability` | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals |
 | `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
 | `capabilities-reasoner` | Reason about a system's capabilities against a typed registry with floor/ceiling/maturity-gate limits |
@@ -134,16 +133,14 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Specialized (25 skills)
+## Specialized (23 skills)
 
 | Skill | Purpose |
 |-------|---------|
 | `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives) chaining media server tools in known-good sequences |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
 | `eqm` | Explanation Quality Markers instrument: scores forecast rationales against 60 EQMs via `market_score_rationale`, aggregates composites, validates against realized outcomes (Brier), emits `overconfidence_bias` |
-| `eqm-improvement` | Improve forecast rationale quality by reverse-engineering the 60 EQMs' reasoning patterns; PDCA score→target→rewrite→re-score loop that preserves the probability and grounds evidence in real sources |
 | `mcda` | Multi-Criteria Decision Analysis with compensation masking |
-| `scenario-builder` | Schwartz scenario planning with STEEP analysis |
 | `hypothesis-framer` | Research question framing via FINER + PICO |
 | `goal-analysis` | Goal specification and completion verification |
 | `structured-extraction` | Extract structured data from unstructured text |
@@ -178,7 +175,7 @@ read-only resources the skill body may reference via `render_template`.
 
 ---
 
-## Cross-Cutting & Audit (10 skills)
+## Cross-Cutting & Audit (9 skills)
 
 | Skill | Purpose |
 |-------|---------|
@@ -187,7 +184,6 @@ read-only resources the skill body may reference via `render_template`.
 | `gradient-seeded-recombination` | Find where to apply constraint-forces recast: inventory ontologies, build prior, map recombination field, detect gradients, select seeds |
 | `principle-constraints` | Compiles a stated principle into checkable, code-path-anchored constraints with named falsifiers |
 | `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority) |
-| `swarm-compose-guide` | Agent/swarm composition authoring aid: renders guidance templates, returns suggested completions or validation verdict |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
 | `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
@@ -201,17 +197,20 @@ read-only resources the skill body may reference via `render_template`.
 |----------|-------|
 | Guardrails | 1 |
 | Core Development | 12 |
-| Reasoning & Analysis | 10 |
+| Reasoning & Analysis | 9 |
 | Kata & Coaching | 3 |
 | Meta & Maintenance | 11 |
-| Specialized | 25 |
+| Specialized | 23 |
 | Research & Corpus | 5 |
-| Cross-Cutting & Audit | 10 |
-| **Total** | **77** |
+| Cross-Cutting & Audit | 9 |
+| **Total** | **73** |
 
-> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 77
+> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 73
 > `SKILL.md` directories, including `onto-anchor`, `writing-style` and
-> `verification-compression`; `gemba-walk` was merged into `algedonic-review`
-> (operator ruling 2026-09-24). `kask/registry/templates/` contains 67 template
-> namespaces holding 334 `.j2` files. The registry counts are filesystem observations, not inferred from the
+> `verification-compression`. Merged by operator decision 2026-09-24:
+> `gemba-walk` into `algedonic-review`, `sequential-inquiry` into
+> `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
+> `scenario-builder` into `scenario-planning`, `eqm-improvement` into `eqm`.
+> `kask/registry/templates/` contains 65 template namespaces holding 330 `.j2`
+> files. The registry counts are filesystem observations, not inferred from the
 > category table.
