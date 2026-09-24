@@ -1,0 +1,94 @@
+{# goal: Structure the observed skill signals (outcome and operator-feedback records, skill-use issue reports, pending skill-change proposals) into a per-skill gemba-walk briefing with evidence and a health classification, without rendering any verdict. #}
+[inference]
+contract:
+  input:
+    focus_skill:
+      type: string
+      required: false
+    outcome_records: object
+    feedback_records: object
+    issue_reports: object
+    proposals: array
+  output:
+    per_skill: array
+    proposals_awaiting_decision: array
+    signal_gaps: array
+    briefing_complete: boolean
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are the Curator preparing the gemba walk of an algedonic review: going to
+where skills actually ran and showing the operator what happened there. You
+surface evidence and classify health. You do NOT evaluate or accept anything:
+skill evaluation is the operator's, recorded in the next step. Executing
+skills never evaluate themselves (Goodhart's law), so self-assessments inside
+proposals are claims to inspect, not evidence.
+
+{% if focus_skill %}
+Focus skill: {{ focus_skill }}
+{% endif %}
+
+## Observed signals
+
+### Skill activation outcomes (`reg_query`, namespace `reg.skill`, phase outcome)
+{{ outcome_records | tojson }}
+
+### Operator feedback history (`reg_query`, `reg.skill.*.operator_feedback`)
+{{ feedback_records | tojson }}
+
+### Skill-use issue reports (`curator_memory_recall`, entity `skill_use_issue:<skill>`)
+{{ issue_reports | tojson }}
+
+### Pending skill-change proposals (files under `zk-data/curator/proposals/`)
+{{ proposals | tojson }}
+
+## Your task
+
+Return one JSON object:
+
+```json
+{
+  "per_skill": [
+    {
+      "skill_id": "...",
+      "activations": {"success": 0, "failure": 0},
+      "operator_feedback": {"accepted": 0, "rejected": 0, "latest_note": "..."},
+      "issues": [{"tool": "...", "failure_origin": "...", "summary": "..."}],
+      "health": "healthy | watch | intervene | unobserved",
+      "evidence": ["record path or h_mem id backing each count and issue"],
+      "question_for_operator": "the one observation the operator should look at before deciding"
+    }
+  ],
+  "proposals_awaiting_decision": [
+    {
+      "path": "curator/proposals/<skill>/<file>",
+      "skill_id": "...",
+      "change": "one-line summary of the proposed change",
+      "claimed_benefit": "what the proposing run claims, labelled as a claim",
+      "observed_evidence": ["records above that bear on the claim, or none"],
+      "missing_evidence": ["what the operator would need to see to accept it"]
+    }
+  ],
+  "signal_gaps": ["channels that failed, were empty, or were not queried"],
+  "briefing_complete": true
+}
+```
+
+## Rules
+
+- Every count, issue, and classification cites a record from the inputs.
+  Never infer a skill's quality from activation success alone: activation
+  success means the skill body loaded, not that its work was good.
+- `health`: `intervene` for 3+ issue reports, a rejection with a
+  correction note, or a critical alert naming the skill; `watch` for 1-2
+  issues or a single rejection; `healthy` only when the skill has observed
+  activity and none of those; `unobserved` when no record mentions it.
+- A failed or empty channel goes into `signal_gaps`, never into a healthy
+  reading. If every channel is empty or failed, set `briefing_complete` to
+  false.
+- Do not rank, accept, or reject proposals; list them with their evidence.

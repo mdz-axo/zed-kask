@@ -1,12 +1,14 @@
 ---
 name: algedonic-review
 core: true
-description: "Human-in-the-loop review and triage of the algedonic alert backlog. Queries pending escalations, the algedonic event log, and system health, then synthesizes a structured triage briefing with per-alert severity, domain, and recommended action (resolve, dismiss, investigate, escalate-to-human). The operator reviews and acts on each alert, closing the feedback loop. Invoked when the algedonic log approaches its cap or on operator demand."
+description: "Human-in-the-loop review of the regulation system with the operator and the Curator: triage the algedonic alert backlog, then walk the gemba of skill execution — observed outcomes, operator feedback, skill-use issues and queued skill-change proposals — so the operator evaluates skills and decides proposals. The only place skills are evaluated; executing sessions never evaluate themselves. Invoked when the algedonic log approaches its cap, for a skill-performance review, or on operator demand."
 ---
 
 # Algedonic Review
 
-Human-in-the-loop review and triage of the algedonic alert backlog. The algedonic system is the cybernetic regulation loop's pain/pleasure feedback — variety deficits, energy exhaustion, outcome plateaus, grounding violations. When these signals breach threshold, the cybernetics loop escalates alerts to a durable review queue. This skill reviews that queue, synthesizes a triage briefing, and guides the operator through resolving or dismissing each alert.
+Human-in-the-loop review of the regulation system. The algedonic system is the cybernetic regulation loop's pain/pleasure feedback — variety deficits, energy exhaustion, outcome plateaus, grounding violations. When these signals breach threshold, the cybernetics loop escalates alerts to a durable review queue. This skill reviews that queue, synthesizes a triage briefing, and guides the operator through resolving or dismissing each alert.
+
+The review's second half is the **gemba walk** (Lean: 現場, going to the actual place where value is created). Here the actual place is skill execution: the operator and the Curator inspect what skills actually did and the operator evaluates them. **Skill evaluation happens only here.** Evaluation is logically separated from execution (operator ruling 2026-09-24; Goodhart's law — a measure the executor targets stops measuring): executing sessions record outcomes and file proposals under `zk-data/curator/proposals/{skill}/`, but only this review, with the operator, records verdicts (`record_skill_feedback` is registered only in Curator sessions) and accepts or rejects proposals. Review records go to `zk-data/curator/reviews/{date}/`.
 
 ## When to Use
 
@@ -14,12 +16,14 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 - The operator wants to review accumulated algedonic alerts and escalations.
 - The operator wants to triage pending escalations before they accumulate further.
 - The operator wants a structured digest of recent regulation events for operational awareness.
+- The operator wants to review skill performance, evaluate a skill, or decide queued skill-change proposals (the gemba walk).
 
 
 ## When NOT to Use
 
 - A `wiring-closed` or `broken` `loop_reading` — investigate the loop wiring before triage; alerts from a loop that never ticked are not trustworthy input.
 - Autonomous resolution — the skill proposes and the operator decides; it never resolves or dismisses on its own.
+- Evaluating a skill from inside the session that ran it — that is the self-evaluation this review exists to replace; file a proposal instead.
 - Clearing the in-memory log as the goal — `AlgedonicLogApproachingCap` is the trigger, not a condition this skill clears; the log self-evicts when full.
 
 ## Instructions
@@ -55,7 +59,15 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 4. The skill does NOT autonomously resolve or dismiss — the operator must confirm each decision.
 5. Every resolve/dismiss verdict carries evidence: the resolution note must cite the observation that settles the alert (a reading taken, a log line, a metric re-checked). A verdict with nothing attached is a laundering UI pointed at the regulation loop — it costs the loop a correction, so it must cost the reviewer an observation. If the operator cannot name the evidence, the recommended action is `investigate`, not `resolve`.
 
-### VERIFY — Confirm backlog cleared (step 5)
+### GEMBA WALK — Skill evaluation with the operator (steps 5–7)
+
+Runs after alert triage, or alone when the operator asks for a skill review. The PDCA loop here is the operator's: the Curator senses and briefs, the operator checks and acts.
+
+5. **Sense (go and see).** Call `reg_query` with `namespace: "reg.skill"` over the review window (default 7 days) for activation outcomes and operator-feedback history; `curator_memory_recall` for each `skill_use_issue:<skill>` entity that appears (or `focus_skill`); and list files under `~/Documents/zk-data/curator/proposals/` via `terminal` (`find … -name '*.json'`), reading each proposal. A failed or empty channel is a gap to report, never a healthy reading. Activation success means the skill body loaded; it is not evidence of good work.
+6. **Brief.** Render `algedonic-review/gemba-walk-briefing` with `outcome_records`, `feedback_records`, `issue_reports`, `proposals` and optional `focus_skill`. Present the per-skill table (activations, feedback, issues, health, evidence) and each proposal with its claimed benefit, observed evidence and missing evidence. Self-assessments inside a proposal are claims, not evidence. Close by asking the operator for decisions.
+7. **Record the operator's verdicts.** Wait for the operator's actual decisions; never infer them. Render `algedonic-review/record-skill-verdicts` with the operator's words verbatim, the briefing and today's date. Execute each planned `record_skill_feedback` call and keep its receipt. Write the review record (decisions + receipts) to `~/Documents/zk-data/curator/reviews/{date}/gemba-walk.json` via `terminal`, and move each decided proposal into that review folder under `proposals/` with its disposition, so `curator/proposals/` holds only undecided proposals. An accepted proposal authorizes its change; making the change and measuring it afterwards is ordinary work whose outcome returns to the next review. If the operator decides nothing, record the briefing and state that no verdicts were recorded.
+
+### VERIFY — Confirm backlog cleared (step 8)
 
 1. After executing any planned calls, collect their real success/error receipts and re-query `curator_escalations`. If the re-query fails, the remaining backlog is unknown; never infer clearance from a planned call or a missing response. Skip re-query when no calls were made.
 2. Render `algedonic-review/verify-cleared` with `decisions` as an array of `{id, tool, success, response, error}` built from actual MCP responses (not the planned call list), plus the post-query response. Report confirmed resolutions, dismissals, failures and what remains pending. Without decisions, report no actions taken; do not imply the operator approved a call.
@@ -69,13 +81,16 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 | `present-triage.j2` | Render the triage briefing as a conversational summary with markdown tables, opening with the alert log cap status. |
 | `execute-decisions.j2` | Produce the structured resolve/dismiss call list from the operator's decisions. |
 | `verify-cleared.j2` | Summarize what was resolved, dismissed, and what remains pending. |
+| `gemba-walk-briefing.j2` | Per-skill gemba-walk briefing from observed outcomes, operator feedback, skill-use issues and queued proposals, with evidence and health — no verdicts. |
+| `record-skill-verdicts.j2` | Plan `record_skill_feedback` calls and proposal dispositions from the operator's explicit decisions only, refusing any verdict without a cited observation. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `algedonic-review/triage-briefing`) and a context object with the required variables.
 
 ## Constraints
 
 - All templates run at `visibility: Public`.
-- Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT autonomously resolve or dismiss alerts.
+- Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT autonomously resolve or dismiss alerts, record a skill verdict, or accept a proposal.
+- Skill evaluation belongs to this review alone. Every verdict and disposition carries the operator's stated reason and the observation behind it; with no observation, the recommended action is to investigate.
 - Ground every claim in the raw alert data. Do not fabricate alerts or severities not present in the inputs.
 - A successful empty alert list means zero pending alerts. Failed, missing, and empty-success responses are different states; never silently substitute one for another.
 - The in-memory algedonic log is a capped ring buffer (default 200 entries). The skill reviews the durable escalation queue, not the in-memory log — the in-memory log self-evicts when full. The `AlgedonicLogApproachingCap` signal is the trigger for running this skill, not a condition the skill itself clears.
@@ -87,3 +102,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Ashby's Law of Requisite Variety — the alert backlog is the variety the regulator could not absorb autonomously; human review is the external variety amplifier.
 - Conant-Ashby theorem — "every good regulator of a system must be a model of that system." The triage briefing is the operator's model of the regulation system's state.
 - Toyota Andon cord — algedonic alerts are the digital Andon; this skill is the structured response (not just acknowledgment).
+- Gemba walk (Lean Enterprise Institute lexicon) — managers go to the actual place, observe the work, and ask questions; here, the operator and the Curator observe recorded skill execution before judging it.
+- Goodhart's law (Wikidata Q2575082) — the reason evaluation is separated from the executing session.
