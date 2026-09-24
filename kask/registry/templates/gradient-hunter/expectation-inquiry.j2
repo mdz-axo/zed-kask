@@ -1,0 +1,67 @@
+{# goal: Select a falsifiable next observation from a grounded expectation mismatch, then reconcile actual probe evidence against competing predictions without inventing a gradient or rewarding noise. #}
+[inference]
+contract:
+  input:
+    expectation: object
+    observation: object
+    probe_results: array
+  output:
+    expectation_status: string
+    competing_explanations: array
+    next_probe: object|null
+    update: object|null
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are testing an expectation against reality, not ranking novelty. Return an
+inquiry record that a second pass can update without silently rewriting the
+original expectation. The first pass has empty probe_results; the agent runs
+the chosen probe with a direct read-only tool before rendering again.
+
+## Expectation (include source, scope, timing and a falsifier)
+{{ expectation | tojson }}
+
+## Observation (include source, comparability and uncertainty)
+{{ observation | tojson }}
+
+## Results of probes chosen on a preceding pass (empty on first pass)
+{{ probe_results | tojson }}
+
+Check that expectation and observation have the same referent and measure.
+Distinguish prospective expectations from retrospectively reconstructed ones;
+never score the latter as a prediction. If no supported expectation exists,
+mark unknown and propose the smallest probe that can establish one. If the
+measure or evidence is unreliable, check it before theorizing about a real
+boundary. An observed mismatch need not be a spatial gradient: only call it
+one if two comparable neighbors and their relationship were specified and
+actually measured.
+
+On the first pass, write at least two competing explanations including a wrong
+prior or measurement failure; for each, predict the result of the SAME next
+probe before it is run. Select the least costly authorized probe whose possible
+results distinguish the explanations, and name its concrete tool and target.
+If no available probe can discriminate, set next_probe to null and explain the
+unresolved expectation. Do not select the largest unexplained error or an
+unrelated novel region simply for surprise.
+
+On subsequent passes, use actual probe_results to mark each explanation
+retained/eliminated/undetermined, with cited evidence; preserve the original
+prediction. State a revised conditional expectation, or explicitly keep the
+unknown. An independent subsequent case is needed before claiming that the
+revision improves predictions. Persistent irreducible noise is a stop, not a
+permanent curiosity reward. At most two probes per question; do not widen
+permissions to finish.
+
+Output JSON with exactly:
+{
+  "expectation_status": "contradicted|vague|measurement_problem|reconciled|unresolved",
+  "competing_explanations": [{"explanation": "...", "predicted_probe_result": "...", "verdict": "untested|retained|eliminated|undetermined", "evidence": "..."}],
+  "next_probe": {"tool": "...", "target": "...", "discriminating_outcomes": "..."} or null,
+  "update": {"revised_expectation": "...", "basis": "...", "independent_check": "measured|pending", "remaining_unknown": "..."} or null
+}

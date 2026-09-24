@@ -1,11 +1,11 @@
 ---
 name: gradient-hunter
-description: "Find steep gradients between populated and unpopulated regions of a codebase, telemetry, or test field and investigate the reason. The signal is in the gradient shape and its cause, not in the absence itself."
+description: "Investigate violated or vague expectations by selecting discriminating observations; when neighboring observations form a measured boundary, diagnose the gradient and its cause in code, telemetry, or tests."
 ---
 
 # Gradient Hunter
 
-Find steep gradients between populated and unpopulated regions of a field, and investigate *why* the gradient exists. The signal is in the gradient shape and its cause — not in the absence itself. A desert is only meaningful relative to an expected oasis; a missing test is only interesting if neighboring code has tests; a silent hook is only a bug if sibling hooks log warnings.
+Investigate a disagreement between a grounded expectation and reality, then revise the expectation using the next observation that can distinguish explanations. When neighboring observations actually show a boundary, investigate *why* that gradient exists. A desert is meaningful relative to an expected oasis; a missing test is interesting if neighboring code has tests. A surprising observation is not automatically a gradient.
 
 ## Substrate ontology: non-ergodicity and information storage
 
@@ -17,6 +17,7 @@ The seven surface ontologies (below, in `gradient-shapes.yaml`) describe the *sh
 
 ## When to Use
 
+- **Self-trigger during other work** when a tool result, code path, test outcome, or missing answer conflicts with a prior expectation, or when a consequential expectation is too vague to predict what an observation would show. Say what was expected and why before selecting another probe; do not wait for an explicit audit request.
 - Audit a crate for missing tests, but only where neighboring code has tests (test-coverage gradient)
 - Audit a subsystem for missing telemetry, but only where sibling subsystems emit spans (telemetry cliff)
 - Audit a config for missing failure signals, but only where sibling configs have them (silent-failure asymmetry)
@@ -27,7 +28,7 @@ The seven surface ontologies (below, in `gradient-shapes.yaml`) describe the *sh
 - Any "dog that didn't bark" investigation where you expect data/activity on both sides of a region
 
 Do NOT use for:
-- Pure absence checking with no prior ("does this crate have any tests?" — that's a checklist, not gradient analysis)
+- Pure absence checking with no prior or testable expectation ("does this crate have any tests?" — that's a checklist, not gradient analysis)
 - Positive-space threat hunting (use `bug-hunt`)
 - Reasoning-context ellipses (use `metacognition`)
 - Reproducing a known symptom (use `diagnose` — deserts are asymptomatic until you have a prior)
@@ -51,6 +52,16 @@ Act:    Phase 7 — Loop        → If not converged, re-enter at Phase 1 with r
 ```
 
 Feedback loop closure: convergence emits `next_prior_focus` (consumed by next iteration's Prior); Report emits `lessons_learned` and `pattern_signatures` (consumed by next iteration's Prior and Detect).
+
+### Expectation-led inquiry when no gradient has yet been measured
+
+Use this route **instead of forcing a shape or reason class** when a single observation contradicts an expectation, or the expectation cannot make a discriminating prediction. It also supplies the next probe for the ordinary gradient route.
+
+1. **Commit a checkable expectation.** Before inspecting the target, state the expected observation, source (sibling, convention, principle, model), scope, comparable measure, and what result would contradict it. Render `gradient-hunter/gradient-prior` when an expected field must be constructed. If the discrepancy was noticed first, label the reconstructed expectation `retrospective`; never claim a before-the-fact prediction. If no grounded expectation can be formed, record `unknown` and select a probe to establish one, not a surprise score.
+2. **Sense and compare.** Fetch direct evidence with `grep`/`read_file` or the relevant read-only tool; render `gradient-hunter/gradient-map` when mapping a field. Record observation, source and comparability. An unobserved region is `unmeasured`, not an empty region. A mismatch in units, scope, measurement or authorization is a measurement problem, not yet evidence the world violates the prior.
+3. **Choose a question, not a spectacle.** Render `gradient-hunter/expectation-inquiry` with the expectation and observation. Form at least two live explanations (including a bad prior or bad measurement), each with a differing prediction for an authorized next probe. Pick the smallest probe whose possible outcomes discriminate them; state expected outcomes **before** invoking it. Repeated unexplained noise without learnable structure is not a reason to revisit indefinitely.
+4. **Execute and update.** Run the selected probe with its owner tool, carry its result and provenance into a second rendering of `expectation-inquiry`, and mark each explanation retained/eliminated/undetermined. Update the expected field only where supported; check one independent neighboring or held-out observation when available. If repeated comparable neighbors reveal a boundary, resume the ordinary Detect → Hypothesize → Report route. If not, call it an `expectation_mismatch` or unresolved expectation, not a spatial gradient. Do not reuse the finance-specific `expectations_gap` ontology identity for a general discrepancy.
+5. **Bound and report.** At most two discriminating probes per question. Stop on decisive discrimination, insufficient evidence, unavailable oracle, denied authority, or budget exhaustion. Report the original expectation (prospective or retrospective), mismatch or vagueness, competing predictions, probe result, revised expectation or explicit unknown, and the observation that would change the verdict. Improvement means fewer *independently contradicted* expectations on subsequent cases, not a higher count of surprises; without a subsequent case the benefit is `unverified`. Re-enter at step 1 only if the result changes the prior and another authorized probe remains.
 
 ## Improvement Measure
 
@@ -79,9 +90,9 @@ Composite of two sub-metrics (weighted 0.5/0.5):
 
 ### Composition Protocol
 
-1. **Prior first** — always start with gradient-prior; implicit priors produce implicit, unfalsifiable gradients.
+1. **Prior first** — name the source and falsifier; render `gradient-prior` for a field prior, or use the expectation-led route above for a single mismatch (mark retrospectively constructed priors).
 2. **Map with matching granularity** — granularity mismatch produces false gradients.
-3. **Detect with fractal check** — the fractal recurrence check is mandatory, not optional.
+3. **Detect with fractal check** — required for a measured gradient; do not impose a gradient shape or fractal recurrence on an isolated expectation mismatch.
 4. **Hypothesize with multiple reasons** — at least 2-3 hypotheses per gradient from different reason classes. Do not collapse to the first match.
 5. **Delegate when needed** — topology gradients → `grep` + manual analysis; no sibling/convention prior → `pragmatic-cybernetics`; non-obvious discrimination → `falsifiability`; prior may be wrong → `metacognition`.
 6. **Report with feedback** — emit `lessons_learned` and `pattern_signatures` for the next iteration.
@@ -103,6 +114,7 @@ Key non-obvious rules the taxonomy encodes:
 
 | Template | Purpose |
 |----------|---------|
+| `expectation-inquiry.j2` | Given a sourced expectation and comparable observation (or an explicitly unknown prediction), choose a discriminating next probe, then on re-render reconcile its actual result and revise the expectation or mark it unresolved. No gradient shape is inferred from one observation. |
 | `gradient-prior.j2` | Build a prior model of the expected field. Without a prior, you can only detect absences, not gradients. The prior comes from one of three sources in order of preference: sibling prior (a populated region structurally similar to the target), convention prior (a documented convention like a .rules trap), or principle prior (a design principle). Records source, scope, and confidence. Delegates to pragmatic-cybernetics for variety engineering when no sibling or convention prior is available. |
 | `gradient-map.j2` | Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to grep + manual code analysis for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). |
 | `gradient-detect.j2` | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence (does this shape appear at other scales or in other domains?), populated side, desert side, magnitude. The fractal recurrence check is mandatory — a shape that recurs at multiple scales/domains is the system's characteristic pattern. References gradient-shapes.yaml for the shape taxonomy. |
@@ -113,13 +125,15 @@ Key non-obvious rules the taxonomy encodes:
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-hunter/gradient-prior`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `gradient-prior.j2`: `target_region`,`field_type` `prior_iteration`
+- `gradient-prior.j2`: `target_region`, `field_type`, `prior_iteration`
+- `expectation-inquiry.j2`: `expectation`, `observation`, `probe_results` (empty array on first pass; carry actual results on re-render)
 
 
 ## Constraints
 
 - All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.
-- The prior must be explicit before gradient detection.
+- The prior must be explicit before gradient detection. A reconstructed prior is labeled retrospective, not scored as a pre-registered forecast.
+- Do not claim a spatial gradient without measured neighbors and an explicit comparison rule; do not claim learnability from prediction error alone.
 - The fractal recurrence check is mandatory.
 - Do not collapse the eight ontologies into one — each shape implies a different intervention.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

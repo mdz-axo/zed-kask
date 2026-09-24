@@ -4219,10 +4219,10 @@ impl Thread {
         }
 
         // Tool retry cap — hard enforcement of the agent-loop retry limit.
-        // After 3 failures, warn the agent to switch tools (with Bayesian probability).
-        // After 5, hard-refuse. Two trackers: per-input (identical retries) and
-        // per-tool consecutive (trivially different inputs, same tool). Prevents
-        // the zero-gain retry death spiral (Ashby variety-deficit).
+        // After 3 failed assistant messages, warn the agent to switch tools.
+        // After 5, hard-refuse. Sibling calls in one message count once in the
+        // per-input and per-tool trackers, preserving a corrected next attempt
+        // while preventing the zero-gain retry death spiral (Ashby variety-deficit).
         let tool_name_str = tool_use.name.as_ref();
         // zed-kask: .rules — tool retry death spiral prevention
         let retry_warning: Option<String> = match self.kask.check_tool_retry(tool_name_str, &input)

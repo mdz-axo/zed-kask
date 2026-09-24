@@ -19,8 +19,9 @@
 //! A successful call resets both trackers for that tool/input.
 //!
 //! **Bayesian probability:** with a uniform prior on the success rate, after N
-//! consecutive failures the posterior predictive probability of success on the
-//! next attempt is `1/(N+2)`. After 3 failures: ~20%. After 4: ~17%. This gives
+//! failed assistant messages (or N sequential calls without message identity)
+//! the posterior predictive probability of success on the next attempt is
+//! `1/(N+2)`. After 3 failed messages: ~20%. After 4: ~17%. This gives
 //! the agent a quantitative signal, not just "try again."
 
 use std::collections::HashMap;

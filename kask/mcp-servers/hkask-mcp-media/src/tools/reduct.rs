@@ -31,6 +31,28 @@ fn reel_detail_url(project_id: &str, reel_id: &str) -> Result<String, McpToolErr
     Ok(format!("{API_ROOT}project/{project_id}/reel/{reel_id}"))
 }
 
+fn reel_create_url(root: &str, project_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    Ok(format!("{root}project/{project_id}/reel"))
+}
+
+fn reel_block_url(
+    root: &str,
+    project_id: &str,
+    reel_id: &str,
+    block_id: Option<&str>,
+) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("reel_id", reel_id)?;
+    let mut url = format!("{root}project/{project_id}/reel/{reel_id}/block");
+    if let Some(block_id) = block_id {
+        validate_reduct_id("block_id", block_id)?;
+        url.push('/');
+        url.push_str(block_id);
+    }
+    Ok(url)
+}
+
 fn recording_read_url(
     project_id: &str,
     recording_id: &str,
@@ -103,6 +125,60 @@ fn validate_indexed_upload_bytes(
         ));
     }
     Ok(())
+}
+
+fn parse_reel_create_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct reel creation may have succeeded but returned invalid JSON; inspect reels before retrying")
+    })?;
+    let id = response.get("reel").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct reel creation may have succeeded but omitted reel ID; inspect reels before retrying")
+    })?;
+    validate_reduct_id("reel_id", id).map_err(|_| {
+        McpToolError::failed_precondition(
+            "Reduct reel creation returned an unusable ID; inspect reels before retrying",
+        )
+    })?;
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "reel_id": id, "state": "submitted; inspect reel detail"}),
+    )
+}
+
+fn parse_reel_block_create_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct block creation may have succeeded but returned invalid JSON; inspect reel before retrying")
+    })?;
+    let id = response.get("block").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct block creation may have succeeded but omitted block ID; inspect reel before retrying")
+    })?;
+    validate_reduct_id("block_id", id).map_err(|_| {
+        McpToolError::failed_precondition(
+            "Reduct block creation returned an unusable ID; inspect reel before retrying",
+        )
+    })?;
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "block_id": id, "state": "submitted; inspect reel detail"}),
+    )
+}
+
+fn parse_reel_block_edit_response(
+    body: &[u8],
+    block_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct block edit may have succeeded but returned invalid JSON; inspect reel before retrying")
+    })?;
+    if response
+        .get(block_id)
+        .is_none_or(serde_json::Value::is_null)
+    {
+        return Err(McpToolError::failed_precondition(
+            "Reduct block edit may have succeeded but omitted the block acknowledgement; inspect reel before retrying",
+        ));
+    }
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "block_id": block_id, "state": "submitted; inspect reel detail"}),
+    )
 }
 
 fn parse_media_upload_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
@@ -496,9 +572,152 @@ async fn reel_detail(
     reel_id: &str,
 ) -> Result<serde_json::Value, McpToolError> {
     let url = reel_detail_url(project_id, reel_id)?;
-    let response = read_response(key, &url, "reel detail").await?;
+    reel_detail_at(key, &url, reel_id).await
+}
+
+async fn reel_detail_at(
+    key: Option<&str>,
+    url: &str,
+    reel_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let response = read_response(key, url, "reel detail").await?;
     let body = read_bounded(response, 4 * 1024 * 1024).await?;
     parse_reel_detail(&body, reel_id)
+}
+
+fn validate_reel_text(value: &str, name: &str) -> Result<(), McpToolError> {
+    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+        return Err(McpToolError::invalid_argument(format!(
+            "{name} must be nonempty, at most 512 bytes, and contain no control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_reel_range(order: f64, start: f64, end: f64) -> Result<(), McpToolError> {
+    if !order.is_finite() || !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+        return Err(McpToolError::invalid_argument(
+            "reel block order must be finite and start/end must be finite, nonnegative, increasing seconds",
+        ));
+    }
+    Ok(())
+}
+
+async fn reel_post_body(
+    key: Option<&str>,
+    url: &str,
+    payload: serde_json::Value,
+    operation: &str,
+) -> Result<Vec<u8>, McpToolError> {
+    let response = post_json_response(key, url, payload, operation).await?;
+    read_bounded(response, 64 * 1024).await.map_err(|error| {
+        McpToolError::failed_precondition(format!(
+            "Reduct {operation} may have succeeded, but its acknowledgement was unreadable: {error}; inspect before retrying"
+        ))
+    })
+}
+
+async fn create_reel(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    title: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_create_url(root, project_id)?;
+    validate_reel_text(title, "reel title")?;
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::json!({"title": title}),
+        "reel creation",
+    )
+    .await?;
+    parse_reel_create_response(&body)
+}
+
+async fn create_reel_clip(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    reel_id: &str,
+    recording_id: &str,
+    order: f64,
+    start: f64,
+    end: f64,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_block_url(root, project_id, reel_id, None)?;
+    validate_reduct_id("recording_id", recording_id)?;
+    validate_reel_range(order, start, end)?;
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::json!({
+            "type": "doc-range", "order": order, "recording": recording_id,
+            "start": start, "end": end, "strikethrough": {}
+        }),
+        "reel clip creation",
+    )
+    .await?;
+    parse_reel_block_create_response(&body)
+}
+
+async fn create_reel_title(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    reel_id: &str,
+    order: f64,
+    duration: f64,
+    title: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_block_url(root, project_id, reel_id, None)?;
+    validate_reel_text(title, "title card text")?;
+    if !order.is_finite() || !duration.is_finite() || duration <= 0.0 {
+        return Err(McpToolError::invalid_argument(
+            "title card order must be finite and duration must be positive finite seconds",
+        ));
+    }
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::json!({
+            "type": "title", "order": order, "duration": duration, "title": title
+        }),
+        "reel title card creation",
+    )
+    .await?;
+    parse_reel_block_create_response(&body)
+}
+
+async fn edit_reel_clip_range(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    reel_id: &str,
+    block_id: &str,
+    start: f64,
+    end: f64,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_block_url(root, project_id, reel_id, Some(block_id))?;
+    validate_reel_range(0.0, start, end)?;
+    let detail_url = format!("{root}project/{project_id}/reel/{reel_id}");
+    let current = reel_detail_at(key, &detail_url, reel_id).await?;
+    let block = current["blocks"].get(block_id).ok_or_else(|| {
+        McpToolError::not_found("Reduct reel detail does not contain the requested block")
+    })?;
+    if block.get("type").and_then(serde_json::Value::as_str) != Some("doc-range") {
+        return Err(McpToolError::failed_precondition(
+            "Only doc-range blocks can have their clip range edited",
+        ));
+    }
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::json!({"start": start, "end": end}),
+        "reel clip edit",
+    )
+    .await?;
+    parse_reel_block_edit_response(&body, block_id)
 }
 
 async fn create_recording(
@@ -654,6 +873,41 @@ struct ReductCreateRecordingRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductCreateReelRequest {
+    project_id: String,
+    title: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductCreateReelClipRequest {
+    project_id: String,
+    reel_id: String,
+    recording_id: String,
+    /// Position among the reel's blocks (Reduct accepts a finite float or integer).
+    order: f64,
+    start: f64,
+    end: f64,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductCreateReelTitleRequest {
+    project_id: String,
+    reel_id: String,
+    order: f64,
+    duration: f64,
+    title: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductEditReelClipRequest {
+    project_id: String,
+    reel_id: String,
+    block_id: String,
+    start: f64,
+    end: f64,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ReductImportMediaRequest {
     project_id: String,
     recording_id: String,
@@ -766,6 +1020,113 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "reduct_reel_detail", async {
             reel_detail(self.reduct_api_key.as_deref(), &project_id, &reel_id).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create an empty Reduct cloud reel with a title in an existing project. Returns its provider ID as submitted; read reel detail before composing. Never creates a local educt reel."
+    )]
+    pub async fn reduct_create_reel(
+        &self,
+        Parameters(ReductCreateReelRequest { project_id, title }): Parameters<
+            ReductCreateReelRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_create_reel", async {
+            create_reel(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &title,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Add an ordered doc-range clip from a Reduct recording to an existing cloud reel. start/end are seconds; returns a submitted block ID. Read reel detail to verify composition; does not edit local educt."
+    )]
+    pub async fn reduct_add_reel_clip(
+        &self,
+        Parameters(ReductCreateReelClipRequest {
+            project_id,
+            reel_id,
+            recording_id,
+            order,
+            start,
+            end,
+        }): Parameters<ReductCreateReelClipRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_add_reel_clip", async {
+            create_reel_clip(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &reel_id,
+                &recording_id,
+                order,
+                start,
+                end,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Add an ordered text title card to an existing Reduct cloud reel. Duration is in seconds; returns a submitted block ID. Read reel detail to verify composition."
+    )]
+    pub async fn reduct_add_reel_title(
+        &self,
+        Parameters(ReductCreateReelTitleRequest {
+            project_id,
+            reel_id,
+            order,
+            duration,
+            title,
+        }): Parameters<ReductCreateReelTitleRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_add_reel_title", async {
+            create_reel_title(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &reel_id,
+                order,
+                duration,
+                &title,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Edit the start/end seconds of an existing Reduct cloud doc-range block. Reads reel detail first to refuse a title block. POST may overwrite those fields; inspect reel detail after submission and before retrying."
+    )]
+    pub async fn reduct_edit_reel_clip_range(
+        &self,
+        Parameters(ReductEditReelClipRequest {
+            project_id,
+            reel_id,
+            block_id,
+            start,
+            end,
+        }): Parameters<ReductEditReelClipRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_edit_reel_clip_range", async {
+            edit_reel_clip_range(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &reel_id,
+                &block_id,
+                start,
+                end,
+            )
+            .await
         })
         .await
     }
@@ -962,6 +1323,267 @@ mod tests {
         assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
         assert!(error.message.contains("REDUCT_API_KEY"));
         assert!(connection_status(Some("  ")).is_err());
+    }
+
+    // This fixture exercises the production URL builder, request body, header and
+    // acknowledgement parser together without sending any cloud mutation.
+    async fn reel_post_fixture<F, Fut>(
+        expected_path: &str,
+        expected_body: serde_json::Value,
+        response_body: &str,
+        call: F,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: std::future::Future<Output = Result<serde_json::Value, McpToolError>>,
+    {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let root = format!("http://{}/", listener.local_addr()?);
+        let response_body = response_body.to_string();
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut request = String::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other(
+                        "incomplete or oversized fixture request",
+                    ));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                if request.split_once("\r\n\r\n").is_some_and(|(_, body)| {
+                    serde_json::from_str::<serde_json::Value>(body).is_ok()
+                }) {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            )?;
+            Ok(request)
+        });
+        let result = call(root).await?;
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(request.starts_with(&format!("POST {expected_path} HTTP/1.1")));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .ok_or("missing fixture request body")?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(body)?,
+            expected_body
+        );
+        assert!(!body.contains("fixture-key"));
+        Ok(result)
+    }
+
+    #[tokio::test]
+    async fn documented_reel_writes_send_only_the_pdf_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reel = reel_post_fixture(
+            "/project/p_fixture/reel",
+            serde_json::json!({"title": "Fixture reel"}),
+            r#"{"reel":"reel_fixture"}"#,
+            |root| async move {
+                create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel").await
+            },
+        )
+        .await?;
+        assert_eq!(reel["reel_id"], "reel_fixture");
+        let clip = reel_post_fixture(
+            "/project/p_fixture/reel/reel_fixture/block",
+            serde_json::json!({"type":"doc-range","order":1.0,"recording":"recording_fixture","start":2.5,"end":4.0,"strikethrough":{}}),
+            r#"{"block":"block_fixture"}"#,
+            |root| async move { create_reel_clip(Some("fixture-key"), &root, "p_fixture", "reel_fixture", "recording_fixture", 1.0, 2.5, 4.0).await },
+        ).await?;
+        assert_eq!(clip["block_id"], "block_fixture");
+        let title = reel_post_fixture(
+            "/project/p_fixture/reel/reel_fixture/block",
+            serde_json::json!({"type":"title","order":2.0,"duration":3.0,"title":"Fixture card"}),
+            r#"{"block":"title_fixture"}"#,
+            |root| async move {
+                create_reel_title(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "reel_fixture",
+                    2.0,
+                    3.0,
+                    "Fixture card",
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(title["block_id"], "title_fixture");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reel_clip_edit_reads_type_then_posts_only_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let root = format!("http://{}/", listener.local_addr()?);
+        let peer = std::thread::spawn(move || -> std::io::Result<(String, String)> {
+            let (mut get, _) = listener.accept()?;
+            get.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut buffer = [0_u8; 4096];
+            let n = get.read(&mut buffer)?;
+            let get_request = String::from_utf8_lossy(&buffer[..n]).to_string();
+            let body = r#"{"reel_fixture":{"title":"Fixture","block":{"clip_fixture":{"type":"doc-range","start":1.0,"end":2.0}}}}"#;
+            write!(
+                get,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+            drop(get);
+            let (mut post, _) = listener.accept()?;
+            post.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut request = String::new();
+            loop {
+                let n = post.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete clip edit fixture"));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                if request.split_once("\r\n\r\n").is_some_and(|(_, body)| {
+                    serde_json::from_str::<serde_json::Value>(body).is_ok()
+                }) {
+                    break;
+                }
+            }
+            let ack = r#"{"clip_fixture":{"start":1.5,"end":2.5}}"#;
+            write!(
+                post,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ack}",
+                ack.len()
+            )?;
+            Ok((get_request, request))
+        });
+        let result = edit_reel_clip_range(
+            Some("fixture-key"),
+            &root,
+            "p_fixture",
+            "reel_fixture",
+            "clip_fixture",
+            1.5,
+            2.5,
+        )
+        .await?;
+        assert_eq!(result["state"], "submitted; inspect reel detail");
+        let (get, post) = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(get.starts_with("GET /project/p_fixture/reel/reel_fixture HTTP/1.1"));
+        assert!(
+            post.starts_with(
+                "POST /project/p_fixture/reel/reel_fixture/block/clip_fixture HTTP/1.1"
+            )
+        );
+        assert!(
+            post.to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        let (_, body) = post.split_once("\r\n\r\n").ok_or("missing edit body")?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(body)?,
+            serde_json::json!({"start":1.5,"end":2.5})
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reel_post_http_error_is_classified_and_never_reported_as_created() -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let root = format!("http://{}/", listener.local_addr()?);
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut buffer = [0_u8; 4096];
+            let mut request = String::new();
+            loop {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 { return Err(std::io::Error::other("incomplete error fixture")); }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                if request.contains("\r\n\r\n") && request.contains("Fixture reel") { break; }
+            }
+            write!(stream, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+            Ok(request)
+        });
+        let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel").await.expect_err("provider refusal is not a created reel");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+        let request = peer.join().map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(request.starts_with("POST /project/p_fixture/reel HTTP/1.1"));
+        assert!(request.to_ascii_lowercase().contains("x-auth-key: fixture-key"));
+        Ok(())
+    }
+
+    #[test]
+    fn reel_writes_reject_bad_ranges_ids_and_ambiguous_acknowledgements() -> Result<(), McpToolError> {
+    {
+        assert_eq!(
+            reel_create_url(API_ROOT, "p_fixture")?,
+            format!("{API_ROOT}project/p_fixture/reel")
+        );
+        assert_eq!(
+            reel_block_url(API_ROOT, "p_fixture", "reel_fixture", Some("b_fixture"))?,
+            format!("{API_ROOT}project/p_fixture/reel/reel_fixture/block/b_fixture")
+        );
+        assert!(reel_block_url(API_ROOT, "p/invalid", "r", None).is_err());
+        assert!(validate_reel_range(1.0, 4.0, 2.0).is_err());
+        assert!(validate_reel_range(f64::NAN, 0.0, 2.0).is_err());
+        assert!(validate_reel_range(1.0, f64::INFINITY, 2.0).is_err());
+        assert!(parse_reel_create_response(br#"{"reel":"r_fixture"}"#).is_ok());
+        for bad in [b"not json".as_slice(), br#"{}"#, br#"{"reel":"../bad"}"#] {
+            assert!(
+                parse_reel_create_response(bad)
+                    .expect_err("uncertain reel acknowledgement")
+                    .message
+                    .contains("inspect")
+            );
+        }
+        assert!(
+            parse_reel_block_create_response(br#"{}"#)
+                .expect_err("uncertain block acknowledgement")
+                .message
+                .contains("inspect")
+        );
+        assert!(
+            parse_reel_block_edit_response(br#"{}"#, "b_fixture")
+                .expect_err("uncertain edit acknowledgement")
+                .message
+                .contains("inspect")
+        );
+        assert_eq!(
+            parse_reel_block_edit_response(br#"{"b_fixture":{"start":2.0}}"#, "b_fixture")?["state"],
+            "submitted; inspect reel detail"
+        );
+        assert_eq!(
+            classify_reduct_status(reqwest::StatusCode::BAD_REQUEST, "reel creation")
+                .expect_err("400 must fail")
+                .kind,
+            hkask_types::McpErrorKind::InvalidArgument
+        );
+        assert_eq!(
+            classify_reduct_status(reqwest::StatusCode::FORBIDDEN, "reel creation")
+                .expect_err("403 must fail")
+                .kind,
+            hkask_types::McpErrorKind::PermissionDenied
+        );
+        Ok(())
     }
 
     #[test]
