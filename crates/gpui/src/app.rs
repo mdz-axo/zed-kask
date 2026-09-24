@@ -2798,7 +2798,7 @@ impl App {
         NOTIFY_CALLER_PROBE.with(|probe| {
             let mut probe = probe.borrow_mut();
             *probe.1.entry((caller.file(), caller.line())).or_default() += 1;
-            if probe.0.elapsed() >= std::time::Duration::from_secs(2) {
+            if probe.0.elapsed() >= std::time::Duration::from_secs(5) {
                 log::warn!(
                     "[DIAG-thread-perf] gpui notify callers={:?} interval_ms={}",
                     probe.1,

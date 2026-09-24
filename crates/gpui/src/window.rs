@@ -3414,7 +3414,7 @@ impl Window {
             let mut probe = probe.borrow_mut();
             probe.1 += 1;
             probe.2 += diagnostic_started.elapsed();
-            if probe.0.elapsed() >= Duration::from_secs(2) {
+            if probe.0.elapsed() >= Duration::from_secs(5) {
                 log::warn!(
                     "[DIAG-thread-perf] gpui draw frames={} ms={} interval_ms={}",
                     probe.1,

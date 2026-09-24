@@ -226,7 +226,7 @@ impl<'a, T: 'static> Context<'a, T> {
         NOTIFY_PROBE.with(|probe| {
             let mut probe = probe.borrow_mut();
             *probe.1.entry(std::any::type_name::<T>()).or_default() += 1;
-            if probe.0.elapsed() >= std::time::Duration::from_secs(2) {
+            if probe.0.elapsed() >= std::time::Duration::from_secs(5) {
                 log::warn!(
                     "[DIAG-thread-perf] gpui context notify={:?} interval_ms={}",
                     probe.1,

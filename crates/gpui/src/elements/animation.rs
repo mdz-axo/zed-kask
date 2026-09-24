@@ -479,7 +479,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                             let mut probe = probe.borrow_mut();
                             let id = format!("{:?} type={}", self.id, std::any::type_name::<E>());
                             *probe.1.entry(id).or_default() += 1;
-                            if probe.0.elapsed() >= Duration::from_secs(2) {
+                            if probe.0.elapsed() >= Duration::from_secs(5) {
                                 log::warn!("[DIAG-thread-perf] gpui animation elements={:?} interval_ms={}", probe.1, probe.0.elapsed().as_millis());
                                 *probe = (std::time::Instant::now(), HashMap::new());
                             }

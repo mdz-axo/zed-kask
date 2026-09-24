@@ -660,6 +660,8 @@ pub struct ConversationView {
     /// Shared with the child [`ThreadView`] when one is constructed.
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
     request_elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
+    // [DIAG-thread-perf] temporary: open start, connected-at, first-frame reported.
+    diag_open: Option<(Instant, Option<Instant>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -988,6 +990,7 @@ impl ConversationView {
             draft_prompt_persist_task: None,
             code_span_resolver,
             request_elicitation_form_states: HashMap::default(),
+            diag_open: Some((Instant::now(), None)),
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -1011,6 +1014,11 @@ impl ConversationView {
         }
 
         self.server_state = state;
+        if matches!(&self.server_state, ServerState::Connected(_))
+            && let Some((_, connected_at @ None)) = &mut self.diag_open
+        {
+            *connected_at = Some(Instant::now());
+        }
         self.publish_injector(cx);
         cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
@@ -3520,6 +3528,23 @@ impl ConversationView {
 
 impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some((started, Some(connected_at))) = self.diag_open {
+            self.diag_open = None;
+            let render_started = Instant::now();
+            let thread_id = self.thread_id;
+            let entries = self
+                .active_thread()
+                .map(|view| view.read(cx).thread.read(cx).entries().len())
+                .unwrap_or_default();
+            window.on_next_frame(move |_, _| {
+                log::warn!(
+                    "[DIAG-thread-perf] thread open thread_id={thread_id:?} entries={entries} load_ms={} connected_to_render_ms={} first_frame_ms={}",
+                    connected_at.duration_since(started).as_millis(),
+                    render_started.duration_since(connected_at).as_millis(),
+                    started.elapsed().as_millis()
+                );
+            });
+        }
         self.sync_request_elicitation_states(window, cx);
         let request_elicitation_connection = self.request_elicitation_connection();
         let active_thread_renders_request_elicitations =

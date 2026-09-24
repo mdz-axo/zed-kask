@@ -7,6 +7,42 @@ use std::{
     time::{Duration, Instant},
 };
 
+// [DIAG-thread-perf] temporary: foreground runnable time by spawn location.
+fn record_foreground_runnable_probe(
+    location: &'static std::panic::Location<'static>,
+    elapsed: Duration,
+) {
+    thread_local! {
+        static RUNNABLE_PROBE: RefCell<(Instant, HashMap<(&'static str, u32), (u64, Duration)>)> =
+            RefCell::new((Instant::now(), HashMap::default()));
+    }
+    RUNNABLE_PROBE.with(|probe| {
+        let mut probe = probe.borrow_mut();
+        let entry = probe.1.entry((location.file(), location.line())).or_default();
+        entry.0 += 1;
+        entry.1 += elapsed;
+        if probe.0.elapsed() >= Duration::from_secs(5) {
+            let total: Duration = probe.1.values().map(|(_, time)| *time).sum();
+            let count: u64 = probe.1.values().map(|(runs, _)| *runs).sum();
+            let mut top: Vec<_> = probe.1.iter().map(|(k, v)| (*k, *v)).collect();
+            top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+            top.truncate(12);
+            let top: Vec<String> = top
+                .into_iter()
+                .map(|((file, line), (runs, time))| {
+                    format!("{file}:{line} runs={runs} ms={}", time.as_millis())
+                })
+                .collect();
+            log::warn!(
+                "[DIAG-thread-perf] gpui foreground runnables count={count} ms={} interval_ms={} top={top:?}",
+                total.as_millis(),
+                probe.0.elapsed().as_millis()
+            );
+            *probe = (Instant::now(), HashMap::default());
+        }
+    });
+}
+
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
@@ -886,7 +922,12 @@ impl WaylandClient {
                             let location = runnable.metadata().location;
                             let spawned = runnable.metadata().spawned;
                             profiler::update_running_task(spawned, location);
+                            let diagnostic_started = Instant::now();
                             runnable.run();
+                            record_foreground_runnable_probe(
+                                location,
+                                diagnostic_started.elapsed(),
+                            );
                             profiler::save_task_timing();
                         });
                     }
