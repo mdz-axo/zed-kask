@@ -559,10 +559,17 @@ fn parse_reel_detail(body: &[u8], reel_id: &str) -> Result<serde_json::Value, Mc
         }
     };
     redact_share_tokens(&mut blocks);
+    // The v3 Reel GET contract omits `publish`; only a nonempty share token
+    // establishes publication. Never return the token itself.
+    let publication_state = match reel.get("share_token") {
+        None => "unpublished",
+        Some(serde_json::Value::String(token)) if !token.is_empty() => "published",
+        Some(_) => "undetermined",
+    };
     Ok(serde_json::json!({
         "source": "reduct_cloud", "reel_id": reel_id, "title": title,
         "block_state": if blocks.is_null() { "not_present_in_provider_response" } else { "provider_map" },
-        "blocks": blocks, "share_tokens": "redacted"
+        "blocks": blocks, "share_tokens": "redacted", "publication_state": publication_state
     }))
 }
 
@@ -1009,7 +1016,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Read an existing Reduct reel's title and provider-native blocks (up to 4 MiB). Recursively removes share_token fields; never publishes, changes, or renders the reel."
+        description = "Read an existing Reduct reel's title, provider-native blocks and publication state (up to 4 MiB). Removes all share_token fields; never publishes, changes, or renders the reel."
     )]
     pub async fn reduct_reel_detail(
         &self,
@@ -1727,12 +1734,17 @@ mod tests {
         let result = parse_reel_detail(body, "reel1")?;
         assert_eq!(result["title"], "Clip reel");
         assert_eq!(result["blocks"]["b1"]["type"], "doc-range");
+        assert_eq!(result["publication_state"], "published");
         assert!(!result.to_string().contains("private-token"));
         assert!(!result.to_string().contains("nested-private"));
         assert!(parse_reel_detail(br#"{"wrong":{"title":"X"}}"#, "reel1").is_err());
         let empty = parse_reel_detail(br#"{"reel1":{"title":"New"}}"#, "reel1")?;
         assert_eq!(empty["block_state"], "not_present_in_provider_response");
+        assert_eq!(empty["publication_state"], "unpublished");
         assert!(empty["blocks"].is_null());
+        let ambiguous =
+            parse_reel_detail(br#"{"reel1":{"title":"New","share_token":null}}"#, "reel1")?;
+        assert_eq!(ambiguous["publication_state"], "undetermined");
         Ok(())
     }
 

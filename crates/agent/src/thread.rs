@@ -5365,10 +5365,9 @@ impl Thread {
                 filtered
             };
 
-        // zed-kask: D44 — count MCP tools registered but hidden from this
-        // session's selection by the filter layers (agent-profile allowlists,
-        // per-tab server scope). Without this
-        // count in the prompt, the model reads the filtered list as the
+        // zed-kask: D44 — count MCP tools registered but absent from this
+        // turn's available set. Without this count in the prompt, the model
+        // reads the filtered list as the
         // complete toolset and reports registered tools as "unavailable"
         // (observed live: an agent denied `web_ping` existed because a filter
         // layer hadn't selected it). Registry names not present in
@@ -5891,9 +5890,7 @@ fn system_prompt_digest(
 }
 
 /// zed-kask: D44 — count registered MCP tools absent from this session's
-/// `available_tools`. The filter layers that hide tools (agent-profile
-/// allowlists, per-tab server scope) run in
-/// `enabled_tools`, and the system prompt renders this count as a visibility
+/// `available_tools`. The system prompt renders this count as a visibility
 /// marker so the model knows the visible list is a selection, not the whole
 /// surface. Pinned by `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
 fn count_hidden_mcp_tools<'a>(

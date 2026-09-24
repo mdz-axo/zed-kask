@@ -270,7 +270,10 @@ unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
 transcript, and provider-native bounded highlight map, respectively.
 `reduct_reels_snapshot` projects bounded reel IDs/titles from project detail;
 `reduct_reel_detail` reads an existing reel's title and blocks while removing
-all nested `share_token` fields. The logged-in v3 API
+all nested `share_token` fields. The v3 reference (pages 29–30) says a Reel
+GET omits `publish` and presence of a share token determines publication;
+source now projects `publication_state` as `published`, `unpublished`, or
+`undetermined` for malformed token shapes, without returning the token. The logged-in v3 API
 reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
 header, root URL, these recording paths, and the mutating calls below. A live
 OS-keychain-based test retrieved a project, project-scoped recordings, recording
@@ -319,11 +322,13 @@ The authorized throwaway Reel was then created, populated with seven ordered
 title cards and nine `doc-range` blocks, edited once to adjust a clip range,
 and independently read back; its plan totals 10:29. This proves cloud
 composition/edit persistence, **not** a rendered export or published link.
-The deployed read-only probe still describes cloud editing as `not_available`;
-source changes that to `not_checked`, 20 focused Reduct tests pass, and
-a corrected `release-mcp` binary was installed atomically. The running child
-still returns the old response, so the correction awaits a child restart
-and live read-only recheck.
+The post-restart read-only probe now reports `cloud_editing: not_checked`
+with HTTP 200; this fixes the prior false `not_available` claim without
+asserting a Reel edit. The v3 PDF documents publication via `POST .../publish`
+but provides no private Reel render/download contract. The
+`publication_state` projection is fixture-tested but not yet deployed or
+observed against the live throwaway Reel. Never publish by default: a share
+token creates a publicly accessible link.
 
 Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough

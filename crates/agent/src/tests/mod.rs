@@ -5311,15 +5311,14 @@ async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
     let names = tool_names_for_completion(&completion);
     assert!(
         names.contains(&"late_registered_tool".to_string()),
-        "a kask tool registered after registry construction must surface via the poll: {names:?}"
+        "a kask tool registered after registry construction must surface via the change signal: {names:?}"
     );
     fake_model.end_last_completion_stream();
 }
 
-/// zed-kask: D44 integration pin — the tool-visibility marker. Tools can
-/// still be hidden from a turn by the non-router filter layers (profile
-/// allowlists, per-tab server scope); when any are,
-/// the system prompt must name how many registered tools are hidden, so the
+/// zed-kask: D44 integration pin — the tool-visibility marker. Registered
+/// tools can still be hidden from a turn by profile restrictions; when any
+/// are absent from the available set, the system prompt names their count so the
 /// model never mistakes the visible list for the complete surface (the live
 /// failure that motivated this: an agent reported `web_ping` as unavailable
 /// because a filter layer hadn't selected it). This drives the full path —

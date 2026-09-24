@@ -400,16 +400,16 @@ Note: `set_curator_session_factory`, `set_regulation_status`, and
 `NativeAgent` (the `ConversationView` handles streaming + tool dispatch).
 Do not re-add them — they have no consumer.
 
-## No per-turn MCP tool filtering (LazyToolRouter removed)
+## No per-turn keyword pruning of MCP tools (LazyToolRouter removed)
 
 The `LazyToolRouter` (`crates/agent/src/tool_router.rs`) was removed
-entirely (D44, 2026-08-30): `Thread::enabled_tools` presents the full
-registered MCP surface every turn. Its per-turn keyword pruning hid tools
+entirely (D44, 2026-08-30): `Thread::enabled_tools` no longer prunes
+registered MCP tools by keywords each turn. That former pruning hid tools
 from the model's view — the model read the pruned list as the complete
 toolset and reported registered tools as "unavailable" (a live incident:
-an agent denied `web_ping` existed). Tools hidden by the remaining filter
-layers (agent-profile allowlists, per-tab server scope, curator edit-tool
-gating) are named by the system-prompt visibility marker
+an agent denied `web_ping` existed). Registered tools absent from the turn's
+available set (for example, because of profile restrictions) are counted by
+the system-prompt visibility marker
 (`mcp_tools_hidden`), and the `list_mcp_tools` meta-tool enumerates the
 registered surface on demand. Do not re-introduce per-turn or
 within-domain tool sampling — if the fleet grows to where schema tokens

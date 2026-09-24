@@ -284,14 +284,15 @@ create a Reel, add clip/title blocks, and edit a clip range. Their loopback
 fixtures pin POST path/body, acknowledgement and refusal. A `release-mcp`
 binary was installed on disk; after the operator restarted, the running child
 advertised all sixteen `reduct_*` tools. Authorized live calls subsequently
-created and read back an unpublished throwaway Reel with seven title cards
-and nine ordered clips, then edited and read back one clip range. That verifies
-persisted cloud composition/edit, not Reel playback, rendering, export, or
-publishing. The deployed read-only probe still returns
-`cloud_editing: not_available` despite the active tools; source corrects
-read-only status to `not_checked` (focused tests, clippy and Zed check passed);
-the corrected `release-mcp` binary is installed, pending child restart and
-runtime verification.
+created and read back a throwaway Reel with seven title cards and nine ordered
+clips, then edited and read back one clip range. That verifies persisted cloud
+composition/edit, not playback, rendering, export, or publication state.
+The post-restart read-only probe now returns HTTP 200 and
+`cloud_editing: not_checked`. The v3 reference says a nonempty share token in
+GET reel detail identifies publication; a new token-redacted
+`publication_state` projection is fixture-tested, pending deployment and live
+verification. The PDF documents publishing, but no private Reel render or
+download endpoint.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
 of rendering. Page 41 lists strikethrough paths but no request/response schema;
 strikethroughs, redaction, publishing and the other undocumented mutations
