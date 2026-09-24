@@ -85,8 +85,10 @@ during retrieval contributes no hits. This freshness check assumes normal
 filesystem metadata changes; it is not a tamper-proof guarantee against a
 writer able to restore metadata or race the check. The explicit tool search
 remains available independently of the opt-in Curator chat injection setting.
-The chat injector reads only selected registered sealed sources, labels their
-passages as external evidence, and never promotes them to Curator memory.
+The Memory page's dropdown selects one registered sealed source for Curator
+chat injection (or "Curator memory only" to disable it); the existing
+Auto-Inject Memories switch is the master gate. The injector labels external
+passages as evidence and never promotes them to Curator memory.
 
 **TODO (operator policy decision):** define the global inclusion rules for
 which databases, replicas, and corpus chunks may be registered for federation

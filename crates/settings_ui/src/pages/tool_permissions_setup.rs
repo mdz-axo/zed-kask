@@ -1441,6 +1441,9 @@ mod tests {
             // Deterministic sandboxed computation — no I/O, no network, no
             // side effects. No permission checks needed.
             "lisp_eval",
+            // Executes local project code only after a mandatory per-call prompt,
+            // independent of configurable allow rules.
+            "lean_check",
             // Read-only ontology resolution against fixture-pinned published
             // vocabularies — no I/O, no side effects. No permission checks
             // needed.

@@ -127,10 +127,12 @@ narrative generation loop.
   via the inherent `recall_context_curator` / `recall_thread_curator`
   methods (`memory.rs:499-519`, `memory.rs:568-614`)
 - External-evidence injection is opt-in for Curator chat and off by default.
-  `BridgeContextInjector` retrieves selected IDs from the existing sealed-source
-  manifest only when `kask.memory.federated_auto_inject` and memory `auto_inject`
-  are enabled; it frames, labels, and bounds passages separately from Curator
-  memory. Injector settings are captured at startup; a settings change takes
+  The Memory page uses one `Auto-Inject Memories` master switch and a dropdown:
+  Curator memory only, or one named source from the sealed-source manifest.
+  Choosing a source enables `kask.memory.federated_auto_inject` and saves its
+  single ID; choosing memory-only disables it and clears the ID. The injector
+  refuses legacy multi-ID selections; when memory `auto_inject` is enabled, it
+  frames, labels, and bounds external passages separately from Curator memory. Injector settings are captured at startup; a settings change takes
   effect after restarting the editor. The explicit `curator_federated_search`
   tool remains independent.
 - No automatic corpus-to-Curator promotion — external evidence remains in its

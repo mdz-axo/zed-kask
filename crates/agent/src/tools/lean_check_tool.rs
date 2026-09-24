@@ -7,9 +7,9 @@ use std::{
 use crate::{AgentTool, ToolCallEventStream, ToolInput, ToolPermissionContext};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow, bail};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
-use project::{Project, project_settings::ProjectSettings as WorktreeSettings};
+use project::{Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
@@ -40,7 +40,14 @@ pub struct LeanCheckToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LeanCheckToolOutput {
+#[serde(untagged)]
+pub enum LeanCheckToolOutput {
+    Check(LeanCheckResult),
+    Error { error: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LeanCheckResult {
     pub lean_version: String,
     pub diagnostics: Vec<serde_json::Value>,
     pub goal_text: Vec<String>,
@@ -169,13 +176,19 @@ async fn invoke_lake(
         .stderr
         .take()
         .ok_or_else(|| anyhow!("Lake stderr unavailable"))?;
+    let mut stdin = if input.is_some() {
+        Some(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("Lake stdin unavailable"))?,
+        )
+    } else {
+        None
+    };
     let execution = async {
         let write = async {
-            if let Some(bytes) = input {
-                let mut stdin = child
-                    .stdin
-                    .take()
-                    .ok_or_else(|| anyhow!("Lake stdin unavailable"))?;
+            if let (Some(bytes), Some(mut stdin)) = (input, stdin.take()) {
                 stdin.write_all(bytes).await?;
             }
             Ok::<_, anyhow::Error>(())
@@ -222,7 +235,7 @@ async fn check_saved(
     file: PathBuf,
     theorem: Option<String>,
     lake: &Path,
-) -> Result<LeanCheckToolOutput> {
+) -> Result<LeanCheckResult> {
     let file = validate_saved_path(&root, &file)?;
     let root = std::fs::canonicalize(root)?;
     let project = project_root(&root, &file)?;
@@ -258,6 +271,7 @@ async fn check_saved(
                     || s.contains(&format!("'{name}' depends on axioms:"))
             })
     });
+    let audit = audit.map(str::to_string);
     let has_warning = diagnostics
         .iter()
         .any(|v| v["severity"] == "warning" || v["severity"] == "error")
@@ -266,7 +280,10 @@ async fn check_saved(
             .any(|s| s.contains("warning:") || s.contains("error:"));
     let completion_status = if code != Some(0) {
         "failed"
-    } else if audit.is_some_and(|s| s.contains("depends on axioms:")) {
+    } else if audit
+        .as_ref()
+        .is_some_and(|s| s.contains("depends on axioms:"))
+    {
         "axioms_present"
     } else if has_warning {
         "warnings"
@@ -281,12 +298,12 @@ async fn check_saved(
         .filter(|s| s.contains('⊢') || s.contains("unsolved goals"))
         .map(str::to_string)
         .collect();
-    Ok(LeanCheckToolOutput {
+    Ok(LeanCheckResult {
         lean_version: version,
         diagnostics,
         goal_text,
         completion_status: completion_status.into(),
-        axioms: audit.map(str::to_string),
+        axioms: audit,
         exit_code: code,
     })
 }
@@ -315,18 +332,18 @@ impl AgentTool for LeanCheckTool {
         input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, LanguageModelToolResultContent>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|e| e.to_string().into())?;
-            validate_relative(&input.path).map_err(|e| e.to_string().into())?;
-            if let Some(name) = &input.theorem {
-                validate_name(name).map_err(|e| e.to_string().into())?;
-            }
-            let fs = project.read_with(cx, |project, _| project.fs().clone());
-            let roots = canonicalize_worktree_roots(&project, &fs, cx).await;
-            let (root, file) = project
-                .read_with(cx, |project, cx| {
+            let result: anyhow::Result<LeanCheckResult> = async {
+                let input = input.recv().await.map_err(|e| anyhow!("{e}"))?;
+                validate_relative(&input.path)?;
+                if let Some(name) = &input.theorem {
+                    validate_name(name)?;
+                }
+                let fs = project.read_with(cx, |project, _| project.fs().clone());
+                let roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+                let (root, file) = project.read_with(cx, |project, cx| {
                     if !project.is_local() {
                         bail!("Lean check requires a local worktree")
                     }
@@ -354,34 +371,38 @@ impl AgentTool for LeanCheckTool {
                         .absolute_path(&path, cx)
                         .ok_or_else(|| anyhow!("File path unavailable"))?;
                     Ok::<_, anyhow::Error>((root, file))
+                })?;
+                // Check the saved file before asking, and again immediately before running.
+                let root_check = root.clone();
+                let file_check = file.clone();
+                let checked = cx
+                    .background_spawn(async move { validate_saved_path(&root_check, &file_check) })
+                    .await;
+                checked?;
+                let prompt = cx.update(|cx| {
+                    event_stream.authorize_always_prompt(
+                        format!(
+                            "Run project Lean on {}? Lake may execute project code",
+                            input.path
+                        ),
+                        ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]),
+                        cx,
+                    )
+                });
+                prompt.await?;
+                let task = cx.update(|cx| {
+                    gpui_tokio::Tokio::spawn(cx, async move {
+                        check_saved(root, file, input.theorem, Path::new("lake")).await
+                    })
+                });
+                task.await.map_err(|e| anyhow!("{e}"))?
+            }
+            .await;
+            result
+                .map(LeanCheckToolOutput::Check)
+                .map_err(|e| LeanCheckToolOutput::Error {
+                    error: format!("{e:#}"),
                 })
-                .map_err(|e| e.to_string().into())?;
-            // Check the saved file before asking, and again immediately before running.
-            let root_check = root.clone();
-            let file_check = file.clone();
-            let checked = cx
-                .background_spawn(async move { validate_saved_path(&root_check, &file_check) })
-                .await;
-            checked.map_err(|e| e.to_string().into())?;
-            let prompt = cx.update(|cx| {
-                event_stream.authorize_always_prompt(
-                    format!(
-                        "Run project Lean on {}? Lake may execute project code",
-                        input.path
-                    ),
-                    ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]),
-                    cx,
-                )
-            });
-            prompt.await.map_err(|e| e.to_string().into())?;
-            let task = cx.update(|cx| {
-                gpui_tokio::Tokio::spawn(cx, async move {
-                    check_saved(root, file, input.theorem, Path::new("lake")).await
-                })
-            });
-            task.await
-                .map_err(|e| e.to_string().into())?
-                .map_err(|e| e.to_string().into())
         })
     }
 }
@@ -404,4 +425,11 @@ mod tests {
         }
         Ok(())
     }
-}
+
+    #[tokio::test]
+    async fn saved_project_check_reports_proof_failure_and_axiom_trust() -> Result<()> {
+        let lake = std::env::var_os("LEAN_CHECK_TEST_LAKE")
+            .context("set LEAN_CHECK_TEST_LAKE to a Lean 4 Lake binary to run this test")?;
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+        std::fs::}

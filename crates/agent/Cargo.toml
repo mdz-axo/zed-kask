@@ -39,6 +39,7 @@ futures.workspace = true
 git.workspace = true
 globset.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 heck.workspace = true
 hkask-lisp.workspace = true
@@ -113,7 +114,6 @@ eval_utils.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
 git = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
-gpui_tokio.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 lsp = { workspace = true, "features" = ["test-support"] }
