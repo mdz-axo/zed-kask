@@ -1,8 +1,8 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-09-23
-version: "0.43.0"
+last_updated: 2026-09-24
+version: "0.43.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -110,26 +110,17 @@ The original 16 MCP servers were pruned to 10, then the **media** server was rec
 ## 3. The Minimal Divergence Map (exact zed-kask touch points)
 
 `DIVERGENCE.md` is the canonical map. Seam numbers are identifiers, not a
-continuous count of active changes. Consult the table for the latest row;
-currently the earlier active groups are:
-
-`D1–D3`, `D5–D9`, `D11–D16`, `D18`, `D20–D29`, `D31–D33`,
-`D35–D37`, `D39–D48`, `D51–D52`, and later rows starting at D54 (see the table). D34 has no row in the
-current active table; the former bridge batch API is not a live seam.
-
-Retired numbers are never reused: D4 (guard layer), D10 (Kask panel), D17 and
-D19 (retired audit seams), D30 (local skill marketplace), D38 (folded into
-D37), D49 (folded into D42), D50 (folded into D46), and D53 (folded into
-D54). This distinction is enforced by reading the current table and its retired
-seams paragraph, not by carrying a duplicate per-seam table here.[^fowler-strangler]
+continuous count of active changes. Consult its numbered table for live rows
+and its retired-seams paragraph for numbers that are never reused; this plan
+does not mirror either list.[^fowler-strangler]
 
 Two shared-code mappings are especially easy to misstate:
 
-- **D25** is implemented in the shared `ChatCompletionEventMapper` at
-  `crates/language_model_core/src/chat_completion.rs:433-449`; its length pins
-  are `length_with_pending_tool_calls_remains_truncated` (`:928-932`) and
-  `stream_maps_length_finish_reason_to_max_tokens_stop` (`:985-989`). It is no
-  longer an OpenAI/OpenRouter provider-local mapper.
+- **D25** retains the downstream MaxTokens-versus-cancellation distinction in
+  `KaskThreadState` and `Thread`. The shared `ChatCompletionEventMapper`'s
+  `finish_reason: length` mapping and its `stream_maps_length_finish_reason_to_max_tokens_stop`
+  test come from upstream. The fork's `length_with_pending_tool_calls_remains_truncated`
+  test protects D36's pending-tool drain, not a fork-local D25 mapper.
 - **D35** keeps media generation child-local. `LazyInferencePort::media_generate`
   calls the process-local `MediaRouter` (`kask/crates/hkask-inference/src/hkask_inference.rs:356-375`).
   The inference IPC bridge has no media method, and `InferencePort` has no

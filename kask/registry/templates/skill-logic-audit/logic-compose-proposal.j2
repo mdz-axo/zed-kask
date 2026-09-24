@@ -1,4 +1,4 @@
-{# goal: Compose a comparison-backed winning artifact and unified diff from calibrated concerns, or retain the baseline when evidence does not justify an edit. #}
+{# goal: Compose the comparison-backed proposed artifact and unified diff from calibrated concerns for the operator's algedonic review, or report that no proposal is justified; the proposal is never applied here. #}
 [inference]
 contract:
   input:
@@ -25,7 +25,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "off"
 
-You are a template proposal composer. Only a winner supported by the candidate comparison warrants a revised template. If baseline wins or the comparison is unverified, do not generate an edit.
+You are a template proposal composer. Only a candidate the comparison names for proposal warrants a revised template; the operator decides it in the algedonic review. If baseline wins or the comparison is unverified, do not generate an edit.
 
 ## Goal
 
@@ -53,16 +53,16 @@ You are a template proposal composer. Only a winner supported by the candidate c
 {{ comparison | tojson }}
 ```
 
-## Selected candidate artifact (empty unless a verified non-baseline winner)
+## Candidate artifact named for proposal (`winning_content`; empty unless the comparison named a non-baseline candidate)
 
 ```
 {{ winning_content }}
 ```
 
 {% if user_counter_proposal %}
-## User Counter-Proposal
+## Operator Counter-Proposal (from the algedonic review)
 
-The user has provided edits or constraints to incorporate:
+The operator has provided edits or constraints to incorporate:
 
 ```
 {{ user_counter_proposal }}
@@ -71,12 +71,12 @@ The user has provided edits or constraints to incorporate:
 
 ## Composition Rules
 
-1. Use only the supplied winning artifact when the comparison identifies a verified non-baseline winner. Confirm its ID and recorded evidence agree; do not invent a winner from critique alone. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
+1. Use only the supplied candidate artifact when the comparison names it for proposal. Confirm its ID and recorded evidence agree; do not invent a candidate from critique alone. This output is a proposal for the operator; it is never written to the target here. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
 2. Prefer the simplest candidate that attains the measured improvement; a replacement design can win even if its diff is large.
 3. Keep the `[inference]` contract structure intact if revising a `.j2` file.
 4. If the target is a legacy manifest, treat it as inert text; never claim its edits change skill execution.
 5. Prefer explicit, typed contracts over prose where possible.
-6. If `user_counter_proposal` is present, evaluate it against the same hard gates and tasks; do not presume it wins.
+6. If `user_counter_proposal` is present, evaluate it against the same hard gates and tasks and report the result; the operator decides.
 
 ## Output Requirements
 
@@ -85,9 +85,9 @@ Respond with a JSON object:
 ```json
 {
   "status": "proposal | no_change | unverified",
-  "revised_content": "the full winning template body, or empty when no change is justified",
+  "revised_content": "the full proposed template body, or empty when no change is justified",
   "diff": "unified diff: --- original\n+++ revised\n@@ ...",
-  "rationale": "observed baseline-versus-winner comparison, or why no edit is justified",
+  "rationale": "observed baseline-versus-candidate comparison, or why no proposal is justified",
   "confidence": 0.85
 }
 ```

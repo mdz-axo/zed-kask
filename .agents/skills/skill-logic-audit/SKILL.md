@@ -65,7 +65,7 @@ outputs must feed the phase that consumes them.
 | `logic-load-goal.j2` | Parse the annotated goal: block from a .j2 or manifest.yaml file and return it as a normalized string. Verify that a goal exists and is non-empty. |
 | `logic-critique-template.j2` | Adversarial critique of a template against its annotated goal and invoking SKILL.md phase, grounded in fixed success, failure and handoff cases; locate each material defect. |
 | `logic-critique-critique.j2` | Review a critique for soundness and goal-anchoring. Separate valid goal-anchored concerns from spurious ones. |
-| `logic-compare-candidates.j2` | Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence; reject regressions and retain the baseline when no verified improvement wins. |
+| `logic-compare-candidates.j2` | Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence, and name the candidate to propose to the operator's algedonic review; never select or apply a winner. |
 | `logic-compose-proposal.j2` | Compose a comparison-backed proposed artifact and unified diff from calibrated concerns for the algedonic review, or retain the baseline when evidence does not justify an edit. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-logic-audit/logic-load-goal`) and a context object with the required variables.

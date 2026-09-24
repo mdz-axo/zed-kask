@@ -1675,7 +1675,7 @@ mod tests {
         // The establishment path (stream_completion returning Err before any
         // events) cannot be driven with a ProviderRejection through
         // FakeLanguageModel (its forbidden-request path hardcodes an `Other`
-        // error), so the wiring is pinned structurally, D48 style. The needle
+        // error), so the wiring is pinned structurally. The needle
         // is assembled from pieces so this test's own source cannot satisfy
         // it.
         let source = include_str!("inference_chat.rs");

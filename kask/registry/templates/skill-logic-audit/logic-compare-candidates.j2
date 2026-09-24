@@ -1,4 +1,4 @@
-{# goal: Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence; reject regressions and retain the baseline when no verified improvement wins. #}
+{# goal: Compare the unchanged template and distinct candidate designs against fixed success, failure and handoff cases using observed evidence, and name the candidate (if any) to propose to the operator's algedonic review; never select or apply a winner. #}
 [inference]
 contract:
   input:
@@ -9,8 +9,8 @@ contract:
     observations: array
   output:
     comparisons: array
-    selected_candidate: string|null
-    verdict: string
+    proposed_candidate: string|null
+    proposal_status: string
     evidence_gaps: array
 visibility: Public
 ---
@@ -60,17 +60,19 @@ IDs, counts and arithmetic with retained logs; this prompt does not execute
 that check. Lean is relevant only to a separately formalized decision rule,
 not to template quality. Do not claim an absolute optimum.
 
-Select only a candidate that passes every hard contract, improves on baseline
-on the fixed outcome measure, and has no unacceptable regression. Otherwise
-choose baseline. If behavioral runs are missing, verdict is `unverified`, not
-`improved`. Do not manufacture evaluation results.
+You do not decide which design is kept: the operator does, in
+algedonic-review's gemba walk, and this comparison is the evidence. Name a
+candidate to propose only if it passes every hard contract, improves on
+baseline on the fixed outcome measure, and has no unacceptable regression;
+otherwise propose nothing. If behavioral runs are missing, the status is
+`unverified`. Do not manufacture evaluation results.
 
 Return JSON:
 ```json
 {
   "comparisons": [{"candidate_id": "baseline", "case_results": [], "hard_gates": [], "cost": null, "evidence": []}],
-  "selected_candidate": "baseline",
-  "verdict": "improved | keep_baseline | unverified",
+  "proposed_candidate": null,
+  "proposal_status": "propose | no_proposal | unverified",
   "evidence_gaps": []
 }
 ```
