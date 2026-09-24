@@ -40,7 +40,7 @@ pub(crate) use curator_stores::curator_db_path;
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 pub use curator_stores::{
     hydrate_operator_feedback, load_operator_feedback, open_curator_regulation_archive,
-    persist_operator_feedback,
+    persist_operator_feedback, persist_skill_outcome,
 };
 
 // ── Alert escalation — extracted to `memory/alert_escalation.rs` ──────────

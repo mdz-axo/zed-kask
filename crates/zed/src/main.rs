@@ -1693,6 +1693,46 @@ fn main() {
                                     }
                                 }
 
+                                // zed-kask: D59 — skill activation outcomes are also
+                                // durable, so the algedonic review's gemba walk (where
+                                // skills are evaluated, separately from the session that
+                                // ran them) can read them via `reg_query` after the
+                                // session ends. Replaces the ledger-only recorder set
+                                // before the archive opened.
+                                {
+                                    let archive_for_outcomes = archive.clone();
+                                    let ledger_for_outcomes = regulation_ledger_for_deferred.clone();
+                                    let outcome_runtime = operator_feedback_runtime.clone();
+                                    agent::set_skill_outcome_recorder(std::sync::Arc::new(
+                                        move |skill_id, success, error| {
+                                            let mut payload = serde_json::json!({ "success": success });
+                                            if let Some(error) = error {
+                                                payload["error"] = serde_json::json!(error);
+                                            }
+                                            if let Err(error) = kask_bridge::persist_skill_outcome(
+                                                &archive_for_outcomes,
+                                                skill_id,
+                                                payload.clone(),
+                                            ) {
+                                                tracing::warn!(
+                                                    target: "reg.storage",
+                                                    skill_id,
+                                                    %error,
+                                                    "Failed to persist skill outcome; the gemba walk will not see it"
+                                                );
+                                            }
+                                            let skill_id = skill_id.to_string();
+                                            let ledger = ledger_for_outcomes.clone();
+                                            outcome_runtime.spawn(async move {
+                                                let ledger = ledger.read().await;
+                                                ledger
+                                                    .record_skill_span(&skill_id, "outcome", payload)
+                                                    .await;
+                                            });
+                                        },
+                                    ));
+                                }
+
                                 let archive_for_feedback = archive.clone();
                                 let ledger_for_feedback = regulation_ledger_for_deferred.clone();
                                 let feedback_runtime = operator_feedback_runtime.clone();

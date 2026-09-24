@@ -50,17 +50,38 @@ pub fn persist_operator_feedback(
     skill_id: &str,
     payload: serde_json::Value,
 ) -> Result<(), InfrastructureError> {
+    persist_skill_span(archive, skill_id, "operator_feedback", payload)
+}
+
+/// Persist one skill activation outcome (`reg.skill.<id>.outcome`) so the
+/// algedonic review's gemba walk can read it through `reg_query`. Skill
+/// evaluation happens in that review, not in the session that ran the skill
+/// (operator ruling 2026-09-24), so the outcome must outlive the session.
+pub fn persist_skill_outcome(
+    archive: &hkask_storage::RegulationArchive,
+    skill_id: &str,
+    payload: serde_json::Value,
+) -> Result<(), InfrastructureError> {
+    persist_skill_span(archive, skill_id, "outcome", payload)
+}
+
+fn persist_skill_span(
+    archive: &hkask_storage::RegulationArchive,
+    skill_id: &str,
+    phase: &str,
+    payload: serde_json::Value,
+) -> Result<(), InfrastructureError> {
     if skill_id.trim().is_empty() {
-        return Err(InfrastructureError::Serialization(
-            "operator feedback skill_id must not be empty".to_string(),
-        ));
+        return Err(InfrastructureError::Serialization(format!(
+            "skill {phase} skill_id must not be empty"
+        )));
     }
     let namespace = SpanNamespace::new("reg.skill").ok_or_else(|| {
         InfrastructureError::Serialization("reg.skill namespace is not registered".to_string())
     })?;
     let event = RegulationRecord::new(
         WebID::from_persona(b"curator"),
-        Span::new(namespace, &format!("{skill_id}.operator_feedback")),
+        Span::new(namespace, &format!("{skill_id}.{phase}")),
         CyclePhase::Sense,
         payload,
         0,
@@ -381,6 +402,30 @@ mod tests {
             30.0,
             "the configured decay constant must reach the store that actually decays"
         );
+    }
+
+    /// The gemba walk reads skill activation outcomes from the archive, so an
+    /// outcome recorded in one session is still there after a restart
+    /// (operator ruling 2026-09-24).
+    #[test]
+    fn skill_outcome_survives_archive_restart() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = hkask_storage::RegulationArchive::from_driver(driver.clone())
+            .expect("regulation archive");
+        persist_skill_outcome(&archive, "listening", serde_json::json!({"success": true}))
+            .expect("outcome is durable");
+        assert!(persist_skill_outcome(&archive, " ", serde_json::json!({})).is_err());
+        drop(archive);
+
+        let restarted =
+            hkask_storage::RegulationArchive::from_driver(driver).expect("restarted archive");
+        let since = chrono::Utc::now() - chrono::Duration::hours(1);
+        let records = restarted
+            .query_records(since, Some("reg.skill"), 10)
+            .expect("query outcomes");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].span.path, "reg.skill.listening.outcome");
+        assert_eq!(records[0].observation, serde_json::json!({"success": true}));
     }
 
     #[tokio::test]

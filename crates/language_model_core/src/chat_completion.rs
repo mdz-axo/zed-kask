@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn length_with_pending_tool_calls_remains_truncated() {
-        // zed-kask: D25 — the stop workaround must never complete truncated input.
+        // zed-kask: D36 — the stop workaround must never complete truncated input.
         let event = serde_json::from_value(json!({"choices": [{
             "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
                 "name": "corpus_query", "arguments": "{\"query\":"
