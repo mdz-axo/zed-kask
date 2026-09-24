@@ -31,19 +31,17 @@ Context: {{ context | default({}) | tojson }}
    - The improvement procedure is itself implemented within the current scaffolding (self-referential: Σ_{t+1} = ℐ_{Σ_t}(Σ_t; 𝒮_t)).
    - Methods: AlphaEvolve (evolutionary), ShinkaEvolve (exploration-exploitation balanced), ADAS (search), Self-Taught Optimizer (recursive), Agent Symbolic Learning (symbolic backprop), Gödel Agent (monkey patching), Darwin Gödel Machine (archive-based open-ended evolution), Live-SWE-Agent (runtime self-evolution).
 
-3. **Gate updates through verifier**:
-   Σ_{t+1} = Σ~_{t+1} if 𝒱(Σ~_{t+1}) = 1, else Σ_t
-   - Verifier checks: functional correctness, tool permission boundaries, robustness to random state perturbations.
-   - The paper requires: "a self-improving agent should be conceptualized as untrusted code executing in a protected runtime environment" (§9.1).
+3. **Produce a candidate, not an update**: Σ~_{t+1} is a candidate. The verifier's checks (functional correctness, tool permission boundaries, robustness to random state perturbations) become evidence in the proposal; the configuration in use stays Σ_t until the operator accepts the proposal in the algedonic review.
+   - The paper requires: "a self-improving agent should be conceptualized as untrusted code executing in a protected runtime environment" (§9.1). Here the executing session is that untrusted code: it proposes, it does not apply.
 
-4. **Maintain version history** for rollback: Σ_{1:t} supports validation and rollback against harmful modifications.
+4. **Keep the candidate reversible**: express it as a diff against Σ_t so the review can see exactly what would change.
 
 5. **Delegation**: If the improvement requires debugging a specific scaffold bug (reproduce → hypothesize → fix → regression-test), delegate to the `diagnose` skill which implements this cybernetic debugging loop.
 
 ## Constraints
 
 - The paper warns: "standard transient exploits (like a one-off prompt injection) can evolve into persistent architectural vulnerabilities, as poisoned memories or hijacked tool logics are committed as stable updates" (§9.1).
-- All patches must pass verifier-gated checks before commitment.
+- No patch is applied by the executing session; verifier results travel with the proposal.
 - The improver can evolve together with the agent it improves (self-referential loop).
 
 Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

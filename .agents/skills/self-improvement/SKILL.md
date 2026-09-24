@@ -121,7 +121,7 @@ This separation is critical because the paper identifies a key tension: "self-im
 
 ### si-kata-target (Outer Kata Step 3)
 
-1. Declare a specific, measurable target condition 1 week to 3 months out, beyond your current knowledge threshold.
+1. Declare a specific, measurable target condition reachable within this session's bounded PDCA cycles (at most 5 per Kata step), beyond your current knowledge threshold. The horizon is counted in bounded experiments, not calendar time (operator ruling 2026-09-24).
 2. Identify every obstacle between current and target conditions to create an Obstacles Parking Lot.
 3. Select the ONE most consequential obstacle to address first.
 4. Define what you do NOT know about the focus obstacle.
@@ -163,7 +163,7 @@ This separation is critical because the paper identifies a key tension: "self-im
 
 ### si-evaluate-improvement (PDCA Check)
 
-1. Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal. **Fallback**: If no held-out set is available, use cross-validation or temporal split. If neither is available, set `evaluation_method: "none_available"` and block commitment.
+1. Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that does NOT overlap with the improvement signal. **Fallback**: If no held-out set is available, use cross-validation or temporal split. If neither is available, set `evaluation_method: "none_available"`; the Act gate then discards the candidate.
 2. Report the full performance trajectory (m_t) across update iterations, not just the final peak score.
 3. Test transfer beyond the improvement signal: does the improvement generalize to held-out tasks?
 4. Track regressions: did the update break previously solved tasks?
@@ -172,33 +172,29 @@ This separation is critical because the paper identifies a key tension: "self-im
 7. If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use a distinct judge configuration for final reporting.
 8. Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based, judge-based, or none_available).
 
-### si-commit-or-rollback (PDCA Act)
+### si-propose-or-discard (PDCA Act)
 
-1. Apply the acceptance criteria from the improvement plan.
-2. If the update passes all criteria (performance improved, no regressions, no safety violations, within budget):
-   - **Commit** the update to the agent's intrinsic configuration.
-   - For scaffolding updates: persist the new Σ_{t+1}.
-   - For FM updates: persist the new θ_{t+1} checkpoint.
-   - Record the committed version for future rollback.
-3. If the update fails any criterion:
-   - **Rollback** to the previous configuration 𝒜_t.
-   - Diagnose the failure: was the signal noisy? Was the operator misaligned? Was the budget insufficient?
-   - Record the failure mode for the Kata obstacle parking lot.
-4. Determine the next step.
-5. Respond with a JSON object containing `decision` (exactly "commit" or "rollback"), `committed_version`, `failure_mode` (if rolled back), and `next_step` (exactly "re-enter", "exit", or "refine").
+The executing session never commits a durable change to a skill, prompt, memory, tool configuration or model — that would make the session the judge of its own work (Goodhart's law; operator ruling 2026-09-24). It decides only whether its candidate is worth the operator's review.
+
+1. Call `lisp_eval` on the measured Check result: form `(and (not (member evaluation_method (list "none_available"))) (> pass_rate baseline_pass_rate) (= regressions 0) (= safety_violations 0))` (`member` is the string-equality primitive) with the numbers from `si-evaluate-improvement`. Supply measured values only.
+2. Render `self-improvement/si-propose-or-discard` with `evaluation_result`, `gate_result` (the `lisp_eval` boolean), `improvement_plan` and `proposed_artifact`.
+3. `gate_result` true → **propose**: write the proposal (diff, measurements, evaluation method, harness logs, the goal id) via `terminal` to `~/Documents/zk-data/curator/proposals/{skill-or-component}/{date}-{run}.json`. Nothing is applied; the algedonic review's gemba walk decides it with the operator.
+4. `gate_result` false → **discard**: keep the configuration unchanged, record the failure mode (noisy signal, misaligned operator, missing harness) in the Kata obstacle parking lot, and re-plan.
+5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
+6. Respond with `decision` (exactly "propose" or "discard"), `proposal_path` (if proposed), `failure_mode` (if discarded), and `next_step` (exactly "re-enter", "exit", or "refine").
 
 ## Improvement Measure
 
-Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
+PDCA loops in this skill run within one session (operator ruling 2026-09-24). Evaluate convergence after each full iteration: the measured Check result has stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
 
-**Max iterations**: 10 (outer Kata), 5 (inner PDCA per Kata step).
+**Max iterations (per session)**: 10 (outer Kata), 5 (inner PDCA per Kata step). A target the session cannot reach within those bounds is reported with its remaining gap, not extended.
 
 ## Safety Governance
 
 The skill implements the paper's safety recommendations (Section 9.1):
 
 1. **Verifier-gated updates**: Before any structural update is committed to Σ_{t+1} or θ_{t+1}, the proposed patch must pass verifier-gated checks covering functional correctness, tool permission boundaries, and robustness to random state perturbations.
-2. **Critic decoupling**: The critic (evaluator) is decoupled from the generator. If the agent conflates the roles of proposing updates and accepting them, it collapses into a self-confirming loop. Critics can evolve but only under monotone changes (e.g., purely additive test generation) and gated by human audit trails.
+2. **Critic decoupling**: The critic (evaluator) is decoupled from the generator. If the agent conflates the roles of proposing updates and accepting them, it collapses into a self-confirming loop. In zed-kask the acceptor is the operator in the algedonic review; this skill only proposes.
 3. **Layered gating**: A strict permission system for self-modification. Improvement is only permitted within explicitly defined and continuously audited safety boundaries.
 4. **Version history for rollback**: Both pathways maintain version history (θ_{1:t} and Σ_{1:t}) to support validation and rollback against harmful modifications.
 5. **Fast-to-slow consolidation**: Scaffold-level improvements (fast, reversible) are validated through rigorous execution tests before parametric consolidation (slow, hard to trace) is considered.
@@ -213,7 +209,7 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
 | `si-execute-improvement.j2` | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
 | `si-evaluate-improvement.j2` | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
-| `si-commit-or-rollback.j2` | Decide whether to commit the improvement (persist the change) or rollback (revert to the prior state) based on the evaluation. |
+| `si-propose-or-discard.j2` | From the measured evaluation and the deterministic gate result, either file a proposal for the algedonic review or discard the candidate; never commit. |
 | `si-exec-fm-demos.j2` | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
 | `si-exec-fm-experience.j2` | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
 | `si-exec-fm-feedback.j2` | Foundation Model Improvement pathway — process intrinsic evaluative feedback from the improvement cycle. |
@@ -239,20 +235,20 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `si-exec-scaffold-tool.j2`: Public.
 - `si-exec-scaffold-full.j2`: Public.
 - `si-evaluate-improvement.j2`: Public.
-- `si-commit-or-rollback.j2`: Public.
+- `si-propose-or-discard.j2`: Public.
 
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
-- All updates must pass verifier-gated checks before commitment.
-- Version history must be maintained for rollback.
+- No durable change is committed by the executing session. A candidate that passes the deterministic gate becomes a proposal under `zk-data/curator/proposals/`; only the operator, in the algedonic review, accepts it.
+- The configuration in use stays unchanged until the operator accepts a proposal, so no rollback of self-applied changes is needed.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
 - Token budgets are not an implicit improvement gate. A `budget` record may describe explicitly approved experiment/time/compute/spending constraints, never an agent-invented token quota. Observed token use neither authorizes truncation nor a model downgrade.
 - Local swarm execution inherits the same configured platform/curator models (Settings → Kask → Models), including cloud models. “Local” never authorizes a smaller/local model downgrade. Use the host inference bridge; a model override requires operator approval. If approved routing is unavailable, stop the experiment rather than substitute a model.
-- Every improvement cycle registers a falsifiable outcome claim before PDCA Do: `kanban_goal_create` with the acceptance criteria as observable criteria and an honest intake prediction, and the executing task links the goal via `advances`. `si-commit-or-rollback` judges the goal (`kanban_goal_judge`) with the measured results — an improvement with no registered claim is a process violation, not an improvement.
-- Scaffold-side updates (p, m, 𝒯, Σ) require a before/after measurement through a deterministic harness (`swarm_eval_agent_local` supports pure contains/not_contains/regex response checks, not shell/file evaluators) and a `lisp_eval` convergence gate — improved pass rate at zero regressions — before `si-commit-or-rollback` may decide commit. Validate the evaluator independently; deterministic response scoring alone is not ground truth. When no suitable deterministic harness exists, `evaluation_method: "none_available"` blocks commitment (si-evaluate-improvement step 1).
+- Every improvement cycle registers a falsifiable outcome claim before PDCA Do: `kanban_goal_create` with the acceptance criteria as observable criteria and an honest intake prediction, and the executing task links the goal via `advances`. `si-propose-or-discard` judges the goal (`kanban_goal_judge`) with the measured results — an improvement with no registered claim is a process violation, not an improvement.
+- Scaffold-side updates (p, m, 𝒯, Σ) require a before/after measurement through a deterministic harness (`swarm_eval_agent_local` supports pure contains/not_contains/regex response checks, not shell/file evaluators) and a `lisp_eval` gate — improved pass rate at zero regressions — before `si-propose-or-discard` may file a proposal. Deterministic response scoring alone is not ground truth, which is why the operator decides. When no suitable deterministic harness exists, `evaluation_method: "none_available"` makes the gate false and the candidate is discarded (si-evaluate-improvement step 1).
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
 - Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
-- `decision` field must be exactly "commit" or "rollback" (lowercase).
+- `decision` field must be exactly "propose" or "discard" (lowercase).
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.
 - Variety engineering: PDCA iteration 2+ must check for repeated pathway/signal combinations and justify or diversify.

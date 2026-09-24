@@ -57,14 +57,13 @@ This is a refinement cycle. Compare the current state to the previous grasp. Wha
 {% endif %}
 
 {% if prior_calibration %}
-## Prior Calibration (from scenario_calibration MCP tool)
+## Prior Calibration (operator-scored metacognition goals from kanban_goal_list)
 ```json
 {{ prior_calibration | tojson }}
 ```
-The calibration curve shows your historical Brier score and overconfidence bias.
-- **overconfidence_bias**: Positive means your predictions were too high (overconfident); negative means too low (underconfident).
-- **brier_score**: Lower is better (0 = perfect, 0.25 = coin-flip, 1 = worst).
-Use this to calibrate your prediction in step 3 — if overconfidence_bias is positive, lower your confidence.
+Each resolved goal pairs your stated confidence with the operator's scored outcome.
+- Brier score per goal is (confidence - outcome)^2: 0 = perfect, 0.25 = a constant 0.5 guess, 1 = worst.
+- If your confident predictions mostly failed, you are overconfident: lower your confidence in step 3.
 {% endif %}
 
 ## What to Measure

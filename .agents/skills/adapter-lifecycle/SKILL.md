@@ -150,14 +150,15 @@ surface that blocker. Only an explicit operator choice may override the model.
    deduplicates by question, and increments the adapter version). Obtain
    operator confirmation for each new submission. Bound: max 2 retrain
    cycles per adapter version; a third failure escalates to the operator.
-10. Persist the verdict — call `memory_insert` (curator server) with
-    entity = the agent/skill name, attribute = "adapter_verdict",
-    value = { adapter_id, baseline_pass_rate, pass_rate, promoted,
-              evaluation_method, model_routes, evidence_gaps } and a real
-    `evidence_h_mem_id` supporting the verdict. Use null pass rates when
-    unmeasured; if there is no evidence h_mem ID, report the persistence
-    blocker rather than inventing a citation. The training server does
-    not persist A/B verdicts itself.
+10. File the measurements for review — the session that trained the
+    adapter does not record its acceptance (operator ruling 2026-09-24:
+    evaluation is separated from execution). Write
+    { adapter_id, baseline_pass_rate, pass_rate, evaluation_method,
+    model_routes, evidence_gaps, harness logs } via `terminal` to
+    `~/Documents/zk-data/curator/proposals/{agent-or-skill}/{date}-adapter-{adapter_id}.json`.
+    Use null pass rates when unmeasured. The operator accepts or rejects
+    the adapter in `algedonic-review`'s gemba walk; promotion follows only
+    an accepted proposal.
 11. Judge the registered goal — call `kanban_goal_judge` against the
     goal's criteria with a verdict and per-criterion results from the
     measured pass rates; mark unmeasured criteria as unresolved rather
@@ -172,7 +173,8 @@ surface that blocker. Only an explicit operator choice may override the model.
   deployment, matched held-out baseline/candidate evaluation, and the
   operator's pre-agreed criterion being met. Do not require retrain-only
   loss comparison for a first adapter or treat it as sufficient for a
-  retrain. The skill records a verdict; it does not deploy or promote.
+  retrain. The skill files measurements as a proposal; it does not record
+  a verdict, deploy, or promote.
 - Rollouts and training jobs consume provider resources; do not invent a
   spend quota or promote on the basis of an unverified cost estimate.
   Present the available estimate and obtain operator confirmation before

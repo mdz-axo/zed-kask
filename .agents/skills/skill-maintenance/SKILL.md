@@ -201,13 +201,15 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 4. Classify 0.00–0.19 as retirement candidate, 0.20–0.49 as critical revision, 0.50–0.79 as stale warning, 0.80–1.00 as active. A score is advisory: propose repair first and never delete or mark a skill deprecated without explicit operator approval. Explain when a low score is caused by multiple repairable faults.
 5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), and recommendations. For any unverified signal report `unverified` separately without a penalty. A score of 1.0 establishes only the absence of verified staleness defects, not skill effectiveness; route requests to improve behavior to `skill-maintenance-optimize`.
 
-### skill-maintenance-optimize — Plan → Do → Check → Act
+### skill-maintenance-optimize — Plan → Do → Check → Act (proposal only)
+
+This loop runs within one session and ends in a **proposal**, never an applied change or a verdict. Skill evaluation belongs to the operator in `algedonic-review`'s gemba walk (operator ruling 2026-09-24; Goodhart's law): the session that designed a candidate cannot also be the judge that accepts it.
 
 1. **Plan:** Read the canonical SKILL.md and referenced .j2 templates via `read_file`; obtain the operator's task/outcome and relevant historical constraints. Specify baseline behavior and a fixed, independently judged set of representative, negative, boundary and held-out tasks with expected results before revising anything. Select success, regression, safety and cost measures and a feasible run budget. `skill-maintenance-audit` and `skill-maintenance-validate` identify defects, but passing them does not establish task success. If the objective or oracle cannot be established, ask for it or return `unverified`; do not optimize to a proxy health score.
 2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, invoke `skill-logic-audit` on the template as a leaf; this skill owns SKILL.md changes and integration. Do not use a legacy manifest as the process specification.
-3. **Check:** Run baseline and candidate implementations against the **same** tasks and evaluator, using `swarm_eval_agent_local` or a governing deterministic harness when available; validate S1–S13/T1–T5 and render reachability for every finalist. Independently inspect outcome evidence and whether the evaluator could be gamed. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain logs. A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable tools are `unverified`, never wins.
+3. **Check (measure, do not judge):** Run baseline and candidate implementations against the **same** tasks and evaluator when a deterministic harness can run them; validate S1–S13/T1–T5 and render reachability for every finalist. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain logs under `~/Documents/zk-data/skills/skill-maintenance/{date}-{run}/`. A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable harnesses (the local swarm runtime does not execute skills) are `unverified`, never wins.
 4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
-5. **Act:** Prefer a candidate only if it satisfies hard constraints, beats baseline on the predeclared outcome measure and has no unacceptable regression; otherwise keep the baseline. For new falsifiers revise the design and rerun the same held-out cases at most once, then report the observed trade-offs and remaining uncertainty. Present a full diff and measured before/after delta for operator review before material SKILL.md process changes; do not claim a working improvement without executing the capability on the target task through the revised process.
+5. **Act (file or drop):** A candidate that satisfies hard constraints and has measured evidence is written as a proposal — full diff, predeclared tasks, measured before/after (or `unverified`), open falsifiers — via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Otherwise drop it and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement; the operator decides the proposal in the gemba walk, and only an accepted proposal is applied.
 
 ### skill-maintenance-coverage
 
@@ -225,7 +227,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 |----------|---------|
 | `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
-| `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions; retain the baseline unless a verified candidate improves the actual capability. |
+| `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. |
 | `skill-maintenance-build.j2` | Generate a complete skill (SKILL.md + .j2 templates) from a natural-language description. |
 | `skill-maintenance-translate.j2` | Convert a classified source skill into the kask format, mapping source steps and tools to kask equivalents. |
 | `skill-maintenance-coverage.j2` | Map task patterns against the skill corpus: covered, uncovered, partial — with impact and action recommendations. |
@@ -255,10 +257,10 @@ Template context variables (from each template's [inference] contract):
   of the same name is the live contract), `convergence_signal`,
   `input_mapping`, `on_failure`, `ordinal:`, `category:`.
 - Core skills (`core: true`) must have names in `CORE_SKILL_NAMES`.
-- Material SKILL.md process changes are self-changes: a before/after
-  `swarm_eval_agent_local` run (or governing deterministic harness) and a
-  `memory_insert` verdict citing its evidence h_mem are required before
-  claiming they work. If the harness or memory tool is unavailable, report
-  the change and its evidence as **unverified**, not as a measured improvement.
+- Material SKILL.md process changes are never self-accepted. This skill
+  files them as proposals under `zk-data/curator/proposals/`; the operator
+  accepts or rejects them in `algedonic-review`'s gemba walk, where the
+  verdict is recorded. Measurements travel with the proposal as evidence;
+  where no harness could run, the proposal says **unverified**.
   An edit that cannot name a measurable behavior change is a documentation
   edit — label it as such.

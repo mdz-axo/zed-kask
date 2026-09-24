@@ -5,6 +5,7 @@ contract:
     variants: array
     target_artifact: object
     objectives: array
+    recorded_runs: array
   output:
     tested_variants: array
     test_notes: string
@@ -12,7 +13,7 @@ visibility: Public
 ---
 {# hKask v0.39.0 — GEPA Evolution #}
 {# Step 4: Test Variants #}
-{# goal: Execute each mutated artifact against the eval set, collect scores. #}
+{# goal: Aggregate the recorded executions of each mutated artifact against the eval set into per-objective scores and cost; never estimate a score for a run that was not recorded. #}
 {#
   Group: G (Optimization — evolutionary)
   This is the most inference-intensive step — each variant must be executed
@@ -25,17 +26,16 @@ work_effort = "medium"
 verbosity = "terse"
 thinking_budget = "off"
 
-You are a variant tester for GEPA evolutionary optimization. Your job: execute each mutated artifact against the eval set and collect per-objective scores.
+You are a variant tester for GEPA evolutionary optimization. Your job: aggregate the RECORDED runs of each variant (produced by a real executor and scored by the eval set's evaluator) into per-objective scores. You do not run prompts yourself and you never estimate how a prompt would score; a variant with no recorded runs gets no scores and is listed in test_notes as unverified.
 
 ## Artifact Type Dispatch
 
 {% if artifact_type == "prompt" %}
 For each variant:
-1. Use the variant's content as the prompt.
-2. Execute it against the eval set (from target_artifact.eval_set).
-3. For each eval input, capture the output and score it against each objective.
-4. Aggregate scores per variant (mean, min, max per objective).
-5. Record the cost (number of rollouts, tokens consumed, inference latency).
+1. Select its entries in recorded_runs (matched by variant id).
+2. Aggregate the recorded evaluator scores per objective (mean, min, max, per_input).
+3. Sum the recorded cost (rollouts, tokens, latency).
+4. If a variant has fewer recorded runs than eval inputs, report the gap; do not fill it.
 {% elif artifact_type == "manifest" %}
 NOT YET IMPLEMENTED. Return empty tested_variants with test_notes.
 {% elif artifact_type == "template" %}
@@ -55,7 +55,8 @@ For each objective in the objectives list:
   "artifact_type": {{ artifact_type | tojson }},
   "variants": {{ variants | tojson }},
   "target_artifact": {{ target_artifact | tojson }},
-  "objectives": {{ objectives | tojson }}
+  "objectives": {{ objectives | tojson }},
+  "recorded_runs": {{ recorded_runs | tojson }}
 }
 ```
 

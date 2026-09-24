@@ -6,6 +6,12 @@ contract:
     current_condition: object
     context: object
   output:
+    performance_trajectory: array
+    transfer_score: number|null
+    regression_rate: number|null
+    cost_summary: object
+    safety_violations: array
+    evaluation_method: string
 visibility: Public
 ---
 {# goal: Evaluate the updated agent on held-out tasks with fallback mechanisms for when no held-out set is available. Report trajectory, transfer, regression, cost, and safety. #}
@@ -31,7 +37,7 @@ Evaluate the updated agent on a held-out evaluation distribution 𝒟_eval that 
 **Fallback if no held-out set is available:**
 - Use cross-validation: split available tasks into folds, evaluate on the fold not used for improvement.
 - Use temporal split: evaluate on tasks created after the improvement signal was generated.
-- If neither is available, set `evaluation_method: "none_available"` and block commitment (the update cannot be safely committed without transfer evidence).
+- If neither is available, set `evaluation_method: "none_available"`; the Act gate then discards the candidate (no transfer evidence, nothing to propose).
 
 ### 2. Report Performance Trajectory
 
@@ -67,4 +73,4 @@ If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use 
 - Cost and safety metrics are mandatory.
 - If judge-based, evaluator must be independent from the improvement signal.
 
-Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based or judge-based).
+Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (exactly `metric-based`, `judge-based`, or `none_available`). Report measured values only; you do not decide whether the update is kept.

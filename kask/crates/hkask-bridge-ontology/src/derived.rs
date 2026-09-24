@@ -224,6 +224,59 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-19; Wikidata Q523022; Mehra & Prescott, The Equity Premium: A Puzzle, Journal of Monetary Economics 15(2) (1985)",
     },
     DerivedConcept {
+        term: "pdca_cycle",
+        aliases: &[
+            "pdca",
+            "plan do check act",
+            "plan-do-check-act",
+            "plan do check adjust",
+            "deming cycle",
+            "shewhart cycle",
+            "pdsa",
+        ],
+        identity: "plan -> do -> check -> act, repeated: propose a change, implement it, measure the result against the target, then standardize or begin again",
+        definition: "The improvement cycle based on the scientific method (Lean Enterprise Institute lexicon): Plan determines goals and needed changes; Do implements them; Check evaluates results against the target; Act standardizes the change or begins the cycle again. In zed-kask a PDCA loop runs within one session, and its Check measures work on the task — it never evaluates the skill that ran it (operator rulings 2026-09-24). The nameable violation: a loop whose Check is the executor's own verdict on itself.",
+        constituents: &["plan", "change", "measurement", "target"],
+        authority: "operator ruling 2026-09-24; Lean Enterprise Institute lexicon, 'Plan, Do, Check, Act (PDCA)'; Wikidata Q820214; Shewhart (1939); Deming (1950s, JUSE 1951)",
+    },
+    DerivedConcept {
+        term: "improvement_kata",
+        aliases: &["improvement kata routine"],
+        identity: "challenge -> grasp the current condition -> set the next target condition -> experiment (PDCA) against one obstacle, repeated",
+        definition: "The repeating four-step routine by which a learner improves a process (Rother 2010; Lean Enterprise Institute lexicon): create a challenge, grasp the current condition with facts and data, set the next target condition, and run PDCA experiments against obstacles. Human practice sets the target about two weeks out; an agent practices it within one session, so its horizon is counted in bounded experiments (operator ruling 2026-09-24).",
+        constituents: &[
+            "challenge",
+            "current condition",
+            "target condition",
+            "pdca cycle",
+        ],
+        authority: "operator ruling 2026-09-24; Lean Enterprise Institute lexicon, 'Kata'; Rother, Toyota Kata (2010), Wikidata Q7830807",
+    },
+    DerivedConcept {
+        term: "coaching_kata",
+        aliases: &["coaching kata questions"],
+        identity: "five questions a coach asks a learner practicing the Improvement Kata, at the place where the work is done",
+        definition: "The routine by which a coach teaches the Improvement Kata (Rother 2010; Lean Enterprise Institute lexicon): five questions that provoke and reinforce PDCA thinking, with procedural guidance rather than solutions. The coach is a separate role from the learner.",
+        constituents: &["improvement kata", "coach", "learner"],
+        authority: "operator ruling 2026-09-24; Lean Enterprise Institute lexicon, 'Kata'; Rother, Toyota Kata (2010), Wikidata Q7830807",
+    },
+    DerivedConcept {
+        term: "gemba_walk",
+        aliases: &["gemba", "genba", "going to the gemba", "genchi gembutsu"],
+        identity: "go to the actual place where value is created, observe the work directly and ask questions, before taking action",
+        definition: "A management practice for grasping the current situation through direct observation and inquiry before taking action (Lean Enterprise Institute lexicon; gemba, 'actual place'). In zed-kask it names the algedonic review's phase where the operator and the Curator inspect recorded skill execution and the operator evaluates skills — the only place skill evaluation happens (operator ruling 2026-09-24).",
+        constituents: &["observation", "current condition", "review"],
+        authority: "operator ruling 2026-09-24; Lean Enterprise Institute lexicon, 'Gemba'",
+    },
+    DerivedConcept {
+        term: "goodharts_law",
+        aliases: &["goodhart law", "goodhart's law", "goodharts law"],
+        identity: "when a measure becomes a target, it ceases to be a good measure",
+        definition: "The adage that a measure an agent optimizes stops tracking what it was meant to measure (Wikidata Q2575082). In zed-kask it is the reason skill evaluation is logically separated from skill execution: the executing session records outcomes and proposes changes, and only the operator, in the algedonic review, evaluates (operator ruling 2026-09-24).",
+        constituents: &["measure", "target"],
+        authority: "operator ruling 2026-09-24; Wikidata Q2575082; Goodhart, Problems of Monetary Management (1975)",
+    },
+    DerivedConcept {
         term: "expectations_gap",
         aliases: &[],
         identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
@@ -303,6 +356,14 @@ mod tests {
             "equity risk premium",
             "expectations gap",
             "expectations_gap",
+            "pdca",
+            "plan-do-check-act",
+            "deming cycle",
+            "improvement kata",
+            "coaching kata",
+            "gemba walk",
+            "genchi gembutsu",
+            "goodhart's law",
         ] {
             assert!(
                 resolve_derived(term).is_some(),
@@ -332,6 +393,36 @@ mod tests {
         // The audit homonym (Liggio 1974) is deliberately not aliased: the
         // singular "expectation gap" stays unresolved.
         assert!(resolve_derived("expectation gap").is_none());
+    }
+
+    /// expect: [P5] The Lean/Kata vocabulary the skills use resolves to
+    /// published anchors (LEI lexicon, Wikidata) with the 2026-09-24 ruling,
+    /// and the PDCA identity names all four steps.
+    #[test]
+    fn lean_kata_terms_resolve_with_published_authority() {
+        let pdca = resolve_derived("PDCA cycle").expect("PDCA is defined");
+        assert_eq!(pdca.term, "pdca_cycle");
+        for step in ["plan", "do", "check", "act"] {
+            assert!(pdca.identity.contains(step), "PDCA identity names {step}");
+        }
+        assert!(pdca.authority.contains("Q820214"));
+        for (term, marker) in [
+            ("improvement kata", "Q7830807"),
+            ("coaching kata", "Q7830807"),
+            ("gemba walk", "Lean Enterprise Institute"),
+            ("goodhart's law", "Q2575082"),
+        ] {
+            let concept = resolve_derived(term).expect("lean term is defined");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.contains("2026-09-24"),
+                "{term} cites the ruling"
+            );
+        }
     }
 
     /// expect: [P5] Every derived entry cites an authority — an entry with

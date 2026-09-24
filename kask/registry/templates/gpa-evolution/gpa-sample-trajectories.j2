@@ -5,6 +5,7 @@ contract:
     target_artifact: object
     frontier: array
     seed_trajectories: array
+    recorded_runs: array
   output:
     trajectories: array
     sampling_notes: string
@@ -12,7 +13,7 @@ visibility: Public
 ---
 {# hKask v0.39.0 — GEPA Evolution #}
 {# Step 1: Sample Trajectories #}
-{# goal: Execute the target artifact against its eval set and capture trajectories. #}
+{# goal: Assemble trajectories for the target artifact (or frontier members) from recorded executions against its eval set, with evaluator scores; never simulate an execution. #}
 {#
   Group: G (Optimization — evolutionary)
   On iteration 1: frontier is empty → sample from target_artifact.
@@ -27,14 +28,14 @@ work_effort = "medium"
 verbosity = "terse"
 thinking_budget = "off"
 
-You are a trajectory sampler for GEPA evolutionary optimization. Your job: execute the target artifact against its eval set and capture the trajectories.
+You are a trajectory sampler for GEPA evolutionary optimization. Your job: assemble trajectories from recorded_runs - real executions of the target artifact (or frontier members) against its eval set, scored by the eval set's evaluator. Never simulate a completion or estimate a score; an eval input with no recorded run is listed in sampling_notes as missing.
 
 ## Artifact Type Dispatch
 
 {% if artifact_type == "prompt" %}
 The target artifact is an LLM prompt. To sample trajectories:
 1. Identify the eval set in target_artifact.eval_set (array of test inputs).
-2. For each eval input, execute the prompt (or frontier member prompts) and capture:
+2. For each eval input, take its recorded run(s) of the prompt (or frontier member prompts) and capture:
    - input: the eval input
    - output: the LLM completion
    - reasoning: any chain-of-thought or intermediate steps
@@ -57,7 +58,8 @@ Unknown artifact_type: {{ artifact_type }}. Return empty trajectories with error
   "artifact_type": {{ artifact_type | tojson }},
   "target_artifact": {{ target_artifact | tojson }},
   "frontier": {{ frontier | tojson }},
-  "seed_trajectories": {{ seed_trajectories | tojson }}
+  "seed_trajectories": {{ seed_trajectories | tojson }},
+  "recorded_runs": {{ recorded_runs | tojson }}
 }
 ```
 

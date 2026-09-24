@@ -148,7 +148,7 @@ impl DiscoveryState {
                     .ok();
                 }
                 Err(e) => {
-                    // zed-kask (D48): `{e:#}` (anyhow's alternate format)
+                    // zed-kask (D76): `{e:#}` (anyhow's alternate format)
                     // includes the full source chain — connect vs DNS vs TLS
                     // vs timeout. The top-level Display alone logged "error
                     // sending request" with no cause, leaving transport
@@ -1071,7 +1071,7 @@ mod tests {
         drop(observer);
     }
 
-    /// D48 pin: the discovery-failure warn must format the error with
+    /// D76 pin: the discovery-failure warn must format the error with
     /// anyhow's alternate Display (`{e:#}`) so the source chain (connect
     /// vs DNS vs TLS vs timeout) is logged. The plain `{e}` left transport
     /// failures undiagnosable — "error sending request" with no cause
@@ -1079,7 +1079,8 @@ mod tests {
     #[test]
     fn discovery_failure_warn_includes_error_source_chain() {
         let source = include_str!("open_ai_compatible.rs");
-        let needle = "model discovery from {api_url} failed: {e:#}";
+        // Split the needle so the test's own source cannot satisfy the search.
+        let needle = concat!("model discovery from {api_url} failed: ", "{e:#}");
         assert!(
             source.contains(needle),
             "the discovery warn must use {{e:#}} (anyhow source chain), not plain {{e}}"

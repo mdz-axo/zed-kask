@@ -51,11 +51,10 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
    > 4. Professionalism — would a client pay for this?
    > 5. Text accuracy — are there any garbled letters, misspellings, or artifacts?
    > Return a score 1-10 for each criterion and a one-paragraph summary of the strongest weakness.
-3. Select the best candidate based on the highest aggregate score.
-4. Regenerate the selected candidate with this refined prompt:
+3. Show the operator every candidate with its critique scores and weakness summary, and ask which to refine. The critique is advice for the operator; the operator chooses the logo. If the operator is unavailable, report the ranked candidates and stop rather than choosing.
+4. Regenerate the operator's chosen candidate with this refined prompt:
    > Redesign this logo concept addressing the following critique: {critique_summary}. Keep the same business name, industry, and style direction. Fix the identified weaknesses while preserving the strengths.
-5. Repeat the critique and refine cycles for the specified number of rounds (default: 1).
-6. Call `image_remove_background` on the final logo for transparent PNG output.
+5. Critique the refined result the same way and show it beside the previous version. Repeat only while the operator asks for another round; at most 3 rounds in a session.
 
 ### Phase 4 — Deliverables
 

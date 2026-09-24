@@ -70,8 +70,7 @@ Specify:
 - What operator 𝒰 will be applied?
 - What signal 𝒮_t will drive it?
 - What experiment scope and explicitly authorized constraints apply (compute, time, provider spending, human input)? Token usage is measured evidence, not an allocated quota; do not invent token budgets or downgrade models.
-- What acceptance criteria will gate the update? (performance threshold, regression tolerance, safety constraints)
-- What version history will be maintained for rollback?
+- What measured criteria must the candidate meet before it is filed as a proposal? (performance threshold, regression tolerance, safety constraints) The operator, not this session, accepts it.
 
 ### Step 5: Variety Engineering (Prevent Knowledge Bubbles)
 
@@ -90,8 +89,7 @@ This implements Ashby's Law of Requisite Variety: the regulator's variety (explo
 ## Constraints
 
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
-- The improvement plan must include acceptance criteria for verifier-gated updates.
-- Version history must be maintained for rollback.
+- The improvement plan must include the measured criteria that decide propose vs discard; acceptance belongs to the operator's algedonic review.
 - The critic (evaluator) must be decoupled from the generator.
 
 Respond with a JSON object containing `pathway` (exactly "theta" or "sigma"), `scaffold_component` (if sigma: exactly "p", "m", "T", or "sigma"), `signal_type` (exactly "D_t", "e_t", "tau_t", or an array of these for multi-signal), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (if PDCA iteration 2+: list of previously attempted combinations and justification for current selection).

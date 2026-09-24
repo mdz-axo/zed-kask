@@ -30,8 +30,8 @@ prediction calibration.
 
 ### Step 0 — Read prior calibration (execute)
 
-1. Read prior calibration from the scenarios MCP forecast store via `scenario_calibration` — the Brier score history and overconfidence_bias from all resolved forecasts.
-2. The overconfidence_bias feeds the grasp-current step so the agent knows its historical calibration. "No stored forecasts" is an expected empty calibration state: record calibration context as unavailable and continue without reporting a skill-use failure. Other failures remain visible, and the Kata cycle proceeds without calibration context.
+1. Read this skill's own prior calibration with `kanban_goal_list`: resolved goals whose `goal_text` begins `metacognition:` carry the intake prediction and the operator's scored outcome (Brier-scored by `kanban_goal_score`). Forecast-market calibration (`scenario_calibration`) is a different reference class and is not this skill's calibration.
+2. The resolved predictions feed the grasp-current step. "No resolved metacognition goals" is an expected empty state: record calibration as unavailable and continue. Other failures remain visible, and the Kata cycle proceeds without calibration context.
 
 ### meta-grasp-current (Kata Step 1: Grasp Current Condition)
 
@@ -50,7 +50,7 @@ prediction calibration.
 
 1. Predict which calibration will close the gap and by how much.
 2. Carry a confidence in [0,1] — how sure is the agent that this prediction is correct?
-3. The Brier score tracks whether the confidence is calibrated across cycles.
+3. Record the prediction before the experiment: `kanban_goal_create` with `goal_text` `metacognition: <the predicted outcome>`, one observable criterion (the measured gap reduction), and the confidence as `prediction`. The operator scores it later (`kanban_goal_score`), which Brier-scores the confidence; this session never scores its own prediction.
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
@@ -63,8 +63,8 @@ prediction calibration.
 1. Compute object-space gap (Dublin Core artifact completeness).
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
-4. Score the prediction via Brier score only after the predicted event has a measured binary outcome; without an outcome record calibration as pending, not zero error.
-5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles and report the remaining gap and pending measurements.
+4. Judge the recorded goal with the measured gap (`kanban_goal_judge`). The Brier score arrives only when the operator scores the goal; until then calibration is pending, not zero error.
+5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires operator-resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles in this session and report the remaining gap and pending measurements.
 
 ## Registry Templates
 

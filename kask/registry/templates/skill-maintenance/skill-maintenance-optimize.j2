@@ -1,4 +1,4 @@
-{# goal: Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions; retain the baseline unless a verified candidate improves the actual capability. #}
+{# goal: Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. #}
 [inference]
 contract:
   input:
@@ -10,8 +10,8 @@ contract:
     observations: array
   output:
     comparisons: array
-    verdict: string
-    selected_candidate: string|null
+    proposal_status: string
+    proposed_candidate: string|null
     unverified: array
     next_step: string
 visibility: Public
@@ -65,18 +65,20 @@ not judge semantic quality. Call `lean-prover` only for a necessary formal
 invariant of a decision rule, with stated assumptions and actual compiler
 and axiom evidence; it does not prove prompt quality or global optimality.
 
-Select a non-baseline design only if it passes hard contracts, beats baseline
-on the fixed outcome measure, and has no unacceptable regression. Otherwise
-retain baseline. Do not infer runs or approval. If no valid comparison was
-run, report `unverified`, with the next run needed rather than a fake win.
+You do not decide which design is kept. Skill evaluation belongs to the
+operator in algedonic-review's gemba walk; this comparison is its evidence.
+Name a non-baseline candidate for the proposal only if it passes hard
+contracts and its measured outcomes beat baseline with no unacceptable
+regression; otherwise propose nothing. Do not infer runs or approval. If no
+valid comparison was run, report `unverified`, with the next run needed.
 
 Return JSON:
 ```json
 {
   "comparisons": [{"candidate_id": "baseline", "task_results": [], "hard_gates": [], "cost": null, "evidence": []}],
-  "verdict": "improved | keep_baseline | unverified",
-  "selected_candidate": "baseline",
+  "proposal_status": "propose | no_proposal | unverified",
+  "proposed_candidate": null,
   "unverified": [],
-  "next_step": "run a named missing comparison, propose a verified diff for review, or stop"
+  "next_step": "run a named missing comparison, file the proposal under zk-data/curator/proposals/, or stop"
 }
 ```

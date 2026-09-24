@@ -47,7 +47,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 ### improvement-step3-target
 
-1. Declare a specific, measurable target condition 1 week to 3 months out, beyond your current knowledge threshold.
+1. Declare a specific, measurable target condition reachable within this session's PDCA cycles (at most the skill's iteration bound), beyond your current knowledge threshold. The Lean Enterprise Institute's human practice sets the target about two weeks out; an agent practices the kata within one session (operator ruling 2026-09-24), so the horizon is counted in bounded experiments, not calendar time.
 2. Identify every obstacle between current and target conditions to create an Obstacles Parking Lot.
 3. Select the ONE most consequential obstacle to address first.
 4. Define what you do NOT know about the focus obstacle.
