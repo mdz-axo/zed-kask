@@ -294,17 +294,26 @@ that the mutation **may have succeeded** and require inspection before retry.
 These three cloud mutations have fixture/contract tests but have **not** been
 run against the live workspace. They are never implicit fallbacks from educt.
 
-Reel creation/blocks/strikethroughs, highlight **writes**, redactions,
-publishing, media download and transcript correction remain **unimplemented**: the pasted API
-index listed their categories but omitted the expanded endpoint request/response
-schemas needed to send safe writes. Reduct's documented warnings apply:
-DELETE is irreversible, POST can overwrite named fields, and audio redaction
-through the API does not redact transcript text. A bounded public search for
-Reel/block write payloads found product/help descriptions but not expanded v3
-schemas; the official API reference still displays a browser login without a
-session. Obtain the non-secret expanded endpoint rows before implementing
-those mutations. Enter/reset the key in Settings → Kask → Data Services;
-writes/deletes refresh the media MCP child.
+The operator supplied `Reduct-Video.pdf` (55-page v3 reference): pages 31–32
+specify Reel creation (`POST .../reel`, `{"title": ...}` → `{"reel": id}`);
+pages 36–38 specify block creation (`POST .../reel/{id}/block`): `doc-range`
+requires `order`, `recording`, `start`, `end`, empty `strikethrough` map;
+`title` requires `order`, `duration` and accepts `title` text. Both return
+`{"block": id}`. Pages 38–39 permit partial `POST .../block/{id}` edits and
+an ID-keyed acknowledgement. `reduct_create_reel`, `reduct_add_reel_clip`,
+`reduct_add_reel_title` and `reduct_edit_reel_clip_range` implement only these
+scoped contracts. Clip edits read back the block type before POST; every
+acknowledgement means submission, not verified composition/rendering. Loopback
+fixtures exercise request path/body, X-Auth-Key header, parsed acknowledgement,
+and HTTP refusal. The PDF's embedded text was cross-checked because corpus OCR
+flagged eleven pages for quality; no PDF text is committed. These four tools
+have **not** been deployed to the running MCP child or live-mutated in Reduct.
+
+Strikethroughs, highlight **writes**, redactions, publishing, media download
+and transcript correction remain unimplemented. Page 41 lists strikethrough
+paths without body/response schema. DELETE is irreversible; POST can overwrite
+named fields; API audio redaction does not redact transcript text. Enter/reset
+the key in Settings → Kask → Data Services; writes/deletes refresh the child.
 
 ## Configuration
 

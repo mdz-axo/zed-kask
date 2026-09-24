@@ -1505,7 +1505,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reel_post_http_error_is_classified_and_never_reported_as_created() -> Result<(), Box<dyn std::error::Error>> {
+    async fn reel_post_http_error_is_classified_and_never_reported_as_created()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let root = format!("http://{}/", listener.local_addr()?);
@@ -1516,23 +1517,38 @@ mod tests {
             let mut request = String::new();
             loop {
                 let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 { return Err(std::io::Error::other("incomplete error fixture")); }
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete error fixture"));
+                }
                 request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                if request.contains("\r\n\r\n") && request.contains("Fixture reel") { break; }
+                if request.contains("\r\n\r\n") && request.contains("Fixture reel") {
+                    break;
+                }
             }
-            write!(stream, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+            write!(
+                stream,
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
             Ok(request)
         });
-        let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel").await.expect_err("provider refusal is not a created reel");
+        let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel")
+            .await
+            .expect_err("provider refusal is not a created reel");
         assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
-        let request = peer.join().map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
         assert!(request.starts_with("POST /project/p_fixture/reel HTTP/1.1"));
-        assert!(request.to_ascii_lowercase().contains("x-auth-key: fixture-key"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
         Ok(())
     }
 
     #[test]
-    fn reel_writes_reject_bad_ranges_ids_and_ambiguous_acknowledgements() -> Result<(), McpToolError> {
+    fn reel_writes_reject_bad_ranges_ids_and_ambiguous_acknowledgements() -> Result<(), McpToolError>
     {
         assert_eq!(
             reel_create_url(API_ROOT, "p_fixture")?,
