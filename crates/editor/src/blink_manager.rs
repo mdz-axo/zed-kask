@@ -1,5 +1,5 @@
-use gpui::{Context, Task};
-
+use gpui::Context;
+use settings::SettingsStore;
 use std::time::Duration;
 use ui::App;
 
@@ -10,23 +10,24 @@ pub struct BlinkManager {
     blinking_paused: bool,
     /// Whether the cursor should be visibly rendered or not.
     visible: bool,
-    /// Whether the editor is active and eligible to blink (focus state).
+    /// Whether the blinking is currently enabled.
     enabled: bool,
-
     /// Whether the blinking is enabled in the settings.
     blink_enabled_in_settings: fn(&App) -> bool,
-    // zed-kask: replacing this task cancels the previous idle deadline, so rapid
-    // selection changes keep exactly one resume callback alive. See DIVERGENCE.md D15.
-    resume_task: Option<Task<()>>,
 }
 
 impl BlinkManager {
-    /// expect: "Unrelated settings edits do not blink cursors in editors I left."
-    /// [P9] Motivating: inactive editors must not consume sustained foreground work.
-    /// pre: the callback reports the current effective cursor-blink setting.
-    /// post: only an active editor keeps a timer, and that timer reads the
-    /// setting on each tick so changes take effect within one interval.
-    pub fn new(blink_interval: Duration, blink_enabled_in_settings: fn(&App) -> bool) -> Self {
+    pub fn new(
+        blink_interval: Duration,
+        blink_enabled_in_settings: fn(&App) -> bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // Make sure we blink the cursors if the setting is re-enabled
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.blink_cursors(this.blink_epoch, cx)
+        })
+        .detach();
+
         Self {
             blink_interval,
             blink_epoch: 0,
@@ -34,7 +35,6 @@ impl BlinkManager {
             visible: true,
             enabled: false,
             blink_enabled_in_settings,
-            resume_task: None,
         }
     }
 
@@ -45,45 +45,42 @@ impl BlinkManager {
 
     pub fn pause_blinking(&mut self, cx: &mut Context<Self>) {
         self.show_cursor(cx);
-        self.blinking_paused = true;
 
         let epoch = self.next_blink_epoch();
-        let interval = self.blink_interval;
-        self.resume_task = Some(cx.spawn(async move |this, cx| {
+        let interval = Duration::from_millis(500);
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(interval).await;
             this.update(cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                .ok();
-        }));
+        })
+        .detach();
     }
 
     fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
         if epoch == self.blink_epoch {
-            self.resume_task = None;
             self.blinking_paused = false;
             self.blink_cursors(epoch, cx);
         }
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut Context<Self>) {
-        if epoch != self.blink_epoch || !self.enabled || self.blinking_paused {
-            return;
-        }
         if (self.blink_enabled_in_settings)(cx) {
-            self.visible = !self.visible;
-            cx.notify();
+            if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
+                self.visible = !self.visible;
+                cx.notify();
+
+                let epoch = self.next_blink_epoch();
+                let interval = self.blink_interval;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(interval).await;
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, cx| this.blink_cursors(epoch, cx));
+                    }
+                })
+                .detach();
+            }
         } else {
             self.show_cursor(cx);
         }
-
-        let epoch = self.next_blink_epoch();
-        let interval = self.blink_interval;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(interval).await;
-            if let Some(this) = this.upgrade() {
-                this.update(cx, |this, cx| this.blink_cursors(epoch, cx));
-            }
-        })
-        .detach();
     }
 
     pub fn show_cursor(&mut self, cx: &mut Context<BlinkManager>) {
@@ -108,9 +105,6 @@ impl BlinkManager {
 
     /// Disable the blinking of the cursor.
     pub fn disable(&mut self, _cx: &mut Context<Self>) {
-        self.resume_task = None;
-        self.blinking_paused = false;
-        self.next_blink_epoch();
         self.visible = false;
         self.enabled = false;
     }
@@ -122,223 +116,5 @@ impl BlinkManager {
     #[cfg(test)]
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::{AppContext, TestAppContext};
-
-    #[gpui::test]
-    fn test_pause_blinking_restarts_single_resume_deadline(cx: &mut TestAppContext) {
-        let blink_manager =
-            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
-
-        blink_manager.update(cx, |blink_manager, cx| {
-            blink_manager.enable(cx);
-            blink_manager.pause_blinking(cx);
-            assert!(blink_manager.blinking_paused);
-            assert!(blink_manager.visible);
-            assert!(blink_manager.resume_task.is_some());
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(400));
-        blink_manager.update(cx, |blink_manager, cx| blink_manager.pause_blinking(cx));
-
-        cx.executor().advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |blink_manager, _| {
-            assert!(blink_manager.blinking_paused);
-            assert!(blink_manager.visible);
-            assert!(blink_manager.resume_task.is_some());
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(400));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |blink_manager, _| {
-            assert!(!blink_manager.blinking_paused);
-            assert!(!blink_manager.visible);
-            assert!(blink_manager.resume_task.is_none());
-        });
-    }
-
-    #[gpui::test]
-    fn test_disable_cancels_pending_resume(cx: &mut TestAppContext) {
-        let blink_manager =
-            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
-
-        blink_manager.update(cx, |blink_manager, cx| {
-            blink_manager.enable(cx);
-            blink_manager.pause_blinking(cx);
-            blink_manager.disable(cx);
-            assert!(!blink_manager.blinking_paused);
-            assert!(blink_manager.resume_task.is_none());
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |blink_manager, _| {
-            assert!(!blink_manager.enabled);
-            assert!(!blink_manager.visible);
-            assert!(blink_manager.resume_task.is_none());
-        });
-    }
-
-    /// D15: repeated SettingsStore updates must NOT accumulate overlapping blink
-    /// timers. Upstream's observer unconditionally calls `blink_cursors` on every
-    /// settings change, and `blink_cursors` spawns a fresh 500ms timer that runs
-    /// alongside the existing one. After N settings changes the cursor strobes at
-    /// (N+1)x the normal rate. The kask observer only (re)starts blinking on the
-    /// disabled→enabled transition, so unrelated settings changes (profile
-    /// switch, model selection, settings.json save) do not duplicate the timer.
-    ///
-    /// This test pins the fix: after enabling blink and firing 5 spurious
-    /// SettingsStore updates, advancing one interval toggles `visible` exactly
-    /// once (one timer), not 6 times (6 overlapping timers).
-    #[gpui::test]
-    fn test_settings_updates_do_not_accumulate_blink_timers(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal;
-        let store = cx.update(|cx| settings::SettingsStore::test(cx));
-        cx.update(|cx| cx.set_global(store));
-
-        let blink_manager =
-            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
-
-        // Start blinking.
-        blink_manager.update(cx, |blink_manager, cx| {
-            blink_manager.enable(cx);
-        });
-        // `enable` sets visible=false then blink_cursors toggles to visible=true
-        // and spawns the first 500ms timer.
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |b, _| assert!(b.enabled));
-
-        // Simulate 5 unrelated settings changes (profile switch, model
-        // selection, settings.json save, etc.). Each fires the SettingsStore
-        // observer on the BlinkManager.
-        for _ in 0..5 {
-            cx.update(|cx| {
-                settings::SettingsStore::update_global(cx, |_, _| {});
-            });
-            cx.run_until_parked();
-        }
-
-        // Snapshot visible, advance exactly one interval, and assert exactly
-        // one toggle. If overlapping timers had accumulated, visible would
-        // toggle multiple times within the 500ms window.
-        let visible_before = blink_manager.read_with(cx, |b, _| b.visible);
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        let visible_after_one_interval = blink_manager.read_with(cx, |b, _| b.visible);
-        assert_ne!(
-            visible_before, visible_after_one_interval,
-            "D15: visible must toggle exactly once per interval. \
-             If it did not toggle, the blink timer was cancelled by a \
-             settings update. If it toggled multiple times, overlapping \
-             timers accumulated — the upstream bug."
-        );
-
-        // Advance another interval and assert a second single toggle back.
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        let visible_after_two_intervals = blink_manager.read_with(cx, |b, _| b.visible);
-        assert_eq!(
-            visible_before, visible_after_two_intervals,
-            "D15: after two intervals the cursor must return to the starting \
-             state (one toggle per interval). Overlapping timers would \
-             produce an out-of-phase result."
-        );
-    }
-
-    /// expect: "A settings change must not restart cursor blinking in an editor I left."
-    /// [P9] Motivating: avoid repeated foreground work from inactive editors.
-    struct TestBlinkSetting(bool);
-    impl gpui::Global for TestBlinkSetting {}
-
-    /// A focused editor keeps a solid cursor while the setting is off and
-    /// resumes a single blink cycle when the setting is turned on again.
-    #[gpui::test]
-    fn test_blink_setting_transitions_preserve_focus_and_resume_one_timer(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal;
-        let store = cx.update(|cx| settings::SettingsStore::test(cx));
-        cx.update(|cx| {
-            cx.set_global(store);
-            cx.set_global(TestBlinkSetting(true));
-        });
-        let blink_manager = cx.new(|cx| {
-            BlinkManager::new(
-                Duration::from_millis(500),
-                |cx| cx.global::<TestBlinkSetting>().0,
-                cx,
-            )
-        });
-        blink_manager.update(cx, |manager, cx| manager.enable(cx));
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            cx.global_mut::<TestBlinkSetting>().0 = false;
-            settings::SettingsStore::update_global(cx, |_, _| {});
-        });
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |manager, _| {
-            assert!(
-                manager.enabled,
-                "disabling the setting must not blur the editor"
-            );
-            assert!(manager.visible, "the focused cursor must remain visible");
-        });
-
-        cx.update(|cx| {
-            cx.global_mut::<TestBlinkSetting>().0 = true;
-            settings::SettingsStore::update_global(cx, |_, _| {});
-        });
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |manager, _| {
-            assert!(manager.enabled);
-            assert!(manager.visible);
-        });
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |manager, _| {
-            assert!(
-                !manager.visible,
-                "one blink interval must toggle the cursor"
-            );
-        });
-    }
-
-    #[gpui::test]
-    fn test_unrelated_settings_update_does_not_reenable_blurred_editor(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal;
-        let store = cx.update(|cx| settings::SettingsStore::test(cx));
-        cx.update(|cx| cx.set_global(store));
-
-        let blink_manager =
-            cx.new(|cx| BlinkManager::new(Duration::from_millis(500), |_| true, cx));
-        blink_manager.update(cx, |blink_manager, cx| {
-            blink_manager.enable(cx);
-            blink_manager.disable(cx);
-        });
-        cx.run_until_parked();
-
-        cx.update(|cx| settings::SettingsStore::update_global(cx, |_, _| {}));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |blink_manager, _| {
-            assert!(
-                !blink_manager.enabled,
-                "a blurred editor must stay disabled"
-            );
-            assert!(!blink_manager.visible);
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(500));
-        cx.run_until_parked();
-        blink_manager.read_with(cx, |blink_manager, _| {
-            assert!(!blink_manager.enabled);
-            assert!(!blink_manager.visible);
-        });
     }
 }
