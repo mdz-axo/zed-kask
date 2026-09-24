@@ -373,12 +373,16 @@ async fn post_json_response(
 async fn post_binary_response(
     key: Option<&str>,
     url: &str,
-    bytes: Vec<u8>,
+    body: reqwest::Body,
+    length: u64,
     operation: &str,
 ) -> Result<reqwest::Response, McpToolError> {
     let (client, header) =
         authorized_client_with_timeout(key, std::time::Duration::from_secs(300))?;
-    let response = client.post(url).header("x-auth-key", header).body(bytes).send().await
+    let response = client.post(url)
+        .header("x-auth-key", header)
+        .header(reqwest::header::CONTENT_LENGTH, length)
+        .body(body).send().await
         .map_err(|error| McpToolError::unavailable(format!(
             "Reduct {operation} transport failed: {}; upload may have succeeded; inspect before retrying",
             error.without_url()
@@ -391,6 +395,70 @@ async fn post_binary_response(
         )));
     }
     Ok(response)
+}
+
+async fn read_upload_ack(response: reqwest::Response) -> Result<serde_json::Value, McpToolError> {
+    let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
+        McpToolError::failed_precondition(format!(
+            "Reduct upload may have succeeded, but its acknowledgement was unreadable: {error}"
+        ))
+    })?;
+    parse_media_upload_response(&body)
+}
+
+async fn upload_local_media(
+    key: Option<&str>,
+    url: &str,
+    path: &std::path::Path,
+) -> Result<serde_json::Value, McpToolError> {
+    if !path.is_absolute() {
+        return Err(McpToolError::invalid_argument(
+            "Reduct local upload requires an absolute file path",
+        ));
+    }
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|_| McpToolError::not_found("Local media file cannot be opened"))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|_| McpToolError::unavailable("Local media file metadata cannot be read"))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(McpToolError::invalid_argument(
+            "Reduct local upload requires a nonempty regular file",
+        ));
+    }
+    let probe = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            "-i",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .map_err(|_| {
+            McpToolError::unavailable("ffprobe is required to check local media before upload")
+        })?;
+    if !probe.status.success()
+        || !probe.stdout.split(|byte| *byte == b'\n').any(|line| {
+            matches!(
+                line.strip_suffix(b"\r").unwrap_or(line),
+                b"audio" | b"video"
+            )
+        })
+    {
+        return Err(McpToolError::invalid_argument(
+            "Local upload requires a decodable audio or video stream; Reduct determines final format support",
+        ));
+    }
+    let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file));
+    let response = post_binary_response(key, url, body, metadata.len(), "media upload").await?;
+    read_upload_ack(response).await
 }
 
 async fn probe_project(key: Option<&str>, url: &str) -> Result<serde_json::Value, McpToolError> {
@@ -968,6 +1036,14 @@ struct ReductUploadMediaRequest {
     gallery_asset_id: String,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductUploadLocalMediaRequest {
+    project_id: String,
+    recording_id: String,
+    /// Absolute path to a local audio/video file. The file is sent to Reduct, not indexed in the gallery.
+    path: String,
+}
+
 fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolError> {
     if key.is_none_or(|key| key.trim().is_empty()) {
         return Err(McpToolError::permission_denied(
@@ -1261,15 +1337,14 @@ impl MediaServer {
             .await
             .map_err(|_| McpToolError::unavailable("Indexed media file could not be read"))?;
         validate_indexed_upload_bytes(&asset.hash, metadata.len(), &bytes)?;
-        let response =
-            post_binary_response(self.reduct_api_key.as_deref(), &url, bytes, "media upload")
-                .await?;
-        let body = read_bounded(response, 64 * 1024).await.map_err(|error| {
-            McpToolError::failed_precondition(format!(
-                "Reduct upload may have succeeded, but its acknowledgement was unreadable: {error}"
-            ))
-        })?;
-        parse_media_upload_response(&body)
+        let response = post_binary_response(
+            self.reduct_api_key.as_deref(),
+            &url,
+            bytes.into(),
+            "media upload",
+        )
+        .await?;
+        read_upload_ack(response).await
     }
 
     #[tool(
@@ -1286,6 +1361,37 @@ impl MediaServer {
         execute_tool(self, "reduct_upload_gallery_media", async {
             self.upload_gallery_media(&project_id, &recording_id, &gallery_asset_id)
                 .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Upload a local audio/video file by absolute path to an existing Reduct recording, without gallery indexing. Sends file bytes to Reduct; Reduct determines format support. Streams the file without an in-memory size cap. Mutates the cloud workspace; check recording status before any retry."
+    )]
+    pub async fn reduct_upload_local_media(
+        &self,
+        Parameters(ReductUploadLocalMediaRequest {
+            project_id,
+            recording_id,
+            path,
+        }): Parameters<ReductUploadLocalMediaRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_upload_local_media", async {
+            connection_status(self.reduct_api_key.as_deref())?;
+            let path = std::path::Path::new(&path);
+            if !path.is_absolute() {
+                return Err(McpToolError::invalid_argument(
+                    "Reduct local upload requires an absolute file path",
+                ));
+            }
+            let filename = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| {
+                    McpToolError::invalid_argument("Local media filename is not UTF-8")
+                })?;
+            let url = media_upload_url(&project_id, &recording_id, filename)?;
+            upload_local_media(self.reduct_api_key.as_deref(), &url, path).await
         })
         .await
     }
@@ -1753,7 +1859,7 @@ mod tests {
         let error = post_binary_response(
             Some("fixture-key"),
             &url,
-            b"fixture-binary".to_vec(),
+            b"fixture-binary".to_vec().into(),
             "media upload",
         )
         .await
@@ -1772,6 +1878,87 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains("x-auth-key: fixture-key")
         );
+        Ok(())
+    }
+
+    /// expect: A local media file outside any gallery can be submitted without indexing, while missing files fail before POST. [P1]
+    #[tokio::test]
+    async fn local_file_upload_streams_without_gallery_and_rejects_missing_input()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("sample clip.wav");
+        let mut payload = Vec::from(&b"RIFF"[..]);
+        payload.extend_from_slice(&38_u32.to_le_bytes());
+        payload.extend_from_slice(b"WAVEfmt ");
+        payload.extend_from_slice(&16_u32.to_le_bytes());
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.extend_from_slice(&8000_u32.to_le_bytes());
+        payload.extend_from_slice(&16000_u32.to_le_bytes());
+        payload.extend_from_slice(&2_u16.to_le_bytes());
+        payload.extend_from_slice(&16_u16.to_le_bytes());
+        payload.extend_from_slice(b"data");
+        payload.extend_from_slice(&2_u32.to_le_bytes());
+        payload.extend_from_slice(&[0, 0]);
+        tokio::fs::write(&path, &payload).await?;
+        let peer_payload = payload.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            while !request
+                .windows(peer_payload.len())
+                .any(|window| window == peer_payload)
+            {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete upload fixture"));
+                }
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let response_body = r#"{"media_id":"m1"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            )?;
+            String::from_utf8(request).map_err(std::io::Error::other)
+        });
+        let url = format!(
+            "http://{address}/project/p_fixture/recording/r_fixture/media-upload?filename=sample+clip.wav"
+        );
+        let result = upload_local_media(Some("fixture-key"), &url, &path).await;
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture peer panicked"))??;
+        let result = result?;
+        assert_eq!(result["media_id"], "m1");
+        assert!(request.starts_with("POST /project/p_fixture/recording/r_fixture/media-upload?filename=sample+clip.wav HTTP/1.1"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        assert!(!request.contains(&path.to_string_lossy().to_string()));
+        let invalid_path = dir.path().join("not-media.wav");
+        tokio::fs::write(&invalid_path, b"not audio").await?;
+        let invalid = upload_local_media(Some("fixture-key"), &url, &invalid_path)
+            .await
+            .expect_err("non-media bytes must not be sent");
+        assert_eq!(invalid.kind, hkask_types::McpErrorKind::InvalidArgument);
+        let missing =
+            upload_local_media(Some("fixture-key"), &url, &dir.path().join("missing.wav"))
+                .await
+                .expect_err("missing local file must not be sent");
+        assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
+        let directory = upload_local_media(Some("fixture-key"), &url, dir.path())
+            .await
+            .expect_err("directory must not be sent");
+        assert_eq!(directory.kind, hkask_types::McpErrorKind::InvalidArgument);
         Ok(())
     }
 
