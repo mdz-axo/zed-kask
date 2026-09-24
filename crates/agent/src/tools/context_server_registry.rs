@@ -676,7 +676,7 @@ impl AnyAgentTool for KaskServerTool {
             }
             schema => schema,
         };
-        // zed-kask: D44/D47 — managed tools share the built-in schema normalization path.
+        // zed-kask: D44 — managed tools share the built-in schema normalization path.
         language_model::tool_schema::normalize_tool_schema(&mut schema);
         schema
     }
@@ -1991,7 +1991,7 @@ mod tests {
             })),
             serde_json::json!({
                 "type": "object",
-                "properties": {"description": {"type": "string"}},
+                "properties": {"description": {"type": "string", "description": "Field help"}},
                 "required": ["description"]
             })
         );

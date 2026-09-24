@@ -13,12 +13,9 @@ pub fn root_schema_for<T: JsonSchema>() -> Schema {
 }
 
 /// Removes redundant root metadata, inlines same-document references, and makes
-/// empty object inputs explicit. Removes verbose property annotations while
-/// preserving property names.
+/// empty object inputs explicit.
 pub fn normalize_tool_schema(schema: &mut Value) {
     inline_refs(schema);
-    // zed-kask: D47 — strip keywords, never entries in schema name maps.
-    strip_verbose_property_fields(schema);
 
     let Value::Object(object) = schema else {
         return;
@@ -58,38 +55,6 @@ fn inline_refs(schema: &mut Value) {
     match inline_refs_fallibly(&mut inlined) {
         Ok(()) => *schema = inlined,
         Err(error) => log::warn!("leaving tool schema references unresolved: {error:#}"),
-    }
-}
-
-/// Name maps bind names to schemas, so a field named `description` or
-/// `default` must survive even though those keywords are stripped inside its
-/// schema. Parameter defaults remain the tool handler's responsibility.
-fn strip_verbose_property_fields(schema: &mut Value) {
-    match schema {
-        Value::Object(object) => {
-            for (key, value) in object.iter_mut() {
-                if matches!(
-                    key.as_str(),
-                    "properties" | "patternProperties" | "$defs" | "definitions"
-                ) {
-                    if let Value::Object(names) = value {
-                        for schema in names.values_mut() {
-                            strip_verbose_property_fields(schema);
-                        }
-                    }
-                } else {
-                    strip_verbose_property_fields(value);
-                }
-            }
-            object.remove("description");
-            object.remove("default");
-        }
-        Value::Array(items) => {
-            for item in items {
-                strip_verbose_property_fields(item);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -250,11 +215,7 @@ mod tests {
             "definitions": { "Glob": { "type": "string" } },
             "type": "object",
             "properties": {
-                "glob": {
-                    "$ref": "#/definitions/Glob",
-                    "description": "a pattern",
-                    "minLength": 1
-                }
+                "glob": { "$ref": "#/definitions/Glob", "description": "a pattern" }
             }
         });
 
@@ -262,8 +223,7 @@ mod tests {
 
         assert_eq!(
             schema["properties"]["glob"],
-            // zed-kask: D47 removes annotations, not sibling constraints.
-            json!({ "type": "string", "minLength": 1 })
+            json!({ "type": "string", "description": "a pattern" })
         );
         assert_eq!(schema.get("definitions"), None);
     }
@@ -301,148 +261,6 @@ mod tests {
         normalize_tool_schema(&mut schema);
 
         assert_eq!(schema, unresolvable);
-    }
-
-    #[test]
-    fn test_strip_verbose_property_fields_removes_defaults_and_descriptions() {
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query",
-                    "default": ""
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results to return",
-                    "default": 10
-                },
-                "nested": {
-                    "type": "object",
-                    "description": "Nested config",
-                    "properties": {
-                        "inner": {
-                            "type": "string",
-                            "description": "Inner field",
-                            "default": "foo"
-                        }
-                    }
-                }
-            },
-            "required": ["query"]
-        });
-
-        normalize_tool_schema(&mut schema);
-
-        assert_eq!(
-            schema,
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" },
-                    "limit": { "type": "integer" },
-                    "nested": {
-                        "type": "object",
-                        "properties": { "inner": { "type": "string" } }
-                    }
-                },
-                "required": ["query"]
-            })
-        );
-    }
-
-    #[test]
-    fn test_strip_verbose_property_fields_preserves_property_named_description() {
-        // Required criteria text and optional task descriptions must both
-        // reach the model; a surviving `required` entry alone is not enough.
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "description": { "type": "string", "description": "Task text" },
-                "criteria": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": { "type": "string", "description": "Criterion text" },
-                            "default": { "type": "string", "default": "x" }
-                        },
-                        "required": ["description", "default"]
-                    }
-                }
-            }
-        });
-
-        normalize_tool_schema(&mut schema);
-
-        assert_eq!(
-            schema,
-            json!({
-                "type": "object",
-                "properties": {
-                    "description": { "type": "string" },
-                    "criteria": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "description": { "type": "string" },
-                                "default": { "type": "string" }
-                            },
-                            "required": ["description", "default"]
-                        }
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn normalization_preserves_names_in_definitions_and_pattern_properties() {
-        for definitions_key in ["$defs", "definitions"] {
-            let mut schema = json!({
-                "type": "object",
-                "properties": { "value": { "$ref": format!("#/{definitions_key}/description") } },
-                "patternProperties": {
-                    "description": { "type": "string", "description": "Pattern annotation" },
-                    "default": { "type": "number", "default": 1 }
-                }
-            });
-            schema[definitions_key] = json!({
-                "description": { "type": "string", "description": "Definition annotation" },
-                "default": { "type": "number", "default": 1 }
-            });
-            let mut unresolved = schema.clone();
-            unresolved["properties"]["value"]["$ref"] =
-                json!(format!("#/{definitions_key}/Missing"));
-
-            normalize_tool_schema(&mut schema);
-            assert_eq!(schema["properties"]["value"], json!({ "type": "string" }));
-            assert!(schema.get(definitions_key).is_none());
-            assert_eq!(
-                schema["patternProperties"],
-                json!({
-                    "description": { "type": "string" },
-                    "default": { "type": "number" }
-                })
-            );
-
-            // Upstream keeps definitions on an unresolved reference. D47 must
-            // preserve their names as well as the unresolved reference itself.
-            normalize_tool_schema(&mut unresolved);
-            assert_eq!(
-                unresolved[definitions_key],
-                json!({
-                    "description": { "type": "string" },
-                    "default": { "type": "number" }
-                })
-            );
-            assert_eq!(
-                unresolved["properties"]["value"]["$ref"],
-                json!(format!("#/{definitions_key}/Missing"))
-            );
-        }
     }
 
     #[test]
