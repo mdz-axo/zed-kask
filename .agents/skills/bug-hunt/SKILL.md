@@ -88,7 +88,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 ## Relationship to Other Skills
 
-- **tdd**: systematically verifies known properties of a single function (property/contract tests). Bug-hunt explores for unknown bugs across a crate. Bug-hunt's `pattern_signatures` and confirmed findings are natural inputs to tdd's gap-check phase — a found bug becomes a regression test.
+- **tdd**: builds or fixes one behavior test-first at an agreed seam. Bug-hunt explores for unknown bugs across a crate. A confirmed finding returns to tdd as a new red test.
 - **diagnose**: when bug-hunt finds a confirmed bug, the `evidence` and `location` fields are a pre-minimized reproducer for diagnose's Phase 2.
 
 ## Registry Templates

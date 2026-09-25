@@ -62,7 +62,7 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 
 - Informal mathematical argument — testable-but-unproven claims belong to `falsifiability` / `hypothesis-framer`; proof is a stronger standard than falsification.
 - Rust type-system design — use `idiomatic-rust`.
-- Property-based testing — `tdd`'s proptest universals test behavior; they do not prove it.
+- Property-based testing — `tdd`'s property tests sample behavior; they do not prove it.
 
 ## Instructions
 

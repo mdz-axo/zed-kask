@@ -1,0 +1,77 @@
+{# goal: Before any test is written, propose the seams, the test layer and the
+   expectation contract for each behavior in scope, so the user can confirm
+   them. No test is written at an unconfirmed seam. #}
+[inference]
+contract:
+  input:
+    task: string
+    crate_scope: string
+    public_interface:
+      type: string
+      required: false
+  output:
+    seams: array
+    questions_for_user: array
+visibility: Public
+---
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "standard"
+
+You are planning a test-driven change. Propose where the tests go; do not
+write tests or code.
+
+## Task
+
+{{ task }}
+
+## Scope
+
+Crate(s): {{ crate_scope }}
+{% if public_interface %}
+Public interface already known:
+
+{{ public_interface }}
+{% endif %}
+
+## Instructions
+
+1. Read the crate's public items (`pub fn`, `pub struct`, MCP `#[tool]`
+   methods, GPUI entities) with `grep` / `read_file`. Only public boundaries
+   are seams.
+2. For each behavior the task needs, name the seam and choose one layer:
+   `example` (known input → output), `property` (invariant over a domain),
+   `proof` (panic-freedom of a pure, allocation-free core) or `loop-closure`
+   (write → observe → recall, or a degradation being surfaced).
+3. State the expectation contract: who expects what outcome, the variables
+   that change it, what may vary incidentally, and the falsifier with an
+   oracle independent of the implementation (literal, worked example, spec).
+4. List boundaries that must be faked (provider HTTP, clock, randomness) and
+   the existing trait that injects each. Nothing internal is mocked.
+5. Order behaviors by risk: correctness and user data first.
+
+## Output
+
+Respond with JSON:
+
+```json
+{
+  "seams": [
+    {
+      "behavior": "sentence naming the capability, used as the test name",
+      "seam": "path::to::public_item or tool name",
+      "layer": "example|property|proof|loop-closure",
+      "expectation": "who expects what, under which conditions",
+      "falsifier": "observation that would contradict it",
+      "oracle": "literal|worked-example|spec",
+      "boundary_fakes": ["InferencePort", "..."]
+    }
+  ],
+  "questions_for_user": ["Which of these seams should we test?"]
+}
+```
+
+`seams` stays a proposal until the user confirms it.

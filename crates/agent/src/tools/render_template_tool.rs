@@ -810,7 +810,7 @@ mod corpus_sweep_tests {
             // The header's load-bearing markers must never survive as
             // leading metadata. Checked only in the first few lines — the
             // word `contract:` legitimately appears mid-prose later (e.g.
-            // tdd-tracer's "verify the contract: it enforces…").
+            // prose that says "verify the contract: it enforces…").
             for (idx, line) in stripped.lines().take(5).enumerate() {
                 let trimmed_line = line.trim();
                 if trimmed_line.starts_with("visibility:")

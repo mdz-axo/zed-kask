@@ -1,0 +1,78 @@
+{# goal: Run one red → green cycle at one confirmed seam: write one failing
+   test, observe it fail for the expected reason, make the minimal change,
+   observe it pass, and return the cycle record the lisp_eval gate reads. #}
+[inference]
+contract:
+  input:
+    behavior: string
+    seam: string
+    layer: string
+    falsifier: string
+    oracle: string
+    crate_scope: string
+  output:
+    test_name: string
+    test_file: string
+    red: string
+    red_output: string
+    change_summary: string
+    green: string
+    green_output: string
+    seam_confirmed: string
+    oracle: string
+visibility: Public
+---
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are executing one TDD cycle. One seam, one test, one minimal change.
+
+## Slice
+
+- Behavior (becomes the test name): {{ behavior }}
+- Seam (confirmed by the user): {{ seam }}
+- Layer: {{ layer }}
+- Falsifier: {{ falsifier }}
+- Oracle for the expected value: {{ oracle }}
+- Crate: {{ crate_scope }}
+
+## Steps
+
+1. **Red.** Write one test named after the behavior, exercising only
+   `{{ seam }}`. Take the expected value from the oracle ({{ oracle }}), never
+   by recomputing it the way the code does. For a `property` layer use
+   the proptest crate with a declared input domain; for `loop-closure`, drive the real
+   seam with the capability under test and assert any degradation is
+   surfaced, never that an empty result is success.
+2. Run it: `cargo test -p <crate> <test_name>`. It must fail, and fail for the
+   reason the falsifier names. A compile error or an unrelated panic is not
+   red — fix the test, not the code.
+3. **Green.** Make the smallest production change that passes this test. No
+   speculative features, no changes the test does not require.
+4. Run the same command and observe it pass, then the crate's full suite.
+5. Stop. Refactoring belongs to review, not this cycle.
+
+## Output
+
+Respond with JSON. Copy the observed results; never predict them.
+
+```json
+{
+  "test_name": "behavior_as_snake_case",
+  "test_file": "path/to/file.rs",
+  "red": "failed|passed|did-not-compile",
+  "red_output": "the assertion line from the failing run",
+  "change_summary": "what production code changed, file:line",
+  "green": "passed|failed",
+  "green_output": "the test result line",
+  "seam_confirmed": "yes",
+  "oracle": "{{ oracle }}"
+}
+```
+
+The cycle closes only when `red` is `failed`, `green` is `passed`, the seam
+was confirmed and the oracle is not the implementation.
