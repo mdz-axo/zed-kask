@@ -13,6 +13,13 @@ the prediction. Evaluate convergence via the hypotenuse
 of object-space (Dublin Core) and process-space (PKO) gaps, plus Brier-scored
 prediction calibration.
 
+## Reference models
+
+- Improvement Kata — Rother, *Toyota Kata* (2010); `onto_anchor` → derived `improvement_kata`.
+- PDCA — Shewhart (1939), Deming; `onto_anchor` → derived `pdca_cycle`.
+- Brier score — Brier (1950); `onto_anchor` → derived `brier_score`.
+- "Metacognition" itself anchors only at the 5W1H core (coarse); the skill's fidelity claim is to the Kata and Brier models above, not to a metacognition literature.
+
 ## When to Use
 
 - When an agent needs to reflect on its own metacognitive state and identify what it knows and doesn't know.
@@ -63,14 +70,16 @@ prediction calibration.
 Use when the gap is in understanding a problem that needs several dependent reasoning steps, not in calibrating a known one. It runs inside Step 4; the Kata steps around it are unchanged.
 
 1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts`, `thinking_budget` and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries`.
-2. For each `delegation_requests` entry, render the matching delegation template with it: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). For `skill_match_queries`, render `skill-discovery (route)/skill-discovery (route)-match` for up to three follow-up skills.
+2. For each `delegation_requests` entry, render the matching delegation template with it: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). For `skill_match_queries`, render `skill-discovery/skill-discovery-route` for up to three follow-up skills.
 3. Feed the delegation and skill-match results back into the next engine render. The engine's `final_answer` and `hypothesis_verified` become the post-experiment current condition.
 
-### Convergence (Steps 5-9: Check + Act — model-evaluated)
+### Convergence (Steps 5-9: Check + Act)
 
-1. Compute object-space gap (Dublin Core artifact completeness).
-2. Compute process-space gap (PKO procedure progress).
-3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
+The counts are probabilistic (P — model-produced, critiqued by the operator when the recorded goal is scored); the arithmetic over them is deterministic (D — `lisp_eval`).
+
+1. (P) Count the object-space gap inputs (Dublin Core artifacts missing vs target) and process-space inputs (PKO procedure steps incomplete vs target) from the grasp and target results; normalize each to [0,1].
+2. (D) Compute the hypotenuse with `lisp_eval`, form `(sqrt (+ (* og og) (* pg pg)))`, env `{ "og": <object gap>, "pg": <process gap> }`. Never estimate the gap in prose.
+3. (D) The reduction is `(- gap_before gap_after)` via `lisp_eval`; `gap_before` is the Step 3 value, unchanged.
 4. Judge the recorded goal with the measured gap (`kanban_goal_judge`). The Brier score arrives only when the operator scores the goal; until then calibration is pending, not zero error.
 5. Check convergence against a declared epsilon and measured before/after gaps. Stability requires two measured iterations, and Brier calibration requires operator-resolved predictions; missing measurements cannot satisfy a convergence branch. If no branch passes, re-enter grasp-current with the experiment's observed result; stop after three cycles in this session and report the remaining gap and pending measurements.
 
