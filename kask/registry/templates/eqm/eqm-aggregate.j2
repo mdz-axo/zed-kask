@@ -40,9 +40,11 @@ You are an EQM aggregation analyst. Your task is to aggregate per-rationale EQM 
 {{ forecaster_groups | tojson }}
 ```
 
+**Arithmetic is not done here.** Group the rationales and list the per-rationale values each group needs; the means, frequencies and `overconfidence_bias` are computed by `lisp_eval` in the SKILL.md `eqm-aggregate` step from the values you list. The definitions below say what each computed field means.
+
 ## Step 1 — Forecast-Level Composite
 
-For each question (grouping rationales by question), compute:
+For each question (grouping rationales by question), list the values for:
 
 - `mean_composite`: mean of composite_score across rationales for that question.
 - `red_flag_count`: total red flags across rationales for that question.
@@ -51,7 +53,7 @@ For each question (grouping rationales by question), compute:
 
 ## Step 2 — Forecaster-Level Composite
 
-For each forecaster (grouping by forecaster_id), compute:
+For each forecaster (grouping by forecaster_id), list the values for:
 
 - `mean_composite`: mean of composite_score across the forecaster's rationales. This is the paper's r=0.51 signal.
 - `red_flag_frequency`: mean red flags per rationale for this forecaster.
@@ -81,7 +83,7 @@ For each rationale, if composite ≥ 4 AND no red flags → add to `green_flag_e
 
 ## Step 4 — Overconfidence Bias
 
-Compute `overconfidence_bias` as a signed signal:
+`overconfidence_bias` is a signed signal (list the four marker scores per rationale; `lisp_eval` computes it):
 
 - positive = overconfident (red flags dominate, especially `extreme_confidence` and `forecast_rationale_misalign`)
 - negative = underconfident (excessive `speculative_terms` without grounding)
@@ -89,7 +91,7 @@ Compute `overconfidence_bias` as a signed signal:
 
 Formula: `overconfidence_bias = (extreme_confidence_score + forecast_rationale_misalign_score) - (statistical_reasoning_score + best_practices_score)`, normalized to [-1, 1] by dividing by the number of rationales × 2.
 
-This signal feeds superforecasting's `apply_calibration_adjustment` compute step (stage 16).
+This signal is passed to superforecasting as `overconfidence_bias` (see that skill's EQM Feedback Integration; the scenarios server does not yet accept it as an input).
 
 ## Step 5 — Improvement-Target Profile
 

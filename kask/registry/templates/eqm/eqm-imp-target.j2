@@ -74,10 +74,10 @@ The target is one step beyond the current condition — challenging but achievab
 
 ## Step 3 — Set Target Composite
 
-If `target_composite` is user-specified, use it. Otherwise, compute the target composite:
+If `target_composite` is user-specified, use it. Otherwise, list the per-marker target scores; `target_composite` is computed from them by `lisp_eval` (SKILL.md Improve step 3) using:
 
 - Default target: "no red flags" (all Hurts markers at 0). This is the paper's strong-signal threshold.
-- Compute: `target_composite = Σ(Helps target scores) - Σ(Hurts target scores)`
+- `target_composite = Σ(Helps target scores) - Σ(Hurts target scores)`
 
 The target composite should be achievable within the iteration budget (max 8 iterations).
 

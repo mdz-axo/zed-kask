@@ -33,7 +33,7 @@ validates against realized outcomes, and emits calibration feedback.
 
 | Anchor | How it shapes the skill |
 |---|---|
-| Karvetski et al. (2026) — the EQM method | 60 markers, LLM-scored 0/1/2, composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
+| Karvetski et al. (2026) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | 60 markers, LLM-scored 0/1/2, composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
 | Tetlock Brier scoring (via superforecasting) | The outcome ground truth that validates EQM scores against accuracy. |
 | PKO (Procedural Knowledge Ontology) | The skill models a measurement procedure: specification (which EQMs, which rationales) / execution (LLM scoring) / verification (outcome correlation). |
 | Dublin Core | Metadata for the rationale corpus (forecaster id, question id, timestamp, resolution status) needed by forecaster-level aggregation. |
@@ -51,7 +51,22 @@ skill's decision rule encodes this asymmetry:
 
 ## Instructions
 
-### eqm-select
+### Deterministic helpers (D — `lisp_eval`)
+
+Every mean, Brier score and correlation in this skill is computed with these definitions, prepended to the form. `lisp_eval` computes over the values supplied; it does not vouch for where they came from (the MCP scorer and the recorded outcomes do).
+
+```lisp
+(define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l))))))
+(define mean (lambda (l) (/ (sum l) (length l))))
+(define zip* (lambda (a b) (if (is_null a) (quote ()) (cons (* (car a) (car b)) (zip* (cdr a) (cdr b))))))
+(define dev (lambda (l m) (if (is_null l) (quote ()) (cons (- (car l) m) (dev (cdr l) m)))))
+(define brier (lambda (p o) (if (is_null p) (quote ()) (cons (* (- (car p) (car o)) (- (car p) (car o))) (brier (cdr p) (cdr o))))))
+(define pearson (lambda (x y) (let ((dx (dev x (mean x))) (dy (dev y (mean y)))) (/ (sum (zip* dx dy)) (sqrt (* (sum (zip* dx dx)) (sum (zip* dy dy))))))))
+```
+
+Correlation requires ≥5 pairs; below that report `Undetermined` (matches the scenarios server's 5-resolved-forecast floor). A zero-variance series makes `pearson` divide by zero — report `Undetermined` for it too.
+
+### eqm-select (P — subset choice; critique: operator)
 
 1. Choose the EQM subset: `predictive_12` (default, matches the MCP tool's
    KEY_EQMS), `full_60` (research/validation), or `domain_tuned`.
@@ -59,7 +74,7 @@ skill's decision rule encodes this asymmetry:
    question, forecaster_id?} objects.
 3. Prepare the scoring batch and cost estimate (~$0.007 per rationale).
 
-### eqm-score (MCP tool step)
+### eqm-score (P scorer, tool-owned — `market_score_rationale`; calibrated by eqm-validate against outcomes)
 
 1. Call `market_score_rationale` (hkask-mcp-prediction-markets) per rationale.
 2. Collect per-rationale EqmResult: composite_score, scores, red_flags,
@@ -69,21 +84,27 @@ skill's decision rule encodes this asymmetry:
    (non-empty), flag the result as an incomplete assessment — the composite
    is pulled toward 0 for those dimensions.
 
-### eqm-aggregate
+### eqm-aggregate (D — `lisp_eval` over the tool's scores)
 
-1. Aggregate per-rationale scores to forecast-level composite (mean across
-   rationales for the same question).
-2. Aggregate to forecaster-level composite (mean across a forecaster's
-   rationales — the paper's r=0.51 signal).
+1. Render `eqm/eqm-aggregate` to group the scores; compute each forecast-level
+   composite as `(mean <composites for the question>)` via `lisp_eval`.
+2. Compute each forecaster-level composite as `(mean <that forecaster's
+   composites>)` — the paper's r=0.51 signal.
 3. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs
    green_flag_endorsement (weak).
-4. Compute overconfidence_bias: signed signal (positive = overconfident, red
-   flags dominate; negative = underconfident).
+4. Compute overconfidence_bias with `lisp_eval` from the four listed marker
+   sums: `(/ (- (+ ec frm) (+ sr bp)) (* 2 n))`, env the sums of
+   `extreme_confidence`, `forecast_rationale_misalign`,
+   `statistical_reasoning`, `best_practices` and `n` rationales. Positive =
+   overconfident, negative = underconfident.
 
-### eqm-validate
+### eqm-validate (D — `lisp_eval` Brier and Pearson; ground truth: realized outcomes)
 
-1. If realized_outcomes are present: correlate EQM composite with accuracy
-   (Brier). Check directional-hypothesis match (paper's >90% finding).
+1. If realized_outcomes are present: compute per-forecaster Brier as
+   `(mean (brier ps os))` and the composite–accuracy correlation as
+   `(- 0 (pearson composites briers))` via `lisp_eval` (negated because lower
+   Brier = better, so positive = higher EQM with better accuracy); Undetermined below 5 forecasters. Check directional-hypothesis
+   match (paper's >90% finding).
 2. If EQM scores rose but accuracy didn't improve → emit `gaming_suspected`
    verdict (halts the Improve loop).
 3. If realized_outcomes absent → return `Undetermined` (not Ready-with-empty —
@@ -118,19 +139,21 @@ Steps:
    preserve and the evidence sources available.
 2. **Current condition** — render `eqm/eqm-imp-current` over a fresh
    `market_score_rationale` result (failing markers, red-flag screen, composite).
-3. **Target** — render `eqm/eqm-imp-target`: marker-level targets from each
+3. **Target** (P targets; D composite) — render `eqm/eqm-imp-target`: marker-level targets from each
    EQM description, red flags first, one step beyond the current condition.
-4. **Predict** — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
+   Compute `target_composite` with `lisp_eval`
+   `(- (sum helps_targets) (sum hurts_targets))` unless the operator set it.
+4. **Predict** (P — calibrated by operator-scored Brier on the recorded goal) — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
    from A to B", with a confidence. Record it with `kanban_goal_create`
    (`goal_text` `eqm: <prediction>`, the confidence as `prediction`) so the
    operator can score it.
-5. **Experiment** — render `eqm/eqm-imp-experiment` and produce the rewrite
+5. **Experiment** (P — critiqued by re-scoring and the three mitigations) — render `eqm/eqm-imp-experiment` and produce the rewrite
    under the three mitigations.
-6. **Check** — re-score via `market_score_rationale`; `lisp_eval`
+6. **Check** (D) — re-score via `market_score_rationale`; `lisp_eval`
    `(abs (- target_score current_score))` per marker for the gap; judge the
    goal (`kanban_goal_judge`) with the measured marker level. The Brier score
    arrives when the operator scores the goal.
-7. **Act** — stop at gap ≤ epsilon, a `gaming_suspected` verdict, or 8
+7. **Act** (D stop rule) — stop at gap ≤ epsilon, a `gaming_suspected` verdict, or 8
    iterations; otherwise re-enter step 2 with the new rationale.
 
 ### Convergence

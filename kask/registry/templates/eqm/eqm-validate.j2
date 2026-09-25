@@ -66,8 +66,8 @@ If `realized_outcomes` is empty or absent:
 For each forecaster with realized outcomes:
 
 1. Match the forecaster's rationales to their realized outcomes (by question).
-2. Compute the forecaster's accuracy: Brier score = (forecast_probability - outcome)². Lower Brier = better accuracy.
-3. Correlate EQM composite_score with accuracy (inverse Brier) across forecasters.
+2. List each matched (forecast_probability, outcome, composite_score) triple. The Brier score, (forecast_probability - outcome)² with lower = better, and the correlation are computed by `lisp_eval` in the SKILL.md `eqm-validate` step — do not compute them here.
+3. With fewer than 5 forecasters having resolved outcomes, the correlation is `Undetermined` (too few pairs to be informative), not a number.
 
 The paper found r=0.51 at the forecaster level. Report the observed correlation.
 
@@ -75,8 +75,8 @@ The paper found r=0.51 at the forecaster level. Report the observed correlation.
 
 The paper found >90% of statistically significant EQM-accuracy correlations match the directional hypotheses (Helps = positive correlation, Hurts = negative correlation).
 
-For each EQM marker:
-- Compute its correlation with accuracy.
+For each EQM marker (only when ≥5 resolved pairs exist; otherwise Undetermined):
+- Take its correlation with accuracy from the `lisp_eval` result.
 - Check if the sign matches the directional hypothesis (Helps → positive, Hurts → negative).
 - Report the percentage of markers that match.
 
