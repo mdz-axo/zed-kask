@@ -95,6 +95,10 @@ for file in "$REG"/*/*.j2; do
     body_after_contract "$file" | strip_raw - > "$body_file"
 
     ins="$(contract_fields "$file" input | tr '\n' ' ')"
+    # server_input fields are supplied by the rendering MCP server (e.g.
+    # companies screening.rs reads contract.server_input), not by the
+    # caller; they are consumed inputs all the same.
+    ins="$ins$(contract_fields "$file" server_input | tr '\n' ' ')"
     outs="$(contract_fields "$file" output | tr '\n' ' ')"
 
     # Consumed context roots: {{ var }}, {% if var %} / {% elif var %}

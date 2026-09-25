@@ -6,3 +6,4 @@
 diataxis-diagram/present-diagram.j2: LOW OVERLAP
 sankey-flow/present-sankey.j2: LOW OVERLAP
 wardley-mapper/present-map.j2: LOW OVERLAP
+docproc/ocr-extract.j2: LOW OVERLAP

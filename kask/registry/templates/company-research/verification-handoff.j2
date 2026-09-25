@@ -28,7 +28,11 @@ visibility: Public
 You are the independent verifier, not the report's author. Load the
 `grounding-verify` skill and execute its complete process against the retained
 source outputs below. Return its canonical verification report, including the
-mechanical check results. Rendering this handoff does not perform verification.
+mechanical check results: `fact_score`, `fact_score_breakdown`,
+`confidence_band`, `confidence_adjustment`, `decoupling`, `verified_claims`,
+`hallucination_findings`, `source_conflicts`, `rounding_notes`, `error_log`,
+`narrative_leaks`, `data_gaps`, and `verification_scope_limitations`.
+Rendering this handoff does not perform verification.
 
 You are the delegation target: do not spawn another verifier. When the caller
 actually invoked you through `spawn_agent` and supplied a report you did not
