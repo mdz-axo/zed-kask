@@ -1,4 +1,4 @@
-{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. v0.31.0: reproducibility separated from confidence; file:line citation required. #}
+{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. Reproducibility separated from confidence; file:line citation required. #}
 [inference]
 contract:
   input:
@@ -14,9 +14,8 @@ contract:
 visibility: Public
 ---
 {# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
-{# hKask v0.39.0 — Bug Hunting Expedition #}
 {#
-  v0.31.0 refinement:
+  
     - Reproducibility is a separate axis from confidence. The previous logic
       conflated "how sure am I this is a bug" (confidence) with "can I reproduce
       it" (provenance). Race conditions, timing bugs, and UB under specific
@@ -85,7 +84,7 @@ Findings without these are REJECTED at the oracle gate. Count them in
 `rejected_findings` with reason `"missing_citation"`. This makes the
 "do not fabricate findings" prohibition mechanical rather than voluntary.
 
-## Pragmatic-Semantics Classification (v0.31.0)
+## Pragmatic-Semantics Classification
 
 For every finding, apply three classifications:
 
@@ -105,7 +104,7 @@ For every finding, apply three classifications:
 - **Inference**: Pattern match (e.g., "dead parameter").
 - **Assessment**: Your opinion. Flag LLM-assessed conclusions.
 
-## Grill-Me Self-Challenge (v0.31.0)
+## Grill-Me Self-Challenge
 
 For each potential bug, challenge your own verdict:
 - Could this be intentional behavior?

@@ -1,4 +1,4 @@
-{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. v0.31.0: dynamic pattern expansion (Ashby), missing-tests detection, algedonic escalation. #}
+{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. Dynamic pattern expansion (Ashby), missing-tests detection, algedonic escalation. #}
 [inference]
 contract:
   input:
@@ -14,14 +14,13 @@ contract:
 visibility: Public
 ---
 {# Phase 2 — PROBE (MCP tool-driven code exploration) #}
-{# hKask v0.39.0 — Bug Hunting Expedition #}
 {#
   This template provides probe guidance, but the actual probing is inherently
   agent-coordinated: the agent reads source files, searches for patterns, runs
   terminal commands (cargo check, cargo test, cargo clippy). This template
   formats the charter into actionable probe instructions and collects results.
 
-  v0.31.0 refinement:
+  
     - Dynamic pattern expansion (Ashby's Law): the static pattern list is a
       FLOOR, not a ceiling. The charter's crate_model.observed_characteristics
       amplify regulator variety by generating crate-specific patterns.

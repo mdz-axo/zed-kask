@@ -51,9 +51,9 @@ INPUT: harness_preference = {{ harness_preference | default("undetermined") }} (
 INPUT: trainer_preference = {{ trainer_preference | default("undetermined") }} (sft | dpo | kto | orpo | grpo | undetermined)
 INPUT: adapter_purpose = {{ adapter_purpose | default("undetermined") }} (instruction | reasoning | vision | preference | reward_model | undetermined)
 INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }} (chatml | preference_dpo | preference_kto | preference_orpo | raw_text | undetermined)
-INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (v0.31.0 — capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
-INPUT: prior_training_history = {{ prior_training_history | default({}) | tojson }} (v0.31.0 — prior runs on same base model; enables Good Regulator compliance)
-INPUT: prior_iteration = {{ prior_iteration | default({}) | tojson }} (v0.31.0 — previous PDCA iteration output; closes the feedback loop)
+INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
+INPUT: prior_training_history = {{ prior_training_history | default({}) | tojson }} (prior runs on same base model; enables Good Regulator compliance)
+INPUT: prior_iteration = {{ prior_iteration | default({}) | tojson }} (previous PDCA iteration output; closes the feedback loop)
 
 AUTHORITY CONTRACT (P1, P3, P4, P12):
 - This skill emits an advisory recommendation from declared evidence.
@@ -271,7 +271,7 @@ G2. memory_budget_gb vs model_size_b?
     - Never emit `will_oom`, `fits`, or equivalent certainty from these two
       scalar inputs alone.
     {% if prior_training_history and prior_training_history.prior_oom_patterns %}
-    - v0.31.0 Good Regulator: prior_training_history.prior_oom_patterns is
+    - Good Regulator: prior_training_history.prior_oom_patterns is
       available. Use it to refine the memory assessment:
       - If prior runs on the same base model OOM'd at a specific batch size /
         sequence length combination, warn that the same combination is at risk
@@ -305,7 +305,7 @@ G3. task_distance? (refines rank_range within the baseline established by G0)
       rank 8-32 but task_distance=heavy), use the wider range and note the
       tension as a constraint.
     {% if prior_training_history and prior_training_history.prior_rank_choices %}
-    - v0.31.0 Good Regulator: prior_training_history.prior_rank_choices is
+    - Good Regulator: prior_training_history.prior_rank_choices is
       available. Use it to refine the rank recommendation:
       - If prior runs on the same base model + similar task distance succeeded
         at a specific rank, note that rank as empirically validated for this
@@ -354,7 +354,7 @@ G6. harness_capability? (after G0-G5; selects harness based on training approach
     modules, initializer, preservation). G6 selects the harness that can best
     execute that approach.
     {% if provider_capabilities and provider_capabilities | length > 0 %}
-    ## v0.31.0: Deep capability reasoning over the full capability space
+    ## Deep capability reasoning over the full capability space
     provider_capabilities is available. Reason over the full capability matrix:
     - **available_hosts**: which training hosts (runpod, nebius) are
       configured and have API keys? This affects which retained harnesses are

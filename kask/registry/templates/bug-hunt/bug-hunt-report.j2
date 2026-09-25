@@ -1,4 +1,4 @@
-{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. v0.31.0: emits lessons_learned and pattern_signatures for feedback loop closure. #}
+{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. Emits lessons_learned and pattern_signatures for feedback loop closure. #}
 [inference]
 contract:
   input:
@@ -21,9 +21,8 @@ contract:
 visibility: Public
 ---
 {# Phase 5 — REPORT (structured JSON bug report) #}
-{# hKask v0.39.0 — Bug Hunting Expedition #}
 {#
-  v0.31.0 refinement: the report now emits lessons_learned and
+  the report now emits lessons_learned and
   pattern_signatures. These are consumed by the next expedition's charter
   (via the manifest's loop step routing them as prior_expedition) to close
   the feedback loop. Without these fields, each expedition is a one-shot and

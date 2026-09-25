@@ -92,6 +92,38 @@ fn company_source_check_handles_retained_original_size() -> Result<()> {
     Ok(())
 }
 
+/// expect: OCR model output alone cannot be elevated to an original quote;
+/// deterministic PDF text extraction of the same retained binary can be checked.
+#[test]
+fn ocr_only_pdf_cannot_pass_original_quote_check() -> Result<()> {
+    let fixtures: Value = serde_json::from_str(FIXTURES)?;
+    let mut packet = fixtures["packet"].clone();
+    let url = "https://example.invalid/disclosure.pdf";
+    let path = "/retained/disclosure.pdf";
+    let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    packet["pipeline_tool_log"][0]["output"]["results"][0]["url"] = json!(url);
+    packet["source_outputs"][0]["url"] = json!(url);
+    packet["source_outputs"][0]["tool_name"] = json!("corpus_convert");
+    packet["source_outputs"][0]["origin_path"] = json!(path);
+    packet["source_outputs"][0]["source_sha256"] = json!(sha);
+    packet["source_outputs"][0]["output"] =
+        json!({"text":"We announced partnerships.", "method":"ocr_pipeline"});
+    packet["pipeline_tool_log"][2]["tool_name"] = json!("corpus_convert");
+    packet["pipeline_tool_log"][2]["origin_path"] = json!(path);
+    packet["pipeline_tool_log"][2]["source_sha256"] = json!(sha);
+    packet["disclosure_inventory"][0]["url"] = json!(url);
+    ensure!(
+        source_status(&packet)? == "not_checked",
+        "model-mediated OCR alone was promoted to original evidence"
+    );
+    packet["source_outputs"][0]["output"]["method"] = json!("text_extraction");
+    ensure!(
+        source_status(&packet)? == "checked",
+        "deterministic extraction of retained PDF did not pass the same check"
+    );
+    Ok(())
+}
+
 /// expect: An unfinished search cannot hide an independently observed material
 /// omission, and adding the missing statement removes only that finding.
 #[test]
@@ -473,7 +505,8 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                         "tool_name":"corpus_convert", "description":"Synthetic PDF passage",
                         "output_key":"source:corpus_convert:regulator", "source_kind":"original",
                         "url":url,"origin_path":path,"source_sha256":sha,
-                        "output":{"text":"The regulator issued a material sanction in July 2026."}
+                        "output":{"text":"The regulator issued a material sanction in July 2026.",
+                            "method":"text_extraction"}
                     }));
                 p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
                     "tool_name":"corpus_convert", "output_key":"source:corpus_convert:regulator",

@@ -161,13 +161,13 @@ This skill does not train, load, initialize, merge, or evaluate models.
 7. Inspect initializer-specific preprocessing and persistence according to the
    selected initializer's documented contract. Do not introduce an EVA-specific
    or framework-version-specific refusal rule.
-8. Enforce no-fiction mechanically (v0.31.0): findings with `evidence_kind` of
+8. Enforce no-fiction mechanically: findings with `evidence_kind` of
    `config_value`, `code_presence`, or `code_absence` MUST have non-null
    `evidence.config_path` AND non-null `evidence.line`. Findings that fail this
    check are rejected at the audit gate and counted in `rejected_findings` with
    reason `"missing_citation"`. Findings with `evidence_kind` of
    `not_available`, `operator_assertion`, or `runtime_measurement` are exempt.
-9. Emit algedonic escalation (v0.31.0): for every `refuse` finding, emit a
+9. Emit algedonic escalation: for every `refuse` finding, emit a
    `refuse_escalation` entry (VSM S1→S5 short-circuit) with `finding_id`,
    `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
    `host`, and `severity: critical`. The escalation is in-addition;
@@ -220,9 +220,9 @@ Do not create alternate finding shapes. A recommendation never overwrites
 
 | Template | Purpose |
 |----------|---------|
-| `preflight-dataset.j2` | v0.32.0: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
+| `preflight-dataset.j2` | Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
 | `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (the previous in-session PDCA turn). |
-| `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. v0.31.0: emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. v0.32.0: consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. v0.32.0: G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
+| `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. Emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. Consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
 | `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) and a context object with the required variables.
@@ -235,13 +235,13 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Emit only values, findings, states, citations, and measurements supported by
   declared evidence. Do not invent defaults, snippets, line numbers, benchmark
   results, or training outcomes.
-- No-fiction enforcement is mechanical (v0.31.0): findings with
+- No-fiction enforcement is mechanical: findings with
   `config_value`/`code_presence`/`code_absence` evidence_kind and null
   `config_path`/`line` are rejected at the audit gate, not merely discouraged.
-- Algedonic escalation (v0.31.0): `refuse` findings emit `refuse_escalation`
+- Algedonic escalation: `refuse` findings emit `refuse_escalation`
   in-addition to normal flow so safety-boundary violations reach the operator
   before the full pipeline completes.
-- Convergence honesty (v0.31.0): `not_evaluated` maps to risk 0.5 (coverage
+- Convergence honesty: `not_evaluated` maps to risk 0.5 (coverage
   gap), distinct from `deferred`/`planned` at 1.0 (known unmet requirement).
   Critical/high contribution is graded (0→0.6→0.8→1.0), not binary.
 - Runtime and post-training gates are requirements or assessments of supplied

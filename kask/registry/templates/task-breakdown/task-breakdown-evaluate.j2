@@ -1,4 +1,4 @@
-{# goal: CHECK phase — score the plan against seven weighted criteria: target condition coverage (0.20, v0.38.0 — do the tasks collectively achieve the target?), task sizing (0.20, v0.31.0: now includes task-count awareness — >20 or <3 tasks penalized), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). v0.31.0: receives context_summary for project-specific convention checking (Good Regulator). #}
+{# goal: CHECK phase — score the plan against seven weighted criteria: target condition coverage (0.20 — do the tasks collectively achieve the target?), task sizing (0.20, now includes task-count awareness — >20 or <3 tasks penalized), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). Receives context_summary for project-specific convention checking (Good Regulator). #}
 [inference]
 contract:
   input:
@@ -14,7 +14,6 @@ contract:
     red_flags: array
 visibility: Public
 ---
-{# v0.38.0: adds target_condition_coverage criterion (do the tasks collectively #}
 {# achieve the target condition?) and re-weights the seven criteria. #}
 
 [inference]
@@ -46,7 +45,7 @@ You are a plan-quality evaluator. Score the task breakdown against seven weighte
 {% endif %}
 
 {% if context_summary %}
-## Project Context (v0.31.0 — Good Regulator)
+## Project Context (Good Regulator)
 
 The following context was gathered during the plan phase by reading the codebase.
 Use it to check project-specific conventions, not just generic criteria. For example:
@@ -58,7 +57,7 @@ Use it to check project-specific conventions, not just generic criteria. For exa
 {% endif %}
 
 {% if target_condition %}
-## Target Condition (v0.38.0 — coverage anchor)
+## Target Condition (coverage anchor)
 
 The target condition is the goal, end state, or outcome the plan must achieve. Use
 it to score the `target_condition_coverage` criterion: do the tasks collectively
@@ -81,7 +80,7 @@ achieve this target? Does every task trace to this target?
 
 The weighted_total is the sum of (score x weight) across all seven criteria, in [0,1].
 
-### Target Condition Coverage (v0.38.0)
+### Target Condition Coverage
 
 This criterion checks whether the decomposed tasks collectively achieve the target
 condition described in the context summary. Ask:
@@ -93,7 +92,7 @@ condition described in the context summary. Ask:
 Score 0 if the tasks fully and non-redundantly cover the target; score higher for
 gaps, orphans, or redundancy.
 
-### Task-count awareness (v0.31.0)
+### Task-count awareness
 
 The sizing criterion now accounts for task count, not just task size:
 - Task count > 20: score +0.10 (too granular — the plan is a list of micro-tasks

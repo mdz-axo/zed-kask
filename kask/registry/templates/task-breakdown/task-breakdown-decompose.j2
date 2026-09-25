@@ -1,4 +1,4 @@
-{# goal: DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. v0.38.0: each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." v0.31.0: emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. #}
+{# goal: DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. Each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. #}
 [inference]
 contract:
   input:
@@ -16,7 +16,6 @@ contract:
     plan_escalation: array
 visibility: Public
 ---
-{# v0.38.0: decomposes the target condition (not a spec) into component target #}
 {# conditions — each task is a sub-target with acceptance criteria framed as #}
 {# "what must be true for this sub-target to be achieved." #}
 {# Merges the former slice + write-tasks steps to fix the grain-mismatch: the loop #}
@@ -231,7 +230,7 @@ Respond with a JSON object:
 - Dependency order must be respected: a task may not precede a task it depends on.
 - If skill_catalog is provided, every task must include a skill_match_query field describing the capability need. If skill_catalog is not provided, omit skill_match_query.
 
-## Algedonic Escalation (v0.31.0 — VSM S1→S5 short-circuit)
+## Algedonic Escalation (VSM S1→S5 short-circuit)
 
 After producing the tasks array, check for catastrophic plan conditions. If any
 of the following are true, emit a `plan_escalation` entry IN ADDITION to the
