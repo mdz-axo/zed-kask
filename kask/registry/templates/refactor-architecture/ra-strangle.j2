@@ -78,21 +78,7 @@ Write one failing test per service operation in `hkask-services`. Each test must
 - Exercise the public interface of the service module
 - Use a `ServiceContext` (or mock) to provide dependencies
 - Verify a domain behavior, not a surface presentation
-- Carry a contract annotation (`expect:` + `[P{N}]`) anchored to a code entity (`dcterms:identifier` = the function/struct being tested)
-
-**Pattern (not actual API — adapt to your service crate's conventions):**
-
-```rust
-// expect: "I can [domain operation] through the [service name]"
-// [P{N}] The test exercises a public seam with a stated behavioral property
-#[tokio::test]
-async fn service_operation_test() {
-    // Build test context using your service crate's test harness
-    // let ctx = your_crate::test_utils::build_test_context();
-    // let result = YourService::operation(&ctx).await;
-    // assert!(result.is_ok());
-}
-```
+- State the user-grounded expectation and a falsifier at that seam; check the behavior with an oracle independent of the implementation. Do not pin incidental names or representation.
 
 ### Step 2 — GREEN: Implement Service Operation
 
@@ -200,7 +186,7 @@ Respond with a JSON object:
 - One domain per migration. No cross-domain changes.
 - Service module must be deep: small interface, much behavior behind it.
 - No surface types in service signatures (no `Json<T>`, no `println!`).
-- Every test must be anchored on a contract (`expect:` + `[P{N}]` annotation).
+- Every test must check a stated behavioral expectation through an independent oracle.
 - Dependency direction is inviolable: no circular dependencies.
 - P6: No `todo!()` or `unimplemented!()` stubs.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

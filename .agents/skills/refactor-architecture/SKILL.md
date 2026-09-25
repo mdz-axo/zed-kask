@@ -83,7 +83,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 ### ra-strangle
 
-1. Write one failing test per service operation in the service crate, using a `ServiceContext` and verifying a domain behavior with a contract annotation.
+1. Write one failing test per service operation at the confirmed seam, verifying a user-grounded expectation with an independent oracle. Use `ServiceContext` where the service requires it.
 2. Implement the minimal code to pass the test, calling domain crates directly and returning domain types.
 3. Wire the CLI adapter to call the service operation and format terminal output, deleting duplicate business logic from the CLI command file.
 4. Wire the API adapter to call the same service operation and serialize to JSON, deleting duplicate business logic from the API route file.

@@ -121,6 +121,13 @@ fn ocr_only_pdf_cannot_pass_original_quote_check() -> Result<()> {
         source_status(&packet)? == "checked",
         "deterministic extraction of retained PDF did not pass the same check"
     );
+    packet["source_outputs"][0]["tool_name"] = json!("pdftotext");
+    packet["source_outputs"][0]["output"]["method"] = json!("pdftotext");
+    packet["pipeline_tool_log"][2]["tool_name"] = json!("pdftotext");
+    ensure!(
+        source_status(&packet)? == "checked",
+        "hashed PDF text extracted with pdftotext did not use the same source check"
+    );
     Ok(())
 }
 
