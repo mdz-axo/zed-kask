@@ -4807,10 +4807,10 @@ pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) 
 }
 
 /// Records the operator's evaluation of a skill's output. Evaluation is
-/// separated from execution (Goodhart): both channels are operator actions
-/// outside the executing session — the Curator-only `record_skill_feedback`
-/// tool used during the algedonic review, and the advice-apply bridge (the
-/// operator confirming application of a skill's recommendation). Production persists the spans in the curator's
+/// separated from execution (Goodhart): the only writer is the Curator-only
+/// `record_skill_feedback` tool, used by the operator during the algedonic
+/// review. Applying curator advice is an intervention record, not a skill
+/// verdict, and records nothing here. Production persists the spans in the curator's
 /// `RegulationArchive`, then feeds the shared `RegulationLedger` working view
 /// as `reg.skill.<id>.operator_feedback`, which the metacognition loop's drift
 /// sensing trends ("declining operator acceptance" — outputs that

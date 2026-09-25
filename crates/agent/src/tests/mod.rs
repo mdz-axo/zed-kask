@@ -5832,6 +5832,99 @@ async fn test_mcp_tool_timeout_does_not_retry(cx: &mut TestAppContext) {
     fake_model.end_last_completion_stream();
 }
 
+/// Pin (D1/D59, evaluation separated from execution — Goodhart): an executing
+/// thread's successful `curator_advice_mark_applied` whose response names a
+/// skill records NO operator feedback. Applying advice is an intervention
+/// record; skill verdicts come only from the operator through the
+/// Curator-only `record_skill_feedback` tool in the algedonic review.
+#[gpui::test]
+async fn test_advice_apply_records_no_skill_verdict(cx: &mut TestAppContext) {
+    let recorded: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let sink = Arc::clone(&recorded);
+    let _recorder_override = crate::scoped_operator_feedback_recorder_for_test(Arc::new(
+        move |skill_id, _accepted, _note| {
+            sink.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(skill_id.to_string());
+            Ok(())
+        },
+    ));
+
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+    let mut mcp_tool_calls = setup_context_server(
+        "curator",
+        vec![plain_mcp_tool("curator_advice_mark_applied")],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["mark the advice applied"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+    let tool_name = tool_names_for_completion(&completion)
+        .into_iter()
+        .next()
+        .expect("the curator tool is visible");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: tool_name.into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let (params, response) = mcp_tool_calls
+        .next()
+        .await
+        .expect("the apply is dispatched");
+    assert_eq!(params.name, "curator_advice_mark_applied");
+    response
+        .send(context_server::types::CallToolResponse {
+            content: vec![context_server::types::ToolResponseContent::Text {
+                text: json!({"content": {"id": "esc-1", "skill_id": "lora-training"}}).to_string(),
+            }],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .expect("send the apply response");
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    assert!(
+        recorded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty(),
+        "an executing thread's advice-apply must not record a skill verdict"
+    );
+}
+
 struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,
