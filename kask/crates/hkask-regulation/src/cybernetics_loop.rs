@@ -414,15 +414,6 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Wire the atomic inference resilience source at construction.
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_inference_resilience_source(
-        mut self,
-        source: Arc<dyn crate::InferenceResilienceSource>,
-    ) -> Self {
-        self.set_inference_resilience_source(source);
-        self
-    }
 
     /// Replace the inference resilience source after model wiring or rewiring.
     pub fn set_inference_resilience_source(

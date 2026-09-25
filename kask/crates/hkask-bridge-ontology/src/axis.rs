@@ -68,38 +68,6 @@ pub enum OntologyNamespace {
     Sumo,
 }
 
-impl OntologyNamespace {
-    /// Rung 2 of the fallback ladder (P8.3): this domain supplement's
-    /// canonical Dublin Core concept — the state-axis anchor (what the
-    /// artifact is) when the domain ontology has no fit for the concept.
-    pub fn dc_concept(&self) -> DcConcept {
-        match self {
-            OntologyNamespace::Fibo => dc_bibo::DATASET,
-            OntologyNamespace::Sepio => dc_bibo::TEXT,
-            OntologyNamespace::Golem => dc_bibo::TEXT,
-            OntologyNamespace::MlSchema => dc_bibo::DATASET,
-            OntologyNamespace::Sdmx => dc_bibo::DATASET,
-            OntologyNamespace::Omc => dc_bibo::IMAGE,
-            OntologyNamespace::Sumo => dc_bibo::TEXT,
-        }
-    }
-
-    /// Rung 2 of the fallback ladder (P8.3): this domain supplement's
-    /// canonical PKO concept — the process-axis anchor (how it came to be)
-    /// when the domain ontology has no fit for the concept.
-    pub fn pko_concept(&self) -> PkoConcept {
-        match self {
-            OntologyNamespace::Fibo => pko::PROCEDURE,
-            OntologyNamespace::Sepio => pko::STEP_VERIFICATION,
-            OntologyNamespace::Golem => pko::PROCEDURE,
-            OntologyNamespace::MlSchema => pko::PROCEDURE,
-            OntologyNamespace::Sdmx => pko::PROCEDURE,
-            OntologyNamespace::Omc => pko::PROCEDURE,
-            OntologyNamespace::Sumo => pko::PROCEDURE,
-        }
-    }
-}
-
 impl std::str::FromStr for OntologyNamespace {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -156,23 +124,6 @@ pub enum OntologyAnchor {
 }
 
 impl OntologyAnchor {
-    /// Return the confidence modifier for this ontology tier.
-    /// These are hKask tuning choices (not values derived from any
-    /// published source): FIBO +0.10 and SUMO +0.05 reflect that a
-    /// domain-verified anchor is stronger evidence than the bare core;
-    /// others get no bonus. Adjust only with condenser-quality evidence.
-    pub fn confidence_modifier(&self) -> f64 {
-        match self {
-            OntologyAnchor::Core => 0.0,
-            OntologyAnchor::DualAxis { .. } => 0.0,
-            OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
-                OntologyNamespace::Fibo => 0.10,
-                OntologyNamespace::Sumo => 0.05,
-                _ => 0.0,
-            },
-        }
-    }
-
     /// Return the information density expectation for this ontology tier.
     /// hKask tuning choices (not values derived from any published
     /// source): FIBO-tagged financial passages and ML-Schema/SDMX-tagged
@@ -527,8 +478,7 @@ mod tests {
     /// Pin the fallback ladder (P8.3): anchoring is a scope-broadening walk
     /// that always terminates on a real anchor — nothing is ever untagged.
     /// Rung 3 (SUMO) catches unknown non-empty domains; rung 4 (the 5W1H
-    /// core) catches the empty hint; rung 2 (universal axes) is reachable
-    /// from every domain supplement via `dc_concept`/`pko_concept`.
+    /// core) catches the empty hint.
     #[test]
     fn fallback_ladder_terminates_on_a_real_anchor() {
         // Rung 3 — unknown domain → SUMO upper ontology, not nothing.
@@ -545,26 +495,5 @@ mod tests {
         }
         // Rung 4 — no domain hint at all → the 5W1H interrogative core.
         assert_eq!(select_ontology_anchor(""), OntologyAnchor::Core);
-        // Rung 2 — every domain supplement has universal-axis concepts, so a
-        // concept with no domain fit still lands on DC (state) or PKO (process).
-        for namespace in [
-            OntologyNamespace::Fibo,
-            OntologyNamespace::Sepio,
-            OntologyNamespace::Golem,
-            OntologyNamespace::MlSchema,
-            OntologyNamespace::Sdmx,
-            OntologyNamespace::Omc,
-            OntologyNamespace::Sumo,
-        ] {
-            assert!(
-                namespace.dc_concept().starts_with("dcmitype:")
-                    || namespace.dc_concept().starts_with("bibo:"),
-                "{namespace:?} rung-2 DC concept must be a real Dublin Core / BIBO term"
-            );
-            assert!(
-                namespace.pko_concept().starts_with("pko:"),
-                "{namespace:?} rung-2 PKO concept must be a real PKO term"
-            );
-        }
     }
 }

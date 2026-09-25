@@ -283,20 +283,19 @@ impl SpanNamespace {
     /// post: returns the SpanCategory for this namespace; unknown prefixes return SpanCategory::Unknown
     ///
     /// F-SYN-009: classify this namespace into a `SpanCategory` for
-    /// typed dispatch (e.g. by `DecayConfig::lambda_for`).
+    /// typed dispatch.
     ///
     /// Hierarchical matches by `short_name()` prefix are preserved
     /// (e.g. `reg.variety.sensor` → `Variety`). Unknown namespaces
     /// return `SpanCategory::Unknown` so the caller can decide the
-    /// fallback policy explicitly (the historical behaviour was
-    /// `cybernetics_lambda`).
+    /// fallback policy explicitly.
     pub fn category(&self) -> SpanCategory {
         SpanCategory::from_short_name(self.short_name())
     }
 }
 
 /// F-SYN-009: typed dispatch key for span-category-dependent logic
-/// (e.g. `DecayConfig::lambda_for`).
+/// (a `match` over `SpanCategory`).
 ///
 /// Replaces the previous `&str` dispatch with a closed enum, while
 /// preserving the hierarchical `.starts_with` matches that the old

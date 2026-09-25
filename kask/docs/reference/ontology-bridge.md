@@ -110,8 +110,7 @@ reused terms keep their canonical prefixes (`pplan:Step`, `prov:Agent`,
 
 Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
-**Helpers:** `kanban_status_to_pko_execution`,
-`corpus_stage_to_pko_step` (both in `pko.rs`, at `:172` and `:191`).
+**Helper:** `kanban_status_to_pko_execution` (`pko.rs:172`).
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 
@@ -273,8 +272,7 @@ Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs:32-48`
 > `"5w1h_core"`, `kask/crates/hkask-bridge-ontology/src/axis.rs:213`) — the
 > ground for artifacts with an empty domain hint. There is also no
 > `research_stage_to_pko` helper (removed with the research-stage mapping;
-`pko.rs` ships `kanban_status_to_pko_execution` and
-`corpus_stage_to_pko_step` only).
+`pko.rs` ships only `kanban_status_to_pko_execution`).
 
 ### `axis` — Domain-selection logic
 
@@ -293,9 +291,6 @@ The core of the system: maps a domain hint to its axis anchoring.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:252`) | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → SUMO; empty → Core. |
-| `OntologyNamespace::dc_concept` | `(&self) -> DcConcept` (`kask/crates/hkask-bridge-ontology/src/axis.rs:75`) | Map namespace to its canonical DC concept. |
-| `OntologyNamespace::pko_concept` | `(&self) -> PkoConcept` (`kask/crates/hkask-bridge-ontology/src/axis.rs:90`) | Map namespace to its canonical PKO concept. |
-| `OntologyAnchor::confidence_modifier` | `(&self) -> f64` (`kask/crates/hkask-bridge-ontology/src/axis.rs:164`) | Confidence modifier for saliency weighting. |
 | `OntologyAnchor::density_factor` | `(&self) -> f64` (`kask/crates/hkask-bridge-ontology/src/axis.rs:182`) | Information density expectation. |
 | `OntologyAnchor::axis` | `(&self) -> Option<OntologyAxis>` (`kask/crates/hkask-bridge-ontology/src/axis.rs:202`) | Which axis this anchor belongs to. |
 | `OntologyAnchor::tier_label` | `(&self) -> &str` (`kask/crates/hkask-bridge-ontology/src/axis.rs:211`) | Human-readable tier label. |
@@ -405,12 +400,9 @@ let procedure = pko::PROCEDURE;      // "pko:Procedure"     (pko.rs:46)
 let dc_type = dc_bibo::mime_to_dc_type("application/pdf"); // Some("dcmitype:Text") (dc_bibo.rs:92)
 ```
 
-PKO ships stage-mapping helpers for servers that convert domain stages
-to process concepts: `kanban_status_to_pko_execution` (`kask/crates/hkask-bridge-ontology/src/pko.rs:172`),
-`corpus_stage_to_pko_step` (`kask/crates/hkask-bridge-ontology/src/pko.rs:191`). GOLEM ships `corpus_op_to_golem`
-(`kask/crates/hkask-bridge-ontology/src/golem.rs:156`). The corpus server's `ontology_anchor` delegates to
-`corpus_stage_to_pko_step` and `corpus_op_to_golem` — the canonical
-mapping, so it cannot drift.
+PKO ships one stage-mapping helper, `kanban_status_to_pko_execution`
+(`kask/crates/hkask-bridge-ontology/src/pko.rs:172`), which the kata-kanban server uses to
+annotate task statuses with their PKO execution status.
 
 **Step 2 — domain supplement when the universal axes are too coarse.**
 Each supplement module is a flat list of `pub const` URI strings — no
@@ -450,8 +442,7 @@ ontology where it doesn't fit. An unknown non-empty domain returns SUMO's
 **Step 4 — read the anchor's tier metadata.** The condenser and other
 regulation-loop consumers read derived fields off the anchor for
 domain-aware saliency weighting — use these instead of re-deriving per
-consumer: `confidence_modifier()` (FIBO +0.10, SUMO +0.05, others ±0.00,
-`kask/crates/hkask-bridge-ontology/src/axis.rs:164`), `density_factor()` (FIBO 1.3, ML-Schema/SDMX 1.1, others
+consumer: `density_factor()` (FIBO 1.3, ML-Schema/SDMX 1.1, others
 1.0, `kask/crates/hkask-bridge-ontology/src/axis.rs:182`), `tier_label()` (`kask/crates/hkask-bridge-ontology/src/axis.rs:211`).
 
 **Step 5 — re-export the shared vocabulary in your server.** Keep

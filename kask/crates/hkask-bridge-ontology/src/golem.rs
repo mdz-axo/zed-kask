@@ -150,35 +150,9 @@ pub fn tag_family(predicate_prefix: &str) -> Option<&'static str> {
     }
 }
 
-// ── Mapping helpers ────────────────────────────────────────
-
-/// Map a corpus creative operation to its GOLEM concept.
-///
-/// Takes the bare operation name — the corpus tool name minus its `corpus_`
-/// prefix (`corpus_compose` → `compose`). Only creative generation anchors on
-/// GOLEM: compose and rewrite produce narrative prose (works). Discovery is
-/// deliberately NOT here — it is a search action on the process axis
-/// (`corpus_stage_to_pko_step`), not a creative work.
-pub fn corpus_op_to_golem(op: &str) -> Option<GolemConcept> {
-    match op {
-        "compose" | "rewrite" => Some(WORK),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn corpus_op_mapper_covers_creative_generation_only() {
-        // Creative generation anchors on GOLEM; discovery is a process action
-        // (corpus_stage_to_pko_step), not a creative work.
-        assert_eq!(corpus_op_to_golem("compose"), Some(WORK));
-        assert_eq!(corpus_op_to_golem("rewrite"), Some(WORK));
-        assert_eq!(corpus_op_to_golem("discover"), None);
-        assert_eq!(corpus_op_to_golem("convert"), None);
-    }
 
     #[test]
     fn tag_family_covers_golem_reused_namespaces() {

@@ -4,7 +4,7 @@
 //! functions (which are property-tested without a live ABW connection) live
 //! alongside their tests.
 //!
-//! Both helpers are `pub` so `cloud_swarm_tools.rs` and the `test_utils` module can
+//! Both helpers are `pub` so `cloud_swarm_tools.rs` can
 //! re-export them.
 
 use crate::request_types::CreateAgentRequest;

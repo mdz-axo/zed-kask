@@ -3,47 +3,9 @@
 use crate::database::driver::{query_map, query_row};
 use crate::database::value::DbValue;
 use crate::define_driver_store;
-use hkask_types::event::{CyclePhase, Span, SpanCategory, SpanNamespace};
+use hkask_types::event::{CyclePhase, Span, SpanNamespace};
 use hkask_types::id::{EventID, WebID};
 use hkask_types::{InfrastructureError, RegulationRecord, RegulationSink};
-
-/// Per-domain decay constants for weighted replay.
-///
-/// Each loop domain has its own `λ` (lambda) for exponential decay.
-/// Half-life = ln(2)/λ. A Cybernetics half-life of ~5min (λ≈0.0023/s)
-/// means events older than ~30min are negligible (weight < 0.001).
-#[derive(Debug, Clone)]
-pub struct DecayConfig {
-    /// Cybernetics decay constant (1/s). Default: ln(2)/300 ≈ 0.00231 (5min half-life)
-    pub cybernetics_lambda: f64,
-    /// Curation decay constant (1/s). Default: ln(2)/900 ≈ 0.00077 (15min half-life)
-    pub curation_lambda: f64,
-    /// Inference decay constant (1/s). Default: ln(2)/120 ≈ 0.00578 (2min half-life)
-    pub inference_lambda: f64,
-    /// Memory decay constant (1/s). Default: ln(2)/600 ≈ 0.00116 (10min half-life)
-    pub memory_lambda: f64,
-    /// Minimum weight threshold — events below this are not replayed. Default: 0.001
-    pub weight_threshold: f64,
-}
-
-impl Default for DecayConfig {
-    fn default() -> Self {
-        Self {
-            cybernetics_lambda: std::f64::consts::LN_2 / 300.0,
-            curation_lambda: std::f64::consts::LN_2 / 900.0,
-            inference_lambda: std::f64::consts::LN_2 / 120.0,
-            memory_lambda: std::f64::consts::LN_2 / 600.0,
-            weight_threshold: 0.001,
-        }
-    }
-}
-
-/// A RegulationRecord with its computed replay weight.
-#[derive(Debug, Clone)]
-pub struct WeightedEvent {
-    pub event: RegulationRecord,
-    pub weight: f64,
-}
 
 /// Algedonic-significant span categories for Curation review.
 ///
@@ -101,71 +63,6 @@ impl RegulationArchive {
         )?;
         tracing::info!(target: "hkask.storage", "RegulationArchive schema initialized");
         Ok(())
-    }
-
-    /// Replay events with exponentially decaying weights.
-    ///
-    /// Events are weighted by `exp(-λ · Δt)` where Δt is the time elapsed
-    /// since the event, and λ is the per-domain decay constant. Events with
-    /// weight below `config.weight_threshold` are excluded.
-    ///
-    /// The domain is determined from the event's span namespace:
-    /// - "variety" → cybernetics_lambda
-    /// - "curation", "spec" → curation_lambda
-    /// - "inference" → inference_lambda
-    /// - "agent_pod", "connector" → memory_lambda
-    /// - everything else → cybernetics_lambda (safe default)
-    ///
-    /// Replay events with temporal decay weighting.
-    ///
-    /// expect: "The system provides durable storage for event data"
-    /// \[P3\] Motivating: Generative Space — replay events with temporal decay
-    /// pre:  observer is valid, category is valid, lookback_secs > 0
-    /// post: returns `Vec<RegulationRecord>` within lookback window, weighted by recency
-    pub fn replay_weighted(
-        &self,
-        since: chrono::DateTime<chrono::Utc>,
-        limit: u64,
-        config: &DecayConfig,
-    ) -> Result<Vec<WeightedEvent>, InfrastructureError> {
-        let events = self.query_algedonic(since, limit)?;
-        let now = chrono::Utc::now();
-        let weighted: Vec<WeightedEvent> = events
-            .into_iter()
-            .filter_map(|event| {
-                let delta_secs = (now - event.timestamp).num_seconds().max(0) as f64;
-                // F-SYN-009: typed dispatch via SpanCategory.
-                let lambda = Self::lambda_for(event.span.namespace.category(), config);
-                let weight = (-lambda * delta_secs).exp();
-                if weight >= config.weight_threshold {
-                    Some(WeightedEvent { event, weight })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        Ok(weighted)
-    }
-
-    /// Returns the decay constant `λ` for a `SpanCategory`.
-    ///
-    /// Unknown categories fall back to `cybernetics_lambda`.
-    /// The fallback is explicit at the type level via `SpanCategory::Unknown`.
-    /// Get the decay lambda for a span category.
-    ///
-    /// expect: "The system provides durable storage for event data"
-    /// \[P3\] Motivating: Generative Space — get decay lambda for category
-    /// pre:  category is a valid SpanCategory
-    /// post: returns decay lambda from config or default
-    pub fn lambda_for(category: SpanCategory, config: &DecayConfig) -> f64 {
-        match category {
-            SpanCategory::Cybernetics => config.cybernetics_lambda,
-            SpanCategory::Curation => config.curation_lambda,
-            SpanCategory::Inference => config.inference_lambda,
-            SpanCategory::Memory => config.memory_lambda,
-            SpanCategory::Skill => config.cybernetics_lambda, // skill ops are cybernetic
-            SpanCategory::Unknown => config.cybernetics_lambda, // safe default
-        }
     }
 
     pub(crate) fn insert(&self, event: &RegulationRecord) -> Result<(), InfrastructureError> {

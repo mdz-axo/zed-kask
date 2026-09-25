@@ -28,9 +28,7 @@ classDiagram
     class server_context {
         +credentials: HashMap
         +webid: WebID
-        +capability_tier: CapabilityTier
         +open_database()
-        +open_database_with_extensions()
     }
     class tool_execution {
         +ToolContext
@@ -161,7 +159,6 @@ Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:56-74`.
 pub struct ServerContext {
     pub credentials: HashMap<String, String>,
     pub webid: hkask_types::WebID,
-    pub capability_tier: CapabilityTier,
 }
 ```
 
@@ -170,7 +167,6 @@ Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:126-135`.
 | Method | Return | Evidence |
 |---|---|---|
 | `open_database(db_env_var)` | persistent database or in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:149-164` |
-| `open_database_with_extensions(db_env_var, extensions)` | persistent/in-memory database with DDL | `kask/crates/hkask-mcp-server/src/server/context.rs:166-190` |
 
 ## Tool execution
 

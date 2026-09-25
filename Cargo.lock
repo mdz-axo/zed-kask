@@ -11256,6 +11256,7 @@ dependencies = [
  "util",
  "x_ai",
  "x_ai_subscribed",
+ "zed_credentials_provider",
 ]
 
 [[package]]

@@ -15,24 +15,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ── Domain newtypes (P2.3) ──────────────────────────────────────────────────
-
-/// Communication queue depth for backpressure regulation.
-///
-/// Newtype wrapper that prevents accidental confusion with other numeric
-/// thresholds in `SetPoints` (energy, variety deficit, error rate).
-///
-/// Defined in hkask-types (substrate crate) because it is shared across
-/// hkask-regulation (SetPoints, cybernetics loop) and hkask-agents
-/// (communication loop).
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct QueueDepth(pub f64);
-
-impl QueueDepth {
-    /// Default backpressure threshold: 100 messages.
-    pub const DEFAULT_BACKPRESSURE: QueueDepth = QueueDepth(100.0);
-}
-
 // Regulation Health — Observability data struct
 
 /// Regulation health status

@@ -17,7 +17,7 @@
 //! For dependent nodes, P(Yes | parents' outcomes in this path) is computed
 //! from the conditional probability tables — the same CPTs that
 //! `scenario_quantify` emits. Multiple dependency entries combine by
-//! independence (product), matching `combine_tree_probabilities`.
+//! independence (product), matching the scenarios server's marginalization.
 //!
 //! # Per-node delta mapping
 //!
@@ -491,7 +491,7 @@ pub(crate) fn scenario_impact_dcf(
 /// For root nodes (no `depends_on`): P(Yes) = `marginal_probability`.
 /// For dependent nodes: P(Yes | parents' outcomes in this path) is computed
 /// from the CPTs. Multiple dependency entries combine by independence
-/// (product), matching `combine_tree_probabilities`.
+/// (product), matching the scenarios server's marginalization.
 fn compute_path_probability(
     topo_order: &[String],
     node_map: &std::collections::HashMap<&str, &ScenarioTreeNode>,

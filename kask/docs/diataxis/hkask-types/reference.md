@@ -193,7 +193,7 @@ status: VERIFIED
 | `SpanKind` | canonical reusable event pairs, including inference transition/recovery | `kask/crates/hkask-types/src/event.rs:446-499` |
 | `CyclePhase` | Sense, Compute, Compare, Act | `kask/crates/hkask-types/src/event.rs:503-521` |
 | `RegulationSink` | persistence and source-ID dedup port | `kask/crates/hkask-types/src/event.rs:536-552` |
-| `QueueDepth`, `LedgerHealth`, `RegulationHealth`, `RegulationSpan` | Regulation measurements and typed namespace source | `kask/crates/hkask-types/src/regulation.rs:29-120` |
+| `LedgerHealth`, `RegulationHealth`, `RegulationSpan` | Regulation measurements and typed namespace source | `kask/crates/hkask-types/src/regulation.rs:29-120` |
 
 ## Inference IPC surface
 

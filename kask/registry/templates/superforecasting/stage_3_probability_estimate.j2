@@ -76,7 +76,7 @@ The tree encodes how the sub-questions combine into the outcome. The
 combinator (AND-gate / OR-gate / mixture) is encoded structurally in each
 node's conditional table — there is no separate combinator field. Your job is
 to estimate the per-node probabilities and conditional tables; the
-`combine_tree_probabilities` compute step walks the tree deterministically via
+`scenario_quantify` tool step walks the tree deterministically via
 `hkask_forecast::marginalize` (the single source of truth for joint
 marginalization) to produce the exact `tree_combined_probability`.
 
@@ -109,15 +109,15 @@ For each hypothesis:
      an OR-gate (any parent sufficient), conditionals are 1 when any parent is
      true; for a mixture, conditionals encode the partial contribution.
    - Encode the combinator **structurally in the conditional table values**, not
-     as a separate field. The compute step reads the table and applies the
+     as a separate field. `scenario_quantify` reads the table and applies the
      exact chain-rule marginalization — no independence heuristic is applied
      across a node's parents.
    - Keep fan-in ≤ 3 so conditional tables stay ≤ 8 entries.
 
-The `combine_tree_probabilities` compute step (next ordinal) walks the tree in
+The `scenario_quantify` tool step (called next by the invoking agent) walks the tree in
 topological order and produces `tree_combined_probability` — the exact
 inside-view posterior, fed to stage 4 as the prior. Do NOT estimate
-`combined_probability` yourself — the compute step owns that. The
+`combined_probability` yourself — `scenario_quantify` owns that. The
 `hypothesis_probabilities` object is retained for stage 4/5 consumers that
 read the primary hypothesis and its individual probability.
 
@@ -130,7 +130,7 @@ Respond with a JSON object containing:
     reasoning: string (how the case-specific evidence adjusted from the outside-view anchor)
   }
   (Note: `combined_probability` is no longer LLM-estimated — the
-  `combine_tree_probabilities` compute step derives `tree_combined_probability`
+  `scenario_quantify` tool step derives `tree_combined_probability`
   from the tree below.)
 - tree_nodes: Array of objects, one per node in the sub-question tree, with:
     - id: string (matches the tree node id from stage 1)
@@ -163,13 +163,13 @@ Return JSON only:
 ## Constraints
 
 - Do NOT generate new hypotheses — they are provided. Do NOT construct counterfactuals — they are provided.
-- Do NOT estimate `combined_probability` — the `combine_tree_probabilities`
-  compute step derives `tree_combined_probability` from `tree_nodes` via the
+- Do NOT estimate `combined_probability` — the `scenario_quantify`
+  tool step derives `tree_combined_probability` from `tree_nodes` via the
   exact chain-rule marginalization. Your output is the tree, not the aggregate.
 - Each tree node must have exactly one of `marginal_probability` or `depends_on`
   — not both (ambiguous: which wins?), not neither (undefined: no probability).
 - `conditionals` length must equal 2^parent_ids.len() — a short table is an
-  error (the compute step rejects it rather than silently zero-filling).
+  error (`scenario_quantify` rejects it rather than silently zero-filling).
 - Keep fan-in ≤ 3 so conditional tables stay tractable (≤ 8 entries).
 - Probabilities must be internally consistent across hypotheses.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

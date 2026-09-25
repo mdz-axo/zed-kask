@@ -637,10 +637,6 @@ mod tests {
             skill_md.contains("(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"),
             "MCDA weighted-average form must stay pinned in superforecasting SKILL.md"
         );
-        assert!(
-            !skill_md.contains("combine_tree_probabilities"),
-            "combine_tree_probabilities exists nowhere — the phantom tool reference was removed"
-        );
     }
 
     #[test]

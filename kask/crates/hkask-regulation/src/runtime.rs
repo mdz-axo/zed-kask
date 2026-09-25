@@ -227,14 +227,6 @@ impl VarietyTracker {
         self.counts.clear();
         self.window_start = Instant::now();
     }
-
-    /// Hard reset — clears both counts and EMA for a fresh session.
-    /// Unlike `reset()`, which blends into the EMA, this discards all history.
-    pub(crate) fn session_reset(&mut self) {
-        self.counts.clear();
-        self.ema = 0.0;
-        self.window_start = Instant::now();
-    }
 }
 
 impl Default for VarietyTracker {
@@ -460,14 +452,6 @@ impl VarietyMonitor {
     /// and `variety` (query surface).
     pub(crate) fn counters(&self) -> &HashMap<String, VarietyTracker> {
         &self.counters
-    }
-
-    /// Hard reset all trackers for a fresh session.
-    /// Preserves domain entries but clears counts and EMAs.
-    pub fn session_reset(&mut self) {
-        for tracker in self.counters.values_mut() {
-            tracker.session_reset();
-        }
     }
 }
 
@@ -778,20 +762,6 @@ impl RegulationLedger {
         state.tracker.variety_for_domain(domain)
     }
 
-    /// Reset all variety counters for a new session.
-    ///
-    /// Clears accumulated counts and EMAs while preserving domain entries
-    /// (i.e., domains registered by the seam watcher remain). Call this
-    /// at session start to prevent stale variety deficits from persisting
-    /// across agent rebuilds.
-    ///
-    /// expect: "Variety counters reset cleanly across sessions"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — clean session state
-    /// post: all VarietyTracker counts and EMAs are zeroed
-    pub async fn reset_variety(&self) {
-        let mut state = self.state.write().await;
-        state.tracker.session_reset();
-    }
 
     // ── Outcome Quality Tracking ──
 
@@ -896,18 +866,6 @@ impl RegulationLedger {
         mgr.check_outcome(domain, success_rate?, total_ops).cloned()
     }
 
-    /// Get outcome success rate for a domain.
-    /// Get outcome success rate for a domain.
-    ///
-    /// expect: "I can query the success rate for a domain as a feedback metric"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — success rate is a feedback metric
-    /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
-    /// pre:  domain is non-empty
-    /// post: returns Some(rate) if domain tracked, None otherwise
-    pub async fn outcome_success_rate(&self, domain: &str) -> Option<f64> {
-        let state = self.state.read().await;
-        state.outcome.get(domain).and_then(|t| t.success_rate())
-    }
 
     /// Per-domain outcome snapshots for the tool-reliability diagnosis
     /// surfaces, ordered by domain name for deterministic output. A domain
@@ -941,17 +899,6 @@ impl RegulationLedger {
         snapshots
     }
 
-    /// List all domains with recorded tool outcomes.
-    ///
-    /// Used by `ToolReliabilitySensor` to aggregate success rates across
-    /// all tracked domains. Returns domain names in arbitrary order.
-    /// (The sensor and `verify_impact` now read `outcome_breakdown` — the
-    /// floored aggregation — but this listing stays for direct ledger
-    /// queries and tests.)
-    pub async fn tracked_outcome_domains(&self) -> Vec<String> {
-        let state = self.state.read().await;
-        state.outcome.keys().cloned().collect()
-    }
 
     /// Increment variety counter for a domain.
     ///
@@ -1009,25 +956,6 @@ impl RegulationLedger {
         drop(state);
     }
 
-    /// Synchronous variant of `calibrate_threshold` for startup/bootstrap contexts.
-    ///
-    /// Uses `blocking_write()` on the internal `ParkingRwLock` — safe because
-    /// this is called during bootstrap before the async runtime is fully active.
-    /// Calibrate threshold (blocking).
-    ///
-    /// expect: "I can access Regulation observability synchronously — preserving generative capability"
-    /// \[P3\] Motivating: Generative Space — sync access preserves generative capability
-    /// \[P7\] Constraining: Evolutionary Architecture — blocking variant emerged from real usage
-    /// \[P4\] Constraining: Clear Boundaries — must not be called from async context
-    /// pre:  domain is non-empty, new_threshold > 0
-    /// post: threshold updated
-    pub fn calibrate_threshold_blocking(&self, domain: &str, new_threshold: u64) {
-        let state = self.state.blocking_write();
-        state
-            .algedonic
-            .write()
-            .set_expected_variety(domain, new_threshold);
-    }
 }
 
 impl Default for RegulationLedger {
@@ -1052,6 +980,15 @@ impl RegulationSink for NoopEventSink {
 mod tests {
     use super::*;
 
+    async fn success_rate(ledger: &RegulationLedger, domain: &str) -> Option<f64> {
+        ledger
+            .outcome_breakdown()
+            .await
+            .into_iter()
+            .find(|snapshot| snapshot.domain == domain)
+            .and_then(|snapshot| snapshot.success_rate)
+    }
+
     /// expect: "Quiet domains stop contributing stale deficits or outcome samples" [P9]
     #[tokio::test]
     async fn observations_expire_without_another_write() {
@@ -1063,7 +1000,7 @@ mod tests {
         ledger
             .record_outcome("quiet", false, Some("internal"))
             .await;
-        assert_eq!(ledger.outcome_success_rate("quiet").await, Some(0.0));
+        assert_eq!(success_rate(&ledger, "quiet").await, Some(0.0));
         // A second domain meeting the sensor's minimum-sample floor, so the
         // observe-level assertions exercise the sensor's real aggregation
         // path — the 1-sample "quiet" domain is below the floor, where
@@ -1091,7 +1028,7 @@ mod tests {
                     .window_start = old;
             }
         }
-        assert_eq!(ledger.outcome_success_rate("quiet").await, None);
+        assert_eq!(success_rate(&ledger, "quiet").await, None);
         assert!(
             sensor.observe().await.is_none(),
             "idle is no sample, not healthy"
@@ -1102,8 +1039,8 @@ mod tests {
             ledger.record_outcome("active", true, None).await;
         }
         let mut rates = Vec::new();
-        for domain in ledger.tracked_outcome_domains().await {
-            if let Some(rate) = ledger.outcome_success_rate(&domain).await {
+        for snapshot in ledger.outcome_breakdown().await {
+            if let Some(rate) = snapshot.success_rate {
                 rates.push(rate);
             }
         }
@@ -1182,8 +1119,7 @@ mod tests {
         ledger
             .record_outcome("media", false, Some("permission_denied"))
             .await;
-        let rate = ledger
-            .outcome_success_rate("media")
+        let rate = success_rate(&ledger, "media")
             .await
             .expect("media domain tracked");
         assert_eq!(
@@ -1196,8 +1132,7 @@ mod tests {
         ledger
             .record_outcome("media", false, Some("internal"))
             .await;
-        let rate = ledger
-            .outcome_success_rate("media")
+        let rate = success_rate(&ledger, "media")
             .await
             .expect("media domain tracked");
         assert_eq!(rate, 0.5, "one real failure of two counted ops");
@@ -1216,8 +1151,7 @@ mod tests {
         ledger
             .record_outcome("media", false, Some("invalid_argument"))
             .await;
-        let rate = ledger
-            .outcome_success_rate("media")
+        let rate = success_rate(&ledger, "media")
             .await
             .expect("media domain tracked");
         assert_eq!(

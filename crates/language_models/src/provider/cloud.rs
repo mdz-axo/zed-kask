@@ -644,6 +644,9 @@ mod tests {
     fn init_test(cx: &mut App) -> (Arc<Client>, Entity<UserStore>, CloudLanguageModelProvider) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        // zed-kask: the default provider is always the OS keychain, whose I/O
+        // runs outside the test scheduler; keep sign-in inside the test.
+        crate::tests::set_fake_credentials_provider(cx);
         cx.set_global(db::AppDatabase::test_new());
         let app_version = AppVersion::global(cx);
         release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);

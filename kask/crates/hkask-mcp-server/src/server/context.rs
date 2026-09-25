@@ -129,9 +129,6 @@ pub struct ServerContext {
 
     /// Resolved from HKASK_WEBID → anonymous.
     pub webid: hkask_types::WebID,
-
-    /// Infrastructure capabilities detected at startup.
-    pub capability_tier: CapabilityTier,
 }
 
 impl ServerContext {
@@ -163,29 +160,4 @@ impl ServerContext {
         }
     }
 
-    /// Like `open_database`, but passes DDL for custom tables (e.g. FTS5).
-    ///
-    /// expect: "The system provides authenticated tool execution context for MCP servers"
-    /// pre:  db_env_var is set, extensions is valid SQL DDL
-    /// post: returns opened Database with extensions applied, or in-memory fallback
-    #[must_use = "result must be used"]
-    pub fn open_database_with_extensions(
-        &self,
-        db_env_var: &str,
-        extensions: &str,
-    ) -> Result<hkask_storage::Database, McpError> {
-        match self.credentials.get(db_env_var) {
-            Some(path) => {
-                let passphrase = self.resolve_db_credential()?;
-                Ok(hkask_storage::Database::open_with_extensions(
-                    path,
-                    &passphrase,
-                    extensions,
-                )?)
-            }
-            None => Ok(hkask_storage::Database::in_memory_with_extensions(
-                extensions,
-            )?),
-        }
-    }
 }

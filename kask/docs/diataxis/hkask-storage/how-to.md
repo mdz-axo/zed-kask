@@ -150,12 +150,13 @@ Confirmation rejects changed snapshots, unresolved recovery artifacts, ambiguous
 hard links, and an empty rotation set
 (`kask/crates/hkask-storage/src/maintenance_inventory.rs:297-375`).
 
-### 4. Validate before maintenance
+### 4. Rotate the confirmed paths
 
-Call `ConfirmedInventory::validate_current` against the newest preview immediately
-before using `rotate_paths()`
-(`kask/crates/hkask-storage/src/maintenance_inventory.rs:183-205`). Establish
-quiescence separately; the inventory receipt is not a maintenance lease.
+The receipt's `rotate_paths()` are recorded with the pending rotation and applied
+at the next startup, which classifies each database by key with
+`verify_database_key` before rotating it
+(`kask/crates/kask_bridge/src/passphrase_rotation.rs`). Establish quiescence
+separately; the inventory receipt is not a maintenance lease.
 Single-database rotation itself is implemented by `rotate_passphrase`
 (`kask/crates/hkask-storage/src/rotation.rs:115-302`).
 

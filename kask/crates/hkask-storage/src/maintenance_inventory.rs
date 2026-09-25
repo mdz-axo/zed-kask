@@ -196,12 +196,6 @@ impl ConfirmedInventory {
     pub fn exclusions(&self) -> &BTreeMap<PathBuf, String> {
         &self.exclusions
     }
-    pub fn validate_current(&self, current: &DatabaseInventory) -> Result<(), InventoryError> {
-        if &self.inventory != current {
-            return Err(InventoryError::Stale);
-        }
-        Ok(())
-    }
 }
 
 impl DatabaseInventory {
@@ -401,25 +395,18 @@ mod tests {
     }
 
     #[test]
-    fn late_paths_invalidate_confirmation_and_receipts() {
+    fn late_paths_invalidate_confirmation() {
         let directory = tempfile::tempdir().expect("tempdir");
         let required = fixture(directory.path(), "required.db");
         let roots = [directory.path().to_path_buf()];
         let before = DatabaseInventory::preview(std::slice::from_ref(&required), &roots, &[])
             .expect("preview");
-        let receipt = before
-            .confirm(&before, &BTreeMap::new(), true)
-            .expect("confirm");
         let other = fixture(directory.path(), "late.db");
         std::fs::write(other.with_file_name("late.db.maintenance-lock"), b"").expect("marker");
         let after = DatabaseInventory::preview(&[required], &roots, &[]).expect("new preview");
         assert_eq!(after.entries.len(), 2);
         assert!(matches!(
             before.confirm(&after, &BTreeMap::new(), true),
-            Err(InventoryError::Stale)
-        ));
-        assert!(matches!(
-            receipt.validate_current(&after),
             Err(InventoryError::Stale)
         ));
     }

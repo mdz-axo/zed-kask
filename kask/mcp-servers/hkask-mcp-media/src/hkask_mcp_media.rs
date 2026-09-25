@@ -5881,9 +5881,10 @@ mod gallery_lifecycle_tests {
         assert!(changed.metadata_stale);
         assert_ne!(changed.hash, original.hash);
         assert_eq!(store.get_tags(&original.id)?.len(), 1);
-        assert!(!store.persist_analysis(
+        assert!(!store.persist_analysis_for_tag_types(
             &original,
             &[("caption".into(), "wrong revision".into(), 1.0)],
+            &["caption".to_string()],
             "fake",
             true
         )?);
@@ -5892,9 +5893,10 @@ mod gallery_lifecycle_tests {
                 .get_by_id(&gallery.gallery_id, &original.id)?
                 .metadata_stale
         );
-        assert!(store.persist_analysis(
+        assert!(store.persist_analysis_for_tag_types(
             &changed,
             &[("caption".into(), "new revision".into(), 1.0)],
+            &["caption".to_string()],
             "fake",
             true
         )?);

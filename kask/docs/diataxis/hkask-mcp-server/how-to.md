@@ -54,16 +54,7 @@ let database = ctx.open_database("SERVICE_DB_PATH")?;
 
 When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:137-164`).
 
-For custom DDL:
-
-```rust
-let database = ctx.open_database_with_extensions(
-    "SERVICE_DB_PATH",
-    "CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY);",
-)?;
-```
-
-The extension-aware path has the same persistent/in-memory split (`kask/crates/hkask-mcp-server/src/server/context.rs:166-190`). For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:61-104`).
+For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:61-104`).
 
 ## Execute a tool and preserve typed errors
 

@@ -178,44 +178,6 @@ pub fn kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept> {
     }
 }
 
-/// Map a corpus pipeline operation to its PKO process concept.
-///
-/// Takes the bare operation name — the corpus tool name minus its `corpus_`
-/// prefix (`corpus_convert` → `convert`). This is the canonical source of
-/// truth for the corpus server's `ontology_anchor`: the reg.tool span tags a
-/// tool *execution*, so pipeline operations anchor on the process axis (PKO),
-/// not the state axis of the artifact they produce. Storage/registry
-/// operations (cache, clear_index, purge) are deliberately unmapped here —
-/// they anchor on the state axis (Dublin Core Dataset) via the anchor's
-/// default arm.
-pub fn corpus_stage_to_pko_step(stage: &str) -> Option<PkoConcept> {
-    match stage.to_lowercase().as_str() {
-        // Ingest: the entry step of the pipeline.
-        "convert" | "extract" => Some(STEP),
-        // Text-processing functions.
-        "ocr" | "chunk" | "split" | "embed" | "vectorize" | "dedup" | "dedup_chunks"
-        | "consolidate" | "consolidate_chunks" => Some(FUNCTION),
-        // Triage before parse — verifies whether OCR is needed.
-        "is_complex" => Some(STEP_VERIFICATION),
-        // Knowledge-extraction and retrieval actions.
-        "tag"
-        | "tag_chunks"
-        | "build_prompts"
-        | "generate_qa"
-        | "generate_qa_batch"
-        | "qa"
-        | "ingest_qa"
-        | "extract_assertions"
-        | "h_mems"
-        | "query"
-        | "search"
-        | "discover"
-        | "discover_company"
-        | "prepare_training_dataset" => Some(ACTION),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,41 +237,3 @@ mod tests {
     }
 }
 
-#[test]
-fn corpus_stage_mapper_covers_every_pipeline_operation() {
-    // Every corpus pipeline tool's bare operation name (tool minus the
-    // corpus_ prefix) must map — the corpus server's ontology_anchor
-    // delegates here, so an unmapped pipeline op would silently fall to
-    // the Dataset default (wrong axis for a process).
-    for op in [
-        "convert",
-        "ocr",
-        "is_complex",
-        "chunk",
-        "embed",
-        "tag_chunks",
-        "dedup_chunks",
-        "consolidate_chunks",
-        "build_prompts",
-        "generate_qa",
-        "generate_qa_batch",
-        "ingest_qa",
-        "extract_assertions",
-        "query",
-        "discover",
-        "discover_company",
-        "prepare_training_dataset",
-    ] {
-        assert!(
-            corpus_stage_to_pko_step(op).is_some(),
-            "pipeline operation {op} must map to a PKO process concept"
-        );
-    }
-    // Storage/registry operations are deliberately unmapped (state axis).
-    for op in ["cache", "cache_work", "clear_index", "purge_qa"] {
-        assert!(
-            corpus_stage_to_pko_step(op).is_none(),
-            "storage operation {op} must NOT map to the process axis"
-        );
-    }
-}

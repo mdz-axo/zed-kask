@@ -44,8 +44,5 @@ tempfile.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = []
-
 [build-dependencies]
 regex = { workspace = true }

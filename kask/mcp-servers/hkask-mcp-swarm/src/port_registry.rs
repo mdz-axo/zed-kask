@@ -7,9 +7,8 @@
 //!
 //! The registry is seeded from `BUILTIN_PORT_TYPES` (the labels already in
 //! use by existing cards and by `build_task_agent_card` in the kata-kanban
-//! server). Runtime extension is via `register_type`; file-backed loading is
-//! wired through `LocalAgentRegistry`'s `port_types.json` extension file,
-//! which the clone path uses to admit third-party (ABW catalogue) port
+//! server). Runtime extension is file-backed: `LocalAgentRegistry`'s
+//! `port_types.json` extension file, which the clone path uses to admit third-party (ABW catalogue) port
 //! labels without papering over the gate for locally-authored cards.
 
 use serde::{Deserialize, Serialize};
@@ -64,8 +63,8 @@ pub fn task_result_schema() -> serde_json::Value {
 
 /// Registered port types. A port label is a reference to a type, not a free
 /// string. The registry is seeded from `BUILTIN_PORT_TYPES`; operators extend
-/// it by adding labels to the built-in set (a code change) or by calling
-/// `register_type` at runtime.
+/// it by adding labels to the built-in set (a code change) or through the
+/// `port_types.json` extension file (`merge_entries`).
 #[derive(Debug, Clone)]
 pub struct PortRegistry {
     types: HashMap<String, PortTypeEntry>,
@@ -101,12 +100,6 @@ impl PortRegistry {
             .and_then(|entry| entry.schema.as_ref())
     }
 
-    /// Register a type with an optional schema. If the type already exists,
-    /// its entry is replaced.
-    pub fn register_type(&mut self, label: &str, schema: Option<serde_json::Value>) {
-        self.types
-            .insert(label.to_string(), PortTypeEntry { schema });
-    }
 
     /// Merge a map of registered types into this registry (extension load).
     /// Existing entries with the same label are replaced by the incoming
@@ -346,16 +339,6 @@ mod tests {
     }
 
     #[test]
-    fn register_type_extends_and_replaces() {
-        let mut registry = PortRegistry::builtin();
-        registry.register_type("custom_label", None);
-        assert!(registry.resolves("custom_label"));
-
-        registry.register_type("custom_label", Some(json!({"type": "object"})));
-        assert!(registry.schema_for("custom_label").is_some());
-    }
-
-    #[test]
     fn validate_output_no_schema_when_labels_have_none() {
         let registry = PortRegistry::builtin();
         let status = registry
@@ -406,10 +389,12 @@ mod tests {
     #[test]
     fn validate_output_unsupported_keyword_yields_unsupported_status() {
         let mut registry = PortRegistry::builtin();
-        registry.register_type(
-            "strict",
-            Some(json!({"type": "object", "additionalProperties": false})),
-        );
+        registry.merge_entries(&HashMap::from([(
+            "strict".to_string(),
+            PortTypeEntry {
+                schema: Some(json!({"type": "object", "additionalProperties": false})),
+            },
+        )]));
         let result = registry.validate_output(&["strict".to_string()], &json!({"a": 1}));
         assert_eq!(result.status, ValidationStatus::UnsupportedSchema);
         assert!(!result.unsupported.is_empty());

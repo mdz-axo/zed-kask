@@ -2794,9 +2794,9 @@ mod tests {
         runtime.block_on(async {
             let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
             let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
-                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>)
-                .with_inference_resilience_source(Arc::new(HealthyResilienceSource));
+            let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
+                .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+            regulation_loop.set_inference_resilience_source(Arc::new(HealthyResilienceSource));
 
             // 361 ticks: heartbeat at tick 1, silence through tick 359,
             // heartbeat at tick 360, tick 361 silent again.

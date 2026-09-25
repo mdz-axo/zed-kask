@@ -181,14 +181,6 @@ pub fn render_deployed_tagging_prompt_at(
     render_named_template(template_root, TEMPLATE_NAME, request, true)
 }
 
-/// Render the fixed deployed passage-tagging template with strict variables.
-pub fn render_tagging_prompt(
-    template_root: &Path,
-    request: &PassageTaggingRequest,
-) -> Result<String, PassageTaggingError> {
-    render_named_template(template_root, TEMPLATE_NAME, request, false)
-}
-
 fn render_named_template(
     template_root: &Path,
     template_name: &str,
@@ -569,6 +561,9 @@ mod tests {
 
     #[test]
     fn required_template_failures_are_typed() {
+        let render_tagging_prompt = |root: &Path, request: &PassageTaggingRequest| {
+            render_named_template(root, TEMPLATE_NAME, request, false)
+        };
         let missing = tempfile::tempdir().expect("tempdir");
         assert!(matches!(
             render_tagging_prompt(

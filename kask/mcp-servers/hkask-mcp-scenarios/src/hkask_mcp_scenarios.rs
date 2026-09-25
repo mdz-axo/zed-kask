@@ -75,12 +75,7 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
         ScenarioError::Forecast(forecast_error) => match forecast_error {
             hkask_forecast::ForecastError::InvalidProbability(..)
             | hkask_forecast::ForecastError::BrierLengthMismatch(..)
-            | hkask_forecast::ForecastError::BrierNoData
-            | hkask_forecast::ForecastError::TreeMissingNode(..)
-            | hkask_forecast::ForecastError::TreeMissingOutcome(..)
-            | hkask_forecast::ForecastError::TreeUndefinedNode(..)
-            | hkask_forecast::ForecastError::TreeUnresolvedParent(..)
-            | hkask_forecast::ForecastError::TreeConditionalLength(..) => {
+            | hkask_forecast::ForecastError::BrierNoData => {
                 McpToolError::invalid_argument(format!(
                     "forecast computation failed: {forecast_error}",
                 ))

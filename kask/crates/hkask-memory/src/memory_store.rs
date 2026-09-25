@@ -285,18 +285,6 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Store related h_mems as one atomic publication.
-    ///
-    /// The final item may be a commit marker or watermark: no item becomes
-    /// visible unless every item is inserted successfully. Regulation events
-    /// are emitted only after the database transaction commits.
-    pub fn store_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), MemoryStoreError> {
-        self.h_mem_store.insert_batch_atomic(h_mems)?;
-        for h_mem in h_mems {
-            self.emit_store_event(h_mem);
-        }
-        Ok(())
-    }
 
     /// Publish related h_mems while atomically replacing one EAV control key.
     pub fn store_batch_replacing_key_atomic(

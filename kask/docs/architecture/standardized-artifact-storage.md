@@ -52,12 +52,12 @@ names what produced it, so the user can tell from the folder name alone which
 server, skill, or review wrote a file, what kind of file it is, and which run
 it came from:
 
-| Folder | Producer | Route helper |
+| Folder | Producer | Written by |
 |---|---|---|
-| `{server}-mcp/{artifact-type}/` | an MCP server tool | `mcp_artifacts_subdir` |
-| `skills/{skill-name}/{date}-{run}/` | one skill run; carries `manifest.json` (skill, thread, time, inputs, outputs) | `skill_run_dir` |
-| `curator/reviews/{date}/` | the algedonic review (operator + Curator) — gemba-walk findings, skill verdicts, action receipts | `curator_review_dir` |
-| `curator/proposals/{skill-name}/` | executing skills filing skill-change proposals; only the review accepts or rejects them | `curator_proposals_dir` |
+| `{server}-mcp/{artifact-type}/` | an MCP server tool | `mcp_artifacts_subdir` route |
+| `skills/{skill-name}/{date}-{run}/` | one skill run; carries `manifest.json` (skill, thread, time, inputs, outputs) | the skill, per its `SKILL.md` |
+| `curator/reviews/{date}/` | the algedonic review (operator + Curator) — gemba-walk findings, skill verdicts, action receipts | the `algedonic-review` skill |
+| `curator/proposals/{skill-name}/` | executing skills filing skill-change proposals; only the review accepts or rejects them | the proposing skill, per its `SKILL.md` |
 | `agent-traces/` | the agent's on-demand tool tracing | `crates/agent/src/tool_trace.rs` |
 
 Nothing is written at the top level of the tree or in an agent-invented folder.

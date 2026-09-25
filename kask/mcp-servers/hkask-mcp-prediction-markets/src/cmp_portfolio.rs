@@ -309,13 +309,6 @@ pub fn materiality_level(
 
 // ── Eligibility ─────────────────────────────────────────────────────────────
 
-/// Why a contract was excluded — surfaced, never silent.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct EligibilityRejection {
-    pub market_id: String,
-    pub reason: String,
-}
-
 /// The eligibility window for a maturity bucket.
 ///
 /// Windows are CONTIGUOUS: interior boundaries are the midpoints between

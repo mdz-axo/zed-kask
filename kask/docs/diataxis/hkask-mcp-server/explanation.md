@@ -14,7 +14,7 @@ mds_categories: [trust, curation]
 
 ## Why construction flows through `ServerContext`
 
-`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid, capability_tier }` (`kask/crates/hkask-mcp-server/src/server/context.rs:126-135`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
+`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid }`; the detected `CapabilityTier` is logged at startup, not passed to the server (`kask/crates/hkask-mcp-server/src/server/context.rs:126-135`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
 
 ```mermaid
 sequenceDiagram

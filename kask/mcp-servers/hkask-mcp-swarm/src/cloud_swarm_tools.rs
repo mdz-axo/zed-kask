@@ -19,8 +19,8 @@ use crate::spend_gate;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
-// Re-export the pure helpers from `cloud` so the `test_utils` module and
-// any internal callers can reach them at the crate root.
+// Re-export the pure helpers from `cloud` so internal callers can reach them
+// at the crate root.
 pub use crate::cloud_swarm::{
     build_agent_update_payload, build_create_agent_card, unsupported_create_fields, valence_payload,
 };

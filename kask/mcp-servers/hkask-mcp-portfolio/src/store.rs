@@ -184,9 +184,10 @@ impl PortfolioStore {
         Ok(Self { db_path })
     }
 
-    /// Test constructor: create a store backed by a DB at `base_dir/master.db`.
-    /// Not `#[cfg(test)]` so downstream crates (e.g. hkask-mcp-companies) can
-    /// use it in their own test suites.
+    /// Test seam: create a store backed by a DB at `base_dir/master.db`.
+    /// Not `#[cfg(test)]` so downstream crates (companies, prediction-markets)
+    /// can use it in their own test suites.
+    #[doc(hidden)]
     pub fn with_dir(base_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&base_dir).expect("failed to create test portfolio directory");
         let db_path = base_dir.join("master.db");
@@ -195,7 +196,8 @@ impl PortfolioStore {
         Self { db_path }
     }
 
-    /// Test constructor: create a store for a specific owner under `base_dir`.
+    /// Test seam: create a store for a specific owner under `base_dir`.
+    #[doc(hidden)]
     pub fn with_dir_for_owner(base_dir: PathBuf, owner: WebID) -> Self {
         Self::with_dir(base_dir.join(sanitize_name(&owner.to_string())))
     }

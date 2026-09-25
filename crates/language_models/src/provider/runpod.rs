@@ -589,11 +589,6 @@ struct GraphqlMyself {
 struct RunpodEndpoint {
     id: String,
     name: String,
-    /// Endpoint type (e.g. `"QB"` for Queue-Based serverless). We accept all
-    /// types but record the value for future filtering.
-    #[serde(default)]
-    #[allow(dead_code)]
-    r#type: Option<String>,
     /// Endpoint env vars. We read `MODEL_NAME` for the display name when the
     /// endpoint has no human-friendly name.
     #[serde(default)]

@@ -344,31 +344,6 @@ impl EscalationQueue {
         }
         Ok(())
     }
-    /// Check whether any pending escalation shares the given `output` string.
-    ///
-    /// Used for deduplication at the source: the regulation loop can sense the
-    /// same deficit every cycle and would otherwise flood the queue with
-    /// identical alerts. Calling this before `add` prevents runaway escalation
-    /// floods when an efferent action is unwired or a deficit is persistent.
-    ///
-    /// expect: "The system provides durable storage for escalation data"
-    /// post: returns true if at least one pending escalation has this output
-    #[must_use = "result must be used"]
-    pub fn has_pending_with_output(&self, output: &str) -> Result<bool, EscalationError> {
-        let rows = self
-            .driver
-            .query(
-                "SELECT COUNT(*) as cnt FROM escalations WHERE status = 'pending' AND output = ?1",
-                &[DbValue::Text(output.to_string())],
-            )
-            .map_err(|e| EscalationError::Infra(InfrastructureError::from(e)))?;
-        let count = rows
-            .first()
-            .and_then(|row| row.get(0).ok())
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(0);
-        Ok(count > 0)
-    }
 
     /// Dismiss all pending escalations matching a given `output` string.
     ///

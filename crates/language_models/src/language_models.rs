@@ -405,9 +405,18 @@ mod tests {
         }
     }
 
+    pub(crate) fn set_fake_credentials_provider(cx: &mut App) {
+        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(Arc::new(
+            FakeCredentialsProvider,
+        )));
+    }
+
     fn init_test(cx: &mut App) -> (Arc<Client>, Arc<dyn CredentialsProvider>) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        set_fake_credentials_provider(cx);
+        // OpenCode's dynamic model catalog reads the global filesystem.
+        <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
         cx.set_global(db::AppDatabase::test_new());
         let app_version = AppVersion::global(cx);
         release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);

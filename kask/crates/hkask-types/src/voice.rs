@@ -67,41 +67,6 @@ impl Default for VoiceDesign {
 }
 
 impl VoiceDesign {
-    /// Render this voice design as a compact prose description for TTS model input.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is a valid VoiceDesign with all fields populated
-    /// post: returns a prose string describing the voice's gender, age, timbre,
-    ///       accent, pace, and emotion range, ending with "."
-    pub fn to_tts_description(&self) -> String {
-        let mut parts = Vec::new();
-
-        if !self.gender_presentation.is_empty() && self.gender_presentation != "neutral" {
-            parts.push(self.gender_presentation.clone());
-        }
-        if !self.age_range.is_empty() {
-            parts.push(self.age_range.clone());
-        }
-        parts.push("voice".to_string());
-
-        if !self.timbre.is_empty() {
-            parts.push(format!("with a {} timbre", self.timbre));
-        }
-        if !self.accent.is_empty() {
-            parts.push(format!("and a {} accent", self.accent));
-        }
-        parts.push(format!("speaking at a {} pace", self.pace));
-
-        if !self.emotion_range.is_empty() && self.emotion_range != vec!["neutral".to_string()] {
-            parts.push(format!(
-                "capable of {} tones",
-                self.emotion_range.join(", ")
-            ));
-        }
-
-        parts.join(", ") + "."
-    }
-
     /// Map this voice design to the closest ElevenLabs voice preset.
     ///
     /// ElevenLabs-compatible voice presets:
@@ -167,24 +132,5 @@ mod tests {
         let v = VoiceDesign::default();
         assert_eq!(v.name, "Neutral");
         assert_eq!(v.pitch, "medium");
-    }
-
-    #[test]
-    fn tts_description_renders_prose() {
-        let v = VoiceDesign {
-            name: "Warm Mentor".to_string(),
-            pitch: "medium-low".to_string(),
-            timbre: "warm".to_string(),
-            pace: "moderate".to_string(),
-            accent: "british".to_string(),
-            emotion_range: vec!["warm".to_string(), "authoritative".to_string()],
-            gender_presentation: "feminine".to_string(),
-            age_range: "middle-aged".to_string(),
-            description: "A warm, middle-aged feminine voice with a British accent.".to_string(),
-        };
-        let desc = v.to_tts_description();
-        assert!(desc.contains("feminine"));
-        assert!(desc.contains("british"));
-        assert!(desc.contains("warm"));
     }
 }

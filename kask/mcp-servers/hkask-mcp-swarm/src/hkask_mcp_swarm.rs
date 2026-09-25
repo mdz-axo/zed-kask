@@ -123,23 +123,6 @@ mod workflow;
 // const as `parse::SWARM_TOOLS`.
 include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils {
-    pub use crate::abw_util::*;
-    pub use crate::cloud_swarm_tools::{
-        build_agent_update_payload, build_create_agent_card, unsupported_create_fields,
-    };
-    pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
-    pub use crate::consent::{ConsentStore, fnv1a, mint_token};
-    pub use crate::error::SwarmError;
-    pub use crate::local_registry::LocalAgentDependencies;
-    pub use crate::request_types::{
-        CapabilityGate, CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ModelLadderRung,
-        ValenceInput,
-    };
-    pub use crate::sanitize::*;
-}
-
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //
 // Only the symbols `hkask-mcp-kata-kanban` actually imports are re-exported.

@@ -53,11 +53,6 @@ impl DocStructure {
             .map(|block| block.text().split_whitespace().count())
             .sum()
     }
-
-    /// Iterate over all blocks in reading order across all pages.
-    pub fn iter_blocks(&self) -> impl Iterator<Item = &Block> {
-        self.pages.iter().flat_map(|page| page.blocks.iter())
-    }
 }
 
 /// A single page of a document.

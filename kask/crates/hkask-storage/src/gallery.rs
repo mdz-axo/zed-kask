@@ -862,24 +862,6 @@ impl GalleryStore {
             .ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "image".into(), id: image_id.into() }))
     }
 
-    /// expect: Analysis of an old revision never tags or certifies a different revision. [P1]
-    /// pre: record was captured before inference
-    /// post: inferred tags for represented types and freshness commit together only while identity/hash still match
-    pub fn persist_analysis(
-        &self,
-        record: &ImageRecord,
-        tags: &[(String, String, f64)],
-        model: &str,
-        complete: bool,
-    ) -> Result<bool, GalleryStoreError> {
-        let mut tag_types = Vec::new();
-        for (tag_type, _, _) in tags {
-            if !tag_types.contains(tag_type) {
-                tag_types.push(tag_type.clone());
-            }
-        }
-        self.persist_analysis_for_tag_types(record, tags, &tag_types, model, complete)
-    }
 
     /// expect: Reanalysis replaces only successful model-produced metadata while preserving user annotations. [P1]
     /// pre: record was captured before inference; replace_tag_types names successful pipeline outputs
@@ -1533,29 +1515,6 @@ impl GalleryStore {
         )?)
     }
 
-    /// Store or replace the canonical OMC creation graph for an asset.
-    pub fn record_omc_creation_graph(
-        &self,
-        image_id: &str,
-        graph_json: &str,
-    ) -> std::result::Result<OmcCreationGraphRecord, GalleryStoreError> {
-        let created_at = now_rfc3339();
-        self.driver.execute(
-            "INSERT INTO gallery_omc_creation_graph (image_id, graph_json, created_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(image_id) DO UPDATE SET graph_json = excluded.graph_json, created_at = excluded.created_at",
-            &[
-                DbValue::Text(image_id.to_string()),
-                DbValue::Text(graph_json.to_string()),
-                DbValue::Text(created_at.clone()),
-            ],
-        )?;
-        Ok(OmcCreationGraphRecord {
-            image_id: image_id.to_string(),
-            graph_json: graph_json.to_string(),
-            created_at,
-        })
-    }
 
     /// Read an asset's canonical OMC creation graph, if one was recorded.
     pub fn get_omc_creation_graph(
@@ -2354,49 +2313,6 @@ mod tests {
                 .get_omc_creation_graph(asset_id)
                 .expect("read deleted graph")
                 .is_none()
-        );
-    }
-
-    #[test]
-    fn omc_creation_graph_round_trips_and_cascades_with_asset_deletion() {
-        let store = setup();
-        let root = tempfile::tempdir().expect("gallery root");
-        let gallery = store
-            .open(
-                root.path().to_str().expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .expect("open gallery");
-        let image = store
-            .add_image(
-                &gallery.id,
-                &root.path().join("asset.wav").to_string_lossy(),
-                "hash",
-                0,
-                0,
-                "wav",
-                128,
-            )
-            .expect("add asset");
-        let graph_json =
-            r#"{"entities":[{"id":"asset","types":["fixture-asset-type"]}],"relationships":[]}"#;
-        store
-            .record_omc_creation_graph(&image.id, graph_json)
-            .expect("record graph");
-        let graph = store
-            .get_omc_creation_graph(&image.id)
-            .expect("read graph")
-            .expect("graph exists");
-        assert_eq!(graph.image_id, image.id);
-        assert_eq!(graph.graph_json, graph_json);
-
-        store.delete_image(&image.id).expect("delete asset");
-        assert!(
-            store
-                .get_omc_creation_graph(&image.id)
-                .expect("read deleted graph")
-                .is_none(),
-            "OMC graph must cascade with its asset"
         );
     }
 

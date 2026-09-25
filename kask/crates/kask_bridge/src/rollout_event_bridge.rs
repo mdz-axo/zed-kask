@@ -50,10 +50,6 @@ struct HarnessRegression {
     /// reads the metric at this position (the previous run's pass rate) and
     /// at the latest event after it (the current run's pass rate).
     before_position: i64,
-    /// The previous run's pass rate.
-    previous_pass_rate: f64,
-    /// The current run's pass rate.
-    current_pass_rate: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,9 +159,9 @@ impl BridgeRolloutEventSource {
         })
     }
 
-    /// Construct from an existing store handle. Used by tests and by the
-    /// composition root when the store is shared between the event source
-    /// and the regression monitor.
+    /// Construct from an existing store handle (test seam; production opens
+    /// the store with `open`).
+    #[doc(hidden)]
     pub fn from_store(store: Arc<EventStore>) -> Self {
         Self { store }
     }
@@ -368,8 +364,6 @@ fn scan_harness_summaries(
             Some(HarnessRegression {
                 agent_name: agent_name.clone(),
                 before_position: previous.position,
-                previous_pass_rate,
-                current_pass_rate,
             })
         } else {
             None
@@ -539,8 +533,6 @@ mod tests {
         assert_eq!(regressions.len(), 1);
         assert_eq!(regressions[0].agent_name, "alpha");
         assert_eq!(regressions[0].before_position, first);
-        assert_eq!(regressions[0].previous_pass_rate, 0.80);
-        assert_eq!(regressions[0].current_pass_rate, 0.60);
         assert_eq!(cursor, Some(_second));
     }
 

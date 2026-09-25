@@ -1081,16 +1081,6 @@ impl HMemStore {
         )
     }
 
-    /// Delete every h_mem under a literal, case-sensitive entity prefix, in one statement.
-    /// No query limit applies; `%`, `_`, and backslash are ordinary characters.
-    /// Returns the number of rows deleted. The forgetting pass uses this
-    /// to forget a distilled thread's shared-copy turns — forgotten rows
-    /// are removed from the database (operator ruling 2026-09-04: there
-    /// is no "expired" state).
-    pub fn delete_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
-        self.delete_by_entity_prefix_with_entities(prefix)
-            .map(|(count, _)| count)
-    }
 
     /// Delete by literal prefix and return the count and distinct affected
     /// entities for coupled-reference cleanup. Identities come from DELETE
@@ -1495,7 +1485,7 @@ mod tests {
             for memory in [&target, &retained, &lower] {
                 store.insert(memory)?;
             }
-            assert_eq!(store.delete_by_entity_prefix(prefix)?, 1, "{prefix}");
+            assert_eq!(store.delete_by_entity_prefix_with_entities(prefix)?.0, 1, "{prefix}");
             assert!(store.get_by_id(&target.id)?.is_none());
             assert!(store.get_by_id(&retained.id)?.is_some());
             assert!(store.get_by_id(&lower.id)?.is_some());
@@ -1515,8 +1505,8 @@ mod tests {
         }
         store.delete_by_id(&first.id)?;
         assert!(store.get_by_id(&first.id)?.is_none());
-        assert_eq!(store.delete_by_entity_prefix("thread:")?, 1);
-        assert_eq!(store.delete_by_entity_prefix("thread:")?, 0);
+        assert_eq!(store.delete_by_entity_prefix_with_entities("thread:")?.0, 1);
+        assert_eq!(store.delete_by_entity_prefix_with_entities("thread:")?.0, 0);
         let raw_count = store
             .driver()
             .query_optional("SELECT count(*) FROM hmems", &[])?

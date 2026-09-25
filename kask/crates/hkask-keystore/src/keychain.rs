@@ -237,27 +237,8 @@ impl Keychain {
     // key-based methods above. Used by `KeychainCredentialsProvider` so ALL
     // credential URLs use the same oo7 schema for both sync and async callers.
 
-    /// Store a secret at an arbitrary URL in the OS keychain.
-    ///
-    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
-    /// pre:  url is non-empty, secret is non-empty
-    /// post: secret stored with label `zed-github-account`, attribute `url=<url>`
-    pub fn store_by_url(
-        &self,
-        url: &str,
-        username: &str,
-        secret: &str,
-    ) -> Result<(), KeychainError> {
-        let keyring = open_keyring();
-        block_on(Self::store_url(
-            keyring,
-            url.to_string(),
-            username.to_string(),
-            Zeroizing::new(secret.to_string()),
-        ))
-    }
 
-    /// Async counterpart of `store_by_url`; oo7 I/O runs on async-std's executor.
+    /// Store a secret at an arbitrary URL; oo7 I/O runs on async-std's executor.
     pub async fn store_by_url_async(
         &self,
         url: &str,
@@ -334,17 +315,8 @@ impl Keychain {
         }))
     }
 
-    /// Delete a secret at an arbitrary URL from the OS keychain.
-    ///
-    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
-    /// pre:  url is non-empty
-    /// post: secret removed (idempotent — no-op if absent)
-    pub fn delete_by_url(&self, url: &str) -> Result<(), KeychainError> {
-        let keyring = open_keyring();
-        block_on(Self::delete_url(keyring, url.to_string()))
-    }
 
-    /// Async counterpart of `delete_by_url`; absent entries are a no-op.
+    /// Delete a secret at an arbitrary URL; absent entries are a no-op.
     pub async fn delete_by_url_async(&self, url: &str) -> Result<(), KeychainError> {
         let keyring = open_keyring();
         async_std::task::spawn(Self::delete_url(keyring, url.to_string())).await
@@ -605,7 +577,7 @@ mod integration_tests {
         kc.store_by_key("runpod_s3_access_key", TEST_VALUE)?;
         kc.store_by_key("runpod_s3_secret", TEST_VALUE)?;
         kc.store_by_key("exa", TEST_VALUE)?;
-        kc.store_by_url("https://api.runpod.io", "kask", TEST_VALUE)?;
+        async_std::task::block_on(kc.store_by_url_async("https://api.runpod.io", "kask", TEST_VALUE))?;
 
         purge_obsolete_runpod_s3_credentials()?;
         purge_obsolete_runpod_s3_credentials()?;
@@ -622,7 +594,7 @@ mod integration_tests {
             TEST_VALUE
         );
         kc.delete_by_key("exa")?;
-        kc.delete_by_url("https://api.runpod.io")?;
+        async_std::task::block_on(kc.delete_by_url_async("https://api.runpod.io"))?;
         Ok(())
     }
 
@@ -756,31 +728,6 @@ mod integration_tests {
             assert_eq!(kc.retrieve_by_url_async(url).await?.as_str(), TEST_VALUE);
             kc.delete_by_url_async(url).await?;
             kc.delete_by_url_async(url).await?;
-            assert!(matches!(
-                kc.retrieve_by_url_async(url).await,
-                Err(KeychainError::NotFound(_))
-            ));
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn sync_and_async_url_operations_share_entries() -> Result<(), KeychainError> {
-        async_std::task::block_on(async {
-            let url = "kask://credentials/__hkask_cross_url_round_trip__";
-            let kc = Keychain;
-            kc.delete_by_url(url)?;
-            kc.store_by_url(url, "kask", TEST_VALUE)?;
-            assert_eq!(kc.retrieve_by_url_async(url).await?.as_str(), TEST_VALUE);
-            kc.delete_by_url_async(url).await?;
-            assert!(matches!(
-                kc.retrieve_by_url(url),
-                Err(KeychainError::NotFound(_))
-            ));
-
-            kc.store_by_url_async(url, "kask", TEST_VALUE).await?;
-            assert_eq!(kc.retrieve_by_url(url)?.as_str(), TEST_VALUE);
-            kc.delete_by_url(url)?;
             assert!(matches!(
                 kc.retrieve_by_url_async(url).await,
                 Err(KeychainError::NotFound(_))

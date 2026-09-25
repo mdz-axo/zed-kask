@@ -35,7 +35,7 @@ pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult};
 pub use escalation::{EscalationEntry, EscalationError, EscalationQueue, EscalationStatus};
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore};
-pub use regulation_store::{DecayConfig, RegulationArchive};
+pub use regulation_store::RegulationArchive;
 
 pub use gallery::{
     AssetCreationPublication, AssetObservation, FaceRegistryRecord, GalleryMode, GalleryRecord,

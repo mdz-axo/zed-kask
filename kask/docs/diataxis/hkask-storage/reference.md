@@ -32,7 +32,7 @@ The crate root declares and exports the current modules at
 | `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
 | `escalation` | `EscalationEntry`, `EscalationQueue`, `EscalationStatus`, `EscalationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:30,35` |
 | `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:31,36-37` |
-| `regulation_store` | `RegulationArchive`, `DecayConfig` | `kask/crates/hkask-storage/src/hkask_storage.rs:32,38` |
+| `regulation_store` | `RegulationArchive` | `kask/crates/hkask-storage/src/hkask_storage.rs:32,38` |
 | `gallery` | gallery index, scan/reconciliation, tags, faces, workflows, generations, OMC graphs, and albums | `kask/crates/hkask-storage/src/hkask_storage.rs:11,40-43`; `kask/crates/hkask-storage/src/gallery.rs:73-135,203-293` |
 
 ## Connection and driver surfaces
@@ -70,7 +70,6 @@ classDiagram
     class ConfirmedInventory {
         +rotate_paths()
         +exclusions()
-        +validate_current()
     }
     class HMemStore
     class EmbeddingStore

@@ -539,7 +539,7 @@ fn check_max(max: Option<f32>, value: f32) -> bool {
 
 // ── Entity Tagging ────────────────────────────────────────────────────────
 
-/// Tags extracted from a passage by string-matching against declared entities.
+/// Entity tags for one passage, built by the caller (corpus tagging).
 #[derive(Debug, Clone, Default)]
 pub struct EntityTags {
     pub characters: Vec<String>,
@@ -547,42 +547,6 @@ pub struct EntityTags {
     pub events: Vec<String>,
     pub concepts: Vec<String>,
     pub methods: Vec<String>,
-}
-
-/// Tag a passage by matching declared entity names against the text.
-///
-/// Uses simple case-insensitive substring matching. Returns distinct
-/// tags only (no duplicates within a category).
-///
-/// expect: "The system scores passage salience to gate h_mem storage budget"
-/// \[P3\] Motivating: Generative Space — tags passages with declared entities for the salience graph
-/// \[P8\] Constraining: Semantic Grounding — case-insensitive substring matching
-/// pre:  text is non-empty, entity lists are valid
-/// post: returns EntityTags with matched entities per category
-/// post: methods field is empty (filled separately)
-pub fn tag_entities(
-    text: &str,
-    characters: &[String],
-    places: &[String],
-    events: &[String],
-    concepts: &[String],
-) -> EntityTags {
-    let lower = text.to_lowercase();
-    EntityTags {
-        characters: filter_matches(&lower, characters),
-        places: filter_matches(&lower, places),
-        events: filter_matches(&lower, events),
-        concepts: filter_matches(&lower, concepts),
-        methods: Vec::new(), // filled separately by method matching
-    }
-}
-
-fn filter_matches(lower_text: &str, candidates: &[String]) -> Vec<String> {
-    candidates
-        .iter()
-        .filter(|c| lower_text.contains(&c.to_lowercase()))
-        .cloned()
-        .collect()
 }
 
 impl EntityTags {

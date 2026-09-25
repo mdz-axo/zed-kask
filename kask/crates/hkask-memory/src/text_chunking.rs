@@ -720,9 +720,6 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     }
 }
 
-pub fn filter_boilerplate_pages(text: &str) -> String {
-    filter_boilerplate_pages_with_report(text).text
-}
 
 fn filter_page_delimited_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let pages = text.split(FORM_FEED).collect::<Vec<_>>();
@@ -1529,7 +1526,7 @@ mod tests {
 
     /// A whole document that MENTIONS "copyright" (an OCR'd book, a
     /// Project Gutenberg text) is a single form-feed-free "page" to
-    /// `filter_boilerplate_pages`. The keyword rule must be size-gated or
+    /// `filter_boilerplate_pages_with_report`. The keyword rule must be size-gated or
     /// the entire document is silently classified as one giant boilerplate
     /// page — observed live: 17 of 138 corpus sources vanished from a chunk
     /// run while the tool reported total_documents=138.
@@ -1537,7 +1534,7 @@ mod tests {
     fn whole_document_mentioning_copyright_is_not_boilerplate() {
         let body = "The hedgehog knows one big thing. ".repeat(200); // ~6K chars
         let document = format!("{body}All rights reserved by the publisher. {body}");
-        let filtered = filter_boilerplate_pages(&document);
+        let filtered = filter_boilerplate_pages_with_report(&document).text;
         assert!(
             !filtered.trim().is_empty(),
             "a whole document mentioning copyright must survive filtering"
@@ -1552,7 +1549,7 @@ mod tests {
     fn whole_ocr_document_with_long_prose_lines_is_not_boilerplate() {
         let page = "This is a sentence that ends with a period. ".repeat(40); // ~1.8K chars
         let document = format!("{page}\n{page}\n{page}"); // ~5.4K chars, 3 long lines
-        let filtered = filter_boilerplate_pages(&document);
+        let filtered = filter_boilerplate_pages_with_report(&document).text;
         assert!(
             !filtered.trim().is_empty(),
             "a whole OCR'd document of long prose lines must survive filtering"
@@ -1608,7 +1605,7 @@ mod tests {
     #[test]
     fn small_copyright_page_is_still_dropped() {
         let page = "Copyright © 2005 Vigyan Prasar. All rights reserved. ISBN 81-7480-1234-5. Printed in India.";
-        let filtered = filter_boilerplate_pages(page);
+        let filtered = filter_boilerplate_pages_with_report(page).text;
         assert!(
             filtered.trim().is_empty(),
             "a small copyright page must still be classified as boilerplate"
@@ -1804,7 +1801,7 @@ mod tests {
     #[test]
     fn filter_drops_blank_pages() {
         let text = "\x0c\x0cReal content here with enough words to be a real page.\x0c\x0c";
-        let result = filter_boilerplate_pages(text);
+        let result = filter_boilerplate_pages_with_report(text).text;
         assert!(result.contains("Real content"));
         assert!(!result.is_empty());
     }
@@ -1812,7 +1809,7 @@ mod tests {
     #[test]
     fn filter_drops_copyright_pages() {
         let text = "Copyright © 2011 by Imperial College Press\nAll rights reserved.\nISBN-13 978-1-84816-456-7\n\x0cChapter 1: Introduction\n\nThis is real content that should be kept because it is the actual body text of the book and contains substantive material.";
-        let result = filter_boilerplate_pages(text);
+        let result = filter_boilerplate_pages_with_report(text).text;
         assert!(!result.contains("Copyright"));
         assert!(!result.contains("ISBN"));
         assert!(result.contains("Chapter 1"));

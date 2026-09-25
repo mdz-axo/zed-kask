@@ -425,56 +425,6 @@ async fn dismiss_nonexistent_id_returns_not_found() {
     );
 }
 
-// ── Escalation dedup at source ──────────────────────────────────────────────
-
-/// `EscalationQueue::has_pending_with_output` returns false for a fresh queue
-/// and true after an escalation with that output is added. This is the
-/// dedup primitive that prevents runaway escalation floods.
-#[tokio::test]
-async fn escalation_queue_has_pending_with_output_detects_duplicates() {
-    let driver = SqliteDriver::in_memory_driver();
-    let queue = EscalationQueue::from_driver(driver).expect("escalation queue init");
-
-    let output = "inference circuit remains open after recovery probe";
-
-    // Fresh queue — no pending escalations.
-    assert_eq!(
-        queue.has_pending_with_output(output).unwrap(),
-        false,
-        "fresh queue must have no pending escalations with this output"
-    );
-
-    // Add one escalation.
-    let template_id = hkask_types::TemplateID::new();
-    let bot_id = hkask_types::BotID::new();
-    queue
-        .add(
-            template_id,
-            bot_id,
-            output.to_string(),
-            1.0,
-            0,
-            "{}".to_string(),
-        )
-        .unwrap();
-
-    // Now the dedup check must find it.
-    assert_eq!(
-        queue.has_pending_with_output(output).unwrap(),
-        true,
-        "after adding an escalation, dedup check must find it"
-    );
-
-    // A different output string must not match.
-    assert_eq!(
-        queue
-            .has_pending_with_output("completely different output")
-            .unwrap(),
-        false,
-        "a different output string must not match"
-    );
-}
-
 // ── Pattern-based batch dismiss ─────────────────────────────────────────────
 
 /// `curator_escalation_dismiss_by_pattern` dismisses all pending escalations

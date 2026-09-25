@@ -302,58 +302,6 @@ mod tests {
     // ── Ontology Anchor Tests (P5.2/P5.4/P8.1) ───────────────────────────
 
     #[test]
-    fn ontology_anchor_confidence_modifiers() {
-        // Core and DualAxis have no modifier
-        assert!((OntologyAnchor::Core.confidence_modifier() - 0.0).abs() < 0.001);
-        assert!(
-            (OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: hkask_bridge_ontology::pko::STEP_EXECUTION.into()
-            }
-            .confidence_modifier()
-                - 0.0)
-                .abs()
-                < 0.001
-        );
-
-        // FIBO: +0.10 (OMG standard, high adoption)
-        assert!(
-            (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
-            }
-            .confidence_modifier()
-                - 0.10)
-                .abs()
-                < 0.001
-        );
-
-        // SUMO: +0.05 (upper ontology, broad coverage)
-        assert!(
-            (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Sumo,
-                concept: hkask_bridge_ontology::sumo::ENTITY.into()
-            }
-            .confidence_modifier()
-                - 0.05)
-                .abs()
-                < 0.001
-        );
-
-        // GOLEM, ML-Schema: ±0.00 (standard)
-        assert!(
-            (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Golem,
-                concept: hkask_bridge_ontology::golem::CHARACTER.into()
-            }
-            .confidence_modifier()
-                - 0.0)
-                .abs()
-                < 0.001
-        );
-    }
-
-    #[test]
     fn ontology_anchor_density_factors() {
         // FIBO financial data: densest (1.3x retention)
         assert!(

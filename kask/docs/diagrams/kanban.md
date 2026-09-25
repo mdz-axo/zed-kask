@@ -25,8 +25,9 @@ the `hkask-mcp-kata-kanban` MCP server and the `hkask-kanban-widget` GPUI
 view import it, so the wire strings and transition rules cannot drift
 between them.
 
-Column ordering is strict: transitions may only advance forward or regress
-one step backward (`can_transition_to`). Skipping columns is prohibited. The
+Column ordering is strict: a move must go to an adjacent column in the
+board's configured order (`Board::can_transition`, enforced by
+`KanbanService::task_move`). Skipping columns is prohibited. The
 one exception is `KanbanService::task_reopen`, which moves Done→InProgress
 directly (skipping Review) as an explicit rework escape hatch — the only
 sanctioned multi-step transition.
@@ -52,8 +53,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-TASK-STATUS
-verified_date: 2026-09-18
-verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24, can_transition_to L65); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_reopen L832)
+verified_date: 2026-09-24
+verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs (can_transition L51); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_move L585, task_reopen L885)
 status: VERIFIED
 -->
 

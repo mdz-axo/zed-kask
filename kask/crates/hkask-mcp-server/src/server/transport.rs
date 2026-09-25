@@ -115,7 +115,6 @@ where
     let ctx = ServerContext {
         credentials: resolved,
         webid,
-        capability_tier,
     };
     let server = server_factory(ctx)?;
     tracing::info!(

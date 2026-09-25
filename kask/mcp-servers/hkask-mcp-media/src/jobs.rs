@@ -298,6 +298,9 @@ impl JobController {
         })
     }
 
+    /// Test seam: admission-slot count, used to pin that cancellation and
+    /// completion release their slot.
+    #[doc(hidden)]
     pub fn active_count(&self) -> Result<usize, JobStoreError> {
         self.active
             .lock()

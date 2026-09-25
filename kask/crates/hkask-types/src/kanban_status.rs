@@ -60,22 +60,6 @@ impl TaskStatus {
         }
     }
 
-    /// Returns `true` iff the transition from `self` to `target` is valid
-    /// (forward one step, or backward one step — no skipping).
-    pub fn can_transition_to(&self, target: TaskStatus) -> bool {
-        use TaskStatus::*;
-        matches!(
-            (self, target),
-            (Backlog, Ready)
-                | (Ready, Backlog)
-                | (Ready, InProgress)
-                | (InProgress, Ready)
-                | (InProgress, Review)
-                | (Review, InProgress)
-                | (Review, Done)
-        )
-    }
-
     /// Returns the next status in the workflow, or `None` if already `Done`.
     pub fn next(&self) -> Option<TaskStatus> {
         match self {
