@@ -15,9 +15,10 @@ use std::sync::Arc;
 /// `RegulationLedger` working view, which the metacognition loop's drift
 /// sensing trends ("declining operator acceptance" — outputs that are
 /// technically successful but increasingly useless; the outcome channel alone
-/// cannot catch that). This is the operator's channel for reacting to a
-/// skill's output directly: overridden tasks, rejection reasons, and
-/// correction directions (task-breakdown's `corrected_fields`).
+/// cannot catch that). This is the operator's only channel for rating a
+/// skill: rejection reasons and correction directions reach the skill through
+/// gemba-walk proposals that change its SKILL.md, never by the skill reading
+/// its own verdicts at run time.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RecordSkillFeedbackInput {
     /// The skill whose output is being rated (e.g., "lora-training").
@@ -25,8 +26,6 @@ pub struct RecordSkillFeedbackInput {
     /// The operator's disposition: true = accepted, false = rejected.
     pub accepted: bool,
     /// Optional reason — the rejection reason or correction direction.
-    /// This is the payload the skill reads as `prior_operator_feedback`
-    /// on its next invocation (e_t intrinsic evaluative feedback).
     #[serde(default)]
     pub note: Option<String>,
 }

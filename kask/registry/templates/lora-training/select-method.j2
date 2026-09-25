@@ -18,8 +18,6 @@ contract:
     provider_capabilities: object
     prior_training_history: object
     prior_iteration: object
-    prior_outcome: object
-    prior_operator_feedback: object
   output:
     recommendation: object
     readiness: object
@@ -57,8 +55,6 @@ INPUT: dataset_format_hint = {{ dataset_format_hint | default("undetermined") }}
 INPUT: provider_capabilities = {{ provider_capabilities | default({}) | tojson }} (v0.31.0 — capability matrix for available training hosts and inference providers; enables G6 to reason over the full capability space)
 INPUT: prior_training_history = {{ prior_training_history | default({}) | tojson }} (v0.31.0 — prior runs on same base model; enables Good Regulator compliance)
 INPUT: prior_iteration = {{ prior_iteration | default({}) | tojson }} (v0.31.0 — previous PDCA iteration output; closes the feedback loop)
-INPUT: prior_outcome = {{ prior_outcome | default({}) | tojson }} (v0.31.0 — outcome evidence from prior training runs; extrinsic exploratory experience signal τ_t)
-INPUT: prior_operator_feedback = {{ prior_operator_feedback | default({}) | tojson }} (v0.31.0 — operator feedback from prior invocations; intrinsic evaluative feedback signal e_t)
 
 AUTHORITY CONTRACT (P1, P3, P4, P12):
 - This skill emits an advisory recommendation from declared evidence.
@@ -115,12 +111,10 @@ GATE PRECEDENCE AND REFINEMENT:
 10. A later gate may refine an `undetermined` or default field, but must not
    overwrite a non-default field without recording the prior value and reason.
 
-PDCA ITERATION LOOP (v0.31.0 — mechanically closed via manifest):
-The select-method phase is the first turn of a PDCA loop. The manifest's
-loop step (ordinal 5) routes convergence_metric, blockers, and
-gate_results_summary back to select-method as `prior_iteration`, closing
-the feedback loop mechanically rather than relying on operator-managed
-re-invocation.
+PDCA ITERATION LOOP (within this session):
+The select-method phase is the first turn of a PDCA loop. When the
+convergence check has not converged, the caller passes convergence_metric,
+blockers, and gate_results_summary back to select-method as `prior_iteration`.
 {% if prior_iteration and prior_iteration | length > 0 %}
 ## Prior Iteration Feedback (loop closure)
 This is iteration N+1. The previous iteration produced:
@@ -138,57 +132,12 @@ This is iteration N+1. The previous iteration produced:
 {% else %}
 This is the first iteration — no prior feedback to consume.
 {% endif %}
-{% if prior_outcome and prior_outcome | length > 0 %}
-## Prior Outcome Evidence (extrinsic exploratory experience — τ_t)
-Outcome evidence from prior training runs that used this skill's recommendation:
-```json
-{{ prior_outcome | tojson }}
-```
-Use this evidence to refine the recommendation:
-- **training_completed**: if prior runs completed successfully, the recommended
-  config has empirical precedent. Note this in the justification.
-- **oom_occurred**: if prior runs OOM'd, adjust G2 (memory) to recommend a more
-  conservative base_mode or warn about the specific batch size / sequence
-  length that caused the OOM.
-- **convergence_issues**: if prior runs had training instability (loss spikes,
-  divergence), adjust G3 (rank) to recommend a different rank range or warn
-  about the specific configuration that caused the instability.
-- **eval_results**: if prior runs have evaluation results, use them to validate
-  or adjust the rank recommendation (e.g., if r=8 underperformed, recommend
-  higher rank).
-Do NOT fabricate outcome certainty — prior outcomes are evidence for this
-operator's setup, not proof for the current config.
-{% endif %}
-{% if prior_operator_feedback and prior_operator_feedback | length > 0 %}
-## Prior Operator Feedback (intrinsic evaluative feedback — e_t)
-The operator explicitly reacted to prior skill recommendations as follows:
-```json
-{{ prior_operator_feedback | tojson }}
-```
-Use this feedback to calibrate the recommendation:
-- **accepted**: the operator accepted the recommendation. Continue producing
-  recommendations in the same style.
-- **overridden**: the operator overrode a specific field. Note which field was
-  overridden and the override reason. If the operator consistently overrides a
-  specific field (e.g., always increases rank), adjust the default for that
-  field toward the operator's preference while preserving the evidence-based
-  range.
-- **rejected**: the operator rejected the entire recommendation. Note the
-  rejection reason and avoid producing recommendations in the same pattern.
-- **corrected_fields**: for each corrected field, compare the recommended vs
-  actual value. If the operator consistently corrects in the same direction,
-  adjust the recommendation bias toward the operator's preference.
-Do NOT blindly follow operator feedback — it calibrates the recommendation,
-  it does not override evidence-based constraints. If the operator's preference
-  conflicts with a hard contract (e.g., wants rank > min(d_in, d_out)), note
-  the conflict rather than complying.
-{% endif %}
 - Plan: select-method produces a recommendation from declared evidence.
 - Do: the operator accepts/overrides/rejects; audit-config evaluates the
   accepted config against the 17 gates.
 - Check: convergence-check computes readiness; contract gaps are recorded.
-- Act: if not converged, the manifest's loop step routes prior_iteration back
-  to select-method. The operator may also revise inputs (adjust rank, switch
+- Act: if not converged, pass the convergence result back to select-method
+  as prior_iteration. The operator may also revise inputs (adjust rank, switch
   harness, add evidence) and re-invoke.
 The loop converges when the convergence metric ≤ 0.10 and no hard blockers
 remain. Each iteration's recommendation is advisory — the operator's accepted
@@ -557,7 +506,6 @@ CONSTRAINTS (P1-P12, P5 minimalism, P8 evidence integrity, P12 host):
 - No actual training execution (P4 boundary — recommendation only).
 - No model download; read only declared workspace config paths.
 - Every recommendation includes `host` identity (P12).
-- Registry (`manifest.yaml` + `.j2`) is authoritative over SKILL.md (P5.1).
 - Do NOT use AutoPEFT-style search (arXiv:2301.12132) — multi-objective
   BO over hundreds of training runs is infeasible per training job.
 - Do NOT recommend AdaLoRA by default; allow it only when the operator
@@ -624,9 +572,6 @@ SOURCE REFERENCES (concrete — P8):
   Databricks (databricks.com/blog/efficient-fine-tuning-lora-guide-llms),
   Gradient Flow (gradientflow.com/lora-or-full-fine-tuning/).
 
-REGISTRY AUTHORITATIVE (P5.1): When SKILL.md and registry templates
-(`manifest.yaml` + `.j2`) conflict, registry wins. This template is the
-canonical `select-method` phase definition.
 PUBLIC VISIBILITY: `visibility: public` — no hidden training controls
 (P3, P4).
 NO FABRICATION: Emit only derivable fields, citations, and explicit

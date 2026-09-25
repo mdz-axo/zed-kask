@@ -78,7 +78,7 @@ pub struct PortfolioWidget {
     /// when a successful inject fires (repo `.rules`: visible, not a silent
     /// no-op).
     disagree_draft: Option<String>,
-    /// F — inline drill-down: the symbol whose `research_search` explain is
+    /// F — inline drill-down: the symbol whose `company_research_search` explain is
     /// in flight (`None` = idle). Last-click-wins; a new click replaces the
     /// pending symbol.
     explain_symbol: Option<String>,
@@ -340,7 +340,7 @@ impl PortfolioWidget {
                 h_flex()
                     .gap_2()
                     .child(attribution_row_element(row))
-                    // F — inline drill-down: dispatches `research_search` on
+                    // F — inline drill-down: dispatches `company_research_search` on
                     // the `companies` MCP server with the row's symbol.
                     .child(
                         div()
@@ -673,7 +673,7 @@ impl PortfolioWidget {
 
     /// F — inline drill-down handler. Dispatches a research/explain tool on
     /// the server that produced the block (from provenance), falling back to
-    /// `hkask-mcp-companies` / `research_search` for stock portfolios without
+    /// `hkask-mcp-companies` / `company_research_search` for stock portfolios without
     /// provenance. For CMP index portfolios from `hkask-mcp-portfolio` or
     /// `hkask-mcp-prediction-markets`, dispatches `ledger_read` / `market_lookup`
     /// respectively so the drill-down is context-appropriate.
@@ -961,7 +961,7 @@ fn format_currency(value: f64) -> String {
     }
 }
 
-/// Compact the `research_search` result for inline display. The full result
+/// Compact the `company_research_search` result for inline display. The full result
 /// stays in the agent conversation as the durable record; the panel only shows
 /// the first ~500 characters (on a char boundary) so the dashboard stays
 /// compact. A trailing ellipsis marks truncation.

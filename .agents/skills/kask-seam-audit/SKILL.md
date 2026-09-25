@@ -1,7 +1,7 @@
 ---
 shipped: false
 name: kask-seam-audit
-description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1–D52, D4/D10/D17/D19/D30 retired). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
+description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (every live D-seam in DIVERGENCE.md). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
 ---
 
 # Kask Seam Audit
@@ -19,7 +19,7 @@ methodology instructs.
 ## When to Use
 
 - Reproducible security + architecture + UI audit of the Kask↔Zed seam
-  (D1–D52 in `DIVERGENCE.md`; D4, D10, D17, D19 and D30 are retired).
+  (every live seam in the `DIVERGENCE.md` table; retired seams are read from the document, not assumed).
 - Dead-surface removal + deepening candidates with grep-verified caller
   counts and the essentialist deletion test.
 - GPUI measured-layout + Zed interaction-language gaps (Button/IconButton vs
@@ -73,7 +73,7 @@ delegate to a separate skill.
 
 | Template | Purpose |
 |----------|---------|
-| `seam-map.j2` | PLAN — read DIVERGENCE.md D1–D52 (D4, D10, D17, D19, D30 retired), grep `crates/` for each convention prior's artifact (live vs phantom), and derive the audit slices. Read-only. |
+| `seam-map.j2` | PLAN — read the live seams and the retired list from DIVERGENCE.md, grep `crates/` for each convention prior's artifact (live vs phantom), and derive the audit slices. Read-only. |
 | `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |

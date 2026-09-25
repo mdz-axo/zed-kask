@@ -184,10 +184,6 @@ impl CalibrationStore {
         self.pending.remove(market_key)
     }
 
-    pub fn pending_count(&self) -> usize {
-        self.pending.len()
-    }
-
     /// Load a journal (JSONL, one {bucket, probability, outcome} per line)
     /// plus its pending-snapshot journal. A missing file is a fresh store
     /// (not an error); a malformed line is skipped with a warning — the
@@ -525,7 +521,7 @@ mod tests {
         ))
         .expect("a missing journal is a fresh store, not an error");
         assert_eq!(store.sample_size("anything"), 0);
-        assert_eq!(store.pending_count(), 0);
+        assert!(store.pending.is_empty());
     }
 
     #[test]

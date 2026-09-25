@@ -24,7 +24,7 @@ outputs must feed the phase that consumes them.
 - Auditing a .j2 template's logic against its stated `{# goal: ... #}` annotation
 - Auditing an explicitly requested legacy manifest.yaml's annotated text, without treating it as a live skill contract
 - Comparing a template's existing design with materially different alternatives before proposing a change
-- Packaging a comparison-backed template change as a proposal for the operator's gemba-walk decision
+- Packaging a comparison-backed template change as a proposal for the operator's decision in the algedonic review's gemba walk
 
 ## When NOT to Use
 

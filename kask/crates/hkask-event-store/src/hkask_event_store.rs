@@ -498,14 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn verdict_source_trust_classification() {
-        assert!(VerdictSource::DeterministicEvaluator.is_trusted_for_task_success());
-        assert!(VerdictSource::Operator.is_trusted_for_task_success());
-        assert!(!VerdictSource::LlmJudged.is_trusted_for_task_success());
-        assert!(!VerdictSource::RegulationImpact.is_trusted_for_task_success());
-    }
-
-    #[test]
     fn rollout_kind_as_str_round_trips() {
         for variant in [
             RolloutKind::Delegation,

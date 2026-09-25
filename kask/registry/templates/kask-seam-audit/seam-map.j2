@@ -24,7 +24,8 @@ audit. Task: {{ task }}.
 ## Step 1 — Map the seam and verify convention priors
 
 Read `{{ divergence_doc }}` and extract the **divergence surface**: the list of
-D-seam files (D1–D33; D17 and D19 are retired). Everything under `{{ seam_scope }}` is additive (ours);
+D-seam files from the numbered seam table, excluding every seam listed under
+"Retired seams" (read both from the document; never assume a range). Everything under `{{ seam_scope }}` is additive (ours);
 everything else tracks upstream Zed and is touched only via the named D-seams.
 
 ### Convention prior liveness check

@@ -71,10 +71,8 @@ This skill does not train, load, initialize, merge, or evaluate models.
 ### `lora-training/select-method`
 
 1. Read the declared training inputs and preserve explicit operator requirements.
-   Consume `prior_iteration` (loop closure), `prior_outcome` (extrinsic
-   exploratory experience, τ_t), `prior_operator_feedback` (intrinsic
-   evaluative feedback, e_t), `prior_training_history` (Good Regulator), and
-   `provider_capabilities` (deep capability reasoning) when supplied.
+   Consume `prior_iteration` (this session's previous PDCA turn),
+   `prior_training_history` (Good Regulator), and `provider_capabilities` (deep capability reasoning) when supplied.
 2. Refine one composable recommendation record through eight gates: adapter
    purpose (G0), dataset analysis (G-D0), inference constraint (G1), memory
    evidence (G2), task distance (G3), quality/cost (G4), knowledge
@@ -174,8 +172,8 @@ This skill does not train, load, initialize, merge, or evaluate models.
 9. Emit algedonic escalation (v0.31.0): for every `refuse` finding, emit a
    `refuse_escalation` entry (VSM S1→S5 short-circuit) with `finding_id`,
    `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
-   `host`, and `severity: critical`. The escalation is in-addition; the
-   manifest and downstream phases still process the finding normally.
+   `host`, and `severity: critical`. The escalation is in-addition;
+   downstream phases still process the finding normally.
 10. Emit every result using the normalized Finding schema below, compute readiness
     separately, and emit `reg.lora.audit` for every represented gate.
 
@@ -225,7 +223,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 | Template | Purpose |
 |----------|---------|
 | `preflight-dataset.j2` | v0.32.0: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
-| `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (mechanical PDCA loop closure via manifest). |
+| `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (the previous in-session PDCA turn). |
 | `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. v0.31.0: emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. v0.32.0: consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. v0.32.0: G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
 | `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
@@ -252,13 +250,11 @@ To render a template, call the `render_template` tool with the template ref (e.g
   measurements; the skill does not execute them.
 - Regression proposals are human-reviewed, `status: pending`, and
   `surface: training`.
-- Self-improvement feedback loop (v0.31.0): the runtime emits
-  `reg.skill.lora-training.outcome` and `reg.skill.lora-training.operator_feedback`
-  spans when training completes/fails or the operator reacts to a recommendation.
-  Both producers are wired (2026-09-09): the operator's reaction is recorded via
-  the `record_skill_feedback` tool (the operator's rating during the Curator's algedonic review) or a confirmed
-  `curator_advice_mark_applied` naming this skill. These become `prior_outcome`
-  (τ_t) and `prior_operator_feedback` (e_t) on subsequent invocations.
+- Evaluation is separated from execution (Goodhart): the runtime records
+  `reg.skill.lora-training.outcome` when the skill activates, and the operator
+  rates recommendations only through `record_skill_feedback` in the Curator's
+  algedonic review. Review findings change this SKILL.md through a gemba-walk
+  proposal; the skill never reads verdicts back to calibrate itself.
 - Security review of training infrastructure is a separate concern owned by
   security-audit practice; `tdd` owns training-loop code correctness;
   this skill owns training-configuration recommendation and contract evidence.

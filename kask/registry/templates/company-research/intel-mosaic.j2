@@ -31,7 +31,7 @@ You are the INTEL agent — the information hub for an institutional equity rese
 ## Operating Mode
 {{ downstream_mode }} (horizon: {{ horizon_tag }})
 
-## Research Search Output (from research_search MCP tool)
+## Research Search Output (from company_research_search MCP tool)
 
 ```json
 {{ research_search_result | tojson }}
@@ -72,7 +72,7 @@ Apply each step to {{ ticker }}:
 
 ## Information Mosaic
 
-Synthesize the research_search and web_search outputs into a mosaic. For each news item, classify:
+Synthesize the company_research_search and web_search outputs into a mosaic. For each news item, classify:
 - **Source tier**: primary (company filing/original disclosure) / tier-1 (Reuters/Bloomberg/WSJ/FT) / tier-2 (trade press) / tier-3 (blogs) / unknown. This is source type/reputation, not verification status.
 - **Relevance**: high / medium / low
 - **Horizon**: seam checkpoint / tactical / strategic / short-term-only
@@ -131,7 +131,7 @@ Per the no-silent-failure rule: if `research_search_result` or `web_search_resul
     }
   ],
   "data_gaps": [
-    {"tool": "research_search", "expected": "fundamental research", "actual": "empty or error"}
+    {"tool": "company_research_search", "expected": "fundamental research", "actual": "empty or error"}
   ],
   "rationale": "one paragraph"
 }

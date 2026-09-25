@@ -132,5 +132,4 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- Process manifest: `kask/registry/manifests/kanban-task-management.yaml`
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

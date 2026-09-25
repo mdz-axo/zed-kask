@@ -258,10 +258,9 @@ Full per-property evidence and the VSM/Ashby analysis are in the audit.
 
 This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
-- Template manifest: `kask/registry/templates/swarm-intelligence/manifest.yaml`
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
 - Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml` (Rendering template — PSO/ACO/Reynolds/Onto4MAT tuning palette; not sent to the LLM)
-- Process manifest: `kask/registry/manifests/swarm-intelligence.yaml` (15 steps:
+- Process (15 steps:
   swarm_get_swarm + swarm_get_local_swarm (call directly) → SENSE → ORIENT → DECIDE →
   FILTER (swarm.filter_proposed_moves) → ACT → re-measure (call directly ×2) → CHECK →
   converge_accumulate → second_order_monitor → `lisp_eval` convergence signal → re-enter the cycle)

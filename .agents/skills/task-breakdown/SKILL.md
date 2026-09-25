@@ -15,7 +15,6 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 - When implementation order must follow a dependency graph built bottom-up (foundations first) rather than ad-hoc task ordering.
 - When a plan needs an independent quality gate to detect self-assessment bias and compensation masking distinct from the producer-coupled evaluation step.
 - When the deliverable is `tasks/plan.md` + `tasks/todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
-- When prior outcome evidence (`prior_outcome`) or operator feedback (`prior_operator_feedback`) should calibrate the plan — the self-improvement feedback loop.
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-router consumption.
 - When you need to distinguish this skill from kanban-task-management (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
 
@@ -36,9 +35,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 5. Identify the deepest crate with no internal dependencies (usually the foundation types crate) and start there.
 6. Note risks and unknowns; surface every assumption as an open question rather than silently resolving it.
 7. Schedule high-risk areas early so they can be addressed first (fail fast).
-8. When `prior_outcome` is present (v0.31.0, τ_t extrinsic exploratory experience): use completion/rework/blocked rates and `plan_followed` to calibrate granularity, AC specificity, and dependency thoroughness. Do not fabricate outcome patterns.
-9. When `prior_operator_feedback` is present (v0.31.0, e_t intrinsic evaluative feedback): calibrate toward the operator's accepted style; note overridden tasks, rejection reasons, and `corrected_fields` direction. The operator records these dispositions via the `record_skill_feedback` tool (accept/reject with an optional reason — the note is the payload this step reads as `prior_operator_feedback`). Do not let operator preference override evidence-based decomposition principles — note conflicts rather than complying.
-10. Produce a JSON object with `context_summary`, `dependency_graph` (node, depends_on, depth, notes), `risks` (risk, impact, mitigation), and `open_questions`.
+8. Produce a JSON object with `context_summary`, `dependency_graph` (node, depends_on, depth, notes), `risks` (risk, impact, mitigation), and `open_questions`.
 
 ### task-breakdown-decompose
 
@@ -107,7 +104,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `task-breakdown-plan.j2`: Public. Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output. `prior_outcome` and `prior_operator_feedback` calibrate but do not override evidence-based decomposition principles.
+- `task-breakdown-plan.j2`: Public. Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output.
 - `task-breakdown-decompose.j2`: Public. Every task is a vertical feature path, not a horizontal layer. No task may be XL. No "and" in a task title. The "~5 files" limit is advisory for cross-crate Rust features (legitimate 5–7 file touches allowed with justification). Every task must have acceptance criteria AND a verification step AND declared dependencies (or "None"). Dependency order must be respected. `skill_match_query` is required per task when `skill_catalog` is provided, omitted otherwise. `plan_escalation` is emitted for catastrophic conditions (algedonic short-circuit).
 - `task-breakdown-evaluate.j2`: Public. Score each criterion independently 0–1; do not inflate. Weighted_total must lie in [0,1]. Only emit refinement directives for criteria scored above 0.00. Task-count awareness (>20 or <3) applies to the sizing criterion only.
 - `task-breakdown-quality-gate.j2`: Public. Independent evaluation — do not inherit the producer's scores. Compensation masking: any single criterion > 0.30 forces `gate_pass: false`. Report `bias_delta` only where |your_score − producer_score| > 0.2 for that criterion.

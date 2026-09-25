@@ -1,6 +1,5 @@
 # Superforecasting Pipeline
 
-**Location:** `registry/manifests/superforecasting.yaml`
 **Templates:** `registry/templates/superforecasting/`
 **Version:** 0.40.0
 

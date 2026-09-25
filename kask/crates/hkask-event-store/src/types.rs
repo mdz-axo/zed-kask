@@ -82,16 +82,6 @@ impl VerdictSource {
             _ => None,
         }
     }
-
-    /// Whether this source is trusted for task-success determination
-    /// (the C0 `s` axis). `DeterministicEvaluator` and `Operator` are
-    /// trusted; `LlmJudged` and `RegulationImpact` are not.
-    pub fn is_trusted_for_task_success(&self) -> bool {
-        matches!(
-            self,
-            VerdictSource::DeterministicEvaluator | VerdictSource::Operator
-        )
-    }
 }
 
 /// The coarse rollout classification. A rollout is the unit that has a

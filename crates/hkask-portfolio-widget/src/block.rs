@@ -64,7 +64,7 @@ pub struct PortfolioBlockBody {
     /// Ontology concept URI (e.g. `fibo:Portfolio`, `fibo:Corporation`).
     /// Emitted by the companies server as the top-level `"ontology"` key.
     /// Drives the "Explain" affordance's tool selection (the "I" pattern).
-    /// `None` on older blocks → the widget falls back to `research_search`.
+    /// `None` on older blocks → the widget falls back to `company_research_search`.
     #[serde(default)]
     pub ontology: Option<String>,
 }

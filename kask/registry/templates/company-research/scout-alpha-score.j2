@@ -109,7 +109,7 @@ Respond with a JSON object:
   },
   "horizon_tag": "valentine | gunn | dual",
   "downstream_mode": "valentine | gunn | dual",
-  "research_query": "a focused research query for INTEL to pass to research_search",
+  "research_query": "a focused research query for INTEL to pass to company_research_search",
   "rationale": "one paragraph explaining the decision"
 }
 ```
@@ -119,5 +119,5 @@ Respond with a JSON object:
 - DROP is terminal — no downstream steps run if decision == "DROP".
 - The alpha score is judgmental but each component must be justified by an observable fact, not a hedge.
 - If `in_excellence_universe` is true and any S1–S11 fails, decision must be "DROP" regardless of alpha score.
-- `research_query` should be a single focused query (not a list) suitable for the research_search MCP tool — e.g. "{{ ticker }} business model competitive position unit economics".
+- `research_query` should be a single focused query (not a list) suitable for the company_research_search MCP tool — e.g. "{{ ticker }} business model competitive position unit economics".
 - Do not fabricate financial data. If you do not know a fact, score the component conservatively and note the gap in `rationale`.

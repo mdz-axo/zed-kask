@@ -45,29 +45,6 @@ impl Profile {
         }
     }
 
-    /// Action threshold: how aggressively the compressor seeks minimal representation.
-    ///
-    /// This is the lazy universe tuning knob (P3 — Generative Space).
-    /// Lower threshold = more aggressive action minimization (the system is "lazier").
-    /// Higher threshold = more permissive (the user chooses a higher-action path).
-    ///
-    /// # Mapping to least action principle
-    ///
-    /// | Profile | Threshold | Lazy Universe Interpretation |
-    /// |---------|-----------|------------------------------|
-    /// | Heavy   | 0.10      | Aggressive minimization — system strongly seeks stationary action |
-    /// | Normal  | 0.25      | Balanced — default operating point |
-    /// | Soft    | 0.50      | Permissive — allows higher-action representations |
-    /// | Light   | 0.90      | Minimal enforcement — user sovereignty overrides lazy tendency |
-    pub fn action_threshold(&self) -> f64 {
-        match self {
-            Profile::Heavy => 0.10,
-            Profile::Normal => 0.25,
-            Profile::Soft => 0.50,
-            Profile::Light => 0.90,
-        }
-    }
-
     pub fn max_lines(&self) -> Option<usize> {
         match self {
             Profile::Heavy => Some(30),
@@ -257,54 +234,6 @@ mod tests {
             let parsed: Profile = s.parse().unwrap();
             assert_eq!(parsed, *original);
         }
-    }
-
-    //
-    // TASK 4.4: Each profile carries an action_threshold that controls how
-    // aggressively the compressor seeks minimal representation. Heavy = most
-    // aggressive (lowest threshold), Light = most permissive (highest threshold).
-    #[test]
-    fn action_threshold_ordering() {
-        let heavy = Profile::Heavy.action_threshold();
-        let normal = Profile::Normal.action_threshold();
-        let soft = Profile::Soft.action_threshold();
-        let light = Profile::Light.action_threshold();
-
-        // Heavy should be most aggressive (lowest threshold)
-        assert!(
-            heavy < normal,
-            "Heavy ({heavy}) should be < Normal ({normal})"
-        );
-        assert!(normal < soft, "Normal ({normal}) should be < Soft ({soft})");
-        assert!(soft < light, "Soft ({soft}) should be < Light ({light})");
-
-        // All thresholds must be in (0.0, 1.0)
-        for (name, threshold) in &[
-            ("Heavy", heavy),
-            ("Normal", normal),
-            ("Soft", soft),
-            ("Light", light),
-        ] {
-            assert!(
-                *threshold > 0.0 && *threshold < 1.0,
-                "{name} action_threshold {threshold} out of bounds"
-            );
-        }
-    }
-
-    //
-    // The user controls how "lazy" their system is by selecting a profile.
-    // Light profile = user sovereignty overrides lazy tendency (P1 + P3).
-    #[test]
-    fn light_profile_is_most_permissive() {
-        let light = Profile::Light.action_threshold();
-        let heavy = Profile::Heavy.action_threshold();
-        assert!(
-            light > heavy,
-            "Light should be most permissive (highest threshold)"
-        );
-        // Light threshold should be close to 1.0 — minimal enforcement
-        assert!(light >= 0.85, "Light threshold {light} should be >= 0.85");
     }
 
     #[test]

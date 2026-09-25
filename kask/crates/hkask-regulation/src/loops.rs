@@ -31,8 +31,7 @@ pub(crate) use core::ImpactReport;
 pub use core::TriggerOrigin;
 pub(crate) use core::{ActionDecision, LoopId, LoopMetrics};
 pub use core::{
-    DistinctionState, LivenessTrust, LoopFailureDistinctions, LoopModel, LoopView, OutcomeTrust,
-    Reading, SenseReading, StageActions,
+    LivenessTrust, LoopModel, LoopView, OutcomeTrust, Reading, SenseReading, StageActions,
 };
 pub(crate) use signals::Signal;
 pub(crate) use signals::{Deviation, DeviationDirection, SignalMetric};

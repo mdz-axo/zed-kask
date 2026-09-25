@@ -686,7 +686,7 @@ classDiagram
         RegulationImpact
         +as_str() &'static str
         +from_str(s) Option~Self~
-        +is_trusted_for_task_success() bool
+
     }
     class RolloutKind {
         <<enumeration>>

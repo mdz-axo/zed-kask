@@ -41,8 +41,8 @@ pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop
 pub use loops::CurationInput;
 pub use loops::signals::Signal;
 pub use loops::{
-    DistinctionState, LivenessTrust, LoopFailureDistinctions, LoopModel, LoopView, OutcomeTrust,
-    Reading, SenseReading, StageActions, TriggerOrigin,
+    LivenessTrust, LoopModel, LoopView, OutcomeTrust, Reading, SenseReading, StageActions,
+    TriggerOrigin,
 };
 pub use regulation_policy::alert_condition;
 pub use runtime::NoopEventSink;

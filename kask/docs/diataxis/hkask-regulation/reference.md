@@ -45,7 +45,7 @@ The crate root re-exports its supported cross-crate surface at
 |---|---|
 | Alerts | `AlertEmailSink`, `AlertEscalationSink`, `AlertPersistError`, `AlertQueueOutcome`, `RuntimeAlert` |
 | Loop | `CyberneticsLoop`, `RolloutEventError`, `RolloutEventSource`, `CurationInput`, `Signal` |
-| Loop views | `DistinctionState`, `LivenessTrust`, `LoopFailureDistinctions`, `LoopModel`, `LoopView`, `OutcomeTrust`, `Reading`, `SenseReading`, `StageActions`, `TriggerOrigin` |
+| Loop views | `LivenessTrust`, `LoopModel`, `LoopView`, `OutcomeTrust`, `Reading`, `SenseReading`, `StageActions`, `TriggerOrigin` |
 | Call caps | `CallMeterOutcome`, `DEFAULT_RUNAWAY_CALL_CEILING` |
 | Inference resilience | `InferenceCircuitState`, `InferenceInterventionKind`, `InferenceInterventionReceipt`, `InferenceObservation`, `InferenceObservationError`, `InferencePermanentFailureKind`, `InferencePermanentFailureReceipt`, `InferenceResilienceSource`, `InferenceSnapshot` |
 | Metacognition | `AlertEvent`, `AlertSink`, `HealthSnapshot`, `MetacognitionLoop` |
