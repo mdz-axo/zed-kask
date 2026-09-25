@@ -394,7 +394,7 @@ coherence_metric:
 
 ### Principles
 
-1. **Contract-anchored:** Every test verifies a behavioral contract via `expect:` + `[P{N}]` annotations.
+1. **Expectation-anchored:** Tests verify a stated behavioral expectation at a public seam, with a falsifier and an oracle independent of the implementation (see `kask/docs/reference/testing-protocol.md`).
 2. **Public seam only:** Tests verify behavior through public interfaces, not implementation.
 3. **Tracer bullet:** One RED→GREEN cycle per behavior. No horizontal slicing.
 4. **Category coverage:** Each MDS category has at least one integration test.
