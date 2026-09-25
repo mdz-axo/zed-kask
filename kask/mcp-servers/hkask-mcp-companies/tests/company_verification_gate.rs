@@ -431,6 +431,40 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             "needs_work",
         ),
         (
+            "converted_primary_pdf_omission",
+            {
+                let mut p = packet.clone();
+                let url = "https://regulator.example.invalid/decision.pdf";
+                let path = "/retained/decision.pdf";
+                let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                p["pipeline_tool_log"][1]["output"] = json!({
+                    "results":[{"url":url}],"count":1,"providers_failed":[]
+                });
+                p["source_outputs"]
+                    .as_array_mut()
+                    .context("source outputs")?
+                    .push(json!({
+                        "tool_name":"corpus_convert", "description":"Synthetic PDF passage",
+                        "output_key":"source:corpus_convert:regulator", "source_kind":"original",
+                        "url":url,"origin_path":path,"source_sha256":sha,
+                        "output":{"text":"The regulator issued a material sanction in July 2026."}
+                    }));
+                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
+                    "tool_name":"corpus_convert", "output_key":"source:corpus_convert:regulator",
+                    "origin_path":path,"source_sha256":sha,"status":"ok"
+                }));
+                p["disclosure_inventory"].as_array_mut().context("inventory")?.push(json!({
+                    "output_key":"source:corpus_convert:regulator", "url":url,
+                    "published_at":"2026-07-15", "quote":"The regulator issued a material sanction in July 2026.",
+                    "report_marker":"material sanction in July 2026"
+                }));
+                p
+            },
+            original.clone(),
+            "material_omission",
+            "needs_work",
+        ),
+        (
             "uninventoried_original",
             {
                 let mut p = packet.clone();
