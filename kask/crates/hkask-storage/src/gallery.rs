@@ -543,6 +543,22 @@ impl GalleryStore {
         self.get(&id)
     }
 
+    /// The registered gallery whose root most specifically contains `path`
+    /// (nested roots resolve to the deepest one), or `None`.
+    pub fn containing(&self, path: &Path) -> Result<Option<GalleryRecord>, GalleryStoreError> {
+        let roots = self
+            .driver
+            .query("SELECT id, root_path FROM galleries", &[])?;
+        let mut best: Option<(usize, String)> = None;
+        for row in &roots {
+            let root = row.get_str(1)?;
+            if path.starts_with(root) && best.as_ref().is_none_or(|(len, _)| root.len() > *len) {
+                best = Some((root.len(), row.get_str(0)?.to_string()));
+            }
+        }
+        best.map(|(_, id)| self.get(&id)).transpose()
+    }
+
     pub fn get(&self, gallery_id: &str) -> Result<GalleryRecord, GalleryStoreError> {
         query_row(&*self.driver,
             "SELECT g.id, g.root_path, g.mode, COUNT(i.id), COALESCE(SUM(i.size_bytes), 0), g.created_at, g.updated_at

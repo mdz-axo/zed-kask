@@ -5997,6 +5997,38 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
+    /// expect: Importing a file files it under the gallery whose folder
+    /// contains it, whichever gallery happens to be active. [P1]
+    #[tokio::test]
+    async fn add_media_files_under_the_containing_gallery() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let owner = fixture.path().join("owner");
+        let active = fixture.path().join("active");
+        std::fs::create_dir_all(&owner)?;
+        std::fs::create_dir_all(&active)?;
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::new()),
+        );
+        organize(&server, &owner, false).await?;
+        let owner_id = server.access_gallery()?.gallery_id;
+        organize(&server, &active, false).await?;
+        let active_id = server.access_gallery()?.gallery_id;
+        let film = owner.join("film.mp4");
+        std::fs::write(&film, b"fixture bytes")?;
+        server
+            .gallery_add_media(Parameters(GalleryAddMediaRequest {
+                path: film.to_string_lossy().into_owned(),
+                media_type: "video".into(),
+                width: None,
+                height: None,
+            }))
+            .await?;
+        assert_eq!(server.gallery_store.count_assets(&owner_id)?, 1);
+        assert_eq!(server.gallery_store.count_assets(&active_id)?, 0);
+        Ok(())
+    }
+
     /// expect: A failed reconciliation rolls back physical changes and missing transitions together. [P1]
     #[tokio::test]
     async fn reconciliation_rolls_back_on_injected_insert_failure() -> TestResult {

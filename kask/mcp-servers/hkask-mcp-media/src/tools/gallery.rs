@@ -1454,7 +1454,7 @@ impl MediaServer {
     /// hash for deduplication and indexes the file for gallery search (the
     /// former gallery_add_video / gallery_add_audio pair, merged).
     #[tool(
-        description = "Import a video or audio file into the gallery index. Computes SHA-256 hash for deduplication and indexes the file for gallery search. media_type selects the kind: 'video' (with optional width/height metadata) or 'audio'."
+        description = "Import a video or audio file into the gallery whose folder contains it (not necessarily the active gallery); the file must be inside an organized gallery folder. Computes SHA-256 hash for deduplication and indexes the file for gallery search. media_type selects the kind: 'video' (with optional width/height metadata) or 'audio'."
     )]
     pub async fn gallery_add_media(
         &self,
@@ -1476,15 +1476,20 @@ impl MediaServer {
                     )));
                 }
             };
-            let ga = self.access_gallery().map_err(map_media_error)?;
             let file_path = std::path::Path::new(&path)
                 .canonicalize()
                 .map_err(|error| McpToolError::invalid_argument(format!("{path}: {error}")))?;
-            if !file_path.exists() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "{kind} file not found: {path}"
-                )));
-            }
+            // The asset belongs to the gallery whose folder contains it, not
+            // whichever gallery is active.
+            let gallery = self
+                .gallery_store
+                .containing(&file_path)
+                .map_err(|e| map_media_error(e.into()))?
+                .ok_or_else(|| {
+                    McpToolError::failed_precondition(format!(
+                        "{path} is not inside any gallery folder; run gallery_organize on its folder first"
+                    ))
+                })?;
             let bytes = std::fs::read(&file_path).map_err(|e| {
                 McpToolError::invalid_argument(format!("Failed to read {kind} file: {e}"))
             })?;
@@ -1502,7 +1507,7 @@ impl MediaServer {
             let record = self
                 .gallery_store
                 .add_media(
-                    &ga.gallery_id,
+                    &gallery.id,
                     &file_path.to_string_lossy(),
                     &hash,
                     width.unwrap_or(0),
