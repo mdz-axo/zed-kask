@@ -149,7 +149,7 @@ Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
 ## When NOT to Use
 
 - Validating an existing skill — use `skill-maintenance` (this skill's Phase 4 delegates there anyway).
-- Matching tasks to installed skills — use `skill-router`.
+- Matching tasks to installed skills — use `skill-discovery` (route).
 - Auditing template/manifest logic — use `skill-logic-audit` (SKILL.md bodies are not its targets).
 
 ## Instructions

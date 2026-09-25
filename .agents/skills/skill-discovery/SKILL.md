@@ -1,29 +1,39 @@
 ---
 shipped: false
 name: skill-discovery
-description: "Acquire NEW skills for hKask. Full lifecycle: detect capability gaps, search the catalog for candidates, evaluate against format/quality/safety criteria, and guide installation. Distinct from skill-router (matches tasks to existing skills)."
+description: "Match tasks to installed skills and acquire NEW skills when none fits. Route a task or gap against the catalog with fit scores, detect and classify capability gaps, and evaluate candidate skills against format/quality/safety criteria before installation."
 ---
 
 # Skill Discovery
 
-Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skill corpus, search the catalog for candidates that could fill each gap, evaluate candidates against format/quality/safety criteria, and guide installation. Distinct from skill-router (which matches tasks to EXISTING skills): skill-discovery acquires NEW skills. skill-router feeds uncovered capabilities to skill-discovery as gap signals.
-
+Match tasks to the installed skill catalog and acquire NEW skills when nothing fits. One fit-scoring instrument serves both questions: **route** ranks installed skills for a task or a capability gap and emits uncovered capabilities; **detect-gap** classifies those uncovered capabilities; **evaluate** vets a candidate before installation.
 
 ## When to Use
 
-- Detect capability gaps in the registry corpus by comparing task patterns an agent encounters against existing registry crates.
-- Search the skill catalog for candidates that could fill an identified gap, ranked by fit score.
-- Evaluate a candidate registry crate against format, quality, and safety criteria to determine whether it should be installed, revised, or rejected.
-
-- Consume gap signals from skill-router (uncovered capabilities) or task-breakdown (task patterns that no skill covers).
+- Match a task or work slice against the installed skill catalog to find the best-fitting skill(s) (route).
+- Consume `skill_match_query` fields emitted by `task-breakdown`'s decompose phase or `metacognition`'s `skill_match_queries` (one per slice) and return ranked recommendations (route).
+- Detect capability gaps in the registry corpus by comparing task patterns against existing skills (detect-gap).
+- Evaluate a candidate skill against format, quality, and safety criteria to decide whether it should be installed, revised, or rejected (evaluate).
 
 ## When NOT to Use
 
-- Matching tasks to already-installed skills — use `skill-router` (its uncovered-capability signals feed this skill).
 - Authoring a skill from scratch — `create-skill`; discovery evaluates candidates, it does not write them.
 - Auditing or maintaining installed skills — `skill-maintenance`.
+- Executing the matched skill — invoke it directly; a recommendation is not a dispatch.
 
 ## Instructions
+
+### skill-discovery-route
+
+1. For each candidate skill in the catalog, compute a fit_score in [0.0, 1.0] across three dimensions: capability overlap (0.50), description alignment (0.25), trigger alignment (0.25).
+2. Composite fit_score = (capability × 0.50) + (description × 0.25) + (trigger × 0.25).
+3. Rank recommendations by fit_score descending; return at most `max_recommendations` (default 3), only those with fit_score ≥ 0.30.
+4. Classify coverage: `full` (≥1 skill at fit ≥ 0.80), `partial` (best fit 0.40–0.79), `none` (best fit < 0.40).
+5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
+6. When `epistemic_state` is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0].
+7. Do not recommend skill-discovery as a match — it is a meta-skill.
+8. Respond with a JSON object: `coverage_assessment`, `recommendations`, `uncovered_capabilities`.
+9. Re-entry: when coverage is partial or none AND the catalog has changed since this route ran (a candidate was installed), re-run route once against the grown catalog. Bound: max 2 routing passes per task; a second partial result emits the gap signals and stops.
 
 ### skill-discovery-detect-gap
 
@@ -32,24 +42,13 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 3. Detect latent gaps where a quality or governance rule exists in `kask/docs/architecture/core/PRINCIPLES.md` but no skill enforces it, classifying these as Governance gaps.
 4. Score the impact of each gap on agent effectiveness as `critical`, `high`, `medium`, or `low`.
 5. Prioritize gaps by impact, then by frequency of the associated task pattern.
-6. Recommend an action per gap: `create_skill` (coverage gap), `extend_skill` (feature gap, needs new templates), `route_to_skill_router` (feature gap, existing skill not yet routed), `discover_external` (external crate), `automate` (automation gap), or `ignore` (low-impact only).
+6. Recommend an action per gap: `create_skill` (coverage gap), `extend_skill` (feature gap, needs new templates), `route_to_existing_skill` (feature gap, existing skill not yet routed — confirm with route), `discover_external` (external crate), `automate` (automation gap), or `ignore` (low-impact only).
 7. Respond with a JSON object containing the `gap_list` and `priority_ranking`.
 8. Evaluate every task pattern without skipping niche patterns.
 9. Ensure each gap references exactly one category, even if it spans multiple task patterns.
 10. Justify impact scoring using task pattern frequency and consequence.
 11. Do not recommend `ignore` for any gap with `critical` or `high` impact.
 12. Classify `epistemic` gaps distinctly from `knowledge` gaps: `knowledge` means missing facts or information; `epistemic` means missing certainty-finding methods or perspective-rotation tools. An `epistemic` gap is flagged when an agent reports low confidence and no installed skill addresses the uncertainty type (perspective_blind, context_loss, conflict).
-
-### skill-discovery-search
-
-1. Given a gap description and the skill catalog, score each skill 0.0–1.0 on capability match (0.50 weight), lexicon overlap (0.25 weight), and trigger relevance (0.25 weight).
-2. Compute composite fit_score as the weighted sum.
-3. Rank candidates by fit_score descending. Return at most `max_candidates` (default 5), only those with fit_score ≥ 0.20.
-4. Classify search coverage: `found` (fit ≥ 0.60), `weak` (0.30–0.59), `empty` (< 0.30 → recommend `create_skill`).
-5. For each candidate, classify gap fill type: `direct` (fills as-is), `extension` (needs new templates), `adaptation` (existing templates reparameterized).
-6. Respond with a JSON object containing `search_coverage`, `best_fit_score`, and `candidates`.
-7. Score every skill in the catalog — do not skip entries.
-8. Do not recommend skill-discovery or skill-router as candidates — they are meta-skills.
 
 ### skill-discovery-evaluate
 
@@ -63,54 +62,42 @@ Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skil
 8. Reject the skill if any safety check scores 0.
 9. Revise the skill if the overall score is less than 16 but there are no safety failures.
 
-## PDCA Pipeline
+## Pipeline
 
 ```mermaid
 flowchart TD
-    A[detect-gap<br/>PLAN: classify gaps] --> B{gap has candidate?}
-    B -- no candidate --> C[create_skill<br/>or discover_external]
-    B -- has candidate --> D[search<br/>DO: find ranked candidates]
-    D --> E{search coverage?}
-    E -- found/weak --> F[evaluate<br/>DO: score quality/safety]
-    E -- empty --> C
-    F --> H{metric <= 0.15?}
-    H -- no, iters < max --> A
-    H -- yes --> I[ACT: install/revise/reject]
-    H -- no, iters = max --> J[escalate: residual gap]
+    R[route<br/>rank installed skills] --> C{coverage?}
+    C -- full --> X[invoke matched skill]
+    C -- partial/none --> A[detect-gap<br/>classify uncovered capabilities]
+    A --> B{existing skill closest?}
+    B -- route_to_existing_skill --> R
+    B -- create_skill / discover_external --> N[create-skill or external candidate]
+    N --> F[evaluate<br/>score quality/safety]
+    F --> H{installable?}
+    H -- yes --> I[operator installs] --> R
+    H -- no --> J[revise or reject]
 ```
 
-## Integration with skill-router
-
-```mermaid
-flowchart LR
-    SR[skill-router-match] -->|uncovered capabilities| A[detect-gap]
-    A --> D[search] --> F[evaluate] --> I[install]
-    I -->|catalog grows| SR
-```
-
-- `skill-router` matches tasks to EXISTING skills. When it finds `coverage: none` or `partial`, it emits `uncovered_capabilities`.
-- Those capabilities are consumed by `detect-gap` as `task_patterns`.
-- `search` finds candidates in the catalog; `evaluate` vets them; `install` adds them.
-- The catalog grows → future `skill-router` calls have better coverage.
+Installation is an operator decision; this skill recommends, it never installs.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `skill-discovery-detect-gap.j2` | Detect capability gaps in the registry corpus. Analyze task patterns against existing registry crate descriptions and template_type coverage. Classify gaps (coverage, feature, automation, knowledge, governance, quality, epistemic) and prioritize by impact. Recommends actions including route_to_skill_router for feature gaps where an existing skill was not previously routed. Epistemic gaps are distinct from knowledge gaps: epistemic means missing certainty-finding methods, knowledge means missing facts. |
-| `skill-discovery-search.j2` | Search the skill catalog for candidates that could fill a capability gap. Scores each skill 0.0–1.0 on capability match (0.50), lexicon overlap (0.25), and trigger relevance (0.25). Returns ranked candidates with fit scores and gap_fill_type (direct/extension/adaptation). Classifies search coverage as found (fit ≥0.60), weak (0.30–0.59), or empty (<0.30 → create_skill action). This is the SEARCH phase — the EVALUATE phase vets candidates for quality and safety. |
-| `skill-discovery-evaluate.j2` | Evaluate a candidate registry crate against format, quality, and safety criteria. Check manifest structure, .j2 frontmatter validity, Magna Carta compliance, and Regulation span validity. Produce scored recommendation. |
+| `skill-discovery-route.j2` | ROUTE — match a task or capability gap against the installed skill catalog. Scores each skill 0.0–1.0 (capability 0.50, description 0.25, trigger 0.25). Returns ranked recommendations with fit_score, match_reason, applicable templates, and invocation hints; emits `coverage_assessment` (full ≥0.8 / partial 0.4–0.79 / none <0.4) and `uncovered_capabilities` for detect-gap. Optional `epistemic_state` boosts certainty-finding skills in a low-confidence regime. |
+| `skill-discovery-detect-gap.j2` | DETECT-GAP — classify gaps (coverage, feature, automation, knowledge, governance, quality, epistemic) and prioritize by impact. Recommends actions including `route_to_existing_skill`. |
+| `skill-discovery-evaluate.j2` | EVALUATE — score a candidate skill against format, quality, and safety criteria (Magna Carta compliance, Regulation span validity) and produce a scored recommendation. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `skill-discovery/skill-discovery-detect-gap`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `skill-discovery/skill-discovery-route`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
+- `skill-discovery-route.j2`: `task_description`, `task_context`, `skill_catalog`, `max_recommendations`, `epistemic_state`
 - `skill-discovery-evaluate.j2`: `candidate_skill_content`
-
 
 ## Constraints
 
-- `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to skill-discovery-search and skill-router-match (standardized naming across the routing/discovery ecosystem). `epistemic` gaps are distinct from `knowledge` gaps: epistemic = missing certainty-finding methods; knowledge = missing facts.
-- `skill-discovery-search.j2`: Public. Scores all catalog entries; returns candidates with fit_score ≥ 0.20.
+- `skill-discovery-route.j2`: Public. Evaluates every skill in the catalog — do not skip seemingly-irrelevant skills without scoring. fit_score and each dimension score are floats in [0.0, 1.0]. If coverage is `full`, `uncovered_capabilities` must be empty; if `none`, recommendations may be empty but `uncovered_capabilities` must be non-empty.
+- `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to route.
 - `skill-discovery-evaluate.j2`: Public. 11 checks scored 0–2; max score 22; min installable 16; safety 0 → reject.
-- **`lisp_eval` is available for custom deterministic computation.** When evaluating candidate skills, `lisp_eval` can compute custom scoring formulas (e.g., weighted combinations of quality, safety, and fit scores) inline — no Rust change needed. Security: gated to `category: skill` manifests only. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple weighted-score expressions, prefix for complex nested logic.
+- `lisp_eval` is available for deterministic scoring formulas (e.g., weighted combinations of quality, safety, and fit scores).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

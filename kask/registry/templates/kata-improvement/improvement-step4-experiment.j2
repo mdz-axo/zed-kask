@@ -45,4 +45,4 @@ Respond with a JSON object containing:
 - metric_after: measured value with source and unit, or null if not observed
 - prediction_result: supported | refuted | pending_check (never infer from a plan)
 - next_step: on refutation re-enter Step 2; on support below target select the next obstacle in Step 3; on target attainment stop; after three experiments report the remaining gap
-- skill_match_query: natural-language description of the skill capability this experiment needs (e.g., 'debug a race condition in async Rust'). Consumed by skill-router when the orchestrator routes experiments to installed skills. Omit if no specific skill is needed.
+- skill_match_query: natural-language description of the skill capability this experiment needs (e.g., 'debug a race condition in async Rust'). Consumed by skill-discovery (route) when the orchestrator routes experiments to installed skills. Omit if no specific skill is needed.

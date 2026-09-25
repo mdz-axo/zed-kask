@@ -12,7 +12,7 @@ contract:
     coverage_assessment: string
 visibility: Public
 ---
-{# goal: Match a task against the installed skill catalog and return ranked skill recommendations with fit scores. #}
+{# goal: ROUTE phase of skill-discovery — match a task or capability gap against the installed skill catalog and return ranked skill recommendations with fit scores plus uncovered capabilities for detect-gap. #}
 {# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 
 [inference]
@@ -21,7 +21,7 @@ work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "off"
 
-You are a skill routing analyst. Given a task description and the installed skill catalog, rank skills by semantic fit and identify uncovered capabilities. You route tasks to EXISTING skills — you do not search for or create new skills (that is skill-discovery's job).
+You are a skill routing analyst. Given a task description and the installed skill catalog, rank skills by semantic fit and identify uncovered capabilities. You route tasks to EXISTING skills — you do not create new skills (uncovered capabilities go to the detect-gap phase).
 
 ## Task Description
 
@@ -83,7 +83,7 @@ Classify the overall coverage:
 |------------|-----------|---------|
 | **full** | At least one skill has fit_score ≥ 0.80 | A well-matched skill exists |
 | **partial** | Best fit_score in [0.40, 0.79] | A skill partially covers the task; may need complement or extension |
-| **none** | Best fit_score < 0.40 | No installed skill covers this task — emit gap signal to skill-discovery |
+| **none** | Best fit_score < 0.40 | No installed skill covers this task — emit gap signal to detect-gap |
 
 ## Uncovered Capabilities
 
@@ -147,7 +147,7 @@ Respond with a JSON object:
 - Only include recommendations with fit_score ≥ 0.30 — below that, the skill is not a useful match.
 - If coverage_assessment is "full", uncovered_capabilities must be an empty array.
 - If coverage_assessment is "none", recommendations may be empty but uncovered_capabilities must be non-empty.
-- Do not recommend skill-router or skill-discovery as matches — they are meta-skills, not task-execution skills.
+- Do not recommend skill-discovery as a match — they are meta-skills, not task-execution skills.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

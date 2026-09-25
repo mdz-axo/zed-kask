@@ -80,14 +80,14 @@ Results from deep-dive skills dispatched in the previous cycle. Weave these insi
 
 **Dead-letter handling:** If ALL delegation results are `invoked: false` (no delegate fired for any request), the convergence check flagged this as `delegation_dead_letter`. In this case:
 1. Do NOT re-emit the same delegation requests — they will fail again.
-2. For each unfilled request, emit a `skill_match_queries` entry instead, so the skill-router can find an alternative skill outside the four fixed delegates.
+2. For each unfilled request, emit a `skill_match_queries` entry instead, so skill-discovery (route) can find an alternative skill outside the four fixed delegates.
 3. Add a thought explaining why the fixed delegates did not match and what capability is needed.
 {% endif %}
 
 {% if prior_skill_match_results %}
 ## Prior Skill-Match Results
 
-Results from skill-router for `skill_match_queries` emitted in the previous cycle. Incorporate these the same way as delegation results — reference the matched skill, summarize the insight, and explain how it changes or confirms your thinking:
+Results from skill-discovery (route) for `skill_match_queries` emitted in the previous cycle. Incorporate these the same way as delegation results — reference the matched skill, summarize the insight, and explain how it changes or confirms your thinking:
 
 ```json
 {{ prior_skill_match_results | tojson }}
@@ -208,7 +208,7 @@ During thinking, you may recognize a thought needs analysis beyond what reasonin
 - One request per distinct analysis need
 - Max 3 requests per cycle (prioritize highest-value deep dives)
 - **ONLY delegate to these four skills:** `hypothesis-framer`, `mcda`, `diagnose`, `falsifiability`. Any other skill name is an error — no delegate exists for it.
-- **When none of the four delegates match a deep-dive need**, emit a `skill_match_queries` entry in the output instead. The orchestrator feeds these to skill-router for matching against the broader installed skill catalog. This covers capabilities outside the four fixed delegates (e.g., security audits, skill curation, diagramming).
+- **When none of the four delegates match a deep-dive need**, emit a `skill_match_queries` entry in the output instead. The orchestrator feeds these to skill-discovery (route) for matching against the broader installed skill catalog. This covers capabilities outside the four fixed delegates (e.g., security audits, skill curation, diagramming).
 - Delegation supplements, not replaces, reasoning
 - Results arrive next cycle via `prior_delegation_results`
 - If you delegated last cycle and got results back, incorporate them — don't re-delegate the same thing

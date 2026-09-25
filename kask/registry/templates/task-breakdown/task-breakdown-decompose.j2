@@ -81,7 +81,7 @@ None — this is the first iteration. Produce the initial decomposition.
 {% if skill_catalog %}
 ## Skill Catalog
 
-The following skills are installed and available for task execution. For each task you produce, include a `skill_match_query` field — a natural-language description of the capability this task needs. This query is consumed by skill-router to generate ranked skill recommendations. Do NOT attempt to match skills yourself — just describe the capability need.
+The following skills are installed and available for task execution. For each task you produce, include a `skill_match_query` field — a natural-language description of the capability this task needs. This query is consumed by skill-discovery (route) to generate ranked skill recommendations. Do NOT attempt to match skills yourself — just describe the capability need.
 
 ```json
 {{ skill_catalog | tojson }}

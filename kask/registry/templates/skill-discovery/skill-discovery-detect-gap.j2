@@ -81,7 +81,7 @@ Respond with a JSON object:
       "rank": 1,
       "gap_id": "GAP-001",
       "reason": "Why this gap has this priority",
-      "recommended_action": "create_skill|extend_skill|route_to_skill_router|discover_external|automate|ignore"
+      "recommended_action": "create_skill|extend_skill|route_to_existing_skill|discover_external|automate|ignore"
     }
   ]
 }
@@ -93,7 +93,7 @@ Respond with a JSON object:
 |--------|-------------------|
 | `create_skill` | Coverage gap — no existing skill addresses the task pattern. |
 | `extend_skill` | Feature gap — an existing skill partially covers but needs new templates or capabilities. |
-| `route_to_skill_router` | Feature gap where an existing skill covers the task but was not previously routed to. Delegate to skill-router to confirm the match and generate an invocation hint. |
+| `route_to_existing_skill` | Feature gap where an existing skill covers the task but was not previously routed to. Run the route phase (skill-discovery-route) to confirm the match and generate an invocation hint. |
 | `discover_external` | Gap is best filled by an external registry crate not yet installed. |
 | `automate` | Automation gap — a manual task that could be automated within an existing skill. |
 | `ignore` | Low-impact gap that does not warrant action. Never recommend for critical or high impact gaps. |

@@ -42,7 +42,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 - Auditing `.j2` template or `manifest.yaml` logic — use `skill-logic-audit` (its target class; SKILL.md bodies are not valid logic-audit targets).
 - Authoring a new skill, or translating one from another agent system — use `create-skill` (it delegates validation back here at Phase 4).
-- Mapping task patterns for coverage gaps — use `skill-discovery` (its detect-gap phase); matching tasks to installed skills — `skill-router`.
+- Mapping task patterns for coverage gaps — use `skill-discovery` (its detect-gap phase); matching tasks to installed skills is its route phase.
 
 ## Instructions
 
