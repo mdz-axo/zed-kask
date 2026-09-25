@@ -20,7 +20,7 @@ visibility: Public
 {# thesis is investment_grade or needs_work. #}
 {# #}
 {# Mode is autonomous (no human in the loop during the pipeline). The #}
-{# essentialist findings feed the goal-analysis criteria as additional #}
+{# essentialist findings feed the thesis-judge criteria as additional #}
 {# evidence — they do not block the thesis directly. #}
 
 [inference]
@@ -163,8 +163,8 @@ For each gate, produce findings with constraint-force classification:
 
 ## Constraints
 
-- Mode is autonomous — do not pause for human input. Produce findings and recommendations; the goal-analysis quality gate (downstream) decides whether to act on them.
-- Single pass only — do not loop. The goal-analysis step is the convergence loop; this step is evidence for it.
+- Mode is autonomous — do not pause for human input. Produce findings and recommendations; the thesis-judge quality gate (downstream) decides whether to act on them.
+- Single pass only — do not loop. The thesis-judge step is the convergence loop; this step is evidence for it.
 - Do NOT rewrite the thesis. You are interrogating, not editing. The `surviving_thesis` reflects what would survive the gates, not a rewritten thesis.
 - "Mixed" as a capital allocation verdict is a hedge ONLY if the evidence supports a stronger verdict. If the evidence genuinely supports "mixed," it is not a hedge.
 - A pillar is decorative only if the thesis statement and the other two pillars fully cover its content. If the pillar adds unique content (e.g., the Valuation pillar's terminal stage cross-references IMAGINE 10Y), it is load-bearing.

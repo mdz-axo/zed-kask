@@ -1054,7 +1054,6 @@ mod tests {
                 id: id.clone(),
                 operator_confirmed: true,
                 action_note: "operator repaired tool service".into(),
-                skill_id: None,
             }))
             .await
             .expect("confirmed application");
