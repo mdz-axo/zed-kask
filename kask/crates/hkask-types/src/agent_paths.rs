@@ -292,8 +292,8 @@ mod tests {
             PathBuf::from("mcp/kata-kanban/kanban.db")
         );
         assert_eq!(
-            mcp_server_db("swarm", "ledger"),
-            PathBuf::from("mcp/swarm/ledger.db")
+            mcp_server_db("swarm", "memory"),
+            PathBuf::from("mcp/swarm/memory.db")
         );
     }
 
@@ -313,7 +313,7 @@ mod tests {
         // is observable regardless of what the env resolves to.
         for relative in [
             agent_db("curator"),
-            mcp_server_db("swarm", "ledger"),
+            mcp_server_db("swarm", "memory"),
             mcp_server_subdir("companies", "fibo-cache"),
         ] {
             let resolved = resolve_under_data_dir(&relative);
