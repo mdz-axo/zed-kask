@@ -37,8 +37,8 @@ by brundonsmith, with these deviations:
 
 **Built-in functions**: `car`, `cdr`, `cons`, `list`, `length`, `nth`,
 `reverse`, `+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`, `is_null`,
-`numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `eq`,
-`string=`, `string-contains`, `concat`
+`numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `max`,
+`min`, `eq`, `string=`, `string-contains`, `concat`
 
 ## Usage
 

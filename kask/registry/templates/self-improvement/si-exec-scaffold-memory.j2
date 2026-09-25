@@ -5,6 +5,10 @@ contract:
     current_config: object
     context: object
   output:
+    updated_config: object
+    execution_trace: array
+    cost_breakdown: object
+    proposed_artifact: object
 visibility: Public
 ---
 {# goal: Execute Scaffolding Improvement via Memory Evolution (§6.2) — apply signal-driven CRUD operations (Create/Read/Update/Delete) to evolve the memory component m_t. #}

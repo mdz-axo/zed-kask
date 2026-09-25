@@ -13,7 +13,8 @@
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
 //!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, assoc,
-//!     append, string=, string-contains, concat, abs, sqrt, eq, member
+//!     append, string=, string-contains, concat, abs, sqrt, max, min, eq,
+//!     member
 //!
 //! `assoc` is defensive: a non-list alist argument returns nil instead of
 //! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
@@ -844,6 +845,12 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // Used by marker-space hypotenuse computations (eqm Improve step 6).
         // Returns a Float.
         ("sqrt", sqrt_fn),
+        // Numeric extrema. (max x ...) / (min x ...) return the largest /
+        // smallest argument unchanged (Int stays Int). Replaces hand-written
+        // `(if (< a b) a b)` clamps in skill forms. Zero args is an arity
+        // error; a non-number is a type error.
+        ("max", max_fn),
+        ("min", min_fn),
         // Generic equality. (eq a b) returns true iff a and b are structurally
         // equal (delegates to LispValue::PartialEq). This is the value-equality
         // counterpart to `=` (numeric) and `string=` (string-only). Distinct
@@ -1417,6 +1424,47 @@ fn sqrt_fn(
         return Err(LispError::Runtime(format!("sqrt of negative number {f}")));
     }
     Ok(LispValue::Float(f.sqrt()))
+}
+
+/// Numeric extremum over one or more args: keeps the winning argument's own
+/// representation (Int or Float). `prefer` decides whether a candidate
+/// replaces the current best.
+fn extremum(
+    name: &str,
+    args: &[LispValue],
+    prefer: fn(f64, f64) -> bool,
+) -> Result<LispValue, LispError> {
+    let Some((first, rest)) = args.split_first() else {
+        return Err(LispError::Arity(format!("{name} expects at least 1 arg")));
+    };
+    let mut best = first;
+    let mut best_value = as_f64(first)?;
+    for arg in rest {
+        let value = as_f64(arg)?;
+        if prefer(value, best_value) {
+            best = arg;
+            best_value = value;
+        }
+    }
+    Ok(best.clone())
+}
+
+/// `(max x ...)` returns the largest numeric argument.
+fn max_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    extremum("max", args, |candidate, best| candidate > best)
+}
+
+/// `(min x ...)` returns the smallest numeric argument.
+fn min_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    extremum("min", args, |candidate, best| candidate < best)
 }
 
 /// Generic equality: `(eq a b)` returns true iff a and b are structurally
@@ -2027,5 +2075,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, LispError::TypeError { .. }), "got: {err}");
+    }
+
+    /// expect: "Skill forms clamp and take extrema with `max`/`min` instead of
+    /// hand-written `(if (< a b) a b)` lambdas; an empty call is an arity
+    /// error, never a silent nil" [F9]
+    #[test]
+    fn max_and_min_take_numeric_extrema() {
+        let env = serde_json::json!({"score": -0.25});
+        assert_eq!(
+            eval_sandboxed("(max 1 2.5 -3)", &env).unwrap(),
+            serde_json::json!(2.5)
+        );
+        assert_eq!(
+            eval_sandboxed("(min 1 2.5 -3)", &env).unwrap(),
+            serde_json::json!(-3)
+        );
+        assert_eq!(
+            eval_sandboxed("(max 0 score)", &env).unwrap(),
+            serde_json::json!(0)
+        );
+        assert!(matches!(
+            eval_sandboxed("(max)", &env).unwrap_err(),
+            LispError::Arity(_)
+        ));
+        assert!(matches!(
+            eval_sandboxed("(min 1 \"a\")", &env).unwrap_err(),
+            LispError::TypeError { .. }
+        ));
     }
 }

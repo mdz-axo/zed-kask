@@ -128,7 +128,7 @@ DROP/HALT/BLOCK remain terminal and cannot be reopened by a passing fact_score.
 6. Publication is permitted only if ENTER eligibility is true, adjusted confidence ≥ 0.50, and the verification gate is `passed`. Execute the following `lisp_eval` form with `enter_eligible` from COMMUNICATION's `publication_possible`, its original `unadjusted_confidence`, and the current verifier's `confidence_adjustment` and `verification_gate`. It returns `[adjusted_confidence, publish]`; missing inputs produce `[nil, false]` and an `incomplete` data gap. Validate numeric types/ranges before evaluation; any evaluation error also blocks publication.
 
    ```lisp
-   (if (or (is_null enter_eligible) (is_null unadjusted_confidence) (is_null confidence_adjustment) (is_null verification_gate)) (list nil false) (let ((adjusted (+ unadjusted_confidence confidence_adjustment))) (list (if (< adjusted 0) 0 adjusted) (and enter_eligible (>= adjusted 0.50) (member verification_gate (list "passed"))))))
+   (if (or (is_null enter_eligible) (is_null unadjusted_confidence) (is_null confidence_adjustment) (is_null verification_gate)) (list nil false) (let ((adjusted (+ unadjusted_confidence confidence_adjustment))) (list (max 0 adjusted) (and enter_eligible (>= adjusted 0.50) (member verification_gate (list "passed"))))))
    ```
 
 7. LENS consistency cannot override a failed grounding gate. Record the verification report alongside the research report. Any factual change after this check, including condensing, requires verification of the edited deliverable before release; otherwise label it unverified.

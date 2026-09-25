@@ -10,10 +10,29 @@ Ontological anchoring in zed-kask follows one canonical pattern, defined in
 pattern's process surface for term anchoring; the `onto_anchor` tool is its
 mechanical step.
 
+## When to Use
+
+- Before naming, classifying, or computing with a domain concept (a ratio,
+  a process, an entity type, a risk) in an answer, a report, or code.
+- When a claim depends on a relation between two concepts ("is ROE a
+  constituent of the sustainable growth rate?") — use `relation_query`.
+- When a term lands on the core rung and needs an operator ruling recorded in
+  the derived registry.
+
+## When NOT to Use
+
+- Everyday words with no domain meaning, file paths, identifiers, or tool
+  names — anchoring them adds noise, not checkability.
+- Facts about particular instances ("does this company have a moat?") — the
+  graph relates concepts, never instances; answer from data tools.
+- Adding or correcting vocabulary — that is a build-gated code change to
+  `kask/crates/hkask-bridge-ontology/src/derived.rs` after an operator ruling,
+  not something this skill does at run time.
+
 ## The canonical pattern
 
 The bridge crate is the single source of truth for ontology vocabulary
-(`hkask/crates/hkask-bridge-ontology/README.md`): every concept is a
+(`kask/crates/hkask-bridge-ontology/README.md`): every concept is a
 fixture-pinned constant verified against its published standard, and
 `all_terms_are_official` fails the build if a term drifts. No ontology
 vocabulary lives inside an MCP server; no fabricated URIs; no private
@@ -41,11 +60,14 @@ ruling (recorded in the derived registry) improves it.
 
 ## Where the pattern is implemented
 
-- **Per-tool span anchors**: every MCP server carries an
-  `ontology_anchor(tool)` fn mapping each registered tool to a bridge
-  concept, called through `execute_tool_semantic`
-  (`docs/reports/mcp-ontology-tagging-proposal.md` — implemented; coverage
-  and stub-collapse tests enforce it).
+- **Per-tool output anchors**: MCP servers that tag their results attach a
+  bridge concept to the tool output's `ontology` field — e.g. the companies
+  server's `fibo::enrich_with_ontology`
+  (`kask/mcp-servers/hkask-mcp-companies/src/fibo.rs`) and the scenarios
+  server's `ontology_anchor`
+  (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+  Coverage is per server, not fleet-wide; an untagged tool output is not an
+  anchor — resolve its terms with `onto_anchor`.
 - **Per-term anchors**: the portfolio widget is the reference
   implementation (`crates/hkask-portfolio-widget/src/view.rs`) — IRR anchors
   on its real FIBO term (rung 1); FIBO-less metrics anchor on
@@ -88,6 +110,17 @@ ruling (recorded in the derived registry) improves it.
    formula survived two operator corrections and a 112-green test suite —
    the ruling that fixed it is the derived registry's first authority
    citation).
+
+## Constraints
+
+- Use only the anchors and edges `onto_anchor` returns; never invent a URI,
+  an intermediate link, or a private definition.
+- A core-rung anchor is real but coarse: surface it with the ruling request;
+  do not upgrade it yourself.
+- `no_supported_path` is not proof a relation is false; `coarse_anchor`
+  cannot be traversed; `max_hops` is 1–4.
+- Vocabulary changes land only through the derived registry with its tests
+  (`all_terms_are_official` fails the build on drift).
 
 ## Verification
 

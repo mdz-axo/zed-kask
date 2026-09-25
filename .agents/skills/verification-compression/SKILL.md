@@ -148,7 +148,13 @@ verification code.
    missing mappings, and lost signals and deterministically emits the only
    admissible Lean instance. Never hand-author or edit the resulting proof.
    Run `lean <new-proof.lean>` (or the configured Lean binary) and preserve
-   exit code, stdout/stderr, version, graph hash, and proof hash. Run
+   exit code, stdout/stderr, version, graph hash, and proof hash. The
+   Lean binary must select a toolchain: an elan shim with no default
+   toolchain exits non-zero with no output — pass the pinned toolchain
+   (e.g. a wrapper running `lean +leanprover/lean4:v4.34.0`), and record
+   `lean --version` from that same binary. The `proof.j2` context is
+   `baseline_graph` (the before-graph JSON), `candidate_graph` (the
+   candidate-graph JSON), and `lean_binary` (that pinned binary). Run
    `bash kask/scripts/test-generate-verification-preservation-proof.sh
    <lean-binary>` to check both the valid graph and a missing-signal proof
    fail case. Any `sorry`, missing toolchain, timeout, graph rejection,

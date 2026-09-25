@@ -5,6 +5,10 @@ contract:
     current_config: object
     context: object
   output:
+    updated_config: object
+    execution_trace: array
+    cost_breakdown: object
+    proposed_artifact: object
 visibility: Public
 ---
 {# goal: Execute Scaffolding Improvement via Full Scaffolding (§6.4) — treat the entire scaffold as a mutable program, generate candidate patches via the agent-as-improver, gate through verifier checks. #}

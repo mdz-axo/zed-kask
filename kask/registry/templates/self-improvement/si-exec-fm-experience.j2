@@ -5,6 +5,10 @@ contract:
     current_config: object
     context: object
   output:
+    updated_config: object
+    execution_trace: array
+    cost_breakdown: object
+    proposed_artifact: object
 visibility: Public
 ---
 {# goal: Execute Foundation Model Improvement via Extrinsic Exploratory Experience (§5.3) — collect interaction trajectories from grounded or simulated environments, update parameters via RL/DPO. #}

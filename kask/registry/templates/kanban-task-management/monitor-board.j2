@@ -6,6 +6,11 @@ contract:
     board_name: string
     tasks: array
   output:
+    blockers: array
+    ready_for_review: array
+    overdue: array
+    capacity: array
+    gaps: array
 visibility: Public
 ---
 
@@ -59,5 +64,5 @@ Answer these questions:
 4. **Capacity** — Are any columns approaching WIP limits?
 5. **Gaps** — Are there tasks with no assignee that should be delegated?
 
-Return a JSON object with your assessment. Be concise — this is for the board operator to act on.
+Return a JSON object with one array per question — `blockers`, `ready_for_review`, `overdue`, `capacity`, `gaps` — each listing task ids with a one-line reason (empty when none). Be concise — this is for the board operator to act on.
 {% endif %}

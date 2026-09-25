@@ -34,8 +34,8 @@ pub struct LispEvalToolInput {
     /// `lambda`, `define`, `begin`, `and`, `or`, `not`, `cond`. Builtins:
     /// arithmetic (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`),
     /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
-    /// `numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `eq`,
-    /// `string=`, `string-contains`, `concat`.
+    /// `numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `max`,
+    /// `min`, `eq`, `string=`, `string-contains`, `concat`.
     form: String,
     /// JSON object whose keys become top-level Lisp bindings. Values are
     /// converted to Lisp values: objects become association lists, arrays
@@ -319,8 +319,8 @@ mod tests {
     // The grounding-verify skill pins literal lisp_eval forms in its SKILL.md
     // and agents call them verbatim. These tests execute the exact forms so
     // interpreter evolution cannot silently break them — the Step 6 floor
-    // form shipped broken (`min`/`mapcar` are not builtins, and symbol keys
-    // never match JSON string keys) because nothing ran it.
+    // form shipped broken (`mapcar` is not a builtin, `min` was not one then,
+    // and symbol keys never match JSON string keys) because nothing ran it.
 
     #[test]
     fn test_canonical_fact_score_form() {
