@@ -20,7 +20,10 @@ company-research-deep without external search, credentials or Exa Agent.
    score. The same source-check result separately preserves a known material
    omission when another discovery hit is unresolved; a corrected target
    removes only the omission, not the unresolved hit.
-   Search fixtures are synthetic; they do not attest real tool provenance.
+   Converted-PDF fixtures accept actual `corpus_convert` text only with a
+   retained full-file path and matching digest in the observed conversion log;
+   missing identity stays `not_checked`. Search fixtures are synthetic; they
+   do not attest actual download/hash provenance or complete page review.
    Do not duplicate either decision form in test code.
 3. For a live process check, separately invoke `grounding-verify` in a
    `spawn_agent` with the rendered packet and let it search public issuer and
