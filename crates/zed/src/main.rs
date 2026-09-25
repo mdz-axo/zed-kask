@@ -923,7 +923,7 @@ fn main() {
         wire_kask_mcp_shutdown(mcp_runtime.clone(), cx);
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
-        // zed-kask: T-V1 — agent-path MCP tool outcome recording. The
+        // zed-kask: agent-path MCP tool outcome recording. The
         // `with_governance` wiring above covers the McpRuntime dispatch path
         // (skills/panel/IPC); the agent path (zed's context-server client)
         // had no regulation wiring, so agent-initiated MCP tool calls were

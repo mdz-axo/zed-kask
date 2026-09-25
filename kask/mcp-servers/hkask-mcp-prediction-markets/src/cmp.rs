@@ -1,4 +1,4 @@
-//! Constant Maturity Prediction (CMP) construction (T14).
+//! Constant Maturity Prediction (CMP) construction.
 //!
 //! Analogous to Constant Maturity Treasury yields: prediction markets have
 //! constantly-shifting deadlines, so raw prices are never comparable across

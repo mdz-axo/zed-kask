@@ -202,7 +202,7 @@ mod tests {
     fn provenance_defaults_empty_when_absent() {
         // A body emitted before provenance lands has no `provenance` key.
         // Adding the field is non-breaking: provenance defaults empty and is
-        // not dispatchable (T3 contract).
+        // not dispatchable.
         let body = parse_scenarios_body(r#"{"viz":"scenarios"}"#).expect("valid body");
         assert!(!body.provenance.is_dispatchable());
         assert!(body.provenance.tool.is_none());

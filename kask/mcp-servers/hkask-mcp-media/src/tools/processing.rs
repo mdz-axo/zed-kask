@@ -997,10 +997,7 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal(
-                    // rr0044-ok: keyframe-extraction-empty
-                    "No keyframes extracted from video.",
-                ));
+                return Err(McpToolError::internal("No keyframes extracted from video."));
             }
 
             let mut image_urls = Vec::new();
@@ -1030,7 +1027,7 @@ impl MediaServer {
             vars.insert("style", style_str);
             let prompt = self
                 .render_prompt("video_caption", &vars)
-                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?; // rr0044-ok: own template engine render failure
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
@@ -1095,7 +1092,7 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal("No keyframes extracted from video.")); // rr0044-ok: ffmpeg-succeeded-no-output
+                return Err(McpToolError::internal("No keyframes extracted from video."));
             }
 
             // Promote each scratch frame into a durable gallery asset. The
@@ -1285,7 +1282,7 @@ impl MediaServer {
             let ffmpeg = self.require_ffmpeg()?;
             let info = ffmpeg.probe(&video_url).await.map_err(map_media_error)?;
             serde_json::to_value(&info)
-                .map_err(|e| McpToolError::internal(format!("encode video info: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode video info: {e}")))
         })
         .await
     }

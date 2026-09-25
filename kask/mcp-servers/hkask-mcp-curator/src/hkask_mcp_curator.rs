@@ -734,7 +734,7 @@ impl CuratorServer {
                         | hkask_memory::MemoryStoreError::Embedding(
                             hkask_storage::EmbeddingError::Infrastructure(ref infra),
                         ) => map_infra_error(infra, "Semantic recall failed"),
-                        other => McpToolError::internal(format!("Semantic recall failed: {other}")), // rr0044-ok: fallback arm of per-variant match
+                        other => McpToolError::internal(format!("Semantic recall failed: {other}")),
                     })?;
                     let serialized: Vec<serde_json::Value> = exact
                         .iter()
@@ -1971,7 +1971,7 @@ fn map_escalation_error(error: hkask_storage::EscalationError, context: &str) ->
 fn to_tool_error(e: ServiceError) -> McpToolError {
     match e.kind() {
         ErrorKind::NotFound => McpToolError::not_found(e.to_string()),
-        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
+        _ => McpToolError::internal(e.to_string()),
     }
 }
 

@@ -21,7 +21,7 @@
 //! pools created by this storage layer retain shared leases through all clones
 //! and checked-out connections. This refuses active cooperating consumers; it
 //! does not stop admission, drain work, or close them. Coordinated settings/
-//! curator maintenance restart remains unimplemented (core-review T11 open).
+//! curator maintenance restart remains unimplemented (open).
 //! Older binaries and direct SQLite opens do not participate in these leases.
 //!
 //! Individual same-directory renames are atomic on POSIX, but the sequence

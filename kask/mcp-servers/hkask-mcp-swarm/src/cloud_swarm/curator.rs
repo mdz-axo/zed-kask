@@ -9,7 +9,7 @@
 //!
 //! `CuratorSession` owns the `Option<Settlement>` and settles it
 //! on `Drop` unless `disarm()` is called on success. Settlement follows the
-//! operator-ratified T05 policy (2026-09-08): every failure path classifies
+//! operator-ratified settlement policy (2026-09-08): every failure path classifies
 //! the error — a proven pre-dispatch rejection releases the authorization,
 //! an ambiguous or accepted-but-unreadable outcome holds it and surfaces
 //! the uncertainty. `Drop` (reached only when `send` was never called — no
@@ -29,7 +29,7 @@ use crate::spend_gate::{self, Settlement};
 ///
 /// Created via [`CuratorSession::create`] (creates a new ABW session) or
 /// [`CuratorSession::resume`] (reuses an existing session_id). Both settle
-/// the reservation on construction failure per the T05 classification.
+/// the reservation on construction failure per the settlement classification.
 /// Call `send` to post a message; on success, `send` calls `disarm`
 /// internally so the auth is consumed. On any `Err` return from
 /// `create`/`send`, the guard settles (release or hold) and drops.
@@ -47,7 +47,7 @@ pub struct CuratorSession<'a> {
 impl<'a> CuratorSession<'a> {
     /// Create a new Xaman Ek session and return a guard holding the auth.
     /// Takes ownership of the auth so it can settle on construction failure
-    /// per the T05 classification (proven rejection releases; ambiguity
+    /// per the settlement classification (proven rejection releases; ambiguity
     /// holds and surfaces the uncertainty; a 2xx without a session_id is
     /// external acceptance followed by a local failure — held).
     pub(crate) async fn create(
@@ -107,7 +107,7 @@ impl<'a> CuratorSession<'a> {
 
     /// Send a message to the curator. On success, disarms the guard (the
     /// auth stays consumed) and returns the raw ABW response. On failure,
-    /// settles the auth by the T05 classification (release on proven
+    /// settles the auth by the settlement classification (release on proven
     /// rejection; hold + surface on ambiguity) and propagates the error.
     pub(crate) async fn send(&mut self, message: &str) -> Result<serde_json::Value, McpToolError> {
         let data = self
@@ -140,7 +140,7 @@ impl<'a> CuratorSession<'a> {
         self.settled = true;
     }
 
-    /// Settle the authorization for a failed curator call by the T05
+    /// Settle the authorization for a failed curator call by the settlement
     /// policy: a proven pre-dispatch rejection releases it (with the custom
     /// Xaman error mapping: Auth/PaymentRequired/RateLimited → specific
     /// kinds, everything else → `CuratorUnavailable`); an ambiguous or
@@ -224,7 +224,7 @@ mod tests {
         }
     }
 
-    /// T05 (Q4): an ambiguous session-create outcome HOLDS the curate token.
+    /// An ambiguous session-create outcome HOLDS the curate token.
     /// Pre-fix, `map_create_error` refunded every error — a token that may
     /// have paid for an accepted dispatch became reusable.
     #[tokio::test]
@@ -246,7 +246,7 @@ mod tests {
         );
     }
 
-    /// T05 (Q4): an ambiguous message-send outcome HOLDS the curate token.
+    /// An ambiguous message-send outcome HOLDS the curate token.
     #[tokio::test]
     async fn xaman_send_ambiguous_holds_curate_token() {
         let dir = tempfile::tempdir().expect("dir");
@@ -275,7 +275,7 @@ mod tests {
         );
     }
 
-    /// T05: a 2xx create response without a session_id is external acceptance
+    /// A 2xx create response without a session_id is external acceptance
     /// followed by a local failure — the token is HELD, not refunded. Pre-fix
     /// this path refunded unconditionally.
     #[tokio::test]
@@ -296,7 +296,7 @@ mod tests {
         );
     }
 
-    /// T05 control: ABW answering with an error proves the dispatch did not
+    /// Control: ABW answering with an error proves the dispatch did not
     /// land — the curate token is released and reusable.
     #[tokio::test]
     async fn xaman_rejection_releases_curate_token() {
@@ -316,7 +316,7 @@ mod tests {
         );
     }
 
-    /// T05 control: a successful two-step curator call consumes the token —
+    /// Control: a successful two-step curator call consumes the token —
     /// single-use per successful spend.
     #[tokio::test]
     async fn xaman_success_consumes_curate_token() {

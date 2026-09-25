@@ -61,7 +61,7 @@ impl TrainingServer {
             if errors.is_empty() {
                 Ok(json!({ "stored": stored, "source": source, "dataset": ds }))
             } else {
-                Err(McpToolError::internal(json!({ "stored": stored, "errors": errors, "source": source, "dataset": ds }).to_string())) // rr0044-ok: partial-store-failure-aggregate
+                Err(McpToolError::internal(json!({ "stored": stored, "errors": errors, "source": source, "dataset": ds }).to_string()))
             }
         })
         .await
@@ -112,9 +112,9 @@ impl TrainingServer {
                             )),
                             DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
                             DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => {
-                                McpToolError::internal(message) // rr0044-ok: infra-db-failure
+                                McpToolError::internal(message)
                             }
-                            _ => McpToolError::internal(message), // rr0044-ok: non-exhaustive-fallback
+                            _ => McpToolError::internal(message),
                         }
                     })?;
                 store.query_by_attribute_untouched("training_qa_pair")

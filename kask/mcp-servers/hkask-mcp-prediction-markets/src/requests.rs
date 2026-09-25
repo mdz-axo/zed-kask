@@ -32,7 +32,7 @@ pub struct MarketLookupRequest {
 }
 
 /// Request for market_record_resolution: feed a resolved outcome into the
-/// calibration store (the sense arm of the T10 feedback loop).
+/// calibration store (the sense arm of the calibration loop).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketRecordResolutionRequest {
     /// Calibration bucket (domain or series) the market belonged to.

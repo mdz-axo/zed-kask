@@ -135,7 +135,7 @@ impl MediaServer {
                 models.retain(|m| m.provider == filter_lower);
             }
             serde_json::to_value(&models)
-                .map_err(|e| McpToolError::internal(format!("encode model list: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))
         })
         .await
     }
@@ -157,7 +157,7 @@ impl MediaServer {
                     ))
                 })?;
             serde_json::to_value(&model)
-                .map_err(|e| McpToolError::internal(format!("encode model info: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))
         })
         .await
     }

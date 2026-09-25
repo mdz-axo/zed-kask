@@ -1880,7 +1880,7 @@ impl SwarmServer {
                 .join(&safe_id)
                 .join("agent_card.json");
             let json = serde_json::to_string_pretty(&updated_card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
+                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
             std::fs::write(&card_path, json).map_err(|e| {
                 hkask_mcp_server::map_io_error(
                     e,

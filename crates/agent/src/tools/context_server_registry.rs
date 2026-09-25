@@ -735,7 +735,7 @@ impl AnyAgentTool for KaskServerTool {
                         serde_json::Value::String(string) => string.clone(),
                         value => value.to_string(),
                     };
-                    // Structural display hints (T-V2) — same as the store
+                    // Structural display hints — same as the store
                     // path: fenced media blocks render deterministically.
                     let mut tool_call_content = Vec::new();
                     for hint in hkask_types::tool_response::display_hints_from_output_text(&text) {
@@ -926,7 +926,7 @@ impl AnyAgentTool for ContextServerTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
-        // zed-kask: D-seam — T-V1 regulation wiring. Agent-path MCP tool
+        // zed-kask: D-seam — regulation wiring. Agent-path MCP tool
         // calls (zed's context-server client) were invisible to the
         // regulation system: the McpRuntime dispatch path (skills/panel/IPC)
         // records outcomes via `with_governance`, but this path had no
@@ -964,7 +964,7 @@ impl AnyAgentTool for ContextServerTool {
 
 impl ContextServerTool {
     /// Execute the MCP tool call — the original `run` body, extracted so the
-    /// `run` wrapper can record the outcome for regulation (T-V1).
+    /// `run` wrapper can record the outcome for regulation.
     fn run_inner(
         self: Arc<Self>,
         input: ToolInput<serde_json::Value>,
@@ -1283,7 +1283,7 @@ impl ContextServerTool {
                     }
                 }
             }
-            // zed-kask: D-seam — structural display_hint rendering (T-V2).
+            // zed-kask: D-seam — structural display_hint rendering.
             // Media tool results carry `display_hint` / `display_hints`
             // (fenced ```media blocks) as JSON fields inside the content
             // envelope; previously they rendered only if the model

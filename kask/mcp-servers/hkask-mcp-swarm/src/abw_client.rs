@@ -65,7 +65,7 @@ impl SwarmClient {
             None => builder,
         };
         let resp = builder.send().await.map_err(|e| {
-            // Settlement classification (operator-ratified T05 policy,
+            // Settlement classification (operator-ratified settlement policy,
             // 2026-09-08): connection-phase and construction failures prove
             // the request never left — releasable. Everything else (timeout
             // mid-request, connection reset after send) leaves the external

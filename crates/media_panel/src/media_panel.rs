@@ -96,7 +96,7 @@ pub fn init(cx: &mut App) {
 /// operations (generate, search, organize, transform, transcribe) are
 /// driven through chat. The viewing pane (top) surfaces what the tools
 /// produced: assets are extracted structurally from tool-result
-/// `display_hint` fields (T-V2), so the viewer updates on every tool
+/// `display_hint` fields, so the viewer updates on every tool
 /// result regardless of whether the model echoes fenced blocks.
 pub struct MediaPanel {
     focus_handle: FocusHandle,

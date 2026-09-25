@@ -1068,7 +1068,7 @@ impl Render for KanbanWidget {
     }
 }
 
-// ── Pure dispatch-planning logic (T6) ──────────────────────────────────
+// ── Pure dispatch-planning logic ──────────────────────────────────
 //
 // Kept free of the GPUI executor / global state so the dispatch decision is
 // unit-testable directly (repo `.rules` racy-global trap: never unit-test by
@@ -1219,7 +1219,7 @@ mod tests {
         }
     }
 
-    // ── Pure dispatch-planning logic (T6) ────────────────────────────────
+    // ── Pure dispatch-planning logic ────────────────────────────────
 
     fn dispatchable_provenance() -> BlockProvenance {
         BlockProvenance {

@@ -21,7 +21,7 @@ pub(crate) fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
         AdapterStoreError::InvalidState(_) => McpToolError::failed_precondition(message),
         AdapterStoreError::Database(_)
         | AdapterStoreError::Infra(_)
-        | AdapterStoreError::Serialization(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        | AdapterStoreError::Serialization(_) => McpToolError::internal(message),
     }
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn map_host_provider_error(e: HostProviderError) -> McpToolError {
         }
         HostProviderError::MissingPrecondition(_) => McpToolError::failed_precondition(message),
         HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
-            McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
+            McpToolError::internal(message)
         }
     }
 }
@@ -55,7 +55,7 @@ pub(crate) fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolEr
         }
         TrainingArtifactError::Upload(_)
         | TrainingArtifactError::Retrieval(_)
-        | TrainingArtifactError::InvalidManifest(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        | TrainingArtifactError::InvalidManifest(_) => McpToolError::internal(message),
     }
 }
 
@@ -69,7 +69,7 @@ pub(crate) fn map_dataset_error(e: DatasetError) -> McpToolError {
         DatasetError::UnsupportedFormat(_)
         | DatasetError::Validation { .. }
         | DatasetError::Empty => McpToolError::invalid_argument(message),
-        DatasetError::Io(_) | DatasetError::Cache(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        DatasetError::Io(_) | DatasetError::Cache(_) => McpToolError::internal(message),
     }
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn map_job_store_error(e: JobStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
         JobStoreError::Storage(_) | JobStoreError::Serialization(_) => {
-            McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
+            McpToolError::internal(message)
         }
     }
 }

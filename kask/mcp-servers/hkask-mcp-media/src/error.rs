@@ -116,7 +116,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         MediaError::YtDlpAuthorization(_) => McpToolError::permission_denied(e.to_string()),
         MediaError::YtDlpVideoUnavailable(_) => McpToolError::not_found(e.to_string()),
         MediaError::YtDlpExtractor(_) => McpToolError::unavailable(e.to_string()),
-        MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm
+        MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()),
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)
@@ -125,7 +125,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         | MediaError::AssetPersistence(_)
         | MediaError::SidecarNotFound(_)
         | MediaError::SidecarInvalid(_)
-        | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm
+        | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()),
     }
 }
 
@@ -157,9 +157,9 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
         image::ImageError::IoError(io) => match io.kind() {
             std::io::ErrorKind::NotFound => McpToolError::not_found(message),
             std::io::ErrorKind::PermissionDenied => McpToolError::permission_denied(message),
-            _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+            _ => McpToolError::internal(message),
         },
-        _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        _ => McpToolError::internal(message),
     }
 }
 

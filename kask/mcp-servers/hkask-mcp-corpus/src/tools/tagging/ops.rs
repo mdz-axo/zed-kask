@@ -502,7 +502,7 @@ impl CorpusServer {
             let mut out = String::new();
             for chunk in &tagged {
                 out.push_str(&serde_json::to_string(chunk)
-                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?); // rr0044-ok: serde serialization of own struct
+                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
                 out.push('\n');
             }
             crate::helpers::write_contained(&req.output, &out)?;

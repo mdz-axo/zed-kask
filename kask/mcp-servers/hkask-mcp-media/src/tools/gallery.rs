@@ -687,9 +687,9 @@ impl MediaServer {
             let style_str = style.as_deref().unwrap_or("descriptive");
             let mut vars = HashMap::new();
             vars.insert("style", style_str);
-            let prompt = self.render_prompt("caption", &vars).map_err(|e| {
-                McpToolError::internal(format!("Template render failed: {}", e)) // rr0044-ok: own template engine render failure
-            })?;
+            let prompt = self
+                .render_prompt("caption", &vars)
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
@@ -965,11 +965,7 @@ impl MediaServer {
                 )));
             }
 
-            self.run_face_scan_folder(
-                &folder,
-                force,
-            )
-            .await
+            self.run_face_scan_folder(&folder, force).await
         })
         .await
     }
@@ -1159,7 +1155,7 @@ impl MediaServer {
                 )
                 .map_err(map_gallery_store_error)?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}")))
         })
         .await
     }
@@ -1281,7 +1277,7 @@ impl MediaServer {
                                 McpToolError::internal(format!(
                                     "stored OMC creation graph for {} is invalid: {error}",
                                     image.id
-                                )) // rr0044-ok: stored server-owned graph failed its typed decode
+                                ))
                             })
                     })
                     .transpose()?;
@@ -1333,7 +1329,7 @@ impl MediaServer {
                 match lineage.params.as_deref() {
                     None => Default::default(),
                     Some(p) => serde_json::from_str(p).map_err(|e| {
-                        McpToolError::internal(format!( // rr0044-ok: parse-stored-lineage-params
+                        McpToolError::internal(format!(
                             "Corrupt lineage params for image {image_index}: {e}"
                         ))
                     })?,
@@ -1512,7 +1508,7 @@ impl MediaServer {
                 )
                 .map_err(|e| map_media_error(e.into()))?;
             let mut value = serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode {kind} record: {e}")))?; // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode {kind} record: {e}")))?;
             // Render the imported media inline in the media widget —
             // without a display_hint the caller has no way to view it.
             if let Some(object) = value.as_object_mut() {
@@ -1563,7 +1559,7 @@ impl MediaServer {
                 .create_album(&ga.gallery_id, &name, parent_id.as_deref())
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode album record: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))
         })
         .await
     }
@@ -1578,7 +1574,7 @@ impl MediaServer {
                 .list_albums(&ga.gallery_id)
                 .map_err(|e| map_media_error(e.into()))?;
             serde_json::to_value(&albums)
-                .map_err(|e| McpToolError::internal(format!("encode album list: {e}"))) // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))
         })
         .await
     }

@@ -1468,7 +1468,7 @@ mod tests {
         // `emit_curator_distillation_env`. Without this allowlist entry the
         // per-server filter silently drops the operator's override and decay
         // reverts to the default 180 while the regulation sensor keeps
-        // reporting the configured value — the exact lie T16 exists to end.
+        // reporting the configured value — the exact misreport this check exists to end.
         assert!(
             s.config_env.unwrap().contains(&"HKASK_MEMORY_LIFE_DAYS"),
             "curator must receive HKASK_MEMORY_LIFE_DAYS so the configured \

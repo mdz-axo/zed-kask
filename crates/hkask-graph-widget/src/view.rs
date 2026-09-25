@@ -93,7 +93,7 @@ impl GraphWidget {
         };
         // Compute polytree status before `body` is moved into the struct.
         let backward_inference_available = crate::propagate::is_polytree(&body);
-        // T7: raw signal for the reask/what-if measurement gate. Counted via
+        // Raw signal for the reask/what-if measurement gate. Counted via
         // tracing target `reg.widget.graph_render`. See
         // tasks/widget-interactivity/plan.md (Track 3, decision 10).
         let node_count = body.nodes.len();
@@ -470,7 +470,7 @@ impl Focusable for GraphWidget {
     }
 }
 
-// T7: a what-if the user explored (evidence was set) is being lost because the
+// A what-if the user explored (evidence was set) is being lost because the
 // widget is dropped without a saved branch (branches do not exist yet — T8b).
 // Counted via tracing target `reg.widget.whatif_discarded`; paired with
 // `reg.widget.evidence_set` to form the discard rate that gates Track 3.

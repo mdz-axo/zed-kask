@@ -20,7 +20,7 @@ use crate::block::{
 };
 
 /// Server that hosts the scenario pipeline tools. Used as the fallback dispatch
-/// target when a block carries no dispatchable provenance (T2 hardcoded path).
+/// target when a block carries no dispatchable provenance.
 const DEFAULT_SERVER: &str = "hkask-mcp-scenarios";
 
 /// Visible hint surfaced when the process-global `ToolInvoker` has not been

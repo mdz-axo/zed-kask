@@ -37,7 +37,7 @@ pub struct KanbanBlockBody {
     #[serde(default)]
     pub columns: Vec<ColumnBody>,
     /// Server-authoritative provenance for re-issuing the originating MCP tool
-    /// with modified args (T6 move affordance). `#[serde(default)]` so bodies
+    /// with modified args. `#[serde(default)]` so bodies
     /// emitted before provenance landed parse with an empty (non-dispatchable)
     /// provenance and the widget falls back to its read-only display.
     #[serde(default)]
@@ -388,7 +388,7 @@ mod tests {
     fn provenance_defaults_empty_when_absent() {
         // A body emitted before provenance lands has no `provenance` key.
         // Adding the field is non-breaking: provenance defaults empty and is
-        // not dispatchable (T6 contract).
+        // not dispatchable.
         let body = parse_kanban_body(r#"{"viz":"kanban"}"#).expect("valid body");
         assert!(!body.provenance.is_dispatchable());
         assert!(body.provenance.tool.is_none());

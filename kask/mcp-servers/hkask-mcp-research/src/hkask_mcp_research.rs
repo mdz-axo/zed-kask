@@ -136,10 +136,10 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
             | rusqlite::ErrorCode::DatabaseLocked
             | rusqlite::ErrorCode::DiskFull
             | rusqlite::ErrorCode::SystemIoFailure => McpToolError::unavailable(message),
-            _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+            _ => McpToolError::internal(message),
         };
     }
-    McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
+    McpToolError::internal(message)
 }
 
 /// Require the research database, returning an Err if not configured.
@@ -1316,7 +1316,7 @@ impl ResearchServer {
             synth.extractor_kind.parse().map_err(McpToolError::from)?;
         let spec: crate::research::synthetic::ExtractorSpec =
             serde_json::from_str(&synth.extractor_spec).map_err(|e| {
-                McpToolError::internal(format!("invalid stored extractor_spec: {e}")) // rr0044-ok: parse-own-stored-data
+                McpToolError::internal(format!("invalid stored extractor_spec: {e}"))
             })?;
 
         // Validate and fetch the source URL.
@@ -1483,50 +1483,50 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<DeleteSyntheticRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "rss_delete_synthetic",
-            async {
-                let db = require_research_db!(self);
+        execute_tool(self, "rss_delete_synthetic", async {
+            let db = require_research_db!(self);
 
-                // Resolve feed_url from stream_id.
-                let sid = req.stream_id.clone();
-                let feed_url_result = spawn_db(db.clone(), move |conn| {
-                    // resolve_feed_url returns Option<String>, wrap in Ok for the
-                    // spawn_db Result<Result<_, anyhow>, JoinError> shape.
-                    Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
-                })
-                .await;
+            // Resolve feed_url from stream_id.
+            let sid = req.stream_id.clone();
+            let feed_url_result = spawn_db(db.clone(), move |conn| {
+                // resolve_feed_url returns Option<String>, wrap in Ok for the
+                // spawn_db Result<Result<_, anyhow>, JoinError> shape.
+                Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
+            })
+            .await;
 
-                let feed_url = match feed_url_result {
-                    Ok(Ok(Some(url))) => url,
-                    Ok(Ok(None)) => {
-                        return Err(McpToolError::not_found("stream_id not found"));
-                    }
-                    Ok(Err(e)) => return Err(map_db_error(e)),
-                    Err(e) => return Err(map_join_error(e, "db lookup failed")),
-                };
-
-                if !feed_url.starts_with("synthetic://") {
-                    return Err(McpToolError::invalid_argument(
-                        "not a synthetic feed; use rss_unsubscribe instead",
-                    ));
+            let feed_url = match feed_url_result {
+                Ok(Ok(Some(url))) => url,
+                Ok(Ok(None)) => {
+                    return Err(McpToolError::not_found("stream_id not found"));
                 }
+                Ok(Err(e)) => return Err(map_db_error(e)),
+                Err(e) => return Err(map_join_error(e, "db lookup failed")),
+            };
 
-                let feed_id: i64 = feed_url
-                    .strip_prefix("synthetic://")
-                    .ok_or_else(|| /* rr0044-ok: unreachable-invariant */ McpToolError::internal("feed_url missing synthetic:// prefix despite starts_with check"))?
-                    .parse()
-                    .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
+            if !feed_url.starts_with("synthetic://") {
+                return Err(McpToolError::invalid_argument(
+                    "not a synthetic feed; use rss_unsubscribe instead",
+                ));
+            }
 
-                let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
-                handle_db_result!(result, |removed| serde_json::json!({
-                    "stream_id": req.stream_id,
-                    "deleted": removed > 0,
-                    "removed": removed
-                }))
-            },
-        )
+            let feed_id: i64 = feed_url
+                .strip_prefix("synthetic://")
+                .ok_or_else(|| {
+                    McpToolError::internal(
+                        "feed_url missing synthetic:// prefix despite starts_with check",
+                    )
+                })?
+                .parse()
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
+
+            let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
+            handle_db_result!(result, |removed| serde_json::json!({
+                "stream_id": req.stream_id,
+                "deleted": removed > 0,
+                "removed": removed
+            }))
+        })
         .await
     }
 
@@ -1648,7 +1648,7 @@ impl ResearchServer {
     /// returned as a `run_ledger` note for the tool's output —
     /// `{"recorded": n}` on success, `{"recorded": 0, "error": ...}` on
     /// failure or when the DB is not configured. Never silent in either
-    /// direction (the T01 reliability pattern: the public response
+    /// direction (the reliability pattern: the public response
     /// surfaces persistence outcomes).
     async fn append_run_ledger(
         &self,

@@ -1158,7 +1158,7 @@ async fn task_move_carries_pko_execution_status_for_every_standard_transition() 
     );
 }
 
-// ── T06: replay protection across the spawn's post-effect failure ──────────
+// ── Replay protection across the spawn's post-effect failure ──────────
 
 /// Counting worktree-spawn stub: SUCCEEDS and counts, so a duplicate spawn
 /// is observable as a count above one (the plan's "counting successful
@@ -1242,7 +1242,7 @@ async fn board_and_task(server: &KanbanServer) -> String {
     task["task_id"].as_str().expect("task_id").to_string()
 }
 
-/// T06: a post-spawn bookkeeping failure (the result note's task comment)
+/// A post-spawn bookkeeping failure (the result note's task comment)
 /// must not fail the call — failing it releases the replay-protection claim
 /// and a same-key retry spawns a SECOND agent. The spawn succeeds, the
 /// partial outcome is recorded and surfaced, and the retry REPLAYS it.
@@ -1292,7 +1292,7 @@ async fn post_spawn_comment_failure_keeps_replay_protection() {
     );
 }
 
-/// T06: two CONCURRENT same-key spawns admit at most one agent — the
+/// Two CONCURRENT same-key spawns admit at most one agent — the
 /// reserve INSERT is atomic, so exactly one call runs the work; the other
 /// replays the recorded response or is refused pending (claim preserved).
 #[tokio::test]
@@ -1327,7 +1327,7 @@ async fn concurrent_same_key_spawns_admit_one_agent() {
     }
 }
 
-/// T06: a claim reserved but never recorded (a previous attempt died
+/// A claim reserved but never recorded (a previous attempt died
 /// mid-work — external acceptance before response recording) survives a
 /// server restart on the shared database and REFUSES the retry: the spawn
 /// is not re-run, so no duplicate agent.
@@ -1395,7 +1395,7 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     );
 }
 
-/// T06 control: a PRE-effect failure (validation) releases the claim, so
+/// Control: a PRE-effect failure (validation) releases the claim, so
 /// the same key can be retried successfully once the input is corrected.
 #[tokio::test]
 async fn pre_effect_failure_releases_the_claim_for_a_clean_retry() {

@@ -331,7 +331,7 @@ impl CompaniesServer {
 
             let summary = scenarios::scenario_summary(&results);
 
-            // T7: optional tree-weighted path (detailed mode). The 2×2 range
+            // Optional tree-weighted path (detailed mode). The 2×2 range
             // above is always computed; when the caller pastes a validated
             // event tree, quadrant probabilities are derived from its root
             // marginals and an expected intrinsic value is produced.

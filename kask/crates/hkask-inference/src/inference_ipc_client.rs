@@ -1256,7 +1256,7 @@ mod tests {
         );
     }
 
-    /// T14: the shared runtime-dir resolution table — the ONE resolver
+    /// The shared runtime-dir resolution table — the ONE resolver
     /// publication and discovery both use. XDG wins when non-empty; the
     /// per-UID fallback otherwise; `None` when neither resolves (never a
     /// hardcoded UID — a wrong-user path is worse than none).

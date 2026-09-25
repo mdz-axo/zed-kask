@@ -115,7 +115,7 @@ pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToo
         TriageError::PdftotextFailed(_) | TriageError::PdfimagesFailed(_) => {
             McpToolError::unavailable(message)
         }
-        TriageError::PageCountMismatch { .. } => McpToolError::internal(message), // rr0044-ok: mapper-fallback-arm
+        TriageError::PageCountMismatch { .. } => McpToolError::internal(message),
     }
 }
 
@@ -138,11 +138,9 @@ pub(crate) fn map_database_error(
             "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
         )),
         DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
-        DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => {
-            McpToolError::internal(message) // rr0044-ok: infra-db-failure
-        }
+        DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => McpToolError::internal(message),
         // Non-exhaustive enum: future variants stay internal (conservative).
-        _ => McpToolError::internal(message), // rr0044-ok: non-exhaustive-fallback
+        _ => McpToolError::internal(message),
     }
 }
 

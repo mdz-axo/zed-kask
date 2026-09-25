@@ -1337,7 +1337,7 @@ impl SwarmServer {
             // The settlement invariant is structural: `CuratorSession` owns
             // the `Option<Settlement>` and settles it on `Drop`
             // unless `send` succeeds (which calls `disarm` internally).
-            // Settlement follows the T05 policy: proven pre-dispatch
+            // Settlement policy: proven pre-dispatch
             // rejection releases the token; an ambiguous outcome holds it
             // and surfaces the uncertainty. The prior inline ladder had four
             // `auth.take().refund()` sites; the guard removes that footgun —

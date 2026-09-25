@@ -56,7 +56,7 @@ impl From<EconomicDataError> for McpToolError {
             InvalidParam(_) => McpToolError::invalid_argument(error.to_string()),
             MissingApiKey => McpToolError::permission_denied(error.to_string()),
             HttpError { .. } | RequestFailed { .. } => McpToolError::unavailable(error.to_string()),
-            ParseError { .. } | ApiError { .. } => McpToolError::internal(error.to_string()), // rr0044-ok: mapper-internal-arm
+            ParseError { .. } | ApiError { .. } => McpToolError::internal(error.to_string()),
         }
     }
 }

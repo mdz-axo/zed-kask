@@ -92,7 +92,7 @@ impl PassageIndex {
     fn lock(&self) -> Result<MutexGuard<'_, IndexState>, McpToolError> {
         self.state
             .lock()
-            .map_err(|_| McpToolError::internal("Passage index mutex poisoned")) // rr0044-ok: poisoned internal state
+            .map_err(|_| McpToolError::internal("Passage index mutex poisoned"))
     }
 
     fn begin(state: &mut IndexState, origin: Origin, scope: PublicationScope) -> Arc<Publication> {
@@ -163,7 +163,7 @@ impl PassageIndex {
         let signals = serde_json::to_value(hkask_memory::salience::compute_method_signals(text))
             .map_err(|error| {
                 McpToolError::internal(format!("Cannot serialize method signals: {error}"))
-            })?; // rr0044-ok: own deterministic struct
+            })?;
         for (attribute, value) in [("text", json!(text)), ("method_signals", signals)] {
             if let Some(record) = existing.iter().find(|record| record.attribute == attribute) {
                 write

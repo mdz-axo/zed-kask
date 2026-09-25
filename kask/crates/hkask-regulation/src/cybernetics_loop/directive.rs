@@ -491,7 +491,7 @@ mod tests {
             .expect("agent cap registered")
     }
 
-    /// T07: every directive variant's acknowledgment reports what actually
+    /// Every directive variant's acknowledgment reports what actually
     /// happened. Real effects are "applied" (with the state change asserted),
     /// persisted requests are "recorded" exactly once, log-only variants are
     /// "log_only", and variants with no handler are "unsupported". Pre-fix,
@@ -567,7 +567,7 @@ mod tests {
             "log_only",
             "seek_more_evidence has no effect handler — must not be acknowledged as applied"
         );
-        // No escalation sink wired in this loop → missing_sink (T08 wired
+        // No escalation sink wired in this loop → missing_sink (the escalation sink is wired
         // the delivery path; the no-sink state is surfaced, not claimed
         // as delivered).
         assert_eq!(
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(directive_acks(&sink_b).len(), 3);
     }
 
-    /// T07 control: a dampened (repeated) directive produces no
+    /// Control: a dampened (repeated) directive produces no
     /// acknowledgment — dampening is not application.
     #[tokio::test]
     async fn dampened_directive_is_not_acknowledged() {
@@ -674,7 +674,7 @@ mod tests {
         );
     }
 
-    /// T07 control: an acknowledgment-persist failure is surfaced (warn) and
+    /// Control: an acknowledgment-persist failure is surfaced (warn) and
     /// does not panic or wedge the inbox — but it never upgrades the
     /// directive's outcome.
     #[tokio::test]
@@ -701,7 +701,7 @@ mod tests {
     }
 
     /// Escalation sink that records what it received and reports a scripted
-    /// `try_persist_alert` outcome — the T08 delivery seam under test.
+    /// `try_persist_alert` outcome — the escalation delivery seam under test.
     struct ScriptedEscalationSink {
         received: Mutex<Vec<(String, f64, String)>>,
         result: Result<crate::AlertQueueOutcome, crate::AlertPersistError>,
@@ -759,7 +759,7 @@ mod tests {
         }
     }
 
-    /// T08: an undampened explicit escalation is delivered to the reviewable
+    /// An undampened explicit escalation is delivered to the reviewable
     /// queue retaining domain, severity, and evidence — and the
     /// acknowledgment reports the confirmed queue outcome with the
     /// escalation id. The queue payload must NOT fabricate measured
@@ -834,7 +834,7 @@ mod tests {
         );
     }
 
-    /// T08: a confirmed in-place supersede (an existing pending row updated,
+    /// A confirmed in-place supersede (an existing pending row updated,
     /// no new id) still reports "queued" — the concern IS in the queue.
     #[tokio::test]
     async fn explicit_escalation_supersede_reports_queued_without_id() {
@@ -859,7 +859,7 @@ mod tests {
         );
     }
 
-    /// T08: a missing escalation sink is surfaced as "missing_sink" — never
+    /// A missing escalation sink is surfaced as "missing_sink" — never
     /// silently dropped and never claimed as delivered.
     #[tokio::test]
     async fn explicit_escalation_without_sink_reports_missing_sink() {
@@ -879,7 +879,7 @@ mod tests {
         );
     }
 
-    /// T08: a failed queue write is surfaced as "attempted" — tried, not
+    /// A failed queue write is surfaced as "attempted" — tried, not
     /// confirmed; never conflated with a confirmed queue write.
     #[tokio::test]
     async fn explicit_escalation_failed_write_reports_attempted() {
@@ -906,7 +906,7 @@ mod tests {
         );
     }
 
-    /// T08: a best-effort sink (the trait default — cannot report the
+    /// A best-effort sink (the trait default — cannot report the
     /// durable outcome) is "attempted", distinct from confirmed.
     #[tokio::test]
     async fn explicit_escalation_best_effort_sink_reports_attempted() {

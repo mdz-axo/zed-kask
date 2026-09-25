@@ -185,7 +185,7 @@ pub fn is_not_tool_fault_kind(kind: &str) -> bool {
 /// `display_hint` is a single fenced ```media block; `display_hints` is an
 /// array (gallery_search, generate_image). Returns an empty vec for
 /// non-JSON or hint-free outputs — ordinary tool results carry nothing.
-/// Consumers: the agent's structural rendering (T-V2 — the tool card
+/// Consumers: the agent's structural rendering (the tool card
 /// renders the blocks via the D18 media renderer) and the media panel's
 /// viewing pane (surfaces assets from the conversation's tool results).
 #[must_use]

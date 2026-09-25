@@ -146,9 +146,8 @@ impl PredictionMarketsServer {
                 records.retain(|r| r.category.to_lowercase().contains(&cat));
             }
             records.truncate(req.limit.unwrap_or(10).min(50) as usize);
-            serde_json::to_value(&records).map_err(|e| {
-                McpToolError::internal(format!("record serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            serde_json::to_value(&records)
+                .map_err(|e| McpToolError::internal(format!("record serialization failed: {e}")))
         })
         .await
     }
@@ -167,9 +166,8 @@ impl PredictionMarketsServer {
             let records = self.gather_candidates().await?;
             let mut matches = matcher::rank_matches(&req.question, &records);
             matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
-            serde_json::to_value(&matches).map_err(|e| {
-                McpToolError::internal(format!("match serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            serde_json::to_value(&matches)
+                .map_err(|e| McpToolError::internal(format!("match serialization failed: {e}")))
         })
         .await
     }
@@ -205,7 +203,7 @@ impl PredictionMarketsServer {
                 .unwrap_or_else(|e| e.into_inner());
             let reading = calibration::read_calibration(&store, &req.bucket);
             serde_json::to_value(&reading).map_err(|e| {
-                McpToolError::internal(format!("calibration serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                McpToolError::internal(format!("calibration serialization failed: {e}"))
             })
         })
         .await
@@ -259,7 +257,7 @@ impl PredictionMarketsServer {
                     reading
                 };
                 serde_json::to_value(&reading).map_err(|e| {
-                    McpToolError::internal(format!("reading serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                    McpToolError::internal(format!("reading serialization failed: {e}"))
                 })
             },
         )
@@ -419,9 +417,7 @@ impl PredictionMarketsServer {
                 "rungs": rungs,
                 "warnings": warnings,
             }))
-            .map_err(|e| {
-                McpToolError::internal(format!("ladder serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            .map_err(|e| McpToolError::internal(format!("ladder serialization failed: {e}")))
         })
         .await
     }
@@ -462,9 +458,8 @@ impl PredictionMarketsServer {
                     residual::MIN_OBSERVATIONS
                 ))
             })?;
-            serde_json::to_value(&analysis).map_err(|e| {
-                McpToolError::internal(format!("residual serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            serde_json::to_value(&analysis)
+                .map_err(|e| McpToolError::internal(format!("residual serialization failed: {e}")))
         })
         .await
     }
@@ -723,7 +718,7 @@ impl PredictionMarketsServer {
                 "warnings": warnings,
             }))
             .map_err(|e| {
-                McpToolError::internal(format!("scan serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                McpToolError::internal(format!("scan serialization failed: {e}"))
             })
         })
         .await
@@ -772,9 +767,7 @@ impl PredictionMarketsServer {
                 "volatility_regime": format!("{regime:?}"),
                 "insufficient_history": variance.is_none(),
             }))
-            .map_err(|e| {
-                McpToolError::internal(format!("history serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            .map_err(|e| McpToolError::internal(format!("history serialization failed: {e}")))
         })
         .await
     }
@@ -806,9 +799,7 @@ impl PredictionMarketsServer {
                 "index": index,
                 "slope_30d_1y_logodds_per_year": slope_30_365,
             }))
-            .map_err(|e| {
-                McpToolError::internal(format!("index serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-            })
+            .map_err(|e| McpToolError::internal(format!("index serialization failed: {e}")))
         })
         .await
     }
@@ -877,7 +868,7 @@ impl PredictionMarketsServer {
                     "model": "DR-AS (Xi, Moallemi, Pai & Wang, arXiv:2607.08199)",
                 }))
                 .map_err(|e| {
-                    McpToolError::internal(format!("volatility serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                    McpToolError::internal(format!("volatility serialization failed: {e}"))
                 })
             },
         )
@@ -1050,7 +1041,7 @@ impl PredictionMarketsServer {
                 "curves": response_curves,
             }))
             .map_err(|e| {
-                McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                McpToolError::internal(format!("store response serialization failed: {e}"))
             })
         })
         .await
@@ -1227,9 +1218,7 @@ impl PredictionMarketsServer {
                 "holdings": holdings,
             })).collect::<Vec<_>>(),
         }))
-        .map_err(|e| {
-            McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-        })
+        .map_err(|e| McpToolError::internal(format!("store response serialization failed: {e}")))
     }
 
     /// Read the materialized holdings for a stored CMP index portfolio.
@@ -1463,7 +1452,7 @@ impl PredictionMarketsServer {
                 "note": "Pass indices to scenario_from_cmp_indices (hkask-mcp-scenarios) as cmp_indices to compose an EventTree; optionally persist curves with market_cmp_index_store.",
             }))
             .map_err(|e| {
-                McpToolError::internal(format!("cmp indices serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                McpToolError::internal(format!("cmp indices serialization failed: {e}"))
             })
         })
         .await
@@ -1561,7 +1550,7 @@ impl PredictionMarketsServer {
                     "usage": "Pass these values to market_cmp_portfolio_store, or override with live data. All fields are optional in market_cmp_portfolio_store — omitting them uses these curated defaults.",
                 }))
                 .map_err(|e| {
-                    McpToolError::internal(format!("context suggest serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+                    McpToolError::internal(format!("context suggest serialization failed: {e}"))
                 })
             },
         )

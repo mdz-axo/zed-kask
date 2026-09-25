@@ -355,12 +355,12 @@ pub(crate) fn compose_cmp_tree_with_deps(
     build_event_tree(&events)
 }
 
-// ── Tree-level Bayesian propagation (T5) ────────────────────────────────────
+// ── Tree-level Bayesian propagation ────────────────────────────────────
 
 /// One step in a propagation journal: a node's marginal before and after a
-/// prior update elsewhere in the tree. The journal is the tâtonnement record
-/// (T10): each entry is one round of the market's one-step-ahead adjustment
-/// (Bhattacharya Prop. 6, arXiv:2211.03244 — see t0-keystone-mapping.md §3).
+/// prior update elsewhere in the tree. The journal is the tâtonnement record:
+/// each entry is one round of the market's one-step-ahead adjustment
+/// (Bhattacharya Prop. 6, arXiv:2211.03244).
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct PropagationEntry {
     pub event_id: String,

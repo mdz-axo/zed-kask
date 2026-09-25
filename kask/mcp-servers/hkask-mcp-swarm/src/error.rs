@@ -46,7 +46,7 @@ pub enum SwarmError {
     /// The request provably never reached ABW — a connection-phase failure
     /// (DNS resolution, connection refused, TLS handshake) or a request
     /// construction failure. No external effect is possible, so a held spend
-    /// reservation may be released (operator-ratified T05 settlement policy,
+    /// reservation may be released (operator-ratified settlement policy,
     /// 2026-09-08).
     #[error("ABW request never sent: {0}")]
     DispatchNotSent(String),
@@ -55,7 +55,7 @@ pub enum SwarmError {
     /// ABW accepted the request. The external outcome is UNKNOWN: the spend
     /// may or may not have taken effect. A held reservation must be retained
     /// and the uncertainty surfaced; never auto-released (operator-ratified
-    /// T05 settlement policy, 2026-09-08: retain + surface, option A).
+    /// settlement policy, 2026-09-08: retain + surface, option A).
     #[error("ABW dispatch outcome uncertain: {0}")]
     DispatchAmbiguous(String),
 }
@@ -99,7 +99,7 @@ impl SwarmError {
             Self::UpstreamModelError { .. } => McpToolError::unavailable(self.to_string()),
             Self::RateLimited(m) => McpToolError::rate_limited(m),
             Self::CuratorUnavailable(m) => McpToolError::unavailable(m),
-            Self::ApiVersionMismatch(m) => McpToolError::internal(m), // rr0044-ok: mapper-internal-arm
+            Self::ApiVersionMismatch(m) => McpToolError::internal(m),
             Self::ConsentDenied(m) => McpToolError::permission_denied(m),
             Self::Unavailable(m) => McpToolError::unavailable(m),
             Self::DispatchNotSent(m) => McpToolError::unavailable(m),
@@ -177,9 +177,7 @@ impl From<SwarmError> for LocalSwarmError {
 /// `Unavailable`.
 pub fn map_local_swarm_error(e: LocalSwarmError) -> McpToolError {
     match e {
-        LocalSwarmError::Io(m) | LocalSwarmError::Database(m) => {
-            McpToolError::internal(m) // rr0044-ok: mapper-internal-arm
-        }
+        LocalSwarmError::Io(m) | LocalSwarmError::Database(m) => McpToolError::internal(m),
         LocalSwarmError::InvalidInput(m) | LocalSwarmError::Sanitize(m) => {
             McpToolError::invalid_argument(m)
         }

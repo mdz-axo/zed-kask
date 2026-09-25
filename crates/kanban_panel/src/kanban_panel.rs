@@ -2414,7 +2414,7 @@ mod tests {
         );
     }
 
-    /// T11 (G8): the selected board's identity reconciles from every
+    /// The selected board's identity reconciles from every
     /// board-list read — a board renamed externally (or via the panel's own
     /// rename gesture) reaches the panel's surfaces instead of freezing at
     /// selection time.

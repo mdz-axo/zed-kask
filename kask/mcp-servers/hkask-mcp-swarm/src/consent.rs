@@ -362,7 +362,7 @@ impl ConsentStore {
     /// remaining balance. Called only on PROVEN pre-dispatch rejection — the
     /// atomic deduction at `authorize_*` time reserved the credits, and a
     /// proven rejection proves the external spend cannot have occurred
-    /// (operator-ratified T05 settlement policy, 2026-09-08). Never called
+    /// (operator-ratified settlement policy, 2026-09-08). Never called
     /// for an ambiguous outcome: those credits stay held. Best-effort with
     /// a loud warn on store failure or unknown session (the dispatch
     /// already failed; the operator re-mints or opens a new session).

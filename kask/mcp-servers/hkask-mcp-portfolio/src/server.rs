@@ -45,7 +45,7 @@ pub fn map_portfolio_error(e: PortfolioError) -> McpToolError {
         PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
         PortfolioError::NotFound(_) => McpToolError::not_found(e.to_string()),
         PortfolioError::Database(_) | PortfolioError::Serialize(_) => {
-            McpToolError::internal(e.to_string()) // rr0044-ok: mapper-internal-arm
+            McpToolError::internal(e.to_string())
         }
     }
 }
@@ -507,7 +507,7 @@ impl PortfolioServer {
             })
             .await?;
             let mut value = serde_json::to_value(&snapshot)
-                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
+                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert(
                     "ontology".to_string(),

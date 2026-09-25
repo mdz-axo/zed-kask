@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(entry.status, hkask_storage::EscalationStatus::Pending);
     }
 
-    /// T08: `try_persist_alert` reports the durable-write truth against a
+    /// `try_persist_alert` reports the durable-write truth against a
     /// real queue — a new insert is Confirmed with the row's id and the row
     /// is readable with the exact payload; a re-fired condition supersedes
     /// the pending row (Confirmed, no new id) instead of duplicating it.
@@ -672,7 +672,7 @@ mod tests {
         }
     }
 
-    /// T08 end-to-end: an `EscalateDomain` directive through the inbox, with
+    /// An `EscalateDomain` directive through the inbox, with
     /// the real `BridgeAlertEscalationSink` and a real in-memory escalation
     /// store — the full bridge→inbox→queue chain. The queue row retains the
     /// concern's identity, and the acknowledgment reports "queued" with the

@@ -390,7 +390,7 @@ impl MediaServer {
                     ))
                 })?;
             let mut value = serde_json::to_value(&job)
-                .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))?; // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("encode job status: {e}")))?;
             let object = value
                 .as_object_mut()
                 .ok_or_else(|| McpToolError::internal("encoded job status was not an object"))?;

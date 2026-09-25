@@ -1471,7 +1471,7 @@ mod tests {
         );
     }
 
-    /// T12: call-cap exhaustion is detected BEFORE the per-tick reset —
+    /// Call-cap exhaustion is detected BEFORE the per-tick reset —
     /// the reset replenishes every cap (remaining = ceiling), so reading
     /// after it would never observe remaining == 0 and the E04 exhaustion
     /// alert could never fire (the pre-fix defect: the alert was dead

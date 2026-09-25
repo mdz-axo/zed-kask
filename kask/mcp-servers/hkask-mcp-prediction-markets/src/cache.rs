@@ -1,4 +1,4 @@
-//! TTL cache for market-data responses (T6).
+//! TTL cache for market-data responses.
 //!
 //! Plain in-process memoization with explicit expiry. A miss or expiry is a
 //! refetch; the cache never synthesizes data. Testable via injected clock —

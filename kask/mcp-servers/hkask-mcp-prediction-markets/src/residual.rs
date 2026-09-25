@@ -1,4 +1,4 @@
-//! Residual risk decomposition (T15).
+//! Residual risk decomposition.
 //!
 //! A niche event's log-odds changes are regressed on its base event's
 //! log-odds changes over overlapping windows: the slope (β) is the event's

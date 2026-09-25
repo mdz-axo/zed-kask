@@ -124,7 +124,6 @@ fn working_transcript(
     };
     let TranscriptLayer::Correction(correction) = record.layer else {
         return Err(McpToolError::internal(
-            // rr0044-ok: layer-kind-filter invariant
             "layer kind mismatch after correction filter",
         ));
     };
@@ -220,9 +219,9 @@ pub(crate) fn map_store_error(error: TranscriptStoreError) -> McpToolError {
         TranscriptStoreError::SourceInspection { path, source } => {
             McpToolError::unavailable(format!("inspect transcript source {path}: {source}"))
         }
-        TranscriptStoreError::Serialization(message) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        TranscriptStoreError::Serialization(message) => McpToolError::internal(message),
         TranscriptStoreError::Db(error) => {
-            McpToolError::internal(format!("transcript store: {error}")) // rr0044-ok: infra-db-failure
+            McpToolError::internal(format!("transcript store: {error}"))
         }
     }
 }
@@ -244,7 +243,7 @@ fn map_pass_error(error: PassError) -> McpToolError {
             McpToolError::invalid_argument(format!("layer rejected: {validation}"))
         }
         PassError::Prompt(message) => {
-            McpToolError::internal(format!("prompt construction: {message}")) // rr0044-ok: own prompt construction
+            McpToolError::internal(format!("prompt construction: {message}"))
         }
         PassError::Inference(error) => classify_inference_error("transcript pass failed", error),
         PassError::NotConfigured { kind, env } => McpToolError::permission_denied(format!(
@@ -306,7 +305,7 @@ impl MediaServer {
                 transcript_store::store_transcript(driver, &bundle, gallery_asset_id.as_deref())
                     .map_err(map_store_error)?;
             let mut result = serde_json::to_value(&summary)
-                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?; // rr0044-ok: serde serialization of own data
+                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
             if !summary.has_word_timings {
                 result["degradation"] = serde_json::json!(
                     "no word-level timings — stored for text/segments only; layers \
@@ -713,7 +712,6 @@ impl MediaServer {
             };
             let TranscriptLayer::Correction(correction) = &record.layer else {
                 return Err(McpToolError::internal(
-                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after correction filter",
                 ));
             };
@@ -855,7 +853,6 @@ impl MediaServer {
             };
             let TranscriptLayer::Highlight(highlight) = &record.layer else {
                 return Err(McpToolError::internal(
-                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after highlight filter",
                 ));
             };
@@ -960,7 +957,6 @@ impl MediaServer {
             };
             let TranscriptLayer::Edl(edl) = &record.layer else {
                 return Err(McpToolError::internal(
-                    // rr0044-ok: store-layer-kind-mismatch
                     "layer kind mismatch after EDL filter",
                 ));
             };
@@ -1003,10 +999,7 @@ impl MediaServer {
             }
             let output = if clip_paths.len() == 1 {
                 clip_paths.first().cloned().ok_or_else(|| {
-                    McpToolError::internal(
-                        // rr0044-ok: non-empty-plan invariant violation
-                        "EDL render produced no clip after a non-empty plan",
-                    )
+                    McpToolError::internal("EDL render produced no clip after a non-empty plan")
                 })?
             } else {
                 let clip_sources = clip_paths
@@ -1255,7 +1248,6 @@ impl MediaServer {
                 let (start_ms, end_ms) =
                     word_range_to_time_range(working_words, range).map_err(|error| {
                         McpToolError::internal(format!(
-                            // rr0044-ok: documented-impossible-invariant
                             "impossible: text_to_word_ranges produced an out-of-bounds \
                              range: {error}"
                         ))

@@ -321,9 +321,8 @@ impl PredictionMarketsServer {
             self.record_call("market_score_rationale");
             let result = eqm::score_rationale(self.inference_port.as_ref(), &req).await;
             result.map_err(McpToolError::from).and_then(|eqm_result| {
-                serde_json::to_value(&eqm_result).map_err(|e| {
-                    McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
+                serde_json::to_value(&eqm_result)
+                    .map_err(|e| McpToolError::internal(format!("eqm serialization failed: {e}")))
             })
         })
         .await

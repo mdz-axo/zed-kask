@@ -1103,7 +1103,7 @@ impl<'a> ConvertService<'a> {
                     "word_count": passage_text.split_whitespace().count(),
                 });
                 serde_json::to_writer(&mut writer, &row).map_err(|e| {
-                    McpToolError::internal(format!("Failed to serialize chunk: {e}")) // rr0044-ok: serde serialization of own struct
+                    McpToolError::internal(format!("Failed to serialize chunk: {e}"))
                 })?;
                 writer
                     .write_all(b"\n")

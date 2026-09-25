@@ -374,7 +374,7 @@ mod tests {
     /// profile — carries an explicit `tools` allowlist, and
     /// `Thread::enabled_tools` drops any tool absent from it. A registered
     /// tool missing from the list never reaches the model, with no compile
-    /// error (the T15 defect: `record_skill_feedback` shipped registered
+    /// error (the defect: `record_skill_feedback` shipped registered
     /// but unlisted, so the operator's direct rating channel was invisible
     /// in every profile). Presence is the invariant — a deliberate disable
     /// must be listed as `false` (the `ask_user` pattern), never omitted.

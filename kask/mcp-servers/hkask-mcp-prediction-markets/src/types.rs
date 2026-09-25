@@ -207,7 +207,7 @@ pub fn calibration_for(store_reading: Option<&CalibrationReading>, category: &st
     }
 }
 
-/// Canonical calibration bucket for a category/tag. The T10 loop closes
+/// Canonical calibration bucket for a category/tag. The calibration loop closes
 /// through this key — if Kalshi's "Elections" and Polymarket's "Politics"
 /// accrue under different buckets, the same domain never reaches the
 /// demotion threshold on either side. Normalization is lowercase synonym
@@ -229,7 +229,7 @@ pub fn canonical_bucket(category: &str) -> String {
 }
 
 /// Static per-domain bias table seeded from arXiv:2602.19520 (politics
-/// chronically underconfident on both exchanges). T5/T10 replace this with
+/// chronically underconfident on both exchanges). Measured calibration replaces this with
 /// data-derived estimates.
 pub fn domain_bias_for(category: &str) -> Option<&'static str> {
     if canonical_bucket(category) == "politics" {
@@ -240,7 +240,7 @@ pub fn domain_bias_for(category: &str) -> Option<&'static str> {
 }
 
 /// Reliability gate from observable covariates, modulated by the bucket's
-/// measured calibration (T10 loop closure). Thresholds are initial
+/// measured calibration. Thresholds are initial
 /// placeholders (Q3 in the plan — recalibrate per-domain after data accrues).
 ///
 /// The feedback is negative (corrective): a poorly-calibrated bucket
@@ -547,7 +547,7 @@ impl MarketRecord {
         // at (approximately) 1 or 0 post-resolution. arXiv:2604.20421
         // documents "Unknown/50-50" resolutions where both legs settle at
         // 0.50 — a looser threshold would fabricate an outcome for those,
-        // poisoning the T10 Brier loop with a false label. Ambiguous ⇒ None.
+        // poisoning the calibration loop with a false label. Ambiguous ⇒ None.
         let resolved_outcome = if matches!(status, MarketStatus::Resolved) {
             market.prices().first().and_then(|p| {
                 if *p >= 0.99 {

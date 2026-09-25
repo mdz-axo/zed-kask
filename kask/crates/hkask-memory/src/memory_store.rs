@@ -285,7 +285,6 @@ impl MemoryStore {
         Ok(())
     }
 
-
     /// Publish related h_mems while atomically replacing one EAV control key.
     pub fn store_batch_replacing_key_atomic(
         &self,
@@ -1930,7 +1929,7 @@ mod tests {
         assert_eq!(store.connectedness("goal:ghost").expect("links swept"), 0);
     }
 
-    /// T09: passage-scoped deletion removes exactly the named passage's
+    /// Passage-scoped deletion removes exactly the named passage's
     /// text and vector; sibling passages of the same entity survive and
     /// remain semantically retrievable; the entity's h_mems are untouched.
     #[test]
@@ -1995,7 +1994,7 @@ mod tests {
         );
     }
 
-    /// T09 control: a NULL-passage legacy row survives a passage-listed
+    /// Control: a NULL-passage legacy row survives a passage-listed
     /// deletion (the caller decides what is covered — a NULL passage is
     /// never in the list), and deleting an unlisted passage's text deletes
     /// nothing.

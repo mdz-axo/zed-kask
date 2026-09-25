@@ -59,7 +59,7 @@ const DATE_FORMAT_ERR: &str = "from/to must be YYYY-MM-DD";
 pub struct PortfolioWidget {
     body: PortfolioBlockBody,
     focus_handle: FocusHandle,
-    /// Focus handles for the two editable date chips (T5 scrub affordance).
+    /// Focus handles for the two editable date chips.
     from_focus: FocusHandle,
     to_focus: FocusHandle,
     /// Editable scrub target dates (`YYYY-MM-DD`), seeded from the block's
@@ -249,7 +249,7 @@ impl PortfolioWidget {
                             .color(Color::Muted),
                         ),
                 )
-                // T5: date-range scrub affordance (or a disabled "ask the
+                // Date-range scrub affordance (or a disabled "ask the
                 // agent" hint when provenance is partial / non-dispatchable).
                 .child(self.render_scrub_affordance(cx))
                 .when_some(self.render_dispatch_status(cx), |this, status| {
@@ -618,7 +618,7 @@ impl PortfolioWidget {
                 this.dispatch_in_flight = None;
                 match outcome {
                     // The conversation is the durable record; the widget only
-                    // surfaces in-flight + error states (T5 spec).
+                    // surfaces in-flight + error states.
                     Ok(_) => this.dispatch_error = None,
                     Err(error) => this.dispatch_error = Some(error.message()),
                 }
@@ -975,7 +975,7 @@ fn truncate_explain_result(result: &str) -> String {
     format!("{head}…")
 }
 
-// ── Pure dispatch-planning logic (T5) ──────────────────────────────────
+// ── Pure dispatch-planning logic ──────────────────────────────────
 //
 // Kept free of the GPUI executor / global state so the dispatch decision is
 // unit-testable directly (repo `.rules` racy-global trap: never unit-test by
@@ -1115,7 +1115,7 @@ mod tests {
         assert_eq!(format_currency(f64::NAN), "—");
     }
 
-    // ── Pure dispatch-planning logic (T5) ────────────────────────────────
+    // ── Pure dispatch-planning logic ────────────────────────────────
 
     fn dispatchable_provenance() -> BlockProvenance {
         BlockProvenance {

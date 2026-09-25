@@ -486,7 +486,7 @@ impl CorpusServer {
             };
 
             serde_json::to_value(&result).map_err(|error| {
-                McpToolError::internal(format!("failed to serialize result: {error}")) // rr0044-ok: serialize-own-struct
+                McpToolError::internal(format!("failed to serialize result: {error}"))
             })
         })
         .await

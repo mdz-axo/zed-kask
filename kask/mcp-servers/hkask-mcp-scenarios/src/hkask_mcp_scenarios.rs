@@ -70,16 +70,14 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
             McpToolError::not_found(format!("event '{id}' not found"))
         }
         ScenarioError::NoForecastData => {
-            McpToolError::internal("no stored forecasts found for calibration") // rr0044-ok: mapper-internal-arm
+            McpToolError::internal("no stored forecasts found for calibration")
         }
         ScenarioError::Forecast(forecast_error) => match forecast_error {
             hkask_forecast::ForecastError::InvalidProbability(..)
             | hkask_forecast::ForecastError::BrierLengthMismatch(..)
-            | hkask_forecast::ForecastError::BrierNoData => {
-                McpToolError::invalid_argument(format!(
-                    "forecast computation failed: {forecast_error}",
-                ))
-            }
+            | hkask_forecast::ForecastError::BrierNoData => McpToolError::invalid_argument(
+                format!("forecast computation failed: {forecast_error}",),
+            ),
         },
         // Caller-side input defects
         ScenarioError::NoEvents
@@ -1164,7 +1162,7 @@ impl ScenariosServer {
         .await
     }
 
-    /// Tree-level Bayesian propagation (T5): update one event's prior and
+    /// Tree-level Bayesian propagation: update one event's prior and
     /// recompute every descendant marginal and the joint. The propagation
     /// journal is the tâtonnement record (Bhattacharya Prop. 6).
     #[tool(

@@ -201,7 +201,7 @@ pub(crate) fn spawn_distillation_timer(
         // Poll at the configured cadence (minimum 60s). The cursor, not
         // the poll interval, bounds what a pass sees, so a long cadence
         // must not be silently shortened — the same one-hour-cap defect
-        // the T17 consolidation repair removed.
+        // the consolidation repair removed.
         let poll_interval = std::time::Duration::from_secs(cadence.max(60));
         let mut interval = tokio::time::interval(poll_interval);
         interval.tick().await; // skip first tick
@@ -463,7 +463,7 @@ pub(crate) async fn distill_store(
         // PREFIX read, not exact-match: safe only because production thread
         // ids are UUIDs (no UUID is a prefix of another). A future non-UUID
         // thread-id source would read a sibling thread's watermark here —
-        // switch to an exact-match read before introducing one (the T09
+        // switch to an exact-match read before introducing one (the passage-scoped deletion
         // prefix-collision observation, recorded 2026-09-07).
         let watermarks = match memory.h_mems_by_entity_prefix(&watermark_entity) {
             Ok(watermarks) => watermarks
@@ -2511,7 +2511,7 @@ mod tests {
         );
     }
 
-    // ---- T04: pending-work revisit through the production cursor ----
+    // ---- Pending-work revisit through the production cursor ----
 
     fn curator_db_with_memory(
         store: hkask_memory::MemoryStore,
@@ -2525,7 +2525,7 @@ mod tests {
         (db, store)
     }
 
-    /// T04: a thread skipped as active at one pass is distilled by a later
+    /// A thread skipped as active at one pass is distilled by a later
     /// pass once idle — no new turn, no restart. Pre-fix, the cursor
     /// advanced past the thread's turns and no later pass ever saw them.
     #[tokio::test]
@@ -2600,7 +2600,7 @@ mod tests {
         );
     }
 
-    /// T04: a transient inference failure before the watermark advances is
+    /// A transient inference failure before the watermark advances is
     /// retried on the next pass; the retry succeeds and distills once.
     #[tokio::test]
     async fn transient_inference_failure_is_retried_on_the_next_pass() {
@@ -2666,7 +2666,7 @@ mod tests {
         );
     }
 
-    /// T04 control: a distilled thread is not re-examined once the cursor
+    /// Control: a distilled thread is not re-examined once the cursor
     /// has moved past it (no replay), and a genuinely new turn is picked up
     /// by the scan window (real cursor progression).
     #[tokio::test]
@@ -2751,7 +2751,7 @@ mod tests {
         );
     }
 
-    /// T04: a pass that cannot read the store must not advance the cursor —
+    /// A pass that cannot read the store must not advance the cursor —
     /// turns stored before the outage stay visible to the healed pass.
     #[tokio::test]
     async fn scan_failure_does_not_advance_the_cursor() {
@@ -2809,7 +2809,7 @@ mod tests {
         assert_eq!(second.lessons_inserted, 1);
     }
 
-    /// T04: the pending set is bounded — overflow evicts the longest-pending
+    /// The pending set is bounded — overflow evicts the longest-pending
     /// cohort with a warn, and the newest pending thread survives (it is
     /// still distilled once idle).
     #[tokio::test]
@@ -2903,7 +2903,7 @@ mod tests {
         );
     }
 
-    /// T04 control, post-2026-09-09 repair: the first pass scans from the
+    /// Control, post-2026-09-09 repair: the first pass scans from the
     /// oldest stored turn (durable recovery) — never a bounded window —
     /// so a restart cannot permanently miss undistilled threads. Covered
     /// threads are skipped by the per-thread watermark check, and the
@@ -2932,7 +2932,7 @@ mod tests {
         );
     }
 
-    /// T17's lesson applied to distillation: the spawned timer actually
+    /// The timer lesson applied to distillation: the spawned timer actually
     /// fires — first tick skipped, first pass one interval in — and
     /// distills an idle thread end to end.
     #[tokio::test(start_paused = true)]
@@ -3002,7 +3002,7 @@ mod tests {
         );
     }
 
-    /// T04/T17: a cadence longer than one hour is honored — the obsolete
+    /// A cadence longer than one hour is honored — the obsolete
     /// 3600s poll clamp silently shortened it.
     #[tokio::test(start_paused = true)]
     async fn distillation_timer_honors_cadences_longer_than_one_hour() {

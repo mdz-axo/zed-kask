@@ -75,7 +75,7 @@ pub(crate) struct DependencySpecRequest {
 }
 
 /// Request for `scenario_propagate`: update one event's prior and recompute
-/// the whole tree (T5).
+/// the whole tree.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PropagateRequest {
     /// The current tree's events (e.g. from a prior

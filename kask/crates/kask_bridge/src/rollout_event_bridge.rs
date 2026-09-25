@@ -441,7 +441,7 @@ mod tests {
         assert_eq!(result, None, "no event after the last — absence, not zero");
     }
 
-    /// T10: the before/after extraction preserves the EXACT detector→
+    /// The before/after extraction preserves the EXACT detector→
     /// verification pair. In a 0.4→0.9→0.6 history with the detector firing
     /// at the 0.9 event, the pair is (0.9, 0.6) — "before" is the value at
     /// the detection point (the LATEST metric-valued event at-or-before),
@@ -484,7 +484,7 @@ mod tests {
         );
     }
 
-    /// T10 control: metric identity is retained — an event carrying a
+    /// Control: metric identity is retained — an event carrying a
     /// DIFFERENT metric's value is never picked up as this metric's
     /// before/after.
     #[test]

@@ -87,7 +87,7 @@ fn board_create_rejects_unrepresentable_column_sets() {
 // — while the mermaid import path already trimmed. Falsifier for the
 // pre-fix code: `board_create("   ")` succeeded.
 
-/// T1: a whitespace-only name is rejected after trimming.
+/// A whitespace-only name is rejected after trimming.
 #[test]
 fn board_create_rejects_whitespace_only_name() {
     let svc = KanbanService::new(make_store());
@@ -97,7 +97,7 @@ fn board_create_rejects_whitespace_only_name() {
     );
 }
 
-/// T1: a padded name is stored trimmed — the stored name is the identity
+/// A padded name is stored trimmed — the stored name is the identity
 /// every surface (board_list, export, steer prompt) addresses the board by.
 #[test]
 fn board_create_stores_trimmed_name() {
@@ -161,7 +161,7 @@ fn board_rename_rejects_name_over_the_cap() {
 // convergent by construction (replaying the same rename re-applies the same
 // name — the `task_update` class), so it carries no idempotency key.
 
-/// T4: rename round-trips — the new name reaches `board_list`, and the
+/// Rename round-trips — the new name reaches `board_list`, and the
 /// board's identity (id, columns, creation time) survives.
 #[test]
 fn board_rename_round_trips() {
@@ -185,7 +185,7 @@ fn board_rename_round_trips() {
     assert_eq!(task.board_id, board.id);
 }
 
-/// T4: a name that is empty after trimming is rejected and the original
+/// A name that is empty after trimming is rejected and the original
 /// name survives the failed rename.
 #[test]
 fn board_rename_rejects_empty_after_trim() {
@@ -198,14 +198,14 @@ fn board_rename_rejects_empty_after_trim() {
     );
 }
 
-/// T4: renaming an unknown board is NotFound.
+/// Renaming an unknown board is NotFound.
 #[test]
 fn board_rename_unknown_board_is_not_found() {
     let svc = KanbanService::new(make_store());
     assert!(svc.board_rename(BoardId::new(), "New Name").is_err());
 }
 
-/// T4: rename is convergent — renaming to the name the board already has
+/// Rename is convergent — renaming to the name the board already has
 /// succeeds without duplicating anything.
 #[test]
 fn board_rename_to_same_name_converges() {

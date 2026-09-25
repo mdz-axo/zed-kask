@@ -4711,7 +4711,7 @@ pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
     TEMPLATE_BASE_PATH.get().map(|p| p.as_path())
 }
 
-/// Callback type for agent-path MCP tool outcome recording (T-V1).
+/// Callback type for agent-path MCP tool outcome recording.
 /// Receives (server_name, tool_name, success, error_kind) — the same tuple
 /// `McpRuntime::invoke` records for the governed dispatch path. The domain
 /// for the reliability sensor is the server name; the tool name is carried
@@ -5394,7 +5394,7 @@ mod internal_tests {
         );
     }
 
-    /// T15: the operator-feedback recorder records, returns an acceptance
+    /// The operator-feedback recorder records, returns an acceptance
     /// receipt, and is replaceable. Same process-global slot discipline as the
     /// outcome recorder test above.
     #[test]

@@ -177,9 +177,9 @@ impl MediaServer {
             }
             let mut vars = HashMap::new();
             vars.insert("character_description", character_description.as_str());
-            let prompt = self.render_prompt("voice_design", &vars).map_err(|e| {
-                McpToolError::internal(format!("Template render failed: {}", e)) // rr0044-ok: own template engine render failure
-            })?;
+            let prompt = self
+                .render_prompt("voice_design", &vars)
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
             // Fail-visible (the operator's no-hidden-models spec): the
             // transcript-pipeline model is the STT model — no configured
@@ -341,9 +341,8 @@ impl MediaServer {
             )
             .map_err(crate::tools::educt::map_store_error)?;
 
-            let mut result = serde_json::to_value(&summary).map_err(|e| {
-                McpToolError::internal(format!("serialize summary: {e}")) // rr0044-ok: serde serialization of own data
-            })?;
+            let mut result = serde_json::to_value(&summary)
+                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
             if !summary.has_word_timings {
                 result["degradation"] = serde_json::json!(
                     "no word-level timings — stored for text/segments only; layers \

@@ -1,8 +1,8 @@
-//! Market-calibration store and Brier computation (T5).
+//! Market-calibration store and Brier computation.
 //!
 //! Reuses `hkask-forecast` math — never reimplemented here. The store is an
 //! in-memory journal of resolved (probability-at-observation, outcome) pairs
-//! per domain/series bucket; persistence is the T12 event-base decision.
+//! per domain/series bucket; persistence is the event-base decision.
 //!
 //! Cybernetic invariant: a bucket with no data or a read failure is `stale`,
 //! never `brier: 0` — a synthetic 0 reads as "perfectly calibrated" and
@@ -333,7 +333,7 @@ pub fn read_calibration(store: &CalibrationStore, bucket: &str) -> CalibrationRe
 mod tests {
     use super::*;
 
-    /// T11: five DISTINCT markets with identical probability and outcome
+    /// Five DISTINCT markets with identical probability and outcome
     /// count as five samples — market identity, not (probability, outcome),
     /// is the dedup key. Rescans of the same markets add zero.
     #[test]
@@ -372,7 +372,7 @@ mod tests {
         }
     }
 
-    /// T11: legacy observations without identity are never deduplicated —
+    /// Legacy observations without identity are never deduplicated —
     /// treating them as duplicates would fabricate an identity the row
     /// does not carry. And an identity-bearing observation never collides
     /// with an identity-less one.

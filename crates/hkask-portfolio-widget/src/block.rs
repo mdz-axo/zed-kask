@@ -56,7 +56,7 @@ pub struct PortfolioBlockBody {
     #[serde(default)]
     pub attribution: Vec<AttributionRow>,
     /// Server-authoritative provenance for re-issuing the originating MCP tool
-    /// with modified args (T5). `#[serde(default)]` so bodies emitted before
+    /// with modified args. `#[serde(default)]` so bodies emitted before
     /// provenance landed parse with an empty (non-dispatchable) provenance and
     /// the widget falls back to its read-only display.
     #[serde(default)]
@@ -258,7 +258,7 @@ mod tests {
     fn provenance_defaults_empty_when_absent() {
         // A body emitted before provenance lands has no `provenance` key.
         // Adding the field is non-breaking: provenance defaults empty and is
-        // not dispatchable (T5 contract).
+        // not dispatchable.
         let body = parse_portfolio_body(r#"{"viz":"portfolio"}"#).expect("valid body");
         assert!(!body.provenance.is_dispatchable());
         assert!(body.provenance.tool.is_none());

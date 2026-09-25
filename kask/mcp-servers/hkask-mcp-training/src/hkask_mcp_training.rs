@@ -1369,7 +1369,7 @@ mod smoke {
             .unwrap_or_else(|| panic!("tool output must have a 'content' key, got: {parsed}"))
     }
 
-    /// T13 fixture: a successful completion manifest as the status tool
+    /// A successful completion manifest as the status tool
     /// would fetch from HuggingFace.
     fn fixture_manifest(job_id: &str) -> crate::huggingface::CompletionManifest {
         crate::huggingface::CompletionManifest {
@@ -1395,7 +1395,7 @@ mod smoke {
         }
     }
 
-    /// T13: a malformed job id is a typed error, never a silent nil-UUID
+    /// A malformed job id is a typed error, never a silent nil-UUID
     /// lookup miss (pre-fix, `unwrap_or_default` made the pre-registration
     /// check silently miss and proceed to register under the malformed id).
     #[tokio::test]
@@ -1421,7 +1421,7 @@ mod smoke {
         );
     }
 
-    /// T13: repeated finalization is idempotent — the first poll registers
+    /// Repeated finalization is idempotent — the first poll registers
     /// the adapter with the manifest's durable metrics; the second poll
     /// finds it pre-registered and registers nothing new.
     #[tokio::test]
@@ -1470,7 +1470,7 @@ mod smoke {
         );
     }
 
-    /// T13 control: no manifest → nothing finalizes.
+    /// Control: no manifest → nothing finalizes.
     #[tokio::test]
     async fn missing_manifest_does_not_finalize() {
         let server = make_server();

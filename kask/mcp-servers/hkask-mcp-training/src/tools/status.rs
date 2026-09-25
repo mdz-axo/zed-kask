@@ -138,7 +138,7 @@ impl TrainingServer {
         .await
     }
 
-    /// T13 seam: the completion finalization — adapter registration from
+    /// The completion finalization — adapter registration from
     /// the completion manifest plus the skill-retrain A/B comparison.
     /// Extracted from `training_status` so the manifest path is testable
     /// without a live HuggingFace fetch (tests pass a fixture manifest

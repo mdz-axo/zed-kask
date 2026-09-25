@@ -8,7 +8,7 @@
 //! session (the store's conditional-UPDATE: two processes racing on one
 //! session cannot both reserve the same credits) — and enforces the
 //! per-dispatch ceiling. Then `complete_*` executes the spend (HTTP POST)
-//! and settles by the operator-ratified T05 policy (2026-09-08):
+//! and settles by the operator-ratified settlement policy (2026-09-08):
 //!
 //! - **Proven pre-dispatch rejection** (the request never left — connection
 //!   phase/construction failure — or ABW answered with an error): `release`.
@@ -75,7 +75,7 @@ pub fn resolve_auth<'a>(
 ///   racing on one session cannot both reserve). The deduction is the
 ///   reservation; a successful dispatch needs no further settlement.
 ///
-/// Settlement follows the operator-ratified T05 policy (2026-09-08):
+/// Settlement follows the operator-ratified settlement policy (2026-09-08):
 /// release on proven pre-dispatch rejection, hold on ambiguity, nothing on
 /// success.
 pub enum Settlement {
@@ -264,7 +264,7 @@ pub(crate) async fn authorize_hire(
 }
 
 /// Execute the hire POST with the `/hire`→`/add` fallback, settling the
-/// reservation by the T05 policy: proven pre-dispatch rejection releases,
+/// reservation by the settlement policy: proven pre-dispatch rejection releases,
 /// ambiguity holds and surfaces the uncertainty, success needs nothing
 /// further (the reservation IS the spend). Returns the raw ABW response
 /// value; the caller wraps it.
@@ -328,7 +328,7 @@ pub(crate) async fn complete_hire(
     }
 }
 
-/// Settle a failed dispatch by the operator-ratified T05 policy
+/// Settle a failed dispatch by the operator-ratified settlement policy
 /// (2026-09-08): a PROVEN pre-dispatch rejection releases the reservation
 /// and propagates the error; an AMBIGUOUS outcome holds the reservation and
 /// surfaces the uncertainty (never auto-released). `None` carries no
@@ -445,7 +445,7 @@ pub fn authorize_delegate(
     Ok(settlement)
 }
 
-/// Execute the delegate @mention POST, settling the reservation by the T05
+/// Execute the delegate @mention POST, settling the reservation by the settlement
 /// policy: proven pre-dispatch rejection releases, ambiguity holds and
 /// surfaces the uncertainty, success needs nothing further (the reservation
 /// IS the spend). Returns the raw ABW response value; the caller wraps it.
@@ -481,7 +481,7 @@ pub(crate) async fn complete_delegate(
 }
 
 /// Execute the single-shot execute POST (`POST /api/agents/:id/execute` —
-/// fermi's envelope route), settling under the same T05 policy as
+/// fermi's envelope route), settling under the same settlement policy as
 /// `complete_delegate`. Distinct from the @mention route on purpose: the
 /// execute route is the only one that returns the trust envelope
 /// (`reliance`, `grounding`, `completeness`, `validation`, the enforced
@@ -566,7 +566,7 @@ mod tests {
             .expect("session alive")
     }
 
-    /// T05: two overlapping 10-credit authorizations against one 10-credit
+    /// Two overlapping 10-credit authorizations against one 10-credit
     /// session admit at most one POST — including across separate server
     /// instances sharing the consent DB. Pre-fix, both authorized
     /// (validate-only, non-atomic balance read) and both POSTed.
@@ -601,7 +601,7 @@ mod tests {
         );
     }
 
-    /// T05 (operator-ratified option A): an ambiguous dispatch outcome HOLDS
+    /// An ambiguous dispatch outcome HOLDS
     /// the session reservation — the credits stay deducted, the uncertainty
     /// is surfaced, the hold survives reopen, and a retry cannot reserve the
     /// held capacity.
@@ -640,7 +640,7 @@ mod tests {
         );
     }
 
-    /// T05 (Q4): an ambiguous dispatch outcome keeps a single-use token
+    /// An ambiguous dispatch outcome keeps a single-use token
     /// consumed — unreusable by a retry, across reopen.
     #[tokio::test]
     async fn ambiguous_dispatch_keeps_single_use_token_consumed() {
@@ -666,7 +666,7 @@ mod tests {
         assert!(reopened.consume(&token, "delegate", "ws", 10).is_err());
     }
 
-    /// T05 control: a connection-phase failure (nothing listening) proves
+    /// Control: a connection-phase failure (nothing listening) proves
     /// the request never left — the reservation is released.
     #[tokio::test]
     async fn connection_refused_releases_session_reservation() {
@@ -689,7 +689,7 @@ mod tests {
         );
     }
 
-    /// T05 control: ABW answering with an HTTP error proves the dispatch did
+    /// Control: ABW answering with an HTTP error proves the dispatch did
     /// not land — the reservation is released.
     #[tokio::test]
     async fn http_rejection_releases_session_reservation() {
@@ -783,7 +783,7 @@ mod tests {
         );
     }
 
-    /// T05 applies to the execute route exactly as to the @mention route: a
+    /// The settlement policy applies to the execute route exactly as to the @mention route: a
     /// proven pre-dispatch failure (connection refused) releases the
     /// reservation. Proves the settlement wiring, not just the POST.
     #[tokio::test]
@@ -813,7 +813,7 @@ mod tests {
         );
     }
 
-    /// T05 control: a successful dispatch settles exactly the reserved cost —
+    /// Control: a successful dispatch settles exactly the reserved cost —
     /// the reservation IS the spend; no second deduction.
     #[tokio::test]
     async fn successful_dispatch_reserves_exactly_once() {
@@ -835,7 +835,7 @@ mod tests {
         );
     }
 
-    /// T05: the hire path reserves the re-verified cost atomically — two
+    /// The hire path reserves the re-verified cost atomically — two
     /// overlapping hires against one session admit at most one POST.
     /// Pre-fix, both authorized (validate-only + non-atomic balance read).
     #[tokio::test]
