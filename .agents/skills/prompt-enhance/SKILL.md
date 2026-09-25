@@ -28,7 +28,7 @@ Single-pass by design (DR-S13a exempt class: documented single-pass) — the ver
 | `prompt`        | string                       | (required) | The prompt to enhance                                                           |
 | `effort`        | `low` \| `medium` \| `high`  | `medium`   | Effort tier — controls whether the verify step runs                             |
 | `output_format` | `inline` \| `file` \| `both` | `inline`   | How to deliver the result                                                       |
-| `output_path`   | string                       | (derived)  | Explicit path for `file`/`both`; default `tasks/enhanced-<type>-<timestamp>.md` |
+| `output_path`   | string                       | (derived)  | Explicit path for `file`/`both`; default `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/enhanced-<type>.md` |
 | `context`       | object                       | (optional) | Target model, intended consumer, existing eval set                              |
 
 ## Effort Tiers

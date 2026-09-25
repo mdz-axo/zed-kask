@@ -119,7 +119,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `falsifiability` (if hypothesis-conflict) or `improv` (riffing, for divergent exploration) |
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
-| GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
+| Fine-tuning run (submit, track, evaluate) | `adapter-lifecycle` | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
 | Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |

@@ -1,4 +1,4 @@
-{# goal: ACT phase — finalize the plan into tasks/plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and tasks/todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. v0.38.0: includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. #}
+{# goal: ACT phase — finalize the plan into plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. v0.38.0: includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. #}
 [inference]
 contract:
   input:
@@ -26,7 +26,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a plan-finalization agent. Produce the two output files: `tasks/plan.md` (the implementation plan document) and `tasks/todo.md` (the checklist-style task list). The agent will create the `tasks/` directory if it does not exist and write both files. These paths are the convention expected by downstream tooling.
+You are a plan-finalization agent. Produce the two output files, `plan.md` (the implementation plan document) and `todo.md` (the checklist-style task list), in the skill run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/`. The agent creates the directory and writes both files there, never inside the repository.
 
 ## Context Summary
 
@@ -36,7 +36,7 @@ You are a plan-finalization agent. Produce the two output files: `tasks/plan.md`
 ## Target Condition
 
 The target condition is the goal, end state, or outcome this plan achieves.
-Include it at the top of `tasks/plan.md` in a "## Target Condition" section so
+Include it at the top of `plan.md` in a "## Target Condition" section so
 the plan is always anchored to what it's achieving.
 
 {{ target_condition }}
@@ -94,12 +94,12 @@ Emit `pko_anchors` alongside the markdown. The plan is a PKO `Procedure` (proces
 targeting a `ProcedureTarget` (the spec). Each task is a `Step`; each phase a `MultiStep`;
 acceptance criteria are `requiresAction`; verification is `StepVerification` (tests/build
 map to `requiresFunction`); risks are `IssueOccurrence`; open questions are
-`UserQuestionOccurrence`; checkpoints are `UserFeedbackOccurrence`. The `tasks/plan.md`
+`UserQuestionOccurrence`; checkpoints are `UserFeedbackOccurrence`. The `plan.md`
 *document* itself carries DC+BIBO state metadata (title/creator/date, `bibo:Document`) —
 PKO grounds the *structure*, DC+BIBO grounds the *document*. Per P5.4, sample both axes;
 do not over-specify either.
 
-## Output File 1: tasks/plan.md
+## Output File 1: plan.md
 
 Use this template structure:
 
@@ -157,7 +157,7 @@ refinement was needed, omit this section.]
 - [Question needing human input]
 ```
 
-## Output File 2: tasks/todo.md
+## Output File 2: todo.md
 
 A flat checklist-style task list, grouped by phase, with checkboxes for each task and
 its acceptance criteria. Keep it scannable — this is the working list, not the rationale.
@@ -168,9 +168,9 @@ Respond with a JSON object:
 
 ```json
 {
-  "plan_md": "Full markdown content of tasks/plan.md",
-  "todo_md": "Full markdown content of tasks/todo.md",
-  "output_paths": ["tasks/plan.md", "tasks/todo.md"],
+  "plan_md": "Full markdown content of plan.md",
+  "todo_md": "Full markdown content of todo.md",
+  "output_paths": ["~/Documents/zk-data/skills/task-breakdown/{date}-{run}/plan.md", "~/Documents/zk-data/skills/task-breakdown/{date}-{run}/todo.md"],
   "pko_anchors": {
     "procedure": "pko:Procedure",
     "procedure_target": "pplan:Step",

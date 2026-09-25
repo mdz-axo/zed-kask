@@ -1,8 +1,8 @@
 //! Educt selection algebra — the deterministic word-index ↔ time layer.
 //!
 //! The trust boundary of the transcript-store design: LLM passes emit word
-//! indices, never timestamps; this module owns the only index→time mapping
-//! required by `tasks/reduct-video-analysis-scaffold.md`. Everything here is pure over
+//! indices, never timestamps; this module owns the only index→time mapping.
+//! Everything here is pure over
 //! `&[TimedWord]` — no I/O, no storage, no inference — so every guarantee
 //! is checkable by test.
 //!

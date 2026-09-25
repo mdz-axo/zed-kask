@@ -6,7 +6,7 @@ description: "Decompose work into small, verifiable, vertically-sliced tasks wit
 
 # Task Breakdown
 
-Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize tasks/plan.md + tasks/todo.md with PKO process-axis anchors. v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-management (single-pass board populate) and tdd (consumes the plan one vertical slice at a time).
+Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize plan.md + todo.md in the skill run directory with PKO process-axis anchors. v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-management (single-pass board populate) and tdd (consumes the plan one vertical slice at a time).
 
 ## When to Use
 
@@ -14,7 +14,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 - When you need a convergent PDCA loop: gather read-only context and dependency graph, decompose by slicing and writing tasks in one producer, evaluate against weighted criteria, iterate until the plan is stable, then finalize.
 - When implementation order must follow a dependency graph built bottom-up (foundations first) rather than ad-hoc task ordering.
 - When a plan needs an independent quality gate to detect self-assessment bias and compensation masking distinct from the producer-coupled evaluation step.
-- When the deliverable is `tasks/plan.md` + `tasks/todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
+- When the deliverable is `plan.md` + `todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-discovery (route) consumption.
 - When you need to distinguish this skill from kanban-task-management (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
 
@@ -75,12 +75,12 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 
 ### task-breakdown-write-plan
 
-1. Create the `tasks/` directory if it does not exist.
-2. Write `tasks/plan.md` with: overview, architecture decisions, phased task list with checkpoints, risks table, and open questions.
+1. Create the run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/` (via `terminal`; built-in file tools cannot write under `~/Documents/zk-data`). Plans are skill artifacts, never repository files.
+2. Write `plan.md` there with: overview, architecture decisions, phased task list with checkpoints, risks table, and open questions.
 3. Include a Refinement History section in `plan.md` (v0.31.0 — PDCA loop visibility): when `refinement_directives` were applied across PDCA iterations, document what criterion scored above threshold, what was wrong, and what fix was applied. Omit the section if no refinement was needed.
-4. Write `tasks/todo.md` as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.
+4. Write `todo.md` there as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.
 5. Emit `pko_anchors`: map the plan to `pko:Procedure` targeting a `pko:ProcedureTarget`; each task to `pko:Step` with `pko:StepVerification`; phases to `pko:MultiStep`; risks to `pko:IssueOccurrence`; open questions to `pko:UserQuestionOccurrence`; checkpoints to `pko:UserFeedbackOccurrence`.
-6. Attach DC+BIBO state metadata (title/creator/date, `bibo:Document`) to the `tasks/plan.md` document itself — PKO grounds the structure, DC+BIBO grounds the document.
+6. Attach DC+BIBO state metadata (title/creator/date, `bibo:Document`) to the `plan.md` document itself — PKO grounds the structure, DC+BIBO grounds the document.
 7. Do not invent tasks not present in the input `tasks` array.
 8. Produce a JSON object with `plan_md`, `todo_md`, `output_paths`, and `pko_anchors`.
 
@@ -98,7 +98,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 | `task-breakdown-decompose.j2` | DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. v0.38.0: each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." v0.31.0: emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. Each task carries slice_id/feature_path, acceptance criteria, verification, dependencies, files, scope (XS/S/M/L/XL), and skill_match_query (a natural-language capability description consumed by skill-discovery (route) when the skill_catalog input is provided). The PDCA loop re-enters here so refinement directives are task-addressable and re-slicing + re-writing happen together. |
 | `task-breakdown-evaluate.j2` | CHECK phase — score the plan against seven weighted criteria: target condition coverage (0.20, v0.38.0 — do the tasks collectively achieve the target?), task sizing (0.20, v0.31.0: now includes task-count awareness — >20 or <3 tasks penalized), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). v0.31.0: receives context_summary for project-specific convention checking (Good Regulator). Emits specific refinement_directives for criteria above threshold — directives are task-addressable (consumed by decompose). |
 | `task-breakdown-quality-gate.j2` | Independent quality gate — evaluates the plan WITHOUT self-assessment bias, distinct from the producer-coupled evaluate step. v0.38.0: scores seven criteria including target_condition_coverage. v0.31.0: receives context_summary for independent project-specific convention checking. Scores the seven criteria independently, flags compensation masking, and detects bias deltas vs the producer's self-assessment. |
-| `task-breakdown-write-plan.j2` | ACT phase — finalize the plan into tasks/plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and tasks/todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. v0.38.0: includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. v0.31.0: includes Refinement History section in plan.md documenting what was refined across PDCA iterations, making the loop visible in the artifact. |
+| `task-breakdown-write-plan.j2` | ACT phase — finalize the plan into plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. v0.38.0: includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. v0.31.0: includes Refinement History section in plan.md documenting what was refined across PDCA iterations, making the loop visible in the artifact. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `task-breakdown/task-breakdown-plan`) and a context object with the required variables.
 

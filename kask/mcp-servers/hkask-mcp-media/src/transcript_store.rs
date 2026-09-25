@@ -1,7 +1,6 @@
 //! Educt transcript store — SQLite persistence for `TranscriptBundle`s and
 //! their layers, in the media server's existing DB via the `GalleryStore`
-//! driver (the local authority selected by
-//! `tasks/reduct-video-analysis-scaffold.md`: ground truth and typed records
+//! driver (the local authority: ground truth and typed records
 //! live together, eliminating the orphan-JOIN trap across stores;
 //! the corpus server is a derived, rebuildable search index, never the
 //! reverse).

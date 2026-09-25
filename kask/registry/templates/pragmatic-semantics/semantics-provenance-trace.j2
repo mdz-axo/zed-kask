@@ -28,10 +28,10 @@ You are a provenance tracer. Trace a claim back through hKask's data layers to d
 
 | Layer | What Lives Here | Authority |
 |-------|-----------------|-----------|
-| **Specification** | `docs/architecture/PRINCIPLES.md`, `MDS.md`, `TESTING_STANDARDS.md` | Highest — normative |
+| **Specification** | `kask/docs/architecture/core/PRINCIPLES.md`, `kask/docs/architecture/core/MDS.md`, `kask/docs/reference/testing-protocol.md` | Highest — normative |
 | **Ontology tier** | Domain anchoring — FIBO (+0.10), SUMO (+0.05), GOLEM/ML-Schema/OMC (±0.00) | Confidence modifier — adjusts claim precision based on ontology adoption and mapping fidelity |
-| **Design** | `docs/architecture/hKask-architecture-master.md`, ERDs, interface specs | High — authoritative for structure |
-| **Implementation** | `crates/*/src/**/*.rs`, `Cargo.toml`, `build.rs` | Direct — what actually runs |
+| **Design** | `kask/docs/architecture/` specifications, `DIVERGENCE.md`, interface specs | High — authoritative for structure |
+| **Implementation** | `kask/crates/*/src/**/*.rs`, `kask/mcp-servers/*/src/**/*.rs`, `crates/*/src/**/*.rs`, `Cargo.toml`, `build.rs` | Direct — what actually runs |
 | **Runtime observation** | Regulation spans (`reg.*`), variety counters, algedonic alerts | Empirical — what actually happens |
 | **Memory** | `hkask-memory`: episodic (private), semantic (public) | Derived — consolidated from experience |
 | **Inference** | Agent reasoning, template output, Curator conclusions | Lowest — derived, may contain assumptions |

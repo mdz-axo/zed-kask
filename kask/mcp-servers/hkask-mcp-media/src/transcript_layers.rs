@@ -2,7 +2,7 @@
 //! over the immutable `words` array.
 //!
 //! Every layer anchors to word indices, never timestamps (the
-//! transcript-as-timeline model in `tasks/reduct-video-analysis-scaffold.md`), and
+//! transcript-as-timeline model), and
 //! carries `LayerProvenance` (model, prompt template, created_at) — Magna
 //! Carta: system types are provenance-aware. Validation is deterministic
 //! and total: a layer that fails is rejected with the named failing

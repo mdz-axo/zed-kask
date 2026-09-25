@@ -1218,8 +1218,8 @@ self-healing reopen; `kask/crates/kask_bridge/src/memory/curator_stores.rs::open
 validates it, and applies it on both store-construction paths. Historical
 bridge RED observed 180 instead of configured 30 without this application;
 the restored bridge suite passes. Curator parser/store and decay-formula
-tests passed in the prior handoff. Full application check and scoped lint subsequently passed;
-see `tasks/plan.md` for exact evidence. The Memory settings UI
+tests passed. Full application check and scoped lint subsequently passed;
+the evidence record is `tasks/plan.md` in git history (last at `b1375ff3be`). The Memory settings UI
 already exposes this field; no UI omission is intended.
 
 `HKASK_MEMORY_STORAGE_BUDGET` remains unwired: the curator store uses the

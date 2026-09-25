@@ -85,7 +85,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 
 | Surface | Status | Note |
 |---|---|---|
-| `DataSovereigntyBoundary` | OUGHT — zero hits | Intended consent-boundary struct; `hkask-types/src/curation.rs` does not exist |
+| `DataSovereigntyBoundary` | OUGHT — zero hits | Intended consent-boundary struct |
 | `UserSovereigntyState` | OUGHT — zero hits | Intended per-user sovereignty tracking struct |
 | `DefaultSpecCurator` / `check_sovereignty` | OUGHT — zero hits | The prior `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction; no successor exists |
 | `SovereigntyConsent` / `DenyAllConsent` | OUGHT — zero hits | Intended consent port and fail-closed default |
@@ -198,7 +198,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-28; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-28; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch.
 
 ---
 

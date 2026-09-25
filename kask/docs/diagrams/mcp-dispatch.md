@@ -118,10 +118,7 @@ verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, co
 status: VERIFIED
 -->
 
-`apply_router_bypassing_built_ins` (in the removed
-`crates/agent/src/tool_router.rs`) was the seam that once pruned the MCP
-surface per turn; the LazyToolRouter was removed entirely (D44, 2026-08-30)
-— the full registered surface is presented every turn, tools hidden by the
+The full registered surface is presented every turn (D44), tools hidden by the
 remaining filter layers (profile allowlists, server scope, curator gating)
 are named by the system-prompt visibility marker, and the `list_mcp_tools`
 meta-tool lets the model enumerate the registered surface on demand.

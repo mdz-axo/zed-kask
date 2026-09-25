@@ -93,9 +93,8 @@ impl GraphWidget {
         };
         // Compute polytree status before `body` is moved into the struct.
         let backward_inference_available = crate::propagate::is_polytree(&body);
-        // Raw signal for the reask/what-if measurement gate. Counted via
-        // tracing target `reg.widget.graph_render`. See
-        // tasks/widget-interactivity/plan.md (Track 3, decision 10).
+        // Raw signal for the reask/what-if measurement: counted via tracing
+        // target `reg.widget.graph_render`.
         let node_count = body.nodes.len();
         let subject = body.subject.clone().unwrap_or_default();
         tracing::info!(
@@ -471,10 +470,9 @@ impl Focusable for GraphWidget {
 }
 
 // A what-if the user explored (evidence was set) is being lost because the
-// widget is dropped without a saved branch (branches do not exist yet — T8b).
+// widget is dropped without a saved branch (the widget has no branches).
 // Counted via tracing target `reg.widget.whatif_discarded`; paired with
-// `reg.widget.evidence_set` to form the discard rate that gates Track 3.
-// See tasks/widget-interactivity/plan.md (decision 10, T7).
+// `reg.widget.evidence_set` to form the discard rate.
 impl Drop for GraphWidget {
     fn drop(&mut self) {
         if !self.evidence.is_empty() {

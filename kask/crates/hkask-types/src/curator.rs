@@ -208,7 +208,7 @@ fn default_drift_threshold() -> f64 {
 
 /// Configurable thresholds for Curation decisions (spec coherence, drift).
 ///
-/// Consolidated from `hkask-regulation/src/types/curation.rs` into `hkask-types`
+/// Lives in `hkask-types`, not `hkask-regulation`
 /// (curation regulates cybernetics — its config belongs in the foundation layer).
 /// YAML loading remains in `hkask-regulation` (requires `serde_yaml_neo`).
 #[derive(Debug, Clone, serde::Deserialize)]

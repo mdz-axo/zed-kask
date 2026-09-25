@@ -1,7 +1,7 @@
 //! Educt transcript-store tools — persist and recall transcripts + layers.
 //!
-//! Local implementation of the transcript-as-timeline interaction model
-//! recovered in `tasks/reduct-video-analysis-scaffold.md`: transcripts stop
+//! Local implementation of the transcript-as-timeline interaction model:
+//! transcripts stop
 //! being per-call artifacts and become queryable objects keyed to their media
 //! path and optional gallery Asset. Persistence and selection are local; pass
 //! tools use configured inference providers, never a hidden Reduct cloud path.

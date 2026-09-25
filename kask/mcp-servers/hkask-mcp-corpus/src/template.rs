@@ -101,8 +101,8 @@ pub(crate) fn render_docproc_template(
 }
 
 // ── One-shot rendering (Strict, no cache) ───────────────────────────────────
-// Shared by `corpus/discover/llm.rs` and `compose.rs` — eliminates the
-// duplicated Environment construction + ServiceError error-wrapping boilerplate.
+// One Environment construction and ServiceError wrapping for one-shot renders
+// (`compose.rs`).
 
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 

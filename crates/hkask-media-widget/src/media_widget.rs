@@ -156,7 +156,7 @@ pub struct MediaWidget {
 
 // Stat + read an audio file with the 256 MiB size guard. Pure (no `self`), so it
 // is safe to move into a background task; the bytes are handed back to the
-// foreground thread where `load_bytes_paused` initializes rodio. See SF-1.
+// foreground thread where `load_bytes_paused` initializes rodio.
 async fn fetch_remote_media(
     client: Arc<dyn HttpClient>,
     url: String,
@@ -487,7 +487,7 @@ impl MediaWidget {
     // Read + stat an audio file off the foreground thread. The blocking I/O
     // (stat + read up to 256 MiB) runs on a background worker;
     // `load_bytes_paused` initializes rodio on the foreground thread where the
-    // AudioPlayer was constructed. See SF-1 in tasks/widget-interactivity/plan.md.
+    // AudioPlayer was constructed.
     fn load_audio_file_async(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         self.audio_loading = true;
         self.sync_transport_state(cx);
