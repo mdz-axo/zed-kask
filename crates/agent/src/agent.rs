@@ -10175,6 +10175,13 @@ mod internal_tests {
             1,
             "Curator must see the same status tool exactly once"
         );
+        // Registered Curator tools must reach the model, not merely register.
+        for name in ["curator_directive", "curator_clear_algedonic_log"] {
+            assert!(
+                request.tools.iter().any(|tool| tool.name == name),
+                "{name} is registered for the Curator but dropped before the model"
+            );
+        }
         // Skill evaluation belongs to the algedonic review with the Curator:
         // the rating tool must reach the Curator model, not merely register.
         assert!(

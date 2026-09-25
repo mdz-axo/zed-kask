@@ -269,6 +269,8 @@ tools! {
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
+    CuratorClearAlgedonicLogTool,
+    CuratorDirectiveTool,
     CuratorStatusTool,
     DeletePathTool,
     DiagnosticsTool,

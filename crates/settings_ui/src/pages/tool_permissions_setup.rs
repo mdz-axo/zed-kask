@@ -1410,6 +1410,10 @@ mod tests {
             // Read-only view of the single in-process metacognition provider;
             // no directive or log-mutation authority follows from visibility.
             "curator_status",
+            // Curator-only session tools (registered by NativeAgent::new_session
+            // for Curator sessions); the Curator role is their authorization.
+            "curator_directive",
+            "curator_clear_algedonic_log",
             "diagnostics",
             "find_path",
             "find_references",

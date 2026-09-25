@@ -7689,12 +7689,15 @@ async fn default_constructed_tools_and_macro_list_are_in_sync(cx: &mut TestAppCo
             .collect()
     });
 
-    // These tools are registered outside add_default_tools: status and the
-    // Curator-only skill-evaluation tool in NativeAgent::new_session, the skill
+    // These tools are registered outside add_default_tools: status, the
+    // Curator-only directive, log-clear and skill-evaluation tools in
+    // NativeAgent::new_session, the skill
     // tool in register_session. Their separate session-path tests pin that
     // they reach (or, for native sessions, stay out of) model-visible requests.
     const SESSION_TOOLS: &[&str] = &[
         CuratorStatusTool::NAME,
+        CuratorDirectiveTool::NAME,
+        CuratorClearAlgedonicLogTool::NAME,
         SkillTool::NAME,
         RecordSkillFeedbackTool::NAME,
     ];
