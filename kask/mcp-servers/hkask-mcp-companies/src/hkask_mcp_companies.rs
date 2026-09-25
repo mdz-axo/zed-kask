@@ -463,8 +463,13 @@ mod tool_behavior_tests {
     use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
 
-    fn make_server() -> CompaniesServer {
-        CompaniesServer::new(
+    /// The store lives in a temp dir kept alive by the returned guard: a
+    /// test must never create databases in the operator's data folder.
+    fn make_server() -> (CompaniesServer, tempfile::TempDir) {
+        let store_dir = tempfile::tempdir().expect("temp research store dir");
+        let store =
+            ResearchStore::with_dir(store_dir.path().to_path_buf()).expect("research store init");
+        let server = CompaniesServer::new(
             WebID::new(),
             reqwest::Client::new(),
             "test-fmp-key".to_string(),
@@ -473,12 +478,13 @@ mod tool_behavior_tests {
             None,
             None,
             None,
-            ResearchStore::new(WebID::new()).expect("research store init"),
+            store,
             std::sync::Arc::new(std::sync::Mutex::new(LearningState::default())),
             superforecast::FermiDefaults::from_env(),
             0.15,
             None,
-        )
+        );
+        (server, store_dir)
     }
 
     // Pins the registered tool-surface count end-to-end. The portfolio ledger
@@ -535,7 +541,7 @@ mod tool_behavior_tests {
     /// `InvalidArgument` error — never panic, never fetch.
     #[tokio::test]
     async fn moat_check_rejects_invalid_symbol_with_typed_error() {
-        let server = make_server();
+        let (server, _store_dir) = make_server();
         let error = server
             .moat_check(Parameters(SymbolRequest {
                 symbol: "../etc/passwd".to_string(),
@@ -556,7 +562,7 @@ mod tool_behavior_tests {
     /// An over-long symbol (>32 chars) violates `validate_identifier`'s cap.
     #[tokio::test]
     async fn moat_check_rejects_over_long_symbol() {
-        let server = make_server();
+        let (server, _store_dir) = make_server();
         let long_symbol = "A".repeat(64);
         let error = server
             .moat_check(Parameters(SymbolRequest {
@@ -602,7 +608,7 @@ mod tool_behavior_tests {
     /// request leaves.
     #[tokio::test]
     async fn resolve_symbol_requires_name_or_ticker() {
-        let server = make_server();
+        let (server, _store_dir) = make_server();
         let error = server
             .resolve_symbol(Parameters(ResolveSymbolRequest {
                 company_name: None,

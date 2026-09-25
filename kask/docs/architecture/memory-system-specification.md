@@ -39,9 +39,7 @@ mds_categories: [lifecycle, domain, curation, trust]
 >
 > **Migration verification:** deletion and column removal commit together.
 > Before the first open with the rebuilt binary, take a fresh SQLCipher
-> `VACUUM INTO` backup of curator, kanban, and swarm memory DBs. The older
-> `curator.db.bak-therapy-2026-09-04` predates the hygiene pass and is not a
-> restore point for the current state. After restart, verify the column is
+> `VACUUM INTO` backup of curator, kanban, and swarm memory DBs. After restart, verify the column is
 > absent, retained-row counts match the pre-migration snapshot, and live
 > `curator_memory_recall` / `curator_semantic_search` work. Unit tests over
 > encrypted fixtures do not substitute for this operator restart gate.
