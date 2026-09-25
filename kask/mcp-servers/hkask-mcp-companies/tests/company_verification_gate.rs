@@ -253,6 +253,8 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
     changed_rule["resolution_criteria"] = json!("Management estimate");
     let mut changed_deadline = original.clone();
     changed_deadline["expiration_date"] = json!("2028-01-31");
+    let mut added_field = original.clone();
+    added_field["confidence_flag"] = json!("quietly changed");
 
     for (name, packet_variant, revised, expected_source, expected_gate) in [
         (
@@ -268,6 +270,13 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             edited,
             "checked",
             "passed",
+        ),
+        (
+            "added_non_rationale_field",
+            packet.clone(),
+            added_field,
+            "checked",
+            "needs_work",
         ),
         (
             "changed_probability",
@@ -559,5 +568,20 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
         );
         eprintln!("{name}: source={status}, gate={result}");
     }
+    let mut invalid = original;
+    invalid["probability"] = json!(1.5);
+    let result = hkask_lisp::eval_sandboxed(
+        gate,
+        &json!({
+            "fact_score":1.0,"claims_checked":3,"decoupling":"spawn_agent",
+            "checks_complete":true,"material_failure":false,
+            "source_review_status":source_status(packet)?,
+            "original_forecast":invalid,"working_forecast":invalid
+        }),
+    )?;
+    ensure!(
+        result == "incomplete",
+        "invalid unchanged probability was accepted: {result}"
+    );
     Ok(())
 }
