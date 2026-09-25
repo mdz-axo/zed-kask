@@ -9,6 +9,7 @@ contract:
     rotated_board: object|null
     economic_trajectory: object|null
     simon_inquiry: object|null
+    eqm_review: object|null
   output:
     business_franchise: object
     management_quality: object
@@ -72,6 +73,14 @@ If the capability assessment has maturity_blocks, the elicited scores for those 
 ```json
 {{ imagine_board | tojson }}
 ```
+
+{% if eqm_review %}
+## EQM forecast-rationale review (advisory, not a thesis grade)
+
+{{ eqm_review | tojson }}
+
+Use the reviewed rationale only for its original dated forecast and unchanged probability. A higher EQM score is not evidence of more accurate forecasts or a stronger investment thesis. If the review is skipped, rejected, incomplete or has no realized-outcome validation, preserve the gap. Do not promote new facts into the thesis without their retained sources and late independent verification.
+{% endif %}
 
 {% if economic_trajectory %}
 ## Economic Trajectory (from economic-trajectory probe)
@@ -147,5 +156,5 @@ One paragraph. Durable, timeless, covering all three pillars. The kind of statem
 - The terminal stage must cross-reference the IMAGINE 10Y scenario. If IMAGINE is absent, flag it and score conservatively.
 - If `rotated_board` is available, the Business Franchise pillar MUST reflect the rotated competitive framing. Do not reproduce corrected framing errors.
 - If `economic_trajectory` is available, the Valuation terminal stage MUST be consistent with the trajectory's implications. Do not project a steady-state terminal that ignores the falling cost's impact.
-- Do not introduce new analysis. You are synthesizing COMPANY, FALSTAFFIAN, GORILLA, ECONOMIC TRAJECTORY, and IMAGINE outputs.
+- Do not introduce new analysis. You are synthesizing COMPANY, FALSTAFFIAN, GORILLA, ECONOMIC TRAJECTORY, IMAGINE, and any advisory EQM review outputs.
 - The thesis statement is the seed for the thesis-judge quality gate. Make it specific enough to evaluate.

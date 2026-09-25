@@ -131,6 +131,8 @@ Emit 3–5 falsifiable predictions, each tagged by horizon. These are persisted 
 - **Resolution criteria**: how to determine if it came true
 - **Expiration date**: when the prediction resolves
 - **Trajectory basis**: which economic trajectory assumption this prediction is grounded in
+- **Rationale**: why this exact probability fits the cited evidence and the strongest contrary case; this is the forecast explanation, not the company thesis.
+- **Rationale sources**: `source_outputs.output_key` references for material factual claims. If there is no retained source, name the gap rather than writing plausible supporting facts.
 
 Good: "By 2031, {{ ticker }} will derive > 30% of revenue from [specific segment] that did not exist in 2026."
 Bad: "The company will be successful."
@@ -166,7 +168,9 @@ What future is the market NOT discounting? If the trajectory is rapid, the marke
       "probability": 0.35,
       "resolution_criteria": "(how to determine if it came true)",
       "expiration_date": "2031-12-31",
-      "trajectory_basis": "(which trajectory assumption grounds this)"
+      "trajectory_basis": "(which trajectory assumption grounds this)",
+      "rationale": "(evidence and opposing case supporting the fixed probability)",
+      "rationale_sources": ["(retained source_outputs.output_key, or empty with a named data gap)"]
     }
   ],
   "not_on_page": "(company's position relative to the adjacent possible)",
