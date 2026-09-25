@@ -11,6 +11,20 @@ on evidence, score resolutions, and assess the project itself (Chermack).
 The scenarios server implements all three methodologies as one pipeline;
 this skill is the operating procedure for that pipeline.
 
+## Reference models
+
+- Schwartz, *The Art of the Long View* (1991) — focal question, driving forces, 2x2 narratives, indicators.
+- Tetlock & Gardner, *Superforecasting* (2015) — `onto_anchor` → derived `superforecasting`; Brier (1950) → derived `brier_score`.
+- Chermack, *Scenario Planning in Organizations* (2011) — project assessment.
+- "Scenario planning" itself anchors only at the 5W1H core (coarse): no operator ruling yet.
+
+## Initial and target condition
+
+- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument, and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) passed as `prior_calibration`; on a first run it is null.
+- **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
+
+**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P, critiqued by the separate `scenario-quality-gate` render, `scenario_cross_validate` (divergence > 0.15 → `grill-me`), and, at resolution, Brier.
+
 ## When to Use
 
 - The operator faces a decision under uncertainty with a time horizon
