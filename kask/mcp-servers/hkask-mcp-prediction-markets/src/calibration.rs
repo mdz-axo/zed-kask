@@ -19,11 +19,10 @@ pub struct ResolvedObservation {
     pub probability: f64,
     pub outcome: bool,
     /// Provider-stable market identity (Kalshi `ticker`, Polymarket Gamma
-    /// `id`) — the dedup key for the rescan guard. `None` on legacy journal
-    /// rows predating identity and on manual `market_record_resolution`
-    /// calls (which carry no market id); identity-less observations are
-    /// never treated as duplicates — that would fabricate an identity the
-    /// row does not carry.
+    /// `id`) — the dedup key for the rescan guard. `None` on manual
+    /// `market_record_resolution` calls (which carry no market id);
+    /// identity-less observations are never treated as duplicates — that
+    /// would fabricate an identity the row does not carry.
     #[serde(default)]
     pub market_key: Option<String>,
 }
@@ -78,7 +77,7 @@ struct JournalRow {
     bucket: String,
     probability: f64,
     outcome: bool,
-    /// Absent on legacy lines (serde default) — loaded as `None`, never
+    /// Absent on manual records (serde default) — loaded as `None`, never
     /// deduplicated against identity-bearing observations.
     #[serde(default)]
     market_key: Option<String>,
@@ -149,7 +148,7 @@ impl CalibrationStore {
     /// 0.9/no markets are five samples), while a rescan of the same
     /// market is always a duplicate — a market resolves once, so identity
     /// matches even if the re-scanned price differs. Identity-less
-    /// observations (legacy journal rows, manual records) are NEVER
+    /// observations (manual records) are NEVER
     /// duplicates — treating them as such would fabricate an identity the
     /// row does not carry.
     pub fn contains(&self, bucket: &str, observation: &ResolvedObservation) -> bool {
@@ -372,12 +371,12 @@ mod tests {
         }
     }
 
-    /// Legacy observations without identity are never deduplicated —
+    /// Observations without identity (manual records) are never deduplicated —
     /// treating them as duplicates would fabricate an identity the row
     /// does not carry. And an identity-bearing observation never collides
     /// with an identity-less one.
     #[test]
-    fn legacy_observations_without_identity_never_dedup() {
+    fn observations_without_identity_never_dedup() {
         let mut store = CalibrationStore::new();
         store.record(
             "politics",
@@ -387,13 +386,13 @@ mod tests {
                 market_key: None,
             },
         );
-        let same_legacy = ResolvedObservation {
+        let same_manual = ResolvedObservation {
             probability: 0.9,
             outcome: false,
             market_key: None,
         };
         assert!(
-            !store.contains("politics", &same_legacy),
+            !store.contains("politics", &same_manual),
             "no identity — never a duplicate"
         );
         let identified = ResolvedObservation {
@@ -403,7 +402,7 @@ mod tests {
         };
         assert!(
             !store.contains("politics", &identified),
-            "an identity-bearing observation never collides with a legacy row"
+            "an identity-bearing observation never collides with a manual record"
         );
     }
 

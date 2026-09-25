@@ -29,9 +29,8 @@ use crate::error::LocalSwarmError;
 ///
 /// `member_sources` tracks the provenance of each member's addition (Gap 6
 /// fix — the ecology view needs a provenance signal without the full RBAC
-/// machinery). Backward-compatible: existing `swarm.json` files without this
-/// field deserialize with an empty vec; members added via `add_member` get a
-/// `MemberSource` entry with `source = "operator"`.
+/// machinery). Members added via `add_member` get a `MemberSource` entry with
+/// `source = "operator"`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalSwarm {
     pub swarm_id: String,
@@ -42,7 +41,7 @@ pub struct LocalSwarm {
     pub members: Vec<String>,
     /// Provenance for each member's addition. Aligned with `members` by
     /// `agent_id` — a member without a `MemberSource` entry has unknown
-    /// provenance (backward compat with pre-Gap-6 `swarm.json` files).
+    /// provenance.
     #[serde(default)]
     pub member_sources: Vec<MemberSource>,
     #[serde(default)]
@@ -50,8 +49,6 @@ pub struct LocalSwarm {
     /// The ABW workspace id this local swarm is synced with. `None` =
     /// local-only. Set by `swarm_push_local_swarm` (after ABW workspace
     /// creation) and `swarm_pull_swarm_to_local` (when copying from ABW).
-    /// Backward-compatible: existing `swarm.json` files without this field
-    /// deserialize with `None`.
     #[serde(default)]
     pub cloud_workspace_id: Option<String>,
 }
