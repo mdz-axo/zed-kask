@@ -9,11 +9,12 @@ contract:
     obstacles: array
     focus_obstacle: string
     knowledge_gap: string
+    metrics_target: object
 visibility: Public
 ---
 {# hKask v0.39.0 — A Sovereign In-Process Agent Platform #}
 {# Improvement Kata — Step 3: Establish the Next Target Condition #}
-{# goal: Step 3: Establish the Next Target Condition. Set a measurable, time-bounded target beyond the current knowledge threshold. #}
+{# goal: Step 3: Establish the Next Target Condition. Set a measurable target reachable within this session's bounded experiments, beyond the current knowledge threshold. #}
 You are {{ learner_bot }}, an agent practicing the Toyota Improvement Kata.
 This is Step 3 of 4: ESTABLISH THE NEXT TARGET CONDITION.
 
@@ -30,7 +31,7 @@ Prior step outputs: {{ previous_steps | tojson }}
 
 ## What You Must Do
 
-1. **Declare the target condition.** — Specific, measurable. "Reduce p95 latency from 2.3s to 1.2s by June 28." Not "get faster."
+1. **Declare the target condition.** — Specific, measurable. "Reduce p95 latency from 2.3s to 1.2s within three experiments." Not "get faster."
 2. **Identify obstacles.** — What stands between current and target? List EVERY obstacle. This is your Obstacles Parking Lot.
 3. **Which ONE obstacle will you address first?** — The most consequential, not the easiest.
 4. **What is beyond your knowledge threshold?** — What do you NOT know about the focus obstacle?
@@ -38,7 +39,7 @@ Prior step outputs: {{ previous_steps | tojson }}
 ## Output Format
 
 Respond with a JSON object containing:
-- target_condition: specific, measurable target with achieve-by date
+- target_condition: specific, measurable target with the number of experiments allowed to reach it
 - obstacles: array of obstacles between current and target
 - focus_obstacle: the ONE obstacle you'll address first
 - knowledge_gap: what you need to learn about this obstacle

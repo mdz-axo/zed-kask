@@ -22,7 +22,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 - **Project-local skills:** `.agents/skills/<name>/SKILL.md` (in the worktree)
 - **Global skills:** `~/.local/share/zed-kask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing)
 - **Prompt templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
-- `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities.
+- `skill-discovery` matches tasks to installed skills (route) and acquires NEW skills when route emits uncovered capabilities (detect-gap → evaluate).
 
 ---
 
@@ -60,8 +60,7 @@ hKask ships **12 MCP servers** launched by zed's `context_server` as child proce
 - `bug-hunt` / `diagnose` — Exploration and debugging.
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
-- `skill-router` — Match tasks to installed skills (fit-scored recommendations, gap signals for skill-discovery).
-- `skill-discovery` — Detect capability gaps, search catalog, evaluate candidates, guide installation.
+- `skill-discovery` — Route tasks to installed skills, detect capability gaps, evaluate candidates before installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
 - `kata-coaching`, `kata-improvement`, `improv` — Toyota Kata dialogues.
@@ -122,7 +121,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
-| Skill matching for a task | `skill-router` | `task-breakdown` (decompose) then `skill-discovery` (if gaps found) |
+| Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
 | Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |
 | Deterministic computation needed | `lisp_eval` tool | (call directly — no skill activation needed) |

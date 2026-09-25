@@ -58,7 +58,8 @@ The skill follows a **three-layer architecture**:
 │  OUTER LAYER: Improvement Kata (kata-improvement)               │
 │  Step 1: Understand Direction (what capability are we building?) │
 │  Step 2: Grasp Current Condition (baseline measurement)         │
-│  Step 3: Establish Target Condition (measurable, time-bounded)   │
+│  Step 3: Establish Target Condition (measurable, bounded in      │
+│          this session's experiments)                           │
 │  Step 4: Experiment (PDCA) — delegates to MIDDLE LAYER           │
 │  Convergence: before/after measurement against target             │
 └─────────────────────────────────────────────────────────────────┘
@@ -101,32 +102,14 @@ This separation is critical because the paper identifies a key tension: "self-im
 
 ## Instructions
 
-### si-kata-direction (Outer Kata Step 1)
+### Outer Kata Steps 1–3 (rendered from `kata-improvement`)
 
-1. Articulate the strategic direction: what capability should the agent build or improve?
-2. Answer what the challenge is with specific, measurable statements.
-3. Describe what excellent performance looks like in measurable terms.
-4. Define how you will know you've improved by stating the metric and measurement plan.
-5. Identify the knowledge threshold: what do you NOT know about the target capability?
-6. Respond with a JSON object containing `challenge`, `excellent_performance`, `measurement_plan`, and `knowledge_threshold`.
+The outer Kata uses the `kata-improvement` step templates directly; this skill supplies the self-improvement framing in `context`, and never restates the procedure.
 
-### si-kata-current (Outer Kata Step 2)
-
-1. Go and see to gather the facts; do not assume—measure.
-2. Collect real data to describe the actual performance now.
-3. List every metric describing the current state with method and source.
-4. Observe what patterns exist in the data.
-5. Redraw the boundary between known and assumed for your knowledge threshold.
-6. Record the baseline measurements you commit to measuring against as `metric_before`.
-7. Respond with a JSON object containing `current_performance`, `metrics`, `patterns`, `knowledge_threshold`, and `metric_before`.
-
-### si-kata-target (Outer Kata Step 3)
-
-1. Declare a specific, measurable target condition reachable within this session's bounded PDCA cycles (at most 5 per Kata step), beyond your current knowledge threshold. The horizon is counted in bounded experiments, not calendar time (operator ruling 2026-09-24).
-2. Identify every obstacle between current and target conditions to create an Obstacles Parking Lot.
-3. Select the ONE most consequential obstacle to address first.
-4. Define what you do NOT know about the focus obstacle.
-5. Respond with a JSON object containing `target_condition`, `obstacles`, `focus_obstacle`, `knowledge_gap`, and `metrics_target`.
+1. Render `kata-improvement/improvement-step1-direction`, `kata-improvement/improvement-step2-current`, and `kata-improvement/improvement-step3-target` in order, passing each step's output in `previous_steps`.
+2. In `context`, state the self-improvement framing (Ren et al., 2026, arXiv:2607.13104): the agent configuration 𝒜_t = (θ_t, Σ_t), where θ_t is the foundation model and Σ_t = (p_t, m_t, 𝒯_t, g_t) is the scaffold (prompts, memory, tools, control logic); the challenge is the capability gap the update operator 𝒰 should close.
+3. Step 2 (current condition) must describe the current θ_t and Σ_t and include cost metrics (compute, tokens, wall-clock time, human input) and safety metrics (regression rate, safety violations, goal-drift indicators) alongside performance metrics; record `metric_before`.
+4. Step 3 (target) counts its horizon in this session's bounded PDCA experiments (at most 5 per Kata step), not calendar time (operator ruling 2026-09-24); record `metrics_target`.
 
 ### si-select-pathway (PDCA Plan)
 
@@ -204,9 +187,6 @@ The skill implements the paper's safety recommendations (Section 9.1):
 
 | Template | Purpose |
 |----------|---------|
-| `si-kata-direction.j2` | Improvement Kata Step 1 — understand the strategic direction from the level above and articulate the challenge. |
-| `si-kata-current.j2` | Improvement Kata Step 2 — gather facts and data to establish the baseline state of the agent's current capabilities. |
-| `si-kata-target.j2` | Improvement Kata Step 3 — set a measurable, time-bounded target beyond the current knowledge threshold. |
 | `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
 | `si-execute-improvement.j2` | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
 | `si-evaluate-improvement.j2` | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
@@ -219,13 +199,10 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-exec-scaffold-prompt.j2` | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
 | `si-exec-scaffold-tool.j2` | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `self-improvement/si-kata-direction`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `self-improvement/si-select-pathway`) and a context object with the required variables.
 
 ## Constraints
 
-- `si-kata-direction.j2`: Public.
-- `si-kata-current.j2`: Public.
-- `si-kata-target.j2`: Public.
 - `si-select-pathway.j2`: Public.
 - `si-execute-improvement.j2`: Public (router only — delegates to sub-pathway templates).
 - `si-exec-fm-demos.j2`: Public.

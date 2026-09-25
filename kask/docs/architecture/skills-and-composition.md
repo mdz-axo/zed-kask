@@ -755,35 +755,35 @@ Bundle management (list, show, apply, evolve) is performed in-process through th
 
 ## Skill Routing and Discovery
 
-Two meta-skills govern how tasks find the right skills: **skill-router** matches tasks to installed skills, and **skill-discovery** acquires new skills when gaps are found. They compose in a feedback loop.[^beer-feedback-loop]
+One meta-skill, **skill-discovery**, governs how tasks find the right skills: its **route** phase matches tasks to installed skills, and its **detect-gap** and **evaluate** phases handle what route cannot cover. The phases compose in a feedback loop.[^beer-feedback-loop]
 
 ### How It Works
 
 ```
-task-breakdown (decompose)
+task-breakdown (decompose) / metacognition (inquiry)
   → emits skill_match_query per slice
-    → skill-router (match)
+    → skill-discovery route
       → full coverage → ranked recommendations with invocation hints
       → partial/none → uncovered_capabilities
-        → skill-discovery (detect-gap → search → evaluate → install)
-          → new skill installed → catalog grows → router has better coverage
+        → skill-discovery detect-gap → evaluate → operator installs
+          → catalog grows → route has better coverage
 ```
 
-### skill-router
+### Route scoring
 
-Given a task description and the installed skill catalog, skill-router scores each skill 0.0–1.0 on three dimensions:
+Given a task description and the installed skill catalog, route scores each skill 0.0–1.0 on three dimensions:
 
 | Dimension | Weight | What it measures |
 |-----------|--------|------------------|
 | Capability overlap | 0.50 | Does the skill description cover the task core need? |
-| Lexicon alignment | 0.25 | Do task verbs/nouns overlap with the skill's lexicon terms? |
+| Description alignment | 0.25 | Do task verbs/nouns overlap with the skill's description? |
 | Trigger alignment | 0.25 | Does the task match the skill When-to-Use conditions? |
 
-Coverage assessment: **full** (fit >= 0.80), **partial** (0.40-0.79), **none** (< 0.40). Partial/none emits `uncovered_capabilities` as gap signals for skill-discovery.
+Coverage assessment: **full** (fit >= 0.80), **partial** (0.40-0.79), **none** (< 0.40). Partial/none emits `uncovered_capabilities` for detect-gap.
 
-### skill-discovery
+### Gap handling
 
-Four-phase pipeline: **detect-gap** (classify gaps: coverage, feature, automation, knowledge, governance, quality) → **search** (rank catalog candidates by fit) → **evaluate** (score format/quality/safety) → **convergence-check** (is the gap resolved?).
+**detect-gap** classifies gaps (coverage, feature, automation, knowledge, governance, quality, epistemic) and recommends an action; **evaluate** scores a candidate's format, quality and safety. Installation is the operator's decision.
 
 ### Regulation feedback records
 
@@ -948,7 +948,7 @@ builds and copies the child binary.
     Cited for the module-composition discipline the skill-bundler applies when ordering skills into phases.
 
 [^beer-feedback-loop]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
-    Cited for the cybernetic feedback-loop design the skill-router/skill-discovery pair implements.
+    Cited for the cybernetic feedback-loop design skill-discovery's route → detect-gap loop implements.
 
 [^mcp-spec-build]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
     Cited for the MCP protocol every builtin MCP server follows.

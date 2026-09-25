@@ -13,7 +13,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 - When practicing the Toyota Improvement Kata for scientific capability development.
 - When articulating the strategic direction and challenge from the level above.
 - When grasping the current condition by gathering facts and data to establish a baseline.
-- When establishing a measurable, time-bounded next target condition.
+- When establishing a measurable next target condition reachable within this session's bounded experiments.
 - When designing rapid PDCA experiments with testable predictions toward the target.
 - When computing a normalized convergence metric to evaluate the coherence of a PDCA cycle.
 - When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
@@ -74,7 +74,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 | `beginner-observation-drill.j2` | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
 | `improvement-step1-direction.j2` | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
 | `improvement-step2-current.j2` | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
-| `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable, time-bounded next target condition. |
+| `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable next target condition bounded in experiments, not calendar time. |
 | `improvement-step4-experiment.j2` | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-selector`) and a context object with the required variables.

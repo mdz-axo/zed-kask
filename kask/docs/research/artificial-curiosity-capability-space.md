@@ -10,6 +10,8 @@ mds_categories: [composition, trust]
 
 # Artificial Curiosity as Capability-Space Exploration
 
+> **Status note (2026-09-24):** the skill set analyzed here has since been consolidated: `sequential-inquiry` merged into `metacognition`, `skill-router` merged into `skill-discovery` (its route phase), and `capabilities-reasoner` was deleted. The analysis below is kept as written.
+
 > **IS/OUGHT boundary.** Sections 1–4 summarize inspected literature and the existing skill contracts; sections 5–7 operationalize a *proposed*, unimplemented zed-kask method and experiment. An RL result is not an observation of zed-kask. Confidence numbers below are judgmental degrees of belief about the stated claim, **not** experimentally calibrated frequencies. The operator has not approved or observed a new curiosity capability.
 
 ## 1. Executive verdict

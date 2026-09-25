@@ -15,7 +15,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 - When a learner must ground their understanding of the current state in actual data rather than assumptions.
 - When a learner needs to identify obstacles preventing progress and prioritize a single obstacle to address.
 - When a learner must design a rapid PDCA experiment by defining a specific next step and a testable prediction.
-- When a learner needs to close the feedback loop by committing to a specific time and metric to check results.
+- When a learner needs to close the feedback loop by committing to a specific check point and metric to check results.
 - When evaluating the overall convergence and effectiveness of a completed kata-coaching PDCA cycle.
 
 ## When NOT to Use
@@ -28,7 +28,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 ### coaching-q1-target
 
 1. Ask the learner what their target condition is.
-2. Respond as the learner with specific data from the IK storyboard, including the specific measurable target, timeline, and success criteria.
+2. Respond as the learner with specific data from the IK storyboard, including the specific measurable target, experiment bound, and success criteria.
 3. If the target is vague, ask the learner to make it more specific, measurable, and verifiable.
 
 ### coaching-q2-actual
@@ -53,7 +53,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 
 1. Ask the learner how quickly they can go and see what they learned.
 2. Prompt the learner to specify exactly when they will check the result, what metric they will measure, and what would prove the theory wrong.
-3. If the learner is vague about timing, require them to pick a specific time to compare prediction to result.
+3. If the learner is vague about the check point, require them to pick a specific experiment step at which to compare prediction to result.
 
 ## Registry Templates
 
