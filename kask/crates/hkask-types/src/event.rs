@@ -135,6 +135,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.pipeline.ocr.low_confidence",
     "reg.pipeline.ocr.rate_limit",
     "reg.pipeline.ocr.silent_failure",
+    "reg.pipeline.ocr.model_class",
+    "reg.pipeline.ocr.protocol",
     // OCR health snapshot persistence — the file the regulation loop senses
     // (a write failure blinds the loop to OCR degradation).
     "reg.pipeline.ocr.health",
