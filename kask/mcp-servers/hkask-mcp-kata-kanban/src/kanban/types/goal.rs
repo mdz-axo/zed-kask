@@ -12,7 +12,7 @@ use super::*;
 /// at resolution, so the agent's functional understanding becomes a
 /// calibrated, measurable signal across sessions.
 ///
-/// Schema lifted from the `goal-analysis` skill (`create.j2` / `judge.j2`):
+/// Schema:
 /// `goal_text` + observable `criteria` + verdict semantics
 /// `done` / `continue` / `blocked` with confidence.
 #[non_exhaustive]
@@ -74,8 +74,7 @@ impl Goal {
 
 // ── Goal Verdict ──────────────────────────────────────────────────────────
 
-/// GoalVerdictValue — the judge verdict, lifted from `goal-analysis`'s
-/// `judge.j2` semantics.
+/// GoalVerdictValue — the judge verdict (`done` / `continue` / `blocked`).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -89,8 +88,7 @@ pub enum GoalVerdictValue {
 }
 
 impl GoalVerdictValue {
-    /// Wire-format name (matches the serde lowercase rename and the
-    /// `goal-analysis` judge vocabulary).
+    /// Wire-format name (matches the serde lowercase rename).
     pub fn as_str(&self) -> &'static str {
         match self {
             GoalVerdictValue::Done => "done",

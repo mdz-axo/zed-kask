@@ -506,8 +506,8 @@ impl KanbanServer {
         .await
     }
 
-    /// Record a judge verdict against a goal's criteria. Verdict semantics
-    /// lifted from the `goal-analysis` skill: `done` (all criteria
+    /// Record a judge verdict against a goal's criteria. Verdict semantics:
+    /// `done` (all criteria
     /// satisfied), `continue` (work continues), `blocked` (unachievable or
     /// needs user input). Verdicts append to a history — the history IS the
     /// learning.
@@ -1587,8 +1587,7 @@ fn parse_goal_id(goal_id: &str) -> Result<hkask_types::GoalID, McpToolError> {
 }
 
 /// Parse a goal verdict string ("done" | "continue" | "blocked") into a
-/// `GoalVerdictValue`. Verdict semantics lifted from the `goal-analysis`
-/// skill's `judge.j2`.
+/// `GoalVerdictValue`.
 fn parse_goal_verdict(verdict: &str) -> Result<GoalVerdictValue, McpToolError> {
     match verdict {
         "done" => Ok(GoalVerdictValue::Done),

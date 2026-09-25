@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **68 skills** are authored here: **54 ship** to every zed-kask user and **14 are developer-only** (`shipped: false`). **300 Jinja2 templates across 61
+> plus a markdown body of process instructions. **66 skills** are authored here: **53 ship** to every zed-kask user and **13 are developer-only** (`shipped: false`). **291 Jinja2 templates across 59
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **68** | 54 shipped + 14 developer-only; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **61** (**300** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **66** | 53 shipped + 13 developer-only; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **59** (**291** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -152,11 +152,10 @@ developer-only skill cannot be `core: true`. Pinned by
 | `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
 | `onto-anchor` | Resolve domain terms through the published-ontology fallback ladder before naming, classifying, or computing with them |
 | `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
-| `goal-analysis` | Goal specification and completion verification |
 | `kata-improvement` | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills) |
 | `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
 
-## Developer-only skills (14, `shipped: false`)
+## Developer-only skills (13, `shipped: false`)
 
 Used to develop zed-kask itself; loaded only as project skills of this repository.
 
@@ -165,8 +164,7 @@ Used to develop zed-kask itself; loaded only as project skills of this repositor
 | `create-skill` | Author or translate a skill: ontology research, PDCA derivation, scaffold under the artifact contract, prescreen, validate |
 | `skill-maintenance` | Validate and audit existing skills; compare designs and file proposals for the algedonic review |
 | `skill-logic-audit` | Goal- and callsite-grounded audit of `.j2` templates; files a comparison-backed proposal for the algedonic review |
-| `skill-discovery` | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation |
-| `skill-router` | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals |
+| `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
 | `skill-bundler` | Compose multiple skills into a cohesive bundle |
 | `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ) |
 | `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
@@ -177,12 +175,14 @@ Used to develop zed-kask itself; loaded only as project skills of this repositor
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 68
+> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 66
 > `SKILL.md` directories. Merged by operator decision 2026-09-24:
-> `gemba-walk` into `algedonic-review`, `sequential-inquiry` into
+> `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
+> (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
 > `scenario-builder` into `scenario-planning`, `eqm-improvement` into `eqm`;
 > removed: `idiomatic-lisp`, `constraint-forces-recast`,
 > `gradient-seeded-recombination`, `capabilities-reasoner`,
-> `principle-constraints`. `kask/registry/templates/` contains 61 template
-> namespaces holding 300 `.j2` files.
+> `principle-constraints`, `goal-analysis` (its judge moved to
+> `company-research/thesis-judge`). `kask/registry/templates/` contains 59
+> template namespaces holding 291 `.j2` files.

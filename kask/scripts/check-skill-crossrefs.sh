@@ -77,6 +77,8 @@ FORMER_SKILL_NAMES=(
   'gradient-seeded-recombination'
   'capabilities-reasoner'
   'principle-constraints'
+  'goal-analysis'
+  'skill-router'
   'kali-audit'
   'adversarial-red-team'
   'graph-audit'

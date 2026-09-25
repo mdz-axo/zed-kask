@@ -3,8 +3,8 @@
 //! Thin vertical slice per `kask/docs/architecture/functional-interaction-spec.md`
 //! Phase B: the functional goal (kata target condition) as a first-class
 //! object with verifiable criteria, recorded verdicts, and Brier-scored
-//! intake predictions. Schema lifted from the validated `goal-analysis`
-//! skill templates.
+//! intake predictions. These tools are the canonical goal lifecycle (the
+//! former `goal-analysis` skill was removed in their favor).
 //!
 //! **Persistent through memory acknowledgment (operator ruling 2026-09-16):**
 //! the goal store is the same DB-backed `HMemStore` that persists boards and
@@ -32,8 +32,8 @@ impl From<hkask_storage::HMemError> for KanbanError {
     }
 }
 
-/// Bounds on goal criteria — lifted from `goal-analysis` (`create.j2`:
-/// "2–4 observable semantic conditions"), relaxed to allow a single
+/// Bounds on goal criteria — "2–4 observable semantic conditions",
+/// relaxed to allow a single
 /// criterion for trivially verifiable goals while keeping verification
 /// tractable.
 const MIN_CRITERIA: usize = 1;
