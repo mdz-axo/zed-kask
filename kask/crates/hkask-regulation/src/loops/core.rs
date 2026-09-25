@@ -599,9 +599,6 @@ impl StageActions {
     }
 }
 
-// ── Nine failure distinctions (Fermi) ───────────────────────────────────────
-
-
 // ── Inter-loop channel types ───────────────────────────────────────────────
 
 /// Cybernetics sends `Alert` through the `mpsc::Sender<CurationInput>` channel.
@@ -976,5 +973,4 @@ mod tests {
         assert_eq!(all[0].1, "algedonic_review_act");
         assert_eq!(all[0].2.len(), 2);
     }
-
 }
