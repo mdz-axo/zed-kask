@@ -284,6 +284,27 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["implied expectation", "demonstrated capability"],
         authority: "operator ruling 2026-09-19; Rappaport & Mauboussin, Expectations Investing: Reading Stock Prices for Better Returns, Harvard Business School Press (2001)",
     },
+    DerivedConcept {
+        term: "superforecasting",
+        aliases: &["superforecaster", "good judgment project method"],
+        identity: "triage -> Fermi-decompose -> outside view (base rate) -> inside view -> Bayesian updating on evidence -> synthesis -> calibrated probability, scored by Brier over resolved forecasts",
+        definition: "The forecasting method of Tetlock & Gardner, Superforecasting: The Art and Science of Prediction (2015), distilled from the Good Judgment Project: triage questions into the Goldilocks zone, break them into tractable sub-questions, anchor on a reference-class base rate before case detail, update incrementally on evidence, synthesize perspectives, and state granular probabilities judged by calibration across many resolved questions, never by one outcome.",
+        constituents: &[
+            "base rate",
+            "fermi decomposition",
+            "bayesian updating",
+            "brier score",
+        ],
+        authority: "operator ruling 2026-09-25; Tetlock & Gardner, Superforecasting: The Art and Science of Prediction, Crown (2015)",
+    },
+    DerivedConcept {
+        term: "explanation_quality_marker",
+        aliases: &["explanation quality markers", "eqm", "eqms"],
+        identity: "a theory-guided reasoning pattern scored 0/1/2 in a forecast rationale; composites flag poor forecasts more reliably than they identify excellent ones",
+        definition: "The rationale-quality instrument of Karvetski, Huang, Kucinskas et al., Measuring Judgment Quality in Natural-Language Explanations: Evidence from Forecasting Tournaments, Forecasting Research Institute (2026): 60 markers (good habits and warning signs) scored by an LLM, aggregated to forecast- and forecaster-level composites, validated against realized accuracy.",
+        constituents: &["forecast rationale", "composite score", "brier score"],
+        authority: "operator ruling 2026-09-25; Karvetski, Huang, Kucinskas et al., Measuring Judgment Quality in Natural-Language Explanations: Evidence from Forecasting Tournaments, Forecasting Research Institute (2026)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -420,6 +441,28 @@ mod tests {
             );
             assert!(
                 concept.authority.contains("2026-09-24"),
+                "{term} cites the ruling"
+            );
+        }
+    }
+
+    /// expect: skill reference models resolve to the operator-named source,
+    /// not the coarse 5W1H core anchor.
+    #[test]
+    fn forecasting_skill_reference_models_resolve_with_authority() {
+        for (term, marker) in [
+            ("superforecasting", "Tetlock & Gardner"),
+            ("EQM", "Karvetski"),
+            ("Explanation Quality Markers", "Karvetski"),
+        ] {
+            let concept = resolve_derived(term).expect("reference model is defined");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.contains("2026-09-25"),
                 "{term} cites the ruling"
             );
         }
