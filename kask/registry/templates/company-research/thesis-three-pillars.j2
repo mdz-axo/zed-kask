@@ -8,6 +8,7 @@ contract:
     imagine_board: object
     rotated_board: object|null
     economic_trajectory: object|null
+    simon_inquiry: object|null
   output:
     business_franchise: object
     management_quality: object
@@ -80,6 +81,14 @@ If the capability assessment has maturity_blocks, the elicited scores for those 
 ```
 
 The Valuation terminal stage MUST be consistent with this trajectory. If the subject is fighting the falling cost (its model is displaced), the terminal stage must reflect displacement. If riding the falling cost (positioned for the adjacent possible), the terminal stage must reflect that positioning.
+{% endif %}
+
+{% if simon_inquiry %}
+## Simon niche inquiry (advisory, not a company score)
+
+{{ simon_inquiry | tojson }}
+
+In Business Franchise, use only source-supported niche leadership and its customer-value mechanism. Address concentration, saturation and exceptions when they change durability. Unknown leadership stays unknown; a missing Simon characteristic is not a quality-gate failure. Do not translate this inquiry into the fixed GORILLA score or a hidden-champion certificate.
 {% endif %}
 
 ## The Three Pillars (firm methodology)

@@ -1,0 +1,52 @@
+[inference]
+contract:
+  input:
+    ticker: string
+    rotated_board: object
+    wardley_map: object
+    source_evidence: array
+    demand_context: object|null
+  output:
+    niche_definition: object
+    leadership_evidence: object
+    advantage_mechanism: object
+    concentration_and_growth: object
+    exceptions: array
+    implication_for_scenarios: string
+    implication_for_thesis: string
+    claim_sources: array
+    data_gaps: array
+visibility: Public
+---
+{# goal: Ask Simon-style questions about a customer-defined niche and the quality of its leadership evidence. This is an advisory inquiry, not a Hidden Champion certificate or an eight-trait score. #}
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+
+You are examining a company through Hermann Simon's Hidden Champions lens, not certifying it. Simon's *Hidden Champions of the 21st Century* (Market & Focus summary and eight lessons) describes focus, deep customer solutions, customer proximity, innovation, globalization and the tension between niche concentration and growth. They are recurring patterns, not necessary conditions. An exceptional company need not fit each pattern. Do not use a revenue/visibility cutoff, score, or checklist verdict. Keep this lens separate from the GORILLA fixed-weight score and from the company's integrity and valuation decisions.
+
+## Company: {{ ticker }}
+
+## Corrected competitive framing
+{{ rotated_board | tojson }}
+
+## Value chain and claimed markets
+{{ wardley_map | tojson }}
+
+## Short extracts from retained sources
+{{ source_evidence | tojson }}
+
+{% if demand_context %}
+## Optional demand evidence (including Engel-curve evidence when relevant)
+{{ demand_context | tojson }}
+{% endif %}
+
+In one bounded pass:
+1. Define the narrow market **from the customer's need and substitutes**, then compare it with management's market definition. Name the unit, geography and period. A market defined solely to make the firm number one is not evidence of leadership.
+2. Separate a *claim* of leadership from independently supported share. For any numerical share, identify compatible numerator, denominator, geography, period and source. Mark the leadership claim `supported`, `contested` or `unknown`; `unknown` is not a failing company score. Do not turn a search with no results into proof of no competitor.
+3. Explain which observed capabilities, if any, support closeness to customers, deep solutions, innovation or geographic expansion. Note contrary evidence and at least one way a nonconforming company may nevertheless be exceptional. Missing a Simon trait never blocks a company.
+4. Identify both the advantage of specialization and the risk of market saturation or customer concentration. Distinguish growth of the niche, capture of that growth, and profitable reinvestment or adjacent diversification. When demand_context is provided, trace the household category to this specific value-chain position; if the category does not map, say so.
+5. State what observation would change the franchise/scenario conclusion. Cite retained `source_evidence` by `output_key` for every material factual claim; distinguish original filings and third-party market estimates from company promotion. An extract is a lead until checked against the retained original. Keep missing evidence in `data_gaps`; never invent a share or an Engel elasticity.
+
+Return JSON only, with exactly the declared output fields. `niche_definition` identifies need, substitutes, geography, period and rival definitions; `leadership_evidence` gives claim, status, share inputs or null and source keys; `advantage_mechanism` gives supporting and contrary observations; `concentration_and_growth` gives saturation, customer risk and adjacencies; `exceptions` records Simon-pattern departures without penalty. `implication_for_scenarios` and `implication_for_thesis` state how this inquiry changes the downstream analysis, or "no supported change". `claim_sources` lists cited output keys; `data_gaps` lists missing sources or unresolved definitions. Do not output a Hidden Champion pass/fail verdict.

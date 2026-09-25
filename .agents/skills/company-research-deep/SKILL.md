@@ -1,11 +1,11 @@
 ---
 name: company-research-deep
-description: "Equity research deep pipeline (EFRA-AI conversion). Sequential 13-step scientific-method process: COMPANY 8-part analysis → VERIFY early anchor → FALSTAFFIAN rotation → WARDLEY map → ECONOMIC TRAJECTORY → GORILLA fixed-weight lisp_eval scoring + capability-limit check → IMAGINE 5/10Y scenarios → THESIS three pillars + essentialist gates → VERIFY late gate → PERSIST → CONDENSE ≤5000-word summary. Converges on THESIS investment_grade verdict."
+description: "Equity research deep pipeline (EFRA-AI conversion). Sequential 14-step scientific-method process: COMPANY 8-part analysis → VERIFY early anchor → FALSTAFFIAN rotation → WARDLEY map → ECONOMIC TRAJECTORY → GORILLA fixed-weight lisp_eval scoring + capability-limit check → SIMON niche inquiry (advisory) → IMAGINE 5/10Y scenarios → THESIS three pillars + essentialist gates → VERIFY late gate → PERSIST → CONDENSE ≤5000-word summary. Converges on THESIS investment_grade verdict."
 ---
 
 # Company Research — Deep Pipeline
 
-Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 13-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
+Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 14-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
@@ -18,7 +18,7 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ## When NOT to Use
 
-- A quick take or initiation note — use `company-research-flash` (the flash pipeline; 23 steps vs this 13-step deep pipeline).
+- A quick take or initiation note — use `company-research-flash` (the flash pipeline; 23 steps vs this 14-step deep pipeline).
 - Subjects SCOUT gates out — the coverage/market-cap/valuation gates exist to spend deep-pipeline effort where it pays.
 - Live trading signals — the deliverable is an investment thesis with a falsifiable prediction set, not an execution signal.
 
@@ -26,7 +26,7 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 Execution order: collect-evidence → COMPANY → verify-early-anchor → FALSTAFFIAN
 → WARDLEY → ECONOMIC TRAJECTORY → GORILLA assessment + capability checks →
-IMAGINE → THESIS → essentialist review → verify-late-gate → semantic quality
+SIMON niche inquiry → IMAGINE → THESIS → essentialist review → verify-late-gate → semantic quality
 gate → PERSIST/CONDENSE. Render each named synthesis template with the actual
 preceding outputs. Collect new evidence into the same source packet, not just
 the narrative. Verification and semantic-quality failures use the bounded
@@ -136,17 +136,24 @@ A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Le
 4. Evaluate whether the GORILLA scores are defensible given the company's capability maturity, execution track record, and customer base evidence.
 5. Emit floor_violations, ceiling_violations, maturity_blocks. Finalize the fixed-weight GORILLA score only after these checks; earlier scores are provisional. A maturity block contributes 0 for that dimension in the `lisp_eval` scoring call; it remains an explicit block in the assessment, not a zero-valued measurement.
 
+### hidden-champions-inquiry
+
+1. After GORILLA's capability check, render `company-research/hidden-champions-inquiry` with `ticker`, `rotated_board`, `wardley_map`, `source_evidence` and `demand_context` (null unless a dated, category-matched demand source is retained). Construct `source_evidence` as short extracts keyed by the original `source_outputs.output_key` with URL, period and unit; keep full originals in `source_outputs` for late verification. Search for independent niche-market and competitor evidence if a leadership claim matters to the thesis; record all retrieved originals and failures in that same packet.
+2. Use Hermann Simon's *Hidden Champions of the 21st Century* as a flexible inquiry into the customer's need, narrow market boundary, focus, deep solution, customer proximity, innovation, globalization and the tradeoff between niche leadership and market saturation. These are observed patterns, **not** a required eight-item checklist, revenue limit, score or investment gate. The existing fixed-weight GORILLA verdict remains untouched.
+3. Emit `simon_inquiry`: a source-keyed niche definition, `supported | contested | unknown` **leadership claim**, mechanism and contrary evidence, concentration and growth options, exceptions, implications for scenarios/thesis, and data gaps. A share requires compatible numerator, denominator, geography and period; management's “number one” alone is not verification. Distinguish company integrity and price expectations from this strategic lens. Missing source evidence yields `unknown`, never a favorable classification or automatic exclusion.
+4. Pass `simon_inquiry` (or explicit null with the named failure in `data_gaps`) to `company-research/imagine-longrange` and `company-research/thesis-three-pillars`. Reconcile it with Wardley and Falstaffian findings; contradictions remain visible in the late verification target. Neither a favorable inquiry nor a passing fact score bypasses the independent quality gate.
+
 ### imagine-longrange
 
 1. Classify the digital transformation stage (MODEL / SHADOW / TWIN / SOURCE).
 2. Classify the growth driver (innovation / demographic / both / neither).
-3. Construct 5/10Y scenarios using the scenario_build MCP tool output as scaffold, ANCHORED on the economic trajectory and CHALLENGED by the Falstaffian rotations.
+3. Construct 5/10Y scenarios using the scenario_build MCP tool output as scaffold, ANCHORED on the economic trajectory and CHALLENGED by the Falstaffian rotations. When `simon_inquiry` is present, test whether niche saturation, adjacent demand or disputed leadership changes a scenario; do not assume a company fits every Simon trait.
 4. Emit 3–5 falsifiable predictions tagged by horizon (5Y/10Y) for the forecast-ledger — the IMAGINE kata loop.
 5. Emit what's not on the page (anchored on the adjacent possible) and what's not in the price (anchored on the trajectory's implications).
 
 ### thesis-three-pillars
 
-1. Synthesize all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal).
+1. Synthesize all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Consume `simon_inquiry` as advisory evidence about a customer-defined niche and its exceptions, not a hidden-champion verdict; unsupported share claims stay unknown.
 2. The terminal stage must cross-reference the IMAGINE 10Y scenario.
 3. Emit the thesis statement (durable, timeless, covering all three pillars).
 4. Do NOT self-evaluate — the investment_grade / needs_work / incomplete verdict comes from the cross-skill company-research/thesis-judge step in the process.
@@ -196,10 +203,11 @@ The verification-handoff gate runs at both early and late verification. `incompl
 - Step 4 (WARDLEY) compresses `wardley-mapper`'s 6-step process via the `company-research/wardley-anchor` adapter. Conditionally upgrades to full `wardley-mapper` when choke_point score < 60.
 - Step 5 (ECONOMIC TRAJECTORY) includes a strategy-literature-probe via Exa semantic search for IO/competition economics grounding.
 - Step 6 runs `company-research/gorilla-capability-reason` — types each GORILLA dimension against a capability registry with floor/ceiling/maturity-gate limits. Dimensions with explicit maturity blocks contribute 0 in the fixed-weight `lisp_eval` score; missing source data remains a surfaced gap.
-- Step 10 reuses `essentialist/essentialist-flow` (via `company-research/thesis-essentialist` adapter) — runs a single pass of the 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis to enforce parsimony. The elimination_report feeds the thesis-judge quality gate as additional evidence.
-- Step 11 (VERIFY-LATE-GATE) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `company-research/thesis-judge` quality gate as additional evidence.
+- Step 7 renders `company-research/hidden-champions-inquiry` as an advisory Simon lens over the rotated company framing and Wardley map; its source-keyed output reaches IMAGINE and THESIS without modifying GORILLA weights or the independent integrity/valuation gates.
+- Step 11 reuses `essentialist/essentialist-flow` (via `company-research/thesis-essentialist` adapter) — runs a single pass of the 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis to enforce parsimony. The elimination_report feeds the thesis-judge quality gate as additional evidence.
+- Step 12 (VERIFY-LATE-GATE) invokes `grounding-verify` as a `spawn_agent` call — decoupled from all prior generators. Checks the full pipeline report against all accumulated source outputs and the `verified_claims` registry from the early anchor. The fact_score feeds the `company-research/thesis-judge` quality gate as additional evidence.
 - The fact_score computation uses `lisp_eval` (deterministic scoring, same pattern as GORILLA's fixed-weight scoring). The provenance lattice and extraction ceiling are adapted from Fermi's `grounding_trust.rs`.
-- Step 12 reuses `company-research/thesis-judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in the thesis-judge semantic evaluator, not LLM self-assessment.
+- Step 13 reuses `company-research/thesis-judge` (semantic evaluation of the thesis against the three-pillar investment_grade criteria). This avoids the LLM-improves-against-LLM-scored-target trap per .rules — the quality gate is grounded in the thesis-judge semantic evaluator, not LLM self-assessment.
 - PERSIST + CONDENSE write the verified deliverables (or explicitly labelled blocked drafts) to `~/Documents/zk-data/companies-mcp/reports/` via `terminal`. Newly composed summaries pass through verify-late-gate before release.
 
 ## Registry Templates
@@ -223,9 +231,10 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `imagine-longrange.j2` | Agent 11 IMAGINE. Projects the business at 5 and 10 years and walks it back analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN / SOURCE), Growth Driver Classification (innovation / demographic / both / neither). In v0.38.0, scenarios are ANCHORED on the economic trajectory probe (falling cost, constraint removal, adjacent possible) and CHALLENGED by the Falstaffian rotations (rotated competitive framing, framing errors detected). Consumes `scenario_build` MCP tool output and the `economic_trajectory` probe. Emits `ImagineBoard` with digital stage, growth driver, 3 scenarios (each with trajectory_anchor and falstaffian_challenge), 3–5 falsifiable predictions (tagged by horizon, each with trajectory_basis), what's not on the page (anchored on adjacent possible), what's not in the price (anchored on trajectory implications), trajectory_anchoring, falstaffian_challenge. |
 | `thesis-three-pillars.j2` | Agent 12 THESIS. Synthesizes all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Quality gate verdict `investment_grade` / `needs_work` / `incomplete` is the deep pipeline convergence signal. Per .rules (LLM-improves-against-LLM-scored-target trap): the quality gate uses the separate `company-research/thesis-judge` semantic evaluation, not self-assessment — rendered as its own step, not inside this template. |
 | `intel-semantic-classify.j2` | v0.38.0 cross-skill adapter. Adapts pragmatic-semantics/ semantics-classify-statement to the INTEL mosaic. Classifies every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance — BEFORE downstream steps consume the intel. Prevents certainty-level drift: a management quote treated as an ontological fact, a scenario treated as a forecast. Emits semantic_tags and certainty_drift_risk that downstream templates (forensic, critical- factor, valuation) consume via intel_bundle.semantic_tags. |
+| `hidden-champions-inquiry.j2` | Advisory Simon niche inquiry after GORILLA capability checks: customer-defined market and substitutes, independently sourced leadership claim (supported/contested/unknown), strategic focus/depth/customer proximity, concentration and growth exceptions. Its `simon_inquiry` output reaches IMAGINE and THESIS; no eight-trait score or investment gate. |
 | `gorilla-capability-reason.j2` | Tests the GORILLA 4-dim scores against capability floor, ceiling and maturity-gate limits. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. Emits capability_assessments, floor_violations, ceiling_violations, maturity_blocks. A maturity block contributes 0 for that dimension in the fixed-weight `lisp_eval` calculation while preserving the block and source gaps. |
 | `thesis-essentialist.j2` | v0.38.0 cross-skill adapter. Adapts essentialist/essentialist-flow to the three-pillar investment thesis. Runs a single pass of the 3-gate protocol (Exist, Surface, Contract) on the thesis to enforce parsimony — does each pillar earn its place? Is the thesis at the right abstraction level? Can it be stated more tersely? Mode is autonomous (no human in the loop during the pipeline). The elimination_report feeds the thesis-judge quality gate as additional evidence — it does not block the thesis directly. |
-| `thesis-judge.j2` | Separate semantic quality gate over the THESIS output (step 12). Judges `goal_text` (the thesis statement), `criteria` (the three-pillar investment_grade criteria), `outcome_summary`, `artifacts`, and `essentialist_report` and returns `verdict` (done / continue / blocked), `reason`, and `confidence`; the pipeline maps done → investment_grade, continue → needs_work, blocked → incomplete. |
+| `thesis-judge.j2` | Separate semantic quality gate over the THESIS output (step 13). Judges `goal_text` (the thesis statement), `criteria` (the three-pillar investment_grade criteria), `outcome_summary`, `artifacts`, and `essentialist_report` and returns `verdict` (done / continue / blocked), `reason`, and `confidence`; the pipeline maps done → investment_grade, continue → needs_work, blocked → incomplete. |
 | `kata-calibration-measure.j2` | v0.38.0 cross-skill adapter. Adapts metacognition/meta-experiment to close the flash pipeline's open kata loop. Flash step 20 (kata- improvement-step1-direction) sets the direction but never measures the gap. This step measures the analyst's calibration gap using the market_calibration Brier score (step 19) and resolved_outcomes (step 18), then re-measures the current condition. Emits calibration_gap (0.0 calibrated → 1.0 maximum gap) that LENS (step 23) consumes as a 6th axis alongside the existing five frameworks. |
 | `wardley-anchor.j2` | v0.38.0 cross-skill adapter. Compresses wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into a single LLM call over the rotated Company Board. Emits wardley_map with components, evolution classifications, movements, commoditization candidates, choke_points, and invisible_gorillas. Feeds GORILLA's Invisible Gorilla and Choke Point dimensions (step 5) and ECONOMIC TRAJECTORY's falling-cost anchor (step 9). The full wardley-mapper skill is available for standalone use — this adapter exists to ground the deep pipeline's strategic analysis without adding a 6-step sub-process. |
 | `verification-handoff.j2` | Prepare a decoupled grounding-verify handoff for a complete company report and retained source outputs, preserving source provenance and surfacing missing evidence. |

@@ -5,6 +5,7 @@ contract:
     company_board: object
     scenario_build_result: object|null
     economic_trajectory: object|null
+    simon_inquiry: object|null
     falstaffian_rotations: object|null
     prior_outcomes: object|null
   output:
@@ -67,6 +68,14 @@ Your scenarios MUST be consistent with this economic structure. The falling cost
 ## Economic Trajectory — MISSING
 
 The trajectory probe did not run or returned empty. Flag this in `data_gaps` and construct scenarios conservatively from the Company Board directly. Without the trajectory anchor, your scenarios are ungrounded — flag the reduced structural rigor in `rationale`.
+{% endif %}
+
+{% if simon_inquiry %}
+## Simon niche inquiry (advisory, not a company score)
+
+{{ simon_inquiry | tojson }}
+
+If the inquiry documents a narrow market nearing saturation, include that limit or a plausible adjacent market in the 5/10Y scenarios. If leadership is contested or unknown, do not assume dominance; preserve the exception and its missing evidence. Never treat a missing Simon trait as a scenario failure.
 {% endif %}
 
 {% if falstaffian_rotations %}
