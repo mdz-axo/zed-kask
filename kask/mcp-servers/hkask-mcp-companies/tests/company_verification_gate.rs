@@ -271,6 +271,51 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             "needs_work",
         ),
         (
+            "uninventoried_original",
+            {
+                let mut p = packet.clone();
+                p["source_outputs"]
+                    .as_array_mut()
+                    .context("source outputs")?
+                    .push(json!({
+                        "tool_name":"web_extract", "output_key":"source:web_extract:unlisted",
+                        "output":{"content":"Material regulator action."}, "source_kind":"original"
+                    }));
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "irrelevant_original_with_reason",
+            {
+                let mut p = packet.clone();
+                p["source_outputs"]
+                    .as_array_mut()
+                    .context("source outputs")?
+                    .push(json!({
+                        "tool_name":"web_extract", "output_key":"source:web_extract:unrelated",
+                        "output":{"content":"Public contact details."}, "source_kind":"original"
+                    }));
+                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
+                    "tool_name":"web_extract", "output_key":"source:web_extract:unrelated", "status":"ok"
+                }));
+                p["disclosure_inventory"]
+                    .as_array_mut()
+                    .context("inventory")?
+                    .push(json!({
+                        "output_key":"source:web_extract:unrelated", "published_at":"2026-07-15",
+                        "quote":"Public contact details.", "disposition":"not_material",
+                        "reason":"Contact page contains no business or regulatory disclosure"
+                    }));
+                p
+            },
+            original.clone(),
+            "checked",
+            "passed",
+        ),
+        (
             "generated_summary_only",
             {
                 let mut p = packet.clone();
@@ -356,6 +401,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             result == expected_gate,
             "{name}: expected {expected_gate}, got {result}"
         );
+        eprintln!("{name}: source={status}, gate={result}");
     }
     Ok(())
 }
