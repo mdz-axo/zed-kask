@@ -47,7 +47,7 @@ ignore = [
     # (upstream). Low severity. Re-review 2026-11-04.
     { id = "RUSTSEC-2026-0258", reason = "h2 unbounded empty DATA frames; 0.3.27 via upstream aws-smithy/reqwest 0.11 chain, no 0.3.x patch. 0.4.x upgraded to 0.4.16. Not kask-introduced." },
     # quick-xml DoS pair (patched >= 0.41.0). The kask-owned XLSX path (corpus via
-    # calamine 0.36 -> quick-xml 0.41.0) IS patched — see RR-0021. These ignores
+    # calamine 0.36 -> quick-xml 0.41.0) IS patched. These ignores
     # cover the four sub-0.41 copies that remain transitively: 0.39.3 (zbus_xml <-
     # atspi <- accesskit_unix <- gpui_linux), 0.38.3 (agent + mermaid_render
     # dev-deps), 0.37.5 (wayland-scanner), 0.30.0 (xcb build-dep). The 0.39.3 copy
@@ -151,10 +151,10 @@ unknown-git = "deny"
 # Known pin weaknesses, tracked rather than silently allowed:
 #   - crates/etw_tracing: wprcontrol was a 7-char `rev = "cd811f7"`; expanded to
 #     the full 40-hex SHA `cd811f7d744f65291e13131b1d907fda63ed91a1` on 2026-08-16
-#     (RR-0065 now enforces immutable revs and forbids mutable tags workspace-wide).
+#     (immutable revs are required and mutable tags forbidden workspace-wide).
 #   - crates/mermaid_render: merman was a MUTABLE `tag = "v0.7.0-with-patches"`;
 #     converted to `rev = "a3ed8d9f3fd1d74c802f25ed9edd501743796504"` on 2026-08-16
-#     (same commit the tag pointed at — verified via Cargo.lock). RR-0065 prevents
+#     (same commit the tag pointed at — verified via Cargo.lock). The immutable-rev rule prevents
 #     re-introduction of mutable tags.
 allow-git = [
     "https://github.com/camdencheek/tree-sitter-go-mod",

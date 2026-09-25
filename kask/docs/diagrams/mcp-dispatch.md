@@ -20,7 +20,7 @@ loop, and the CMP research tool-call flow across servers. Unique
 **`invoke` does not authorize.** It charges one call against the agent's
 per-tick runaway ceiling, dispatches, and emits the outcome span. The only
 pre-dispatch refusal is an exhausted ceiling. Verified current (unchanged
-since the 2026-08-12 RR-0056/RR-0057 corrections).
+since the 2026-08-12 capability-gate removal and fail-open breaker correction).
 
 ```mermaid
 flowchart TD
@@ -44,7 +44,7 @@ status: VERIFIED
 The call meter is fail-open on an *unregistered* agent: it auto-registers at
 `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and logs the wiring gap rather than
 refusing — a missing seed is a wiring omission, not an authorization
-decision (RR-0057). A runtime with no governance wired dispatches unmetered
+decision. A runtime with no governance wired dispatches unmetered
 rather than failing closed.
 
 Where authority is enforced instead:
@@ -55,7 +55,7 @@ Where authority is enforced instead:
 - each swarm agent card's declared `mcp_tools` allowlist
   (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`)
 - the per-server MCP env/credential allowlists
-  (`kask/crates/kask_bridge/src/mcp_servers.rs`, RR-0038)
+  (`kask/crates/kask_bridge/src/mcp_servers.rs`)
 
 ## MCP Tool Call — enabled_tools to McpRuntime::invoke to unwrap_tool_envelope
 

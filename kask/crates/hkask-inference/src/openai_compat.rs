@@ -5,7 +5,7 @@
 //! truncates to [`ERROR_BODY_MAX_CHARS`] (char-boundary safe). It is shared
 //! across inference backends, the MCP `classify_http_error` helper
 //! (`hkask-mcp-server`), and the research web-search/browse providers
-//! (`hkask-mcp-research`) — RR-0035 class, hardened by RR-0049/0050/0051.
+//! (`hkask-mcp-research`) — the provider error-body redaction class, hardened by the shared sanitizer.
 //!
 //! The direct-HTTP OpenAI-compatible chat completion path that previously
 //! lived here was removed when chat inference routing moved to the IPC
@@ -26,7 +26,7 @@ pub(crate) const SECRET_PREFIXES: &[&str] = &[
     "bearer ",
     "sk-",
     "api_key",
-    // Common credential prefixes beyond OpenAI's `sk-` (RR-0049/0050/0051):
+    // Common credential prefixes beyond OpenAI's `sk-`:
     // GitHub PATs, AWS keys, Slack tokens, GitLab tokens, JWTs.
     "ghp_",
     "gho_",
@@ -46,7 +46,7 @@ pub(crate) const SECRET_PREFIXES: &[&str] = &[
 /// (char-boundary safe) with a total-length suffix.
 ///
 /// Shared across inference backends, the MCP `classify_http_error` helper,
-/// and research providers (RR-0035 class — RR-0049/0050/0051).
+/// and research providers (the provider error-body redaction class).
 #[must_use]
 pub fn sanitize_error_body(body: &str) -> String {
     let redacted = redact_secret_tokens(body);

@@ -24,6 +24,10 @@ company-research-deep without external search, credentials or Exa Agent.
    retained full-file path and matching digest in the observed conversion log;
    missing identity stays `not_checked`. Search fixtures are synthetic; they
    do not attest actual download/hash provenance or complete page review.
+   The retained-original-size control shows the default 100,000-step Lisp
+   budget rejects a 20,000-character original while the documented bounded
+   1,000,000-step budget checks it; a larger packet that still exceeds that
+   limit remains `not_checked`, not a passing result.
    Do not duplicate either decision form in test code.
 3. For a live process check, separately invoke `grounding-verify` in a
    `spawn_agent` with the rendered packet and let it search public issuer and

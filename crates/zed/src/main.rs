@@ -219,7 +219,7 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 /// Seeding is no longer load-bearing for correctness. `charge_call_metered`
 /// auto-registers an unseeded agent at
 /// `hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING` and logs the gap instead of
-/// refusing (RR-0057) — the prior fail-closed behavior silently broke the two
+/// refusing — the prior fail-closed behavior silently broke the two
 /// paths that mint *different* personas (`kask-panel` on the inference-IPC
 /// dispatch, the skill execution), since those derive
 /// different WebIDs than the one seeded here. This seed now only sets an
@@ -608,7 +608,7 @@ fn main() {
         // D3: Construct the McpRuntime (manages MCP server child processes).
         // The McpRuntime implements ToolPort — tool dispatch with a per-agent
         // call meter (one call charged per invocation, runaway-loop breaker) and
-        // reg.tool.* span emission. It does NOT authorize (RR-0056). MCP servers
+        // reg.tool.* span emission. It does NOT authorize. MCP servers
         // are started as child processes (stdio).
         //
         // Server auto-launch happens after settings::init() (below) so we
@@ -1170,7 +1170,7 @@ fn main() {
         // No capability token is threaded through the bridge. `McpRuntime::invoke`
         // performs no per-call authorization: its former capability-match gate
         // compared a caller-supplied tool name against itself and could deny
-        // nothing (RR-0056). `invoke` takes an `agent: WebID` for call metering
+        // nothing. `invoke` takes an `agent: WebID` for call metering
         // only. Delegated-dispatch authority is the per-request `tool_allowlist`
         // in `kask_bridge::inference_ipc_server` (fail-closed), the swarm card
         // `mcp_tools` allowlist, and the per-server MCP env allowlists.

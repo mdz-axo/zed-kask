@@ -899,6 +899,61 @@ fn deep_search_request() -> SearchRequest {
     }
 }
 
+/// expect: A provider that ignores the requested domain filters cannot return
+/// off-domain search hits to the primary-disclosure consumer.
+#[tokio::test]
+async fn web_search_enforces_domain_filters_after_provider_results() {
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(FailingInferencePort),
+        None,
+    );
+    let mut request = deep_search_request();
+    request.strategy = Some("quick".to_string());
+    request.include_domains = Some(vec!["amf-france.org".to_string()]);
+    let blocked = parse(&ok(server.web_search(Parameters(request)).await));
+    assert_eq!(blocked["count"], 0);
+    assert_eq!(blocked["results"], serde_json::json!([]));
+
+    let mut request = deep_search_request();
+    request.strategy = Some("quick".to_string());
+    request.include_domains = Some(vec!["example.com".to_string()]);
+    let included = parse(&ok(server.web_search(Parameters(request)).await));
+    assert_eq!(included["count"], 3);
+
+    let mut request = deep_search_request();
+    request.strategy = Some("quick".to_string());
+    request.exclude_domains = Some(vec!["example.com".to_string()]);
+    let excluded = parse(&ok(server.web_search(Parameters(request)).await));
+    assert_eq!(excluded["count"], 0);
+    assert_eq!(excluded["results"], serde_json::json!([]));
+}
+
+/// expect: A run-scoped official-domain search never records provider hits
+/// excluded from the response as server-observed primary sources.
+#[tokio::test]
+async fn filtered_search_does_not_ledger_off_domain_hits() {
+    let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "official-domain boundary".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run id").to_string();
+    let mut request = deep_search_request();
+    request.strategy = Some("quick".to_string());
+    request.include_domains = Some(vec!["amf-france.org".to_string()]);
+    request.run_id = Some(run_id.clone());
+    let output = parse(&ok(server.web_search(Parameters(request)).await));
+    assert_eq!(output["count"], 0);
+    assert_eq!(output["domain_filter_removed"], 3);
+    assert_eq!(output["run_ledger"]["recorded"], 0);
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
+        .await));
+    assert_eq!(manifest["sources"], serde_json::json!([]));
+}
+
 /// Success contract: the LLM's per-candidate scores reach the caller
 /// (descending score order) and the output names `mode: "llm"` with no
 /// reason.

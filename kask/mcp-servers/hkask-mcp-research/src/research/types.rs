@@ -199,7 +199,12 @@ fn duplication_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 pub struct SearchRequest {
     pub query: String,
     pub num_results: Option<u32>,
+    /// Host allowlist applied again at the server boundary after provider
+    /// results. Exact host or dot-boundary subdomain; providers may ignore
+    /// their own filter. `domain_filter_removed` reports dropped hits; an empty
+    /// response after filtering is not evidence that the domain has no pages.
     pub include_domains: Option<Vec<String>>,
+    /// Host denylist applied at the same server boundary.
     pub exclude_domains: Option<Vec<String>>,
     pub freshness: Option<String>,
     /// Accepted values: `quick`, `web` (alias `semantic`), `news`,
@@ -625,6 +630,11 @@ pub(crate) struct SearchOutput {
     /// Providers that were queried but failed, so callers can distinguish a
     /// genuine zero-result search from one where every provider errored.
     pub providers_failed: Vec<ProviderFailureRecord>,
+    /// Returned provider hits removed because their parsed URL host violated
+    /// the caller's include/exclude domain filter. A zero-result filtered
+    /// search is not proof that no relevant primary disclosure exists.
+    #[serde(default)]
+    pub domain_filter_removed: usize,
     /// The provider that was actually queried when `provider` was set or
     /// `quick` strategy selected a single provider. `None` for compound
     /// strategies (web/news/deep fan out across multiple).

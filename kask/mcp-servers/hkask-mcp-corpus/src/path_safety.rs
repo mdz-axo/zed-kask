@@ -7,7 +7,7 @@
 //! The implementation lives in `hkask_mcp_server::server` (shared with the
 //! other MCP servers) and is re-exported here so in-crate call sites keep
 //! the `crate::path_safety::` path. The test surface is preserved so the
-//! `path_safety` cargo-test pattern pinned by RR-0032 keeps matching.
+//! `path_safety` cargo-test pattern keeps matching.
 //!
 //! Launch-path note: the per-project ContextServerStore spawn sets cwd to the
 //! project root (crates/project/src/context_server_store.rs passes root_path),

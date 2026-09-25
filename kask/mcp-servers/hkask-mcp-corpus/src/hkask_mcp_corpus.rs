@@ -57,7 +57,7 @@ pub(crate) use helpers::{
 };
 // Re-export OCR config and text-cleaning helpers from their semantic homes.
 pub(crate) use convert::sanitize_links;
-// LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
+// LLM JSON extraction is shared via `hkask_types::json_extract`.
 pub(crate) use hkask_types::json_extract::extract_json_from_response;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)

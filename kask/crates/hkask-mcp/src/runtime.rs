@@ -302,7 +302,7 @@ pub struct McpServer {
 }
 
 /// Non-secret process plumbing forwarded to every MCP child process after
-/// `env_clear()` (RR-0060).
+/// `env_clear()`.
 ///
 /// The child's environment is otherwise built solely from its own filtered
 /// per-server allowlist, so nothing here may be a credential. Each entry is
@@ -514,7 +514,7 @@ impl McpRuntime {
     /// Wire the cybernetic governance membrane (call-cap metering + Regulation spans).
     /// All subsequent `invoke` calls charge one call against the agent's per-tick
     /// cap and emit Regulation spans. There is deliberately **no** per-call OCAP
-    /// capability check (RR-0056): the prior gate compared a `resource_id` built
+    /// capability check: the prior gate compared a `resource_id` built
     /// from the same tool name passed to `invoke`, so it was a value against
     /// itself. Authority is enforced upstream — at the inference IPC
     /// `tool_allowlist`, the swarm card `mcp_tools` allowlist, and per-server env
@@ -1854,7 +1854,7 @@ fn parse_call_result(result: &rmcp::model::CallToolResult) -> Value {
     Value::Array(items)
 }
 
-/// RR-0060: the spawned-child environment boundary.
+/// The spawned-child environment boundary.
 ///
 /// These tests assert on a REAL child process's environment rather than on
 /// `filter_credentials_for_server`. That distinction is the whole point: the
@@ -1928,7 +1928,7 @@ mod env_isolation_tests {
                 assert!(
                     !env.contains(value),
                     "child inherited parent secret {key} despite an empty \
-                     allowlist (RR-0060). Child env was:\n{env}"
+                     allowlist. Child env was:\n{env}"
                 );
             }
         }
@@ -1986,7 +1986,7 @@ mod env_isolation_tests {
                     || upper.contains("PASSPHRASE")),
                 "{key} looks like a credential and must not be in \
                  PASSTHROUGH_ENV_VARS — add it to the server's credential \
-                 allowlist in kask_bridge::mcp_servers instead (RR-0060)"
+                 allowlist in kask_bridge::mcp_servers instead"
             );
         }
     }
@@ -2379,7 +2379,7 @@ mod metering_tests {
     /// dispatch (which then fails because no server is connected — but the
     /// failure is `Unavailable`, not a metering refusal).
     ///
-    /// This pins RR-0056's removal of the per-call capability gate: a missing
+    /// This pins the removal of the per-call capability gate: a missing
     /// registration is a wiring omission, not an authorization decision.
     #[tokio::test]
     async fn unregistered_agent_is_auto_registered_not_denied() {

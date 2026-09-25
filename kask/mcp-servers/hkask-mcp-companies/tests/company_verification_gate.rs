@@ -66,6 +66,32 @@ fn cases<'a>(fixtures: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
     Ok(cases)
 }
 
+/// expect: A retained original larger than the default interpreter budget is
+/// still checked within the documented bounded production budget.
+#[test]
+fn company_source_check_handles_retained_original_size() -> Result<()> {
+    let fixtures: Value = serde_json::from_str(FIXTURES)?;
+    let mut packet = fixtures["packet"].clone();
+    packet["source_outputs"][0]["output"]["content"] =
+        json!(format!("We announced partnerships. {}", "x".repeat(20_000)));
+    let mut input = packet.clone();
+    input["disclosures"] = packet["disclosure_inventory"].clone();
+    ensure!(
+        matches!(
+            hkask_lisp::eval_sandboxed(source_check_form()?, &input),
+            Err(hkask_lisp::LispError::StepLimitExceeded(_))
+        ),
+        "oversize control did not exceed the default step budget"
+    );
+    let result =
+        hkask_lisp::eval_sandboxed_with_budget(source_check_form()?, &input, 1_000_000, 4096)?;
+    ensure!(
+        result == json!(["checked", "not_found_in_reviewed"]),
+        "documented budget lost the original-source check: {result}"
+    );
+    Ok(())
+}
+
 /// expect: An unfinished search cannot hide an independently observed material
 /// omission, and adding the missing statement removes only that finding.
 #[test]

@@ -300,7 +300,7 @@ threat_model:
   adversaries:
     - name: malicious_template_author
       vector: template_injection
-      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation[^minijinja]  # NOT information flow control (RR-0053)
+      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation[^minijinja]  # NOT information flow control (taint check removed: its inputs were constants)
     - name: compromised_dependency
       vector: supply_chain
       mitigation: cargo_deny + pinned_versions
@@ -308,9 +308,9 @@ threat_model:
 capability_separation:
   - "Tool authority is a list the calling party does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists"
   - "`McpRuntime::invoke` performs NO per-call authorization — it meters the call against the agent's per-tick runaway ceiling, dispatches, and emits the span. Its `agent: WebID` is an accounting identity, not a credential"
-  - "Information flow is NOT gated. Defense Layer 5 is absent by decision (RR-0053), as Layer 3 is (RR-0010) — treat every tool path as taint-unaware"
-  - "Removed 2026-08-12: the per-call DelegationToken capability match (RR-0056 — it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
-  - "Removed 2026-08-12: the FIDES Source→Sink taint check on `ToolInfo.taint` (RR-0053 — both inputs were constants, so it could not deny). RR-0053 is now an absence check; do not re-add the machinery without live inputs and a test proving a real block"
+  - "Information flow is NOT gated. Defense Layer 5 is absent by decision, as Layer 3 is — treat every tool path as taint-unaware"
+  - "Removed 2026-08-12: the per-call DelegationToken capability match (it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
+  - "Removed 2026-08-12: the FIDES Source→Sink taint check on `ToolInfo.taint` (both inputs were constants, so it could not deny). This is now an absence check; do not re-add the machinery without live inputs and a test proving a real block"
 
 keystore:
   encryption: AES-256-GCM
@@ -481,7 +481,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |
-| `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053). The former `SYSTEM_MAX_RECURSION` cascade-depth bound was removed with the `hkask-templates` crate (2026-08-20, commit `80e466c1a5`) |
+| `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`). Holds no tokens, no authorization check, and no taint labels (taint check removed: its inputs were constants). The former `SYSTEM_MAX_RECURSION` cascade-depth bound was removed with the `hkask-templates` crate (2026-08-20, commit `80e466c1a5`) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `kask/crates/hkask-keystore/Cargo.toml:14`, `kask/crates/hkask-keystore/src/keychain.rs:104`) |
 | `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into MCP children (`config.rs:109-129,218-228`); media generation is child-local while chat/vision/embed/list/rerank may cross the IPC bridge (`hkask_inference.rs:190-383`). The `InferencePort` has no `generate_batch` method, and the IPC protocol has no media-generation route. |
@@ -543,7 +543,7 @@ Domain and MCP crates never depend on Zed crates. The editor-side `kask_bridge` 
 it performs no per-call authorization. The capability-match gate that this table
 previously named was removed on 2026-08-12 because every production mint site
 derived the token's `resource_id` from the same tool name it passed to `invoke`
-— the check compared a caller-supplied value against itself (RR-0056). A
+— the check compared a caller-supplied value against itself. A
 capability check is a boundary only when the authority list is written by someone
 other than the caller being checked; the rows below satisfy that.
 
@@ -551,10 +551,10 @@ other than the caller being checked; the rows below satisfy that.
 |----------|-------------|-----------|
 | Delegated tool dispatch | Per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on missing/empty, enforced before dispatch | P4 |
 | Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
-| Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038) | P1 |
-| Information flow | **None — absent by decision (RR-0053).** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
+| Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`) | P1 |
+| Information flow | **None — absent by decision.** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
 | MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs:445-455,576-680`) | P1 |
-| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
+| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
 | Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `kask/crates/hkask-keystore/src/keychain.rs:36-38,133-161`) | P1 |
 
 ### Bootstrap Sequence

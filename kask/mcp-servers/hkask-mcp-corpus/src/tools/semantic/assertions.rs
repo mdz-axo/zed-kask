@@ -96,7 +96,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
     What
 }
 
-/// Hallucination guard for LLM-extracted assertions (RR-0018).
+/// Hallucination guard for LLM-extracted assertions.
 ///
 /// Returns the confidence to store for an assertion: the LLM-reported confidence,
 /// or 0.5 (capped) when the assertion fails verification. Verification:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI gate: enforce RR-0020 — every hkask-* library crate must declare an
+# CI gate: every hkask-* library crate must declare an
 # unsafe-gating attribute on line 1 of its crate root file.
 #
 # Crate roots are discovered from [lib] path in Cargo.toml, falling back to
@@ -52,7 +52,7 @@ for dir in "${scan_dirs[@]}"; do
   if echo "$first_line" | grep -q 'forbid(unsafe_code)\|deny(unsafe_code)'; then
     : # OK — has an unsafe-gating attribute
   else
-    echo "::error::RR-0020: $root is missing an unsafe-gating attribute on line 1"
+    echo "::error::unsafe-forbid: $root is missing an unsafe-gating attribute on line 1"
     echo "  current line 1: $first_line"
     violations=$((violations + 1))
   fi

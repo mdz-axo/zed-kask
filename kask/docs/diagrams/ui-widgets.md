@@ -149,7 +149,7 @@ already in the chat stream, mirroring the combined `kanban_board_list` +
 are interactive: the move affordance stages a pending move, the user
 confirms/cancels, and the controller dispatches `kanban_task_move` via the
 governed `shared_tool_invoker()` (metered against the panel persona's call
-ceiling; not capability-gated — RR-0056). The move affordance uses the
+ceiling; not capability-gated). The move affordance uses the
 block's server-authoritative provenance to pick the dispatch server.
 Verified current. See [Kanban diagrams](./kanban.md) for the state
 machines.

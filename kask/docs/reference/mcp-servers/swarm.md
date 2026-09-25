@@ -82,7 +82,7 @@ composition, agent authoring, and governed spend:
 
 Both substrates dispatch through the kask MCP runtime (per-agent call metering,
 `hkask.mcp.swarm` telemetry targets; tool reach itself is
-bounded by the card's `mcp_tools` allowlist, not by the runtime — RR-0056). The server is the
+bounded by the card's `mcp_tools` allowlist, not by the runtime). The server is the
 substrate for the **Agent Swarm panel** (`crates/swarm_panel`), the
 **`swarm-intelligence` skill**, and the **`swarm-steering` skill**.
 

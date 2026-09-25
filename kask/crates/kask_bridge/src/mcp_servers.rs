@@ -92,7 +92,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // "removed: no read site" — true only of this spelling; the server was
             // reading the non-canonical `HKASK_SERPAPI_KEY`, which no allowlist or
             // registry carried, so the key never arrived. Normalized on the
-            // kask/.env spelling (RR-0061).
+            // kask/.env spelling.
             "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
@@ -390,7 +390,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DATA_DIR",
             // Swarm memory store shape — read in config.rs alongside the
             // passphrase above. Without these the DB path and embedding
-            // dimension overrides were silently dropped (RR-0061).
+            // dimension overrides were silently dropped.
             "HKASK_SWARM_MEMORY_DB",
             "HKASK_SWARM_EMBEDDING_DIM",
             // A2A HTTP listener toggle — read via `config.a2a_http_enabled`
@@ -1423,7 +1423,7 @@ mod tests {
         );
     }
 
-    // ── RR-0061: read-alignment for the five previously-unguarded servers ────
+    // ── read-alignment for the five previously-unguarded servers ────
     //
     // Before these tests, only 5 of 13 servers had a read-alignment test.
     // including `training` (the registry's largest secret grant) and `curator`
@@ -1608,11 +1608,11 @@ mod tests {
         );
     }
 
-    // ── RR-0061: the swarm under-grants that silently disabled real features ──
+    // ── the swarm under-grants that silently disabled real features ──
 
     /// The swarm memory DB is one of the kask SQLCipher DBs — the swarm
     /// server must receive the shared `HKASK_DB_PASSPHRASE` or its memory
-    /// store cannot decrypt (RR-0061's lesson, now unified: one passphrase).
+    /// store cannot decrypt (the read-alignment lesson, now unified: one passphrase).
     #[test]
     fn swarm_credentials_include_db_passphrase() {
         let s = server_by_id("swarm");
@@ -1638,7 +1638,7 @@ mod tests {
             assert!(
                 cfg.contains(&key),
                 "{key} is read by the swarm server but is not allowlisted — the \
-                 operator override is silently dropped (RR-0061)"
+                 operator override is silently dropped"
             );
         }
     }

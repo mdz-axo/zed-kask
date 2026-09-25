@@ -72,8 +72,8 @@ PID-bound. See the settings reference for provisioning and revocation behavior.
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `kask/crates/hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
 | Parent-held delegated-tool grant intersected with the request allowlist | `kask_bridge/src/delegation_grants.rs` + `inference_ipc_server.rs` `tool_invoke` dispatch | Refuses `server/tool` outside either set before tool dispatch; missing/invalid grants deny. Settings unload revokes before child stop. |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:224-229` (declared set), `:441-447` (refusal) | Restricts which tools a swarm agent may call at all |
-| Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
-| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1378`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
+| Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server |
+| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1378`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist
 > boundaries whose list the checked caller cannot choose. IPC requests can
@@ -90,7 +90,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `DefaultSpecCurator` / `check_sovereignty` | OUGHT — zero hits | The prior `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction; no successor exists |
 | `SovereigntyConsent` / `DenyAllConsent` | OUGHT — zero hits | Intended consent port and fail-closed default |
 | `require_sovereignty` | OUGHT — zero hits | Intended data-class policy gate; not yet enforced |
-| `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous (RR-0056). Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
+| `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous. Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
 | `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `kask/crates/hkask-types/src/visibility.rs:18-19` and `:29-31`; no struct or impl exists |
 
 One nuance: the `reg.sovereignty.*` span namespaces (`reg.sovereignty`, `reg.sovereignty.consent_anomaly`, `reg.sovereignty.consent_audited`, `reg.sovereignty.governance_report`, `reg.sovereignty.portability_failure`, `reg.sovereignty.portability_verified`) **are registered** in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:277-282`) — but no code emits them (zero emission sites as of 2026-09-04). Registered namespace, no enforcement: still OUGHT.
@@ -240,7 +240,7 @@ per-call capability token today.**
 
 1. **`require_capability` (partially live — as separation, not per-call gating)** —
    The per-call token check this once named was removed on 2026-08-12 as vacuous
-   (RR-0056): every production mint site set the token's `resource_id` from the
+  : every production mint site set the token's `resource_id` from the
    tool name it then invoked, so the check compared a value against itself and
    denied nothing. What *is* live is capability **separation** — which tools a
    caller may reach at all:
@@ -448,7 +448,7 @@ assertions:
 | p3c | Generative Space | Generative resources are open-source with exposed weights and settings | Structural + behavioral |
 | p3e | Generative Space | User preference overrides take precedence over LLM aggregate defaults | Absence check |
 | p4a | Clear Boundaries | Every access path goes through `require_capability` *(IS)* + `require_sovereignty` *(OUGHT)* | Structural + behavioral |
-| p4b | Clear Boundaries | Tool authority is allowlisted outside the caller (IPC `tool_allowlist`, swarm `mcp_tools`, per-server env) — the per-call token check was removed as vacuous (RR-0056) | Structural |
+| p4b | Clear Boundaries | Tool authority is allowlisted outside the caller (IPC `tool_allowlist`, swarm `mcp_tools`, per-server env) — the per-call token check was removed as vacuous | Structural |
 | p4c | Clear Boundaries | Generative settings tokens obtainable through P2's affirmative consent | Structural |
 | p4d | Clear Boundaries | Connected inference providers expose settings (open-source requirement) | Structural |
 

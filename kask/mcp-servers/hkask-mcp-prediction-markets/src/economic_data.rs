@@ -84,7 +84,7 @@ impl<'a> EconomicDataClient<'a> {
     /// `series_code`, `query`) cannot inject extra params (`&limit=...`) or
     /// truncate the URL (`#`). Path segments are NOT encoded here — callers
     /// must validate path-segment inputs against `^[A-Za-z0-9_-]+$` before
-    /// interpolating them into `endpoint` (RR-0052).
+    /// interpolating them into `endpoint`.
     pub fn build_url(base: &str, endpoint: &str, params: &[(&str, &str)]) -> String {
         let mut url = if endpoint.is_empty() {
             base.trim_end_matches('/').to_string()
@@ -146,7 +146,7 @@ impl<'a> EconomicDataClient<'a> {
 
 /// Percent-encode a query-parameter value per RFC 3986 (unreserved + `+` for
 /// space). Prevents LLM-controlled values from injecting extra query params
-/// (`&limit=...`) or truncating the URL (`#`) (RR-0052).
+/// (`&limit=...`) or truncating the URL (`#`).
 fn url_encode_value(s: &str) -> String {
     let mut encoded = String::with_capacity(s.len() * 3);
     for byte in s.bytes() {

@@ -48,6 +48,55 @@ const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// OOM from malicious or misconfigured feeds that serve unbounded content.
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Enforce the caller's domain boundary even when a provider ignores its
+/// domain parameters. A host suffix matches only at a dot boundary, never
+/// inside a longer hostname or a URL's userinfo/path.
+fn search_url_in_domains(url: &str, include: &[String], exclude: &[String]) -> bool {
+    if include.is_empty() && exclude.is_empty() {
+        return true;
+    }
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let matches_domain = |raw: &String| {
+        let domain = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+        !domain.is_empty()
+            && (host == domain
+                || host
+                    .strip_suffix(&domain)
+                    .is_some_and(|prefix| prefix.ends_with('.')))
+    };
+    (include.is_empty() || include.iter().any(matches_domain))
+        && !exclude.iter().any(matches_domain)
+}
+
+#[cfg(test)]
+mod domain_filter_tests {
+    use super::search_url_in_domains;
+
+    #[test]
+    fn parsed_host_boundary_rejects_lookalikes_and_userinfo() {
+        let official = vec!["amf-france.org".to_string()];
+        assert!(search_url_in_domains(
+            "https://bdif.amf-france.org/back/api/v1/documents/notice.pdf",
+            &official,
+            &[],
+        ));
+        for url in [
+            "https://notamf-france.org/notice",
+            "https://amf-france.org.evil.test/notice",
+            "https://amf-france.org@evil.test/notice",
+            "not a url",
+        ] {
+            assert!(!search_url_in_domains(url, &official, &[]), "{url}");
+        }
+    }
+}
+
 // ── ResearchServer ──
 
 hkask_mcp_server::mcp_server!(
@@ -281,6 +330,22 @@ impl ResearchServer {
                 .await
                 .map_err(McpToolError::from)?;
 
+            let before_domain_filter = compound.results.len();
+            compound.results.retain(|result| {
+                search_url_in_domains(
+                    &result.url,
+                    &search_query.include_domains,
+                    &search_query.exclude_domains,
+                )
+            });
+            let domain_filter_removed = before_domain_filter - compound.results.len();
+            if domain_filter_removed > 0 {
+                tracing::warn!(
+                    target: "hkask.web",
+                    domain_filter_removed,
+                    "search provider returned results outside the requested domain boundary"
+                );
+            }
             compound.results.truncate(num_results as usize);
 
             // Deep strategy rerank stage: ONE templated rerank call
@@ -395,6 +460,7 @@ impl ResearchServer {
                 related_questions: compound.related_questions.clone(),
                 count: compound.results.len(),
                 providers_failed: compound.providers_failed.clone(),
+                domain_filter_removed,
                 selected_provider,
                 provider_profiles,
                 provider_recommendations,

@@ -237,7 +237,6 @@ impl Keychain {
     // key-based methods above. Used by `KeychainCredentialsProvider` so ALL
     // credential URLs use the same oo7 schema for both sync and async callers.
 
-
     /// Store a secret at an arbitrary URL; oo7 I/O runs on async-std's executor.
     pub async fn store_by_url_async(
         &self,
@@ -314,7 +313,6 @@ impl Keychain {
             id: format!("keychain entry not found at url={url}"),
         }))
     }
-
 
     /// Delete a secret at an arbitrary URL; absent entries are a no-op.
     pub async fn delete_by_url_async(&self, url: &str) -> Result<(), KeychainError> {
@@ -412,7 +410,7 @@ pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError
     // Validate in place and copy only on success. `String::from_utf8(bytes.to_vec())`
     // moved the passphrase into a plain `Vec` that escaped `Zeroizing`; on the error
     // path the resulting `FromUtf8Error` then OWNED those bytes and dropped them
-    // unwiped (RR-0063). `from_utf8` on a borrowed slice cannot take ownership, so
+    // unwiped. `from_utf8` on a borrowed slice cannot take ownership, so
     // the failure path leaves nothing behind.
     let passphrase = std::str::from_utf8(&bytes)
         .map_err(|e| KeychainError::Platform(format!("DB passphrase is not valid UTF-8: {e}")))?;
@@ -577,7 +575,11 @@ mod integration_tests {
         kc.store_by_key("runpod_s3_access_key", TEST_VALUE)?;
         kc.store_by_key("runpod_s3_secret", TEST_VALUE)?;
         kc.store_by_key("exa", TEST_VALUE)?;
-        async_std::task::block_on(kc.store_by_url_async("https://api.runpod.io", "kask", TEST_VALUE))?;
+        async_std::task::block_on(kc.store_by_url_async(
+            "https://api.runpod.io",
+            "kask",
+            TEST_VALUE,
+        ))?;
 
         purge_obsolete_runpod_s3_credentials()?;
         purge_obsolete_runpod_s3_credentials()?;

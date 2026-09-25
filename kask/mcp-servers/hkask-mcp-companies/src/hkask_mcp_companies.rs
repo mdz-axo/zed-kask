@@ -331,7 +331,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // server. This read used the shorter `HKASK_SERPAPI_KEY`, which
             // appeared in no allowlist and no credential registry, so the key
             // could never arrive and corpus-mode transcript search was
-            // permanently unavailable (RR-0061).
+            // permanently unavailable.
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
             let investor_required_return = std::env::var("HKASK_INVESTOR_REQUIRED_RETURN")
                 .map_err(|error| hkask_mcp_server::McpError::UnexpectedResponse {

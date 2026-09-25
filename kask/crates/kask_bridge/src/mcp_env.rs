@@ -387,8 +387,8 @@ pub(crate) fn emit_media_env(
 /// cleared (`cmd.env_clear()`), so a shell-set value never reaches the
 /// process unless `mcp_env()` carries it and the server's `config_env`
 /// allowlist admits it. Without this passthrough, the allowlist entries for
-/// these vars advertise a delivery path that nothing sources (RR-0061's
-/// "allowlist entry naming a credential that nothing ever sources", in
+/// these vars advertise a delivery path that nothing sources (an
+/// allowlist entry naming a credential that nothing ever sources, in
 /// config form). Only non-empty parent values are forwarded — an empty shell
 /// var is not a meaningful override.
 const OPERATOR_OVERRIDE_ENV_VARS: &[&str] = &[

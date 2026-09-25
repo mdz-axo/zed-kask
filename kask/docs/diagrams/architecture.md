@@ -566,7 +566,7 @@ with `permission_denied` at tool time.
 
 The `hkask-tool-port` crate holds the dispatch port only — no tokens, no
 authorization check, no information-flow labels (the per-call capability
-gate RR-0056 and the FIDES taint lattice RR-0053 were removed 2026-08-12).
+gate and the FIDES taint lattice were removed 2026-08-12).
 `McpRuntime::invoke` meters the call and dispatches it; the only pre-dispatch
 refusal is the runaway-loop breaker. Verified current.
 

@@ -7,7 +7,7 @@
 //! REPL/API/CLI — MCP server binaries depend on hkask-mcp-server instead.
 //!
 //! `invoke` performs no per-call authorization; see `ToolPort::invoke` and
-//! RR-0056 for why the prior capability gate was removed. Authority lives in the
+//! the tool-port README for why the prior capability gate was removed. Authority lives in the
 //! inference IPC `tool_allowlist`, the swarm card `mcp_tools` allowlist, and the
 //! per-server MCP env allowlists.
 

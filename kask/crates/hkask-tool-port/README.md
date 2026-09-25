@@ -11,7 +11,7 @@ Tool dispatch port.
 ## This crate does not authorize
 
 It previously minted `DelegationToken`s that `McpRuntime::invoke` checked against
-the invoked tool. **That gate was removed (2026-08-12, RR-0056) because it could
+the invoked tool. **That gate was removed (2026-08-12) because it could
 not deny anything.** All three production mint sites built the token's
 `resource_id` from the same tool name they then passed to `invoke`, so
 `is_valid_for` compared a caller-supplied value against itself and returned true
@@ -27,7 +27,7 @@ caller being checked. Authority in zed-kask lives at three such boundaries:
 |---|---|---|
 | Per-request delegated-tool allowlist (fail-closed on missing/empty) | `kask_bridge::inference_ipc_server` `tool_invoke` dispatch | `dispatch_tool_invoke_rejects_unallowed_tool` |
 | Per-agent declared `mcp_tools` allowlist | `hkask-mcp-swarm` `agent_executor` | swarm card tests |
-| Per-server MCP env / credential allowlists | `kask_bridge::mcp_servers` | RR-0038, `all_servers_have_credential_allowlist` |
+| Per-server MCP env / credential allowlists | `kask_bridge::mcp_servers` | `all_servers_have_credential_allowlist` |
 
 Capability **separation** (which tools a given agent may reach at all) is
 enforced; per-call capability **gating** is deliberately not.
@@ -42,7 +42,7 @@ enforced; per-call capability **gating** is deliberately not.
   Reinstating information-flow control means first giving tools real labels and
   propagating taint on write.
 - The call meter (runaway-loop breaker, fail-open on an unseeded agent) lives in
-  `hkask_regulation::CallCapManager` — see RR-0057.
+  `hkask_regulation::CallCapManager` — it fails open for an unseeded agent.
 
 ## See Also
 

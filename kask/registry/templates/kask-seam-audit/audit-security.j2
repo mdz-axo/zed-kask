@@ -30,7 +30,7 @@ an issue in an upstream non-D-seam file, report it with `deferred: true` and
 `deferred_reason: "upstream non-D-seam"`.
 
 ## Priority surfaces (OWASP LLM Top-10 2025, MITRE ATLAS v5.1, NIST SSDF SP 800-218A)
-1. MCP runtime gate — `McpRuntime::invoke`: per-tick call ceiling / runaway-loop breaker, fail-closed. Verify no per-call authorization gate remains (removed RR-0056).
+1. MCP runtime gate — `McpRuntime::invoke`: per-tick call ceiling / runaway-loop breaker, fail-closed. Verify no per-call authorization gate remains (it was removed: it compared a value with itself).
 2. Credential/config scoping per MCP server — each `BuiltinMcpServer` uses `Some(&[])` minimum (not `None`); allowlist content aligns with what the server reads.
 3. `AnyJsonValue` vs `serde_json::Value` in MCP tool input structs (schemars renders `Value` as bare `true`).
 4. `unwrap_or(0)` on regulation-loop sense inputs.
