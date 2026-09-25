@@ -32,11 +32,30 @@ fn source_check_form() -> Result<&'static str> {
         .context("closing source-check fence")
 }
 
-fn source_status(packet: &Value) -> Result<Value> {
+fn source_review(packet: &Value) -> Result<Value> {
     let mut input = packet.clone();
     input["disclosures"] = packet["disclosure_inventory"].clone();
-    hkask_lisp::eval_sandboxed(source_check_form()?, &input)
-        .context("check original disclosure and observed search/extraction log")
+    let result = hkask_lisp::eval_sandboxed(source_check_form()?, &input)
+        .context("check original disclosure and observed search/extraction log")?;
+    ensure!(
+        result.as_array().is_some_and(|items| items.len() == 2),
+        "source review must contain coverage and known-omission status"
+    );
+    Ok(result)
+}
+
+fn source_status(packet: &Value) -> Result<Value> {
+    source_review(packet)?
+        .get(0)
+        .cloned()
+        .context("coverage status")
+}
+
+fn known_omission(packet: &Value) -> Result<Value> {
+    source_review(packet)?
+        .get(1)
+        .cloned()
+        .context("known-omission status")
 }
 
 fn cases<'a>(fixtures: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
@@ -45,6 +64,50 @@ fn cases<'a>(fixtures: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
         .context("missing fixture case array")?;
     ensure!(!cases.is_empty(), "fixture case array must not be empty");
     Ok(cases)
+}
+
+/// expect: An unfinished search cannot hide an independently observed material
+/// omission, and adding the missing statement removes only that finding.
+#[test]
+fn known_material_omission_survives_unperformed_discovery() -> Result<()> {
+    let fixtures: Value = serde_json::from_str(FIXTURES)?;
+    let mut packet = fixtures["packet"].clone();
+    packet["source_outputs"][0]["output"]["content"] =
+        json!("We announced partnerships. The regulator issued a material sanction.");
+    packet["disclosure_inventory"]
+        .as_array_mut()
+        .context("inventory")?
+        .push(json!({
+            "output_key":"source:web_extract:disclosure",
+            "url":"https://example.invalid/disclosure", "published_at":"2026-07-01",
+            "quote":"The regulator issued a material sanction.",
+            "report_marker":"material sanction"
+        }));
+    packet["pipeline_tool_log"][1]["output"] = json!({
+        "results":[{"url":"https://regulator.example.invalid/unextracted"}],
+        "count":1,"providers_failed":[]
+    });
+    ensure!(
+        source_status(&packet)? == "not_checked",
+        "unextracted hit must block coverage"
+    );
+    ensure!(
+        known_omission(&packet)? == "material_omission",
+        "known omission lost behind incomplete discovery"
+    );
+    packet["target_text"] = json!(format!(
+        "{} The regulator issued a material sanction.",
+        packet["target_text"].as_str().context("target")?
+    ));
+    ensure!(
+        source_status(&packet)? == "not_checked",
+        "new text cannot clear missing hit"
+    );
+    ensure!(
+        known_omission(&packet)? == "not_found_in_reviewed",
+        "covered disclosure should not be reported omitted"
+    );
+    Ok(())
 }
 
 /// expect: Both research consumers supply the same snapshot inputs at first
@@ -239,6 +302,90 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             "incomplete",
         ),
         (
+            "inventory_url_does_not_match_original",
+            {
+                let mut p = packet.clone();
+                p["disclosure_inventory"][0]["url"] = json!("https://example.invalid/other");
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "search_hit_without_original",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"][1]["output"] = json!({
+                    "results":[{"url":"https://regulator.example.invalid/decision"}],
+                    "count":1,"providers_failed":[]
+                });
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "uninspected_search_output",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"][0]["output"] = Value::Null;
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "failed_search_provider",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"][1]["output"]["providers_failed"] =
+                    json!(["provider_timeout"]);
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "failed_followup_search",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
+                    "tool_name":"web_search", "scope":"regulator", "query":"ExampleCo enforcement",
+                    "status":"failed", "output":{"results":[],"count":0,"providers_failed":["timeout"]}
+                }));
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "missing_search_results_field",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"][1]["output"] = json!({"count":0,"providers_failed":[]});
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
+            "search_result_count_mismatch",
+            {
+                let mut p = packet.clone();
+                p["pipeline_tool_log"][0]["output"]["count"] = json!(2);
+                p
+            },
+            original.clone(),
+            "not_checked",
+            "incomplete",
+        ),
+        (
             "omitted_regulatory_disclosure",
             {
                 let mut p = packet.clone();
@@ -249,6 +396,10 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     "source_kind":"original", "url":"https://regulator.example.invalid/decision",
                     "retrieved_at":"2026-09-24", "period":"2026-07", "unit":null
                 }));
+                p["pipeline_tool_log"][1]["output"] = json!({
+                    "results":[{"url":"https://regulator.example.invalid/decision"}],
+                    "count":1,"providers_failed":[]
+                });
                 p["pipeline_tool_log"]
                     .as_array_mut()
                     .context("tool log")?
@@ -260,7 +411,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     .as_array_mut()
                     .context("inventory")?
                     .push(json!({
-                        "output_key":"source:web_extract:regulator", "published_at":"2026-07-15",
+                        "output_key":"source:web_extract:regulator", "url":"https://regulator.example.invalid/decision", "published_at":"2026-07-15",
                         "quote":"The regulator issued a material sanction in July 2026.",
                         "report_marker":"material sanction in July 2026"
                     }));
@@ -296,8 +447,13 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     .context("source outputs")?
                     .push(json!({
                         "tool_name":"web_extract", "output_key":"source:web_extract:unrelated",
-                        "output":{"content":"Public contact details."}, "source_kind":"original"
+                        "output":{"content":"Public contact details."}, "source_kind":"original", "url":"https://example.invalid/unrelated"
                     }));
+                p["pipeline_tool_log"][0]["output"] = json!({
+                    "results":[{"url":"https://example.invalid/disclosure"},
+                        {"url":"https://example.invalid/unrelated"}],
+                    "count":2,"providers_failed":[]
+                });
                 p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
                     "tool_name":"web_extract", "output_key":"source:web_extract:unrelated", "status":"ok"
                 }));
@@ -305,7 +461,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     .as_array_mut()
                     .context("inventory")?
                     .push(json!({
-                        "output_key":"source:web_extract:unrelated", "published_at":"2026-07-15",
+                        "output_key":"source:web_extract:unrelated", "url":"https://example.invalid/unrelated", "published_at":"2026-07-15",
                         "quote":"Public contact details.", "disposition":"not_material",
                         "reason":"Contact page contains no business or regulatory disclosure"
                     }));

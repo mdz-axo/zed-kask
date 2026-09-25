@@ -14,7 +14,14 @@ company-research-deep without external search, credentials or Exa Agent.
    status, not an authored `checked` field. The test also varies source bytes,
    discovery/extraction log, material-disclosure inventory and frozen forecasts;
    it checks omission and forbidden mutation against a clean and rationale-only
-   control. Do not duplicate either decision form in test code.
+   control. A returned official-domain search URL with no extracted original,
+   an absent search-results field, a mismatched result count, or a mismatched
+   original URL must leave coverage `not_checked` even with a perfect fact
+   score. The same source-check result separately preserves a known material
+   omission when another discovery hit is unresolved; a corrected target
+   removes only the omission, not the unresolved hit.
+   Search fixtures are synthetic; they do not attest real tool provenance.
+   Do not duplicate either decision form in test code.
 3. For a live process check, separately invoke `grounding-verify` in a
    `spawn_agent` with the rendered packet and let it search public issuer and
    regulator disclosures using only public identifiers. Inspect the actual

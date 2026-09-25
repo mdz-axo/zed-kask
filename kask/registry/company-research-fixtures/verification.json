@@ -23,12 +23,12 @@
       {"tool_name":"income_statement", "description":"Synthetic provider financial data fixture", "output_key":"source:income_statement:revenue", "output":{"entity":"ExampleCo","revenues":[{"period":"FY2025","revenue":100},{"period":"FY2024","revenue":80}],"currency":"USD","warnings":["Synthetic test data; not an audited filing"]}, "source_kind":"original", "url":null, "retrieved_at":null, "period":"FY2024-FY2025", "unit":"USD"}
     ],
     "pipeline_tool_log": [
-      {"tool_name":"web_search","scope":"issuer","query":"ExampleCo investor releases","status":"ok","note":"Synthetic discovery; no network call claimed"},
-      {"tool_name":"web_search","scope":"regulator","query":"ExampleCo regulator decisions","status":"ok","note":"Synthetic discovery; no network call claimed"},
+      {"tool_name":"web_search","scope":"issuer","query":"ExampleCo investor releases","status":"ok","output":{"results":[{"url":"https://example.invalid/disclosure"}],"count":1,"providers_failed":[]},"note":"Synthetic discovery; no network call claimed"},
+      {"tool_name":"web_search","scope":"regulator","query":"ExampleCo regulator decisions","status":"ok","output":{"results":[],"count":0,"providers_failed":[]},"note":"Synthetic discovery; no network call claimed"},
       {"tool_name":"web_extract","output_key":"source:web_extract:disclosure","status":"ok","note":"Supplied original-source fixture; no network call claimed"},
       {"tool_name":"income_statement","output_key":"source:income_statement:revenue","status":"ok","note":"Supplied provider-data fixture; no live call claimed"}
     ],
-    "disclosure_inventory": [{"output_key":"source:web_extract:disclosure", "published_at":"2026-07-01", "quote":"We announced partnerships.", "report_marker":"We announced partnerships."}],
+    "disclosure_inventory": [{"output_key":"source:web_extract:disclosure", "url":"https://example.invalid/disclosure", "published_at":"2026-07-01", "quote":"We announced partnerships.", "report_marker":"We announced partnerships."}],
     "original_forecast": null,
     "working_forecast": null,
     "leak_rules": [{"block":"financial_profile","rule_type":"Quantity","pattern":"%"}, {"block":"paying_customers","rule_type":"Word","pattern":"paying customers"}],
