@@ -656,7 +656,7 @@ decoupled from ingestion — it runs on the timer, never in the
    per-thread watermark control row is replaced to keep one current coverage
    boundary. Control-state replacement never edits an existing lesson.
 
-**T17 scheduling enforcement (2026-09-08):** `start_consolidation_timer`
+**Scheduling enforcement (2026-09-08):** `start_consolidation_timer`
 uses an interval of `max(consolidation_cadence_secs, 60)` seconds, skips the
 immediate first tick, and fires subsequent passes. Zero disables the timer.
 This replaces the non-firing cold-start timestamp gate; no timestamp or
@@ -734,7 +734,7 @@ so lessons survive the session without anyone choosing to save them.
   after startup scans from the Unix epoch and uses per-thread watermarks
   to skip already-covered work, so older undistilled turns remain
   discoverable after restart.
-- **Pending-work revisit** (T04, 2026-09-08): a thread skipped as
+- **Pending-work revisit** (2026-09-08): a thread skipped as
   active, or whose inference, parse, validation, or atomic publication
   fails, is carried in the timer's in-memory
   pending set and re-examined on every later pass — its turns were
@@ -748,7 +748,7 @@ so lessons survive the session without anyone choosing to save them.
   epoch-based first-pass scan re-discovers undistilled work. The timer
   polls at the configured cadence with a 60s floor — no upper clamp
   (the obsolete 3600s cap silently shortened longer cadences; removed
-  with the same T17 ruling that removed the consolidation cap).
+  with the same ruling that removed the consolidation cap).
 - **Configuration.** `kask.memory.distillation_cadence_secs` (default
   600, 0 = disabled) and `kask.memory.distillation_idle_secs` (default
   300) — `settings.rs:241`, defaults in `Default` (`:257`), emitted to
@@ -1208,9 +1208,9 @@ Defined in `kask/crates/kask_bridge/src/settings.rs:211-234`; defaults at
 | `recall_limit`               | 5       | Max snippets to retrieve per recall                   |
 | `recall_min_confidence`      | 0.3     | Min confidence for a snippet to be injected           |
 | `auto_inject`                | true    | Whether to auto-inject recalled memories into prompts |
-| `memory_life_days`           | 180     | Decay constant S applied to bridge and curator-server stores on construction/reopen (T16) |
+| `memory_life_days`           | 180     | Decay constant S applied to bridge and curator-server stores on construction/reopen |
 
-**T16 enforcement update (2026-09-08, operator ruling 2026-09-07):**
+**Enforcement update (2026-09-08, operator ruling 2026-09-07):**
 `RealMemoryPort::new` threads the setting into `CuratorStore`, including
 self-healing reopen; `kask/crates/kask_bridge/src/memory/curator_stores.rs::open_curator_store` applies
 `MemoryStore::with_memory_life_days`. The curator MCP server receives
@@ -1223,7 +1223,7 @@ see `tasks/plan.md` for exact evidence. The Memory settings UI
 already exposes this field; no UI omission is intended.
 
 `HKASK_MEMORY_STORAGE_BUDGET` remains unwired: the curator store uses the
-default budget with no env override. T16 does not change that policy.
+default budget with no env override. This update does not change that policy.
 
 ### Environment variables (live — read via `std::env::var`)
 

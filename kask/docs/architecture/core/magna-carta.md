@@ -58,7 +58,7 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 ### Core-review decision — 2026-09-04
 
 The operator reaffirmed **parent-held delegation grants**: a child request may
-narrow, never enlarge, its grant. Implemented in core-review T04 and checked
+narrow, never enlarge, its grant. Implemented and checked
 through dispatch plus settings/launch tests: `delegation_grants::parent_allows`
 is checked before `ToolPort::invoke`, independently of the request allowlist.
 Configuration is explicit and empty by default (`kask.mcp.delegated_tools`).

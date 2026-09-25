@@ -44,7 +44,7 @@ an empty replacement. Reconcile recovery explicitly; retry is not cleanup.
 This is the storage primitive, not live maintenance orchestration. The operator
 approved maintenance restart on 2026-09-06, but inventory confirmation, operation
 drain, helper handoff, multi-file journal/key publication, and visible reopen/resume
-remain open in core-review T11. These leases cover participating storage users,
+remain open. These leases cover participating storage users,
 not older binaries or direct SQLite opens. Individual file renames do not establish
 multi-database/keychain crash atomicity.
 
