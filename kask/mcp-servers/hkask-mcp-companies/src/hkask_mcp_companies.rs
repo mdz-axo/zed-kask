@@ -494,9 +494,9 @@ mod tool_behavior_tests {
     // this pin is what makes a re-introduction (or a silent registration drop)
     // fail CI instead of shipping as an undocumented duplicate.
     #[test]
-    fn tool_surface_is_exactly_40_registered_tools() {
+    fn tool_surface_is_exactly_41_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 40, "companies registered tool surface changed; got {n}");
+        assert_eq!(n, 41, "companies registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must map to an ontology concept for

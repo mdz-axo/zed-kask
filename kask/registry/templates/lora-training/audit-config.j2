@@ -1,4 +1,4 @@
-{# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings and reg.lora.audit spans (P9), and require host (P12). #}
+{# goal: Audit declared LoRA/QLoRA training artifacts phase-by-phase without executing training. Preserve the operator-selected method, distinguish recommendations from readiness, emit normalized evidence-backed findings, and require host (P12). #}
 [inference]
 contract:
   input:
@@ -294,12 +294,6 @@ The manifest and downstream phases still process the finding normally —
 the escalation is an IN-ADDITION short-circuit, not a replacement for the
 normal flow. This mirrors bug-hunt's `probe_escalation` pattern.
 
-Regulation SPAN EMISSION (P9)
-Emit `reg.lora.audit` for every gate represented in `gate_results`: target
-`"reg.lora.audit"`, message `"Regulation"`, operation `"audit_gate"`, gate_id,
-phase, state, readiness_impact, evidence_kind, selected_method,
-host, latency_ms. The namespace remains registered in
-`CANONICAL_NAMESPACES`. Emit no anonymous action.
 
 CAPABILITY BOUNDARY (P4)
 Read only declared workspace paths. Do not load models, execute training or

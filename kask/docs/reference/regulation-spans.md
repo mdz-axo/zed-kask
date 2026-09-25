@@ -73,11 +73,10 @@ The canonical registry currently includes these live roots and selected descenda
 | MCP | `reg.mcp`, `reg.mcp.cap`, `reg.mcp.media.face` |
 | Tool tracing | `reg.tool`; hierarchical descendants such as `reg.tool.agent` are valid |
 | Inference | `reg.inference` and the typed circuit-transition/recovery paths |
-| Outcome | `reg.outcome`, `reg.outcome.coherence`, `reg.outcome.predictive` |
+| Outcome | `reg.outcome`, `reg.outcome.predictive` |
 | Memory | `reg.memory`, `reg.memory.decay`, `reg.memory.encode` |
 | Skills | `reg.skill` plus hierarchical per-skill outcome and operator-feedback descendants |
-| Pipelines | `reg.pipeline` and registered calibration, triage, PDF, OCR, and decimation descendants |
-| Sovereignty | `reg.sovereignty` and its registered policy descendants |
+| Pipelines | `reg.pipeline` and registered triage, PDF, chunk, and OCR descendants |
 
 `RegulationSpan` remains the small cross-cutting enum for `Curation` and `MemoryEncode`; its `emit` method writes target `reg` with `reg_domain` and `operation` fields (`kask/crates/hkask-types/src/regulation.rs:108-144`). Domain-specific emitters use their own registered namespace strings.
 

@@ -76,9 +76,20 @@ Each source record has `tool_name`, `description`, and a unique `output_key`
   `derived` for computed tool results, `synthesis` for generated summaries;
 - `url`, `retrieved_at`, `period`, `unit`: known metadata or explicit nulls.
 
-The caller may supply this packet in a file instead of inline when large.
-Read the entire target and the referenced source records before verification.
-An unread or inaccessible file is missing evidence, never a clean check.
+The caller may supply a public-only packet in a file instead of inline when
+large. The canonical file is `companies-mcp/research-runs/{run_id}/packet.json`
+under the user's artifacts directory. Hash its exact bytes with SHA-256 and
+invoke `company_verification_packet_check(run_id, expected_sha256)` to run the
+SAME source-check form below over the full JSON without model argument cuts.
+The tool returns the paired mechanical review and the packet digest, NOT an
+independent discovery or download attestation. The verifier still reads the
+entire target and source records, checks original PDF/file identities and
+source materiality, then binds `not_checked` when any required check was not
+performed. A changed target or packet gets a NEW digest and receipt; old
+receipts remain history. Never store private unpublished source text in this
+user-facing plaintext packet; without an authorized private packet path,
+return `not_checked`. An unread or inaccessible file is missing evidence,
+never a clean check.
 
 ## Actual tool-call log
 

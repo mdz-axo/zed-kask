@@ -79,28 +79,20 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Seam architecture ──
     // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
     // that would have emitted them was never built; zero emitters.
-    "reg.consent",
     // Email notification span — emitted by hkask-email (hkask_email.rs) and
     // kask_bridge credentials (credential-alert emails).
     "reg.email.sent",
     "reg.consolidation",
-    "reg.contract.violated",
     // ── Curation / Curator ──
     "reg.curation",
     "reg.curator.directive",
     "reg.curator.metacognition",
     // ── Cybernetics ──
     "reg.cybernetics",
-    "reg.cybernetics.backpressure",
-    "reg.cybernetics.substitution",
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
     // pain-signal span. Live via Span::from_kind, not string literals.
     "reg.variety",
-    // Grounding alert signals from the cybernetics loop violation-delta sensor.
-    "reg.grounding",
-    // ── Goal ──
-    "reg.goal",
     // ── Inference ──
     "reg.inference",
     // ── Kata / Skill / Keystore ──
@@ -119,18 +111,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.sensor.memory",
     // ── Outcome ──
     "reg.outcome",
-    // ── Regulation (v0.31.0 Fermi impact-gate) ──
-    "reg.outcome.coherence",
     "reg.outcome.predictive",
-    // ── Sovereignty ──
-    "reg.sovereignty",
-    "reg.sovereignty.consent_anomaly",
-    "reg.sovereignty.consent_audited",
-    "reg.sovereignty.governance_report",
-    "reg.sovereignty.portability_failure",
-    "reg.sovereignty.portability_verified",
-    // ── Spec ──
-    "reg.spec",
     // ── Storage ──
     "reg.storage",
     "reg.storage.corruption",
@@ -147,18 +128,13 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // (removed with the wallet economy — no emitter)
     // ── Pipeline (corpus) ──
     "reg.pipeline",
-    "reg.pipeline.calibration",
-    "reg.pipeline.decimation",
     "reg.pipeline.triage",
-    "reg.pipeline.decimation.binarize",
     "reg.pipeline.ocr",
     "reg.pipeline.ocr.circuit_breaker",
-    "reg.pipeline.ocr.collusion",
     "reg.pipeline.ocr.inference_failure",
     "reg.pipeline.ocr.low_confidence",
     "reg.pipeline.ocr.rate_limit",
     "reg.pipeline.ocr.silent_failure",
-    "reg.pipeline.ocr.trust_invert",
     // OCR health snapshot persistence — the file the regulation loop senses
     // (a write failure blinds the loop to OCR degradation).
     "reg.pipeline.ocr.health",
@@ -169,32 +145,15 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Batch (corpus AIMD concurrency ramp — ratified spec, PM decision
     // 2026-09-03) ──
     "reg.batch.concurrency",
-    // ── LoRA training (training-config audit — lora-training skill) ──
+    // ── LoRA training (config validation and runtime alerts, training server) ──
     "reg.lora",
-    "reg.lora.select",
     "reg.lora.audit",
-    "reg.lora.report",
-    "reg.lora.convergence",
     "reg.lora.runtime",
-    // ── Bug hunt (exploratory testing audit — bug-hunt skill) ──
-    "reg.bughunt",
-    "reg.bughunt.charter",
-    "reg.bughunt.probe",
-    "reg.bughunt.oracle",
-    "reg.bughunt.taxonomize",
-    "reg.bughunt.report",
-    "reg.bughunt.learn",
-    // ── Code review (convergent review audit — code-review skill) ──
-    "reg.codereview",
-    "reg.codereview.scope",
-    "reg.codereview.perspectives",
-    "reg.codereview.adjudicate",
-    "reg.codereview.report",
-    "reg.codereview.implement",
-    // ── Skill (unified cybernetic feedback — one namespace per skill) ──
-    // Every skill emits reg.skill.<skill-id>.<phase> for its six PDCA phases.
-    // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid
-    // without per-skill registration.
+    // ── Skill (activation outcomes and operator feedback) ──
+    // The editor records reg.skill.<skill-id>.outcome and
+    // reg.skill.<skill-id>.operator_feedback (kask_bridge curator_stores);
+    // ancestor matching makes every <skill-id> valid. Skills themselves emit
+    // no spans.
     "reg.skill",
     // ── Training providers (provider HTTP call observability — post-mortem 2026-07-19) ──
     "reg.training.provider.runpod.cancel",
@@ -306,7 +265,7 @@ impl SpanNamespace {
 pub enum SpanCategory {
     /// `reg.variety*` — the cybernetics loop.
     Cybernetics,
-    /// `reg.curation*`, `reg.spec*` — the curation loop.
+    /// `reg.curation*` — the curation loop.
     Curation,
     /// `reg.inference*` — the inference loop.
     Inference,

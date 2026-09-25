@@ -30,6 +30,9 @@ cd "$(dirname "$0")/.."
 # production paths.
 REGISTRY="${REGISTRY:-crates/hkask-types/src/event.rs}"
 SCAN_DIRS=( ${SCAN_DIRS:-crates/ mcp-servers/} )
+# Producers also live in the editor crates (widgets, panels), so the
+# registry → producer check scans them too.
+PRODUCER_DIRS=( ${PRODUCER_DIRS:-crates/ mcp-servers/ ../crates/} )
 TEMPLATE_DIR="${TEMPLATE_DIR:-registry/templates/}"
 
 if [ ! -f "$REGISTRY" ]; then
@@ -136,8 +139,26 @@ for ns in "${J2_REFS[@]}"; do
   fi
 done
 
+# ── Surface 3: registry → producer — every registered namespace is emitted ──
+# A namespace (or a descendant) must appear as a string in production Rust
+# outside the registry. A registry entry nothing produces is a span that can
+# never be observed, and skills cannot emit spans themselves.
+mapfile -t REGISTERED < <(
+  awk '/^const CANONICAL_NAMESPACES/{f=1;next} f&&/^\];/{f=0} f' "$REGISTRY" \
+    | grep -oE '"reg\.[a-z0-9_.]+"' | tr -d '"' | sort -u
+)
+for ns in "${REGISTERED[@]}"; do
+  if ! grep -rqE --include='*.rs' --exclude-dir=target --exclude-dir=tests \
+      --exclude-dir=examples --exclude="$(basename "$REGISTRY")" \
+      -- "\"$(printf '%s' "$ns" | sed 's/\./\\./g')(\.[a-z0-9_.]+)?[\"*]" \
+      "${PRODUCER_DIRS[@]}" 2>/dev/null; then
+    echo "  no producer: $ns (registered in $REGISTRY, emitted nowhere)"
+    FAIL=1
+  fi
+done
+
 if [ "$FAIL" -eq 0 ]; then
-  echo "OK: every reg.* reference in Rust code and .j2 templates is canonical (registered in CANONICAL_NAMESPACES)."
+  echo "OK: every reg.* reference in Rust code and .j2 templates is canonical (registered in CANONICAL_NAMESPACES), and every registered namespace has a producer."
   if [ "$template_ratchet" -gt 0 ]; then
     echo "ratchet: $template_ratchet non-canonical template reference(s) allowlisted (pre-existing — fix to remove from allowlist)"
   fi

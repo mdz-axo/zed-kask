@@ -1,4 +1,4 @@
-{# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. Emit reg.lora.preflight span (P9). No actual training execution; host mandatory (P12). #}
+{# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. No actual training execution; host mandatory (P12). #}
 [inference]
 contract:
   input:
@@ -87,10 +87,6 @@ CAPABILITY BOUNDARY (P4):
 - It does not read outside declared workspace paths, load the dataset into memory,
   execute Python, or call remote services.
 
-Regulation SPAN (P9):
-- Emit `reg.lora.preflight` with verdict, detected_format, expected_format,
-  mapping_code length, finding count, host, and latency_ms.
-- Namespace is registered in CANONICAL_NAMESPACES.
 
 OUTPUT FORMAT (JSON):
 {
@@ -121,7 +117,6 @@ EVIDENCE-BACKED ONLY (P8): detected_format comes from runtime detection;
 expected_format comes from declared trainer/purpose. No inference of format
 from filename alone when detection failed.
 CAPABILITY BOUNDARY (P4): Workspace evidence only; no training execution or network call.
-Regulation REGULATION (P9): Emit the registered span unconditionally.
 HOST (P12): `host` is mandatory.
 VISIBILITY (P11): Public output; no hidden preflight controls.
 SAFETY FLOOR (P3.1): Incompatible verdict remains visible as a refuse finding.

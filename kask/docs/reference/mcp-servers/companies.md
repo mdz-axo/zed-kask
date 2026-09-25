@@ -121,7 +121,7 @@ status: VERIFIED
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 40 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `ResearchStore` operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492` and `kask/mcp-servers/hkask-mcp-companies/src/tools.rs`.[^mcp-spec-companies-ref]
+The diagram traces the dispatch seam shared by all 41 tools: `combined_router` sums nine sub-routers, every tool funnels through `execute_tool`, then branches into provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, `ResearchStore` operations, or a contained file-backed company verification packet check. The latter only executes the shared Lisp source form over a hash-pinned local packet; it is not an independent source-discovery verdict. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492` and `kask/mcp-servers/hkask-mcp-companies/src/tools.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD
@@ -136,7 +136,7 @@ flowchart TD
     Comb --> R6["economic_profit_router<br/>1 tool"]
     Comb --> R7["expectations_router<br/>1 tool"]
     Comb --> R8["transcript_router<br/>1 tool"]
-    Comb --> R9["artifacts_router<br/>3 tools"]
+    Comb --> R9["artifacts_router<br/>4 tools"]
     R1 --> Seam["execute_tool name async<br/>Regulation span outcome record"]
     R2 --> Seam
     R3 --> Seam
@@ -149,6 +149,7 @@ flowchart TD
     Seam --> SinkA["fetch<br/>providers companies_get"]
     Seam --> SinkB["valuation engines<br/>financial_model scenarios<br/>superforecast"]
     Seam --> SinkC["run_store<br/>spawn_blocking"]
+    Seam --> SinkD["SHA256-pinned public packet<br/>shared source-check Lisp"]
     SinkA --> Learn["LearningState<br/>preferred_provider override"]
     Learn --> FmpEod["FMP or EODHD<br/>normalize to FMP shape"]
     FmpEod --> Out["tool JSON response"]
@@ -159,6 +160,7 @@ flowchart TD
     Feedback["result_feedback tool<br/>explicit user-scored update"]
     Feedback -->|"state.record symbol provider score"| Learn
     Ledger --> Out
+    SinkD --> Out
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -264,7 +266,7 @@ The portfolio ledger tools that previously lived here (`portfolio_list`,
 `portfolio_delete`, `ledger_import`, `ledger_export`, `transaction_note_append`,
 `portfolio_comparison`, `portfolio_returns`) were removed when the portfolio
 MCP server took ownership of the ledger; they are pinned absent by the
-40-tool surface test.
+41-tool surface test.
 
 | Tool | Description |
 |------|-------------|
@@ -281,13 +283,14 @@ MCP server took ownership of the ledger; they are pinned absent by the
 |------|-------------|
 | `company_transcript` | Fetch earnings transcripts or search the transcript corpus with explicit channel and recency controls |
 
-### Saved report artifacts (3)
+### Saved report artifacts and verification packet (4)
 
 | Tool | Description |
 |------|-------------|
 | `report_list` | List saved report or screen artifact names |
 | `report_load` | Load a saved report or screen JSON artifact by name |
 | `report_save` | Persist a report or screen JSON artifact |
+| `company_verification_packet_check` | Read one contained public-only research-run `packet.json` by 16-hex run ID, check expected SHA-256, and execute the shared company source-check form with a bounded Lisp budget; returns mechanical statuses, **not** source completeness or fact score |
 
 ## Configuration
 

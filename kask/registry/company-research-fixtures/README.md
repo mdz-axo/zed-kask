@@ -28,7 +28,12 @@ company-research-deep without external search, credentials or Exa Agent.
    budget rejects a 20,000-character original while the documented bounded
    1,000,000-step budget checks it; a larger packet that still exceeds that
    limit remains `not_checked`, not a passing result.
-   Do not duplicate either decision form in test code.
+   Do not duplicate either decision form in test code. For a public-only
+   packet too large for model arguments, `company_verification_packet_check`
+   executes that same source-check form from a SHA-256-pinned `packet.json`
+   beneath a 16-hex research run directory; disposable-root tests cover a
+   changed target/digest and a symlink path escape. This is mechanical packet
+   evaluation, not independent proof of discovery or original URL retrieval.
 3. For a live process check, separately invoke `grounding-verify` in a
    `spawn_agent` with the rendered packet and let it search public issuer and
    regulator disclosures using only public identifiers. Inspect the actual

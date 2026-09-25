@@ -77,5 +77,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility; they emit `reg.ui_layout.*` spans.
+- All templates are prompt templates with `Public` visibility.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -62,7 +62,7 @@ fn emit() {
 EOF
 
 set +e
-CASE1_OUT=$(SCAN_DIRS="$TMPDIR/src/" REGISTRY="$TMPDIR/event.rs" TEMPLATE_DIR="$TMPDIR/no-templates/" bash "$GATE" 2>&1)
+CASE1_OUT=$(SCAN_DIRS="$TMPDIR/src/" PRODUCER_DIRS="$TMPDIR/src/" REGISTRY="$TMPDIR/event.rs" TEMPLATE_DIR="$TMPDIR/no-templates/" bash "$GATE" 2>&1)
 CASE1_RC=$?
 set -e
 
@@ -89,9 +89,16 @@ fn emit() {
     tracing::warn!(target: "reg.skill.lifecycle", "selftest clean");
 }
 EOF
+# A registry holding only the produced ancestor, so this case isolates
+# ancestor matching from the producer check (case 3).
+cat > "$TMPDIR/clean-registry.rs" <<'EOF'
+const CANONICAL_NAMESPACES: &[&str] = &[
+    "reg.skill",
+];
+EOF
 
 set +e
-CASE2_OUT=$(SCAN_DIRS="$TMPDIR/src/" REGISTRY="$TMPDIR/event.rs" TEMPLATE_DIR="$TMPDIR/no-templates/" bash "$GATE" 2>&1)
+CASE2_OUT=$(SCAN_DIRS="$TMPDIR/src/" PRODUCER_DIRS="$TMPDIR/src/" REGISTRY="$TMPDIR/clean-registry.rs" TEMPLATE_DIR="$TMPDIR/no-templates/" bash "$GATE" 2>&1)
 CASE2_RC=$?
 set -e
 
@@ -107,9 +114,37 @@ else
   echo "OK (case 2 — clean/ancestor): gate passed on hierarchical ancestor match"
 fi
 
+# ──────────────────────────────────────────────────────────────────────────
+# Case 3: orphan — a registered namespace no Rust code produces.
+# A registry entry with no producer is a span nothing emits.
+# ──────────────────────────────────────────────────────────────────────────
+cat > "$TMPDIR/orphan-registry.rs" <<'EOF'
+const CANONICAL_NAMESPACES: &[&str] = &[
+    "reg.skill",
+    "reg.selftest.orphan",
+];
+EOF
+
+set +e
+CASE3_OUT=$(SCAN_DIRS="$TMPDIR/src/" PRODUCER_DIRS="$TMPDIR/src/" REGISTRY="$TMPDIR/orphan-registry.rs" TEMPLATE_DIR="$TMPDIR/no-templates/" bash "$GATE" 2>&1)
+CASE3_RC=$?
+set -e
+
+if [ "$CASE3_RC" -ne 1 ]; then
+  echo "FAIL (case 3 — orphan): expected exit 1, got $CASE3_RC"
+  printf '%s\n' "$CASE3_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+elif ! printf '%s\n' "$CASE3_OUT" | grep -q "no producer: reg.selftest.orphan"; then
+  echo "FAIL (case 3 — orphan): exit 1 but the orphan was not named"
+  printf '%s\n' "$CASE3_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 3 — orphan): gate named the registered namespace with no producer"
+fi
+
 if [ "$failures" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: reg-canonical gate is alive (violation detected, ancestor-match pinned)"
+  echo "SELFTEST OK: reg-canonical gate is alive (violation, ancestor match and orphan pinned)"
   exit 0
 else
   echo ""

@@ -1,12 +1,12 @@
 ---
 name: bug-hunt
 core: true
-description: "Exploratory bug hunting: explores a target crate for threats to user-defined quality using heuristic test strategy and exploratory testing charters. Emits reg.bughunt.* spans."
+description: "Exploratory bug hunting: explores a target crate for threats to user-defined quality using heuristic test strategy and exploratory testing charters."
 ---
 
 # Bug Hunt
 
-Bug hunting: explores a target crate for threats to user-defined quality. Applies Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters. Decomposed into phased templates: Charter (with Good Regulator crate modeling + prior-expedition feedback) → Probe (with dynamic pattern expansion + missing-tests detection + algedonic escalation) → Oracle (with reproducibility separated from confidence + file:line citation enforcement) → Taxonomize → Report (with lessons_learned + pattern_signatures for loop closure) → Convergence (with honest process_stabilization + coverage_estimate sub-metrics + next_charter_focus). Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic classification + provenance), pragmatic-cybernetics (feedback loop analysis + Good Regulator checks + variety engineering), diagnose, and grill-me are embedded as inline prompt instructions in the oracle phase. Emits Regulation spans (reg.bughunt.*) for observability (P12).
+Bug hunting: explores a target crate for threats to user-defined quality. Applies Weinberg's quality definition ("value to some person who matters"), Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters. Decomposed into phased templates: Charter (with Good Regulator crate modeling + prior-expedition feedback) → Probe (with dynamic pattern expansion + missing-tests detection + algedonic escalation) → Oracle (with reproducibility separated from confidence + file:line citation enforcement) → Taxonomize → Report (with lessons_learned + pattern_signatures for loop closure) → Convergence (with honest process_stabilization + coverage_estimate sub-metrics + next_charter_focus). Reasoning patterns from pragmatic-semantics (IS/OUGHT + epistemic classification + provenance), pragmatic-cybernetics (feedback loop analysis + Good Regulator checks + variety engineering), diagnose, and grill-me are embedded as inline prompt instructions in the oracle phase.
 
 
 ## When to Use

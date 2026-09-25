@@ -1,4 +1,4 @@
-{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, emit reg.lora.report (P9), and require host (P12). #}
+{# goal: Report phase-aware training findings without changing their schema or classification. Preserve the operator-selected method, separate recommendations from readiness, and require host (P12). #}
 [inference]
 contract:
   input:
@@ -125,11 +125,6 @@ EVIDENCE INTEGRITY
   then, preserve the input classification unchanged.
 - Do not introduce framework-version-specific initializer refusal policy.
 
-Regulation SPAN (P9)
-Emit `reg.lora.report` with exact counts by phase, state, severity, and
-`evidence_kind`; selected_method; readiness
-verdict; contract-gap count; host; latency_ms. Namespace remains
-registered in `CANONICAL_NAMESPACES`. Emit no anonymous action.
 
 CAPABILITY BOUNDARY (P4)
 This report consumes supplied audit artifacts only. It does not read outside

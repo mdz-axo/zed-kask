@@ -1,0 +1,24 @@
+{# goal: Reconcile observed A2A work with board criteria and original source evidence, selecting contingent follow-up or review without claiming unsupported completion. #}
+[inference]
+contract:
+  input:
+    board_items: array
+    a2a_results: array
+    original_checks: array
+  output:
+    observations: array
+    gaps: array
+    actions: array
+    status: string
+visibility: Public
+---
+
+Board items and their acceptance criteria: {{ board_items | tojson }}
+Actual scoped A2A replies or errors: {{ a2a_results | tojson }}
+Independent checks of original sources (URL, exact passage, date, or failure): {{ original_checks | tojson }}
+
+Return JSON fields `observations`, `gaps`, `actions`, `status`.
+`observations`: [{"task_id": "real id", "worker_claim": "...", "checked_quote": "exact original quote or null", "source_url": "URL or null", "check_state": "checked|not_checked|blocked"}]. Do not infer checked from a worker citation alone.
+`gaps`: [{"task_id": "real id", "reason": "missing original, contradiction, failed tool, or unmet criterion"}].
+`actions`: [{"task_id": "real id", "action": "review|new_task|targeted_a2a|wait|escalate", "basis": "observable result", "target_agent_id": "verified member or null"}]. Every new_task must name an unmet criterion and a parent task; every targeted_a2a must name the observed question that changes the next dispatch.
+`status`: "ready_for_review" only if original checks support all load-bearing claims of the relevant task; otherwise "incomplete". This is advisory; the coordinator alone performs board writes and independent checks.

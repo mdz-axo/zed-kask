@@ -41,8 +41,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - Read only declared workspace paths. Do not download models, call remote
   services without explicit consent, or execute initialization, forward,
   backward, merge, training, or evaluation.
-- Require `host` for every action and emit the corresponding registered
-  `reg.lora.*` span.
+- Require `host` for every action.
 
 ## When NOT to Use
 
@@ -66,7 +65,6 @@ This skill does not train, load, initialize, merge, or evaluate models.
    mapping needed, verdict is `ready`.
 4. This phase is optional — skipped when `dataset_path` is absent. It does not
    execute training, load the dataset into memory, or modify files.
-5. Emit `reg.lora.preflight`.
 
 ### `lora-training/select-method`
 
@@ -135,7 +133,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
    emits `undetermined` with blockers (the honest exit step 3 defines)
    instead of iterating.
 9. Return separate `recommendation`, `readiness`, `justification`, and
-   `authority` objects. Emit `reg.lora.select`.
+   `authority` objects.
 
 ### `lora-training/audit-config`
 
@@ -174,8 +172,8 @@ This skill does not train, load, initialize, merge, or evaluate models.
    `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
    `host`, and `severity: critical`. The escalation is in-addition;
    downstream phases still process the finding normally.
-10. Emit every result using the normalized Finding schema below, compute readiness
-    separately, and emit `reg.lora.audit` for every represented gate.
+10. Emit every result using the normalized Finding schema below and compute
+    readiness separately.
 
 ### Normalized Finding Schema
 
@@ -215,8 +213,8 @@ Do not create alternate finding shapes. A recommendation never overwrites
 5. Derive readiness with precedence:
    `Refuse > Fail > Conditional > Deferred > Not evaluated > Pass`.
    A different method recommendation cannot change the verdict.
-6. Preserve claim-appropriate citations and emit `reg.lora.report` with exact
-   phase, state, severity, and evidence-kind counts.
+6. Preserve claim-appropriate citations and report exact phase, state,
+   severity, and evidence-kind counts.
 
 ## Registry Templates
 

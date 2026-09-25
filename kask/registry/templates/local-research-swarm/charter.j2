@@ -1,0 +1,24 @@
+{# goal: Map the project and real kanban tasks into bounded research transforms, source checks, roster needs, and a WIP policy. #}
+[inference]
+contract:
+  input:
+    question: string
+    limits: object
+    tasks: array
+  output:
+    transforms: array
+    source_checks: array
+    roster_needs: array
+    wip_policy: object
+visibility: Public
+---
+
+Project question: {{ question }}
+Limits: {{ limits | tojson }}
+Actual kanban tasks with IDs and criteria: {{ tasks | tojson }}
+
+Produce a JSON object with exactly `transforms`, `source_checks`, `roster_needs`, and `wip_policy`.
+`transforms`: [{"task_id": "real board task id", "input": "...", "deliverable": "...", "depends_on": ["other real task ids"]}].
+`source_checks`: [{"task_id": "...", "original_source_required": "...", "observable_check": "exact passage/URL/date inspection"}].
+`roster_needs`: [{"transform": "...", "accepts": "registered port", "produces": "registered port", "mcp_tools": ["actual qualified tools needed"]}]. Do not assert an agent exists; compare against actual cards after rendering.
+`wip_policy`: {"max_active": 1, "reason": "adjust to the given limits and dependencies"}. This example number is not a hardcoded project default; derive the policy from the project and explain it. If no permissible capacity is specified, surface that gap instead of dispatching.

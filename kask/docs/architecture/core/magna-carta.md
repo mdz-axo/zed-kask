@@ -93,7 +93,7 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous. Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
 | `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `kask/crates/hkask-types/src/visibility.rs:18-19` and `:29-31`; no struct or impl exists |
 
-One nuance: the `reg.sovereignty.*` span namespaces (`reg.sovereignty`, `reg.sovereignty.consent_anomaly`, `reg.sovereignty.consent_audited`, `reg.sovereignty.governance_report`, `reg.sovereignty.portability_failure`, `reg.sovereignty.portability_verified`) **are registered** in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:277-282`) — but no code emits them (zero emission sites as of 2026-09-04). Registered namespace, no enforcement: still OUGHT.
+No `reg.sovereignty.*` span namespace is registered: with no emitter, the names were removed from `CANONICAL_NAMESPACES` (2026-09-25). Register one only together with the code that emits it.
 
 The live default-deny enforcement is the **parent-held grant plus request allowlist** on inference IPC `tool_invoke`: absence from either set refuses dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`, `dispatch`). A child cannot grant itself permissions by rewriting its request. The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
 

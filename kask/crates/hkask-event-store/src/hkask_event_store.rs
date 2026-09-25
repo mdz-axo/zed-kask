@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn opaque_kinds_pass_through_unparsed() {
         let store = memory_store();
-        let payload = serde_json::json!({"span": "reg.bughunt.probe", "arbitrary": [1, 2, 3]});
+        let payload = serde_json::json!({"span": "opaque.example", "arbitrary": [1, 2, 3]});
         store.append("r", "skill_span", &payload).unwrap();
         let events = store
             .query(&EventFilter {
