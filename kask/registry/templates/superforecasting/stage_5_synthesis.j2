@@ -73,12 +73,12 @@ Apply Multi-Criteria Decision Analysis to weight and score each causal model. Ea
 | Model confidence | How confident is the model in its own prediction? |
 
 **Scoring** (1-10 per criterion per model):
-- Score each model on each criterion
-- Compute composite score = weighted sum of criterion scores
+- Score each model on each criterion (these scores are your judgment)
+- Do NOT compute the composite or the weighted average here — report the criterion scores; the composite and `synthesized_probability` are computed by `lisp_eval` in the SKILL.md stage_5 step
 - Check for **compensation masking**: if a model scores high on one criterion but very low on another, flag it — high composite may mask a critical weakness
 
-**Weighted synthesis**:
-- Normalize composite scores to weights (sum = 1.0)
+**Weighted synthesis** (computed downstream by `lisp_eval`, shown for reference):
+- composite = sum of the four criterion scores; weights = composite / sum of composites
 - synthesized_probability = sum(model.implied_probability × model.weight)
 - If compensation masking is detected, reduce the weight of the affected model
 
@@ -98,10 +98,10 @@ Respond with a JSON object containing:
     perspective: string,
     implied_probability: float,
     confidence: string,
-    mcda_composite_score: float,
+
     mcda_criteria_scores: object with {evidence_alignment: int, reference_class_stability: int, causal_mechanism_clarity: int, model_confidence: int}
   }
-- synthesized_probability: float (0.0-1.0, weighted average after MCDA aggregation)
+- synthesized_probability_judgment: float (0.0-1.0, your holistic read, for cross-validation against the lisp_eval weighted average — not the authoritative value)
 - dissenting_views: Array of objects with {
     view: string,
     steelmanned_argument: string,

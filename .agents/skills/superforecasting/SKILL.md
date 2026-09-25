@@ -8,6 +8,15 @@ description: "Superforecasting pipeline following Tetlock's Good Judgment Projec
 
 Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process from question triage through Fermi decomposition, outside/inside views, Bayesian evidence updating, dragonfly-eye synthesis, probability calibration, and forecast recording.
 
+## Reference model
+
+Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) — `onto_anchor` → derived `superforecasting` (operator ruling 2026-09-25). Brier (1950) → derived `brier_score`. Each stage below is labelled **D** (deterministic, oracle named) or **P** (probabilistic, calibration or critique named).
+
+## Initial and target condition
+
+- **Initial condition (T1):** the admitted question, its resolution criteria and deadline, the stage-2 base rate with reference class, any `market_context` / `expert_prior`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket.
+- **Target condition (T2):** a probability with a defensible range, a record carrying the stage-0 resolution criteria and deadline unchanged, and `forecast-quality-gate` `gate_pass = true`. Accuracy is judged only by Brier over resolved forecasts, never by one outcome.
+
 ## When to Use
 
 - When you need to forecast the likelihood of a future event using a rigorous, structured methodology based on Tetlock's Good Judgment Project.
@@ -28,14 +37,14 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 ## Instructions
 
-### stage_0_triage
+### stage_0_triage (P — critique: `scenario_triage` classification as cross-check; operator sharpens missing criteria)
 
 1. Evaluate whether a forecasting question is worth investing significant effort in.
 2. Classify the question into "clocklike" (easy), "goldilocks" (just right), or "cloudlike" (unpredictable).
 3. Assess if there is sufficient publicly available information, if the outcome is determined by analyzable factors, if research would improve accuracy, and if the time horizon is appropriate.
 4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. If no supported `scenario_type` or bounded `time_horizon` fits, report null and do not proceed into the scenario tree. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when the question is in the goldilocks zone **and** can later be resolved; carry the criteria and deadline unchanged into stage 7's record.
 
-### stage_1_fermi_decompose
+### stage_1_fermi_decompose (P — critique: stage 3's falsifiability delegation; structural limits checked by `scenario_quantify` rejection)
 
 1. Decompose the forecasting question into tractable sub-questions.
 2. Unpack the question by asking what it would take for the answer to be yes or no.
@@ -45,7 +54,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 6. List all assumptions, noting whether they are reasonable and what happens if they are false.
 7. Identify established facts (knowns) and uncertain factors requiring estimation (unknowns).
 
-### stage_2_outside_view
+### stage_2_outside_view (P — calibration: reference-class base rate; `market_match` as D anchor when a market exists)
 
 1. Establish base rates by identifying relevant reference classes and determining how often similar events occur.
 2. Identify reference classes for the main question and sub-questions.
@@ -54,7 +63,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 > **MCP tool step (step 4, call `market_match` directly — no template):** before this step, call `market_match` (hkask-mcp-prediction-markets) to fetch prediction-market candidates for the forecasting question. The market-implied probabilities feed this step's `market_context` input as a deterministic anchor. An empty result is a valid signal that no relevant market exists, not an error.
 
-### stage_3_probability_estimate (delegated split)
+### stage_3_probability_estimate (delegated split — node estimates P, combination D via `scenario_quantify`)
 
 The former single inside-view step is split into three steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
 
@@ -64,7 +73,7 @@ The former single inside-view step is split into three steps. Generation and cou
 
 > **MCP tool step (after stage 3, call `scenario_quantify` directly — no template):** map the `sub_question_tree` nodes into ScenarioEvent objects (id, name, question, deadline, time_horizon, scenario_type, subject, probability, depends_on with parent_event_ids + conditionals, sub_questions, update_count) and call `scenario_quantify`. The outcome node's `marginal_probability` is `tree_combined_probability`, stage 4's prior. The server's sequence advisory expects `scenario_build` first — the advisory warn is expected noise when superforecasting brings its own tree.
 
-### stage_4_evidence_update
+### stage_4_evidence_update (likelihood ratios P; posterior D via `lisp_eval`)
 
 1. Incorporate new evidence and update probabilities using likelihood ratios and Bayesian reasoning.
 2. Assess the strength (weak/moderate/strong) and direction (supports/contradicts/neutral) of each piece of evidence.
@@ -75,19 +84,19 @@ The former single inside-view step is split into three steps. Generation and cou
 5. Make many small updates most of the time, and occasional large updates when evidence is very strong.
 6. Update the prior probability to the posterior probability based on the accumulated evidence.
 
-### stage_5_synthesis
+### stage_5_synthesis (model probabilities and criterion scores P; weighted average D via `lisp_eval`)
 
 1. Integrate multiple causal models and perspectives into a "dragonfly eye" view.
 2. Identify clashing causal forces pushing toward YES vs. NO.
 3. Steelman the strongest opposing arguments, making them as persuasive as possible.
 4. Generate 3-5 distinct causal models, each with an implied probability.
 5. Apply MCDA-style weighted aggregation: score each model against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria. Compute composite scores and detect compensation masking.
-6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum:
+6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum. Each `c_i` is the sum of that model's four criterion scores from the template output. The result is the `synthesized_probability` passed to stage 6; the template's `synthesized_probability_judgment` is a cross-check only:
    - form: "(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"
    - env: `{ "m1": <model 1 probability>, "c1": <model 1 composite score>, "m2": ..., "c2": ..., "m3": ..., "c3": ... }`
 7. Aggregate the judgments of different models, noting where they agree and diverge.
 
-### stage_6_calibration
+### stage_6_calibration (P — calibration: `scenario_calibrate`, which applies the learned overconfidence bias when ≥5 resolved forecasts exist)
 
 1. Assign a precise, well-calibrated probability to the forecasted outcome using the full 0-100% scale.
 2. Anchor the assignment on `scenario_calibrate` (hkask-mcp-scenarios): call it with the question and the stage-1 sub-questions (each with estimate + confidence) — the server computes the calibrated probability via Tetlock's methodology. Depart from its output only with explicit justification.
@@ -96,7 +105,7 @@ The former single inside-view step is split into three steps. Generation and cou
 5. Justify the specific probability and precision against the pipeline's evidence trail.
 6. Define a defensible range of probabilities that would also be reasonable.
 
-### stage_7_record
+### stage_7_record (P content; resolution criteria and deadline D-copied from stage 0)
 
 1. Create a structured record of the forecast for later tracking, scoring, and post-mortem analysis.
 2. Include a unique tracking ID, timestamp, full question text, resolution criteria, probability, and confidence.
@@ -104,9 +113,9 @@ The former single inside-view step is split into three steps. Generation and cou
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
-> **MCP tool step (step 16, call `scenario_score` directly — no template):** after this step, call `scenario_score` (hkask-mcp-scenarios) to persist the forecast for later Brier scoring against actual outcomes.
+> **No scoring at record time.** `scenario_score` requires outcomes; it runs only after the deadline, when the event has resolved (D — Brier computed by the server). Keep the record's tracking ID so the resolution can be scored then. For equity-price questions only, `forecast_persist` (companies server) stores a price target for later Brier scoring.
 
-### forecast-quality-gate
+### forecast-quality-gate (P — decoupled critic: a separate render that evaluates, never generates; pass rule D)
 
 1. Evaluate the forecast across four independent dimensions: calibration realism, confidence justification, evidence trail, and record completeness.
 2. Score each dimension on a 0–1 scale with specific evidence from the calibration and record outputs.
@@ -114,7 +123,14 @@ The former single inside-view step is split into three steps. Generation and cou
 4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
 
-> **MCP tool step (step 18, call `scenario_calibration` directly — no template):** after this gate, call `scenario_calibration` (hkask-mcp-scenarios) to fetch the calibration curve (Brier score, overconfidence per bin) from resolved forecasts, feeding the `apply_calibration_adjustment` call (step 20) that closes the Brier feedback loop.
+### Loop (PDCA over the gate)
+
+- **Plan:** the gate's fix notes predict which stage's output, if revised, lifts the failing dimension to ≥ 0.60.
+- **Do:** re-run only the stage(s) the fix notes name, then every downstream stage.
+- **Check (D):** re-render the gate; pass iff all four scores ≥ 0.60, checked with `lisp_eval` `(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))`.
+- **Act:** stop on pass, or after 2 gate cycles. On a second failure, ship the forecast with the failing dimensions and their scores recorded as the remaining gap.
+
+Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts.
 
 ## LEAP Integration
 
@@ -143,8 +159,7 @@ the process runs without it. Do not fabricate LEAP data.
 ## EQM Feedback Integration
 
 The superforecasting process accepts an optional `overconfidence_bias` number
-input that feeds the step-16 compute (`apply_calibration_adjustment`) to
-close the Brier feedback loop. Before re-invoking superforecasting on a prior
+input. **Not yet wired:** `scenario_calibrate` derives its bias only from its own resolved-forecast store (`hkask_mcp_scenarios.rs` calibration block) and has no caller input for an EQM-derived bias. Until it does, apply the EQM signal as an explicit, justified departure at stage 6 step 2 and record it; do not claim the server applied it. Before re-invoking superforecasting on a prior
 iteration's forecast, the invoking agent should:
 
 1. Score the prior iteration's rationale (stage_7_record output) against the
