@@ -6,9 +6,6 @@
 //! so `hkask-keystore` and zed's `CredentialsProvider` read and write the
 //! same entries. One keychain, one namespace, one attribute schema.
 //!
-//! The legacy `service=hkask` namespace was fully removed. All entries in
-//! that namespace are purged at startup via `purge_legacy_hkask_entries`.
-//! No code reads from or writes to the old namespace — it is dead surface.
 //! There is exactly one copy of each secret, in `kask://credentials/*`.
 
 use crate::keychain_keys::KEY_DB_PASSPHRASE;
@@ -335,49 +332,6 @@ impl Keychain {
         }
         Ok(())
     }
-
-    /// Purge ALL entries from the old `service=hkask` namespace.
-    ///
-    /// The legacy namespace was replaced by the unified `kask://credentials/*`
-    /// namespace. The old entries were copied (not moved) during the migration,
-    /// leaving duplicate secrets in the keychain — a security liability.
-    /// This function deletes every entry with `service=hkask` attribute,
-    /// regardless of its key name.
-    ///
-    /// Idempotent — if no legacy entries exist, returns 0.
-    ///
-    /// Returns the count of deleted entries.
-    pub fn purge_legacy_entries(&self) -> Result<usize, KeychainError> {
-        let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            let items = keyring.search_items(&[("service", "hkask")]).await?;
-            let mut deleted = 0;
-            for item in items {
-                let label = item.label().await.unwrap_or_default();
-                match item.delete().await {
-                    Ok(()) => {
-                        tracing::info!(
-                            target: "hkask.identity",
-                            label = %label,
-                            "Deleted legacy service=hkask keychain entry"
-                        );
-                        deleted += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.identity",
-                            label = %label,
-                            error = %e,
-                            "Failed to delete legacy service=hkask keychain entry"
-                        );
-                    }
-                }
-            }
-            Ok(deleted)
-        })
-    }
 }
 
 /// Resolve the database encryption passphrase.
@@ -441,28 +395,6 @@ pub fn provision_db_passphrase_string() -> Result<Zeroizing<String>, KeychainErr
         }
         Err(e) => Err(e),
     }
-}
-
-/// Migrate legacy `service=hkask` keychain entries to the unified
-/// `kask://credentials/*` namespace.
-///
-/// Purge ALL legacy `service=hkask` keychain entries.
-///
-/// Convenience wrapper around `Keychain::purge_legacy_entries`.
-/// Returns the count of deleted entries.
-pub fn purge_legacy_hkask_entries() -> Result<usize, KeychainError> {
-    Keychain.purge_legacy_entries()
-}
-
-/// Delete the two retired RunPod S3 credential slots. The live RunPod API key
-/// is stored at its provider URL and is never touched. Idempotent on restart:
-/// if one deletion fails, the next startup retries both exact keys.
-pub fn purge_obsolete_runpod_s3_credentials() -> Result<(), KeychainError> {
-    let keychain = Keychain;
-    for key in ["runpod_s3_access_key", "runpod_s3_secret"] {
-        keychain.delete_by_key(key)?;
-    }
-    Ok(())
 }
 
 /// Resolve a SecretRef to actual secret bytes.
@@ -570,37 +502,6 @@ mod integration_tests {
     }
 
     #[test]
-    fn obsolete_runpod_s3_purge_preserves_provider_and_other_keys() -> Result<(), KeychainError> {
-        let kc = Keychain;
-        kc.store_by_key("runpod_s3_access_key", TEST_VALUE)?;
-        kc.store_by_key("runpod_s3_secret", TEST_VALUE)?;
-        kc.store_by_key("exa", TEST_VALUE)?;
-        async_std::task::block_on(kc.store_by_url_async(
-            "https://api.runpod.io",
-            "kask",
-            TEST_VALUE,
-        ))?;
-
-        purge_obsolete_runpod_s3_credentials()?;
-        purge_obsolete_runpod_s3_credentials()?;
-
-        for key in ["runpod_s3_access_key", "runpod_s3_secret"] {
-            assert!(matches!(
-                kc.retrieve_by_key(key),
-                Err(KeychainError::NotFound(_))
-            ));
-        }
-        assert_eq!(kc.retrieve_by_key("exa")?.as_str(), TEST_VALUE);
-        assert_eq!(
-            kc.retrieve_by_url("https://api.runpod.io")?.as_str(),
-            TEST_VALUE
-        );
-        kc.delete_by_key("exa")?;
-        async_std::task::block_on(kc.delete_by_url_async("https://api.runpod.io"))?;
-        Ok(())
-    }
-
-    #[test]
     fn resolve_finds_entry_written_by_store_by_key() {
         let kc = Keychain;
 
@@ -688,36 +589,6 @@ mod integration_tests {
         .expect("isolated test thread")?;
         assert_eq!(provision_db_passphrase_string()?.as_str(), TEST_VALUE);
         Ok(())
-    }
-
-    #[test]
-    fn purge_legacy_entries_deletes_old_namespace() {
-        let keyring = open_keyring();
-        block_on(async move {
-            keyring
-                .await?
-                .create_item(
-                    KEYRING_LABEL,
-                    &[("service", "hkask")],
-                    TEST_VALUE.as_bytes(),
-                    true,
-                )
-                .await?;
-            Ok::<_, KeychainError>(())
-        })
-        .expect("seed temporary legacy entry");
-        let deleted =
-            purge_legacy_hkask_entries().expect("purge_legacy_hkask_entries should not error");
-        assert!(
-            deleted > 0,
-            "Expected at least one legacy entry to be deleted"
-        );
-        // Verify no legacy entries remain
-        let second_pass = purge_legacy_hkask_entries().expect("second purge should succeed");
-        assert_eq!(
-            second_pass, 0,
-            "No legacy entries should remain after purge"
-        );
     }
 
     #[test]

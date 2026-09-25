@@ -1596,38 +1596,11 @@ fn main() {
                 let embedding_dim = kask_settings.corpus.embedding_dim as usize;
                 let username_for_provision = username.clone();
 
-                let provision_result = cx.background_spawn(async move {
-                    // Purge ALL legacy `service=hkask` keychain entries.
-                    // The old namespace was replaced by `kask://credentials/*`.
-                    // The migration copied entries but never deleted the originals,
-                    // leaving duplicate secrets in the keychain — a security liability.
-                    // This deletes every `service=hkask` entry, regardless of key name.
-                    // Idempotent — returns 0 if no legacy entries exist.
-                    match hkask_keystore::purge_legacy_hkask_entries() {
-                        Ok(deleted) if deleted > 0 => {
-                            log::info!(
-                                "Purged {} legacy service=hkask keychain entries",
-                                deleted
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::warn!(
-                                "Legacy keychain purge failed (non-fatal — \
-                                 new namespace entries are unaffected): {e}"
-                            );
-                        }
-                    }
-                    // Retired RunPod S3 keys have no consumer. Delete their
-                    // exact keychain entries without touching the provider API
-                    // key; a failed deletion is visible and retried next launch.
-                    if let Err(error) = hkask_keystore::purge_obsolete_runpod_s3_credentials() {
-                        log::error!(
-                            "RunPod S3 credential purge failed; will retry at next startup: {error}"
-                        );
-                    }
-                    kask_bridge::provision_agent(&username_for_provision)
-                }).await;
+                let provision_result = cx
+                    .background_spawn(async move {
+                        kask_bridge::provision_agent(&username_for_provision)
+                    })
+                    .await;
 
                 // zed-kask: no separate swarm-memory passphrase provisioning —
                 // there is ONE passphrase (HKASK_DB_PASSPHRASE, provisioned

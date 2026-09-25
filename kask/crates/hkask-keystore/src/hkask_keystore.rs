@@ -22,7 +22,6 @@ pub mod passphrase;
 
 pub use error::KeystoreError;
 pub use keychain::{
-    Keychain, KeychainError, provision_db_passphrase_string, purge_legacy_hkask_entries,
-    purge_obsolete_runpod_s3_credentials, resolve, resolve_db_passphrase_string,
+    Keychain, KeychainError, provision_db_passphrase_string, resolve, resolve_db_passphrase_string,
 };
 pub use passphrase::DEFAULT_PASSPHRASE;

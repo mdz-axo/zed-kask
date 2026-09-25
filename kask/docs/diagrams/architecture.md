@@ -472,8 +472,7 @@ keys from env only — there is no keychain fallback for API keys.
 `HKASK_DB_PASSPHRASE` resolves via the canonical 2-tier helper
 (ctx.credentials → env → `kask://credentials/hkask_db_passphrase`); there
 is no `HKASK_SWARM_MEMORY_PASSPHRASE` — one passphrase covers every
-SQLCipher DB. The legacy `service=hkask` namespace is fully removed and
-purged at startup (`hkask-keystore/src/keychain.rs`).
+SQLCipher DB.
 Writes/deletes to any credential URL that feeds MCP server env must call
 `nudge_mcp_servers` to re-fire the `SettingsStore` observer and restart
 changed servers. Verified current 2026-08-31.

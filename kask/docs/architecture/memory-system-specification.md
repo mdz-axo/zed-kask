@@ -1176,8 +1176,7 @@ share one passphrase architecture:
   the swarm server by the canonical helper (below).
 - **Keychain namespace:** unified `kask://credentials/<key>` with label
   `zed-github-account` — the same schema zed's `CredentialsProvider` uses.
-  The legacy `service=hkask` namespace is dead surface, purged at startup
-  (`kask/crates/hkask-keystore/src/keychain.rs:1-12`). One passphrase
+  One passphrase
   key: `hkask_db_passphrase`
   (`kask/crates/hkask-keystore/src/keychain_keys.rs:14`) — there is no
   per-DB `hkask_swarm_memory_passphrase` key.

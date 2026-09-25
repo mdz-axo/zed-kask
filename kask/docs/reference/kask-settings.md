@@ -378,8 +378,7 @@ children). The general/chat, embedding, classifier, QA-generation, and OCR defau
 There is ONE keychain namespace: zed's `CredentialsProvider` — keys stored
 under `kask://credentials/<key>` (data services) or the provider's `api_url`
 slot (inference providers — one key, one location,
-D5).[^owasp-keychain-settings] The legacy `service=hkask` namespace is fully
-removed and purged at startup (`hkask-keystore/src/keychain.rs`); the single
+D5).[^owasp-keychain-settings] The single
 internal key is `hkask_db_passphrase` in the `kask://credentials/` namespace.
 
 The composition root bridges the keychain to child processes: at MCP server
