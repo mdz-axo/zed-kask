@@ -606,6 +606,38 @@ impl RealMemoryPort {
         if ids.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err("External source selection contains duplicate IDs".to_string());
         }
+        // Admit sources before embedding: an unregistered or unsealed source
+        // fails closed without sending the query to the embedding provider.
+        let cache = Arc::clone(&self.external_sources);
+        let manifest_path = manifest_path.to_path_buf();
+        let passphrase = self.external_passphrase.clone();
+        let registry = self
+            .tokio_handle
+            .spawn_blocking(move || {
+                let mut cache = cache
+                    .lock()
+                    .map_err(|error| format!("External source cache lock poisoned: {error}"))?;
+                if let Some(existing) = cache.as_ref()
+                    && existing.manifest_path == manifest_path
+                    && existing.selected_ids == ids
+                    && existing.unchanged()?
+                {
+                    // Reuse unchanged sealed handles without rehashing the DB.
+                } else {
+                    *cache = None;
+                    *cache = Some(Arc::new(ExternalSourceCache::load(
+                        &manifest_path,
+                        ids,
+                        &passphrase,
+                    )?));
+                }
+                cache
+                    .as_ref()
+                    .cloned()
+                    .ok_or("External source cache is empty after admission".to_string())
+            })
+            .await
+            .map_err(|error| format!("External source admission task failed: {error}"))??;
         let embedding_port = self
             .embedding_port
             .clone()
@@ -622,35 +654,9 @@ impl RealMemoryPort {
             .into_iter()
             .next()
             .ok_or("External query embedding returned no vector".to_string())?;
-        let cache = Arc::clone(&self.external_sources);
-        let manifest_path = manifest_path.to_path_buf();
-        let passphrase = self.external_passphrase.clone();
         let model = self.embedding_model.clone();
         self.tokio_handle
             .spawn_blocking(move || {
-                let registry = {
-                    let mut cache = cache
-                        .lock()
-                        .map_err(|error| format!("External source cache lock poisoned: {error}"))?;
-                    if let Some(existing) = cache.as_ref()
-                        && existing.manifest_path == manifest_path
-                        && existing.selected_ids == ids
-                        && existing.unchanged()?
-                    {
-                        // Reuse unchanged sealed handles without rehashing the DB.
-                    } else {
-                        *cache = None;
-                        *cache = Some(Arc::new(ExternalSourceCache::load(
-                            &manifest_path,
-                            ids,
-                            &passphrase,
-                        )?));
-                    }
-                    cache
-                        .as_ref()
-                        .cloned()
-                        .ok_or("External source cache is empty after admission".to_string())?
-                };
                 let results = registry
                     .sources
                     .iter()
