@@ -48,7 +48,7 @@ approach:
 ```
 
 Key fields:
-- `overall_brier`: your aggregate Brier score (lower = better; <0.10 = good).
+- `overall_brier`: your aggregate Brier score as returned by `scenario_calibration` (lower = better; <0.10 = good). Read it; never estimate it.
 - `overconfidence_score`: signed bias (positive = overconfident, negative = underconfident).
 - `resolved_forecasts`: how many prior forecasts have been resolved.
 - `bins`: per-probability-range calibration detail.
