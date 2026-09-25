@@ -13,7 +13,7 @@
 # (Fermi averaging, shrinkage, Bayes, Brier) and excludes struct constructors
 # like `FermiQuestion::new`, which are not methodology stages.
 #
-# Runs locally on demand; not currently wired into any CI workflow.
+# Runs in CI (kask-invariants.yml, "Skills" step).
 # Run locally: scripts/check-forecast-conformance.sh
 
 set -euo pipefail

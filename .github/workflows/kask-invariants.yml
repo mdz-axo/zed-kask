@@ -111,11 +111,24 @@ jobs:
       - name: MCP tool-behavior contract tests — Parameters seam coverage
         run: bash kask/scripts/check-mcp-tool-tests.sh
       - name: MCP packaging — installer inventory matches runtime
-        run: |
-          bash kask/scripts/check-mcp-servers.sh
-          bash kask/scripts/check-mcp-servers-selftest.sh
+        run: bash kask/scripts/check-mcp-servers.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
+      - name: Skills — cross-references resolve; forecasting contract matches primitives
+        run: |
+          bash kask/scripts/check-skill-crossrefs.sh
+          bash kask/scripts/check-forecast-conformance.sh
+      - name: Crate hygiene — unsafe gated, versions in sync
+        run: |
+          bash kask/scripts/check-unsafe-forbid.sh
+          bash kask/scripts/check-version-sync.sh
+      - name: Gate selftests — every gate above still fails on a violation
+        run: |
+          for selftest in kask/scripts/check-*-selftest.sh; do
+            # Advisory: runs in goal-traceability-advisory, never blocking.
+            [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue
+            bash "$selftest"
+          done
 
   kask-tests:
     runs-on: ubuntu-latest
