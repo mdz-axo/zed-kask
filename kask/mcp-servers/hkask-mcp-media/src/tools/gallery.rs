@@ -592,7 +592,7 @@ impl MediaServer {
                 if let Some(folder) = crate::default_face_folder()
                     && folder.is_dir()
                 {
-                    match self.run_face_scan_folder(&ga, &folder, false).await {
+                    match self.run_face_scan_folder(&folder, false).await {
                         Ok(result) => {
                             face_scan = result;
                         }
@@ -966,7 +966,6 @@ impl MediaServer {
             }
 
             self.run_face_scan_folder(
-                &self.access_gallery().map_err(map_media_error)?,
                 &folder,
                 force,
             )
@@ -1256,7 +1255,7 @@ impl MediaServer {
                     self.gallery_store
                         .get_image(&ga.gallery_id, Some(index), None)
                 }
-                (None, Some(id)) => self.gallery_store.get_by_id(&ga.gallery_id, &id),
+                (None, Some(id)) => self.gallery_store.get_by_id(&id),
                 _ => {
                     return Err(McpToolError::invalid_argument(
                         "Supply exactly one of image_index or image_id",
@@ -1314,10 +1313,6 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_reproduce", async {
             let _admission = self.admit_heavy_operation()?;
-            // Admission-time gallery capture: the reproduction is indexed
-            // into the gallery active when it was requested, never a root
-            // activated while the replayed generation is in flight.
-            let gallery = self.capture_gallery();
             let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
             let lineage = self
                 .gallery_store
@@ -1367,7 +1362,6 @@ impl MediaServer {
             let args = serde_json::to_value(&media_params)
                 .unwrap_or(serde_json::Value::Null);
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "gallery_reproduce",
@@ -1401,7 +1395,7 @@ impl MediaServer {
                     .map_err(|e| map_gallery_store_error(e))?,
                 (None, Some(id)) => self
                     .gallery_store
-                    .get_by_id(&ga.gallery_id, &id)
+                    .get_by_id(&id)
                     .map_err(|e| map_gallery_store_error(e))?,
                 _ => {
                     return Err(McpToolError::invalid_argument(

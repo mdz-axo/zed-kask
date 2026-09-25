@@ -866,15 +866,11 @@ impl GalleryStore {
     }
 
     /// Stable-ID inspection includes missing assets; positional readers never do.
-    pub fn get_by_id(
-        &self,
-        gallery_id: &str,
-        image_id: &str,
-    ) -> Result<ImageRecord, GalleryStoreError> {
+    pub fn get_by_id(&self, image_id: &str) -> Result<ImageRecord, GalleryStoreError> {
         query_row(&*self.driver,
             "SELECT id, gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale
-             FROM gallery_images WHERE gallery_id = ?1 AND id = ?2",
-            &[gallery_id.to_string().into(), image_id.to_string().into()], Self::image_from_row)?
+             FROM gallery_images WHERE id = ?1",
+            &[image_id.to_string().into()], Self::image_from_row)?
             .ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "image".into(), id: image_id.into() }))
     }
 
@@ -1887,7 +1883,7 @@ mod tests {
                 .iter()
                 .any(|tag| tag.value == "old-model" || tag.value == "old-caption")
         );
-        assert!(store.get_by_id(&gallery.id, &image.id)?.metadata_stale);
+        assert!(store.get_by_id(&image.id)?.metadata_stale);
 
         assert!(store.persist_analysis_for_tag_types(
             &image,
@@ -1896,7 +1892,7 @@ mod tests {
             "model-b",
             true,
         )?);
-        assert!(!store.get_by_id(&gallery.id, &image.id)?.metadata_stale);
+        assert!(!store.get_by_id(&image.id)?.metadata_stale);
         Ok(())
     }
 
@@ -2580,7 +2576,7 @@ mod tests {
             ALTER TABLE gallery_images DROP COLUMN metadata_stale;",
         )?;
         let migrated = GalleryStore::from_driver(store.driver.clone())?;
-        let record = migrated.get_by_id(&gallery.id, &image.id)?;
+        let record = migrated.get_by_id(&image.id)?;
         assert_eq!(Path::new(&record.absolute_path), real.join("clip.mp4"));
         assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
         // The file returns under the real directory — same identity, same ID.

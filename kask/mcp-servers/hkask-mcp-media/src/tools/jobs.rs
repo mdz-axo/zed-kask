@@ -130,10 +130,6 @@ impl MediaServer {
             let job_id = uuid::Uuid::new_v4().to_string();
             let now = hkask_types::time::now_rfc3339();
 
-            // Admission-time gallery capture: a submitted job is in-flight
-            // work — it is indexed into the gallery active at submission,
-            // never one activated while the job runs.
-            let gallery = self.capture_gallery();
 
             // Admission owns a slot before the queued record becomes visible,
             // so overload cannot grow an unbounded waiting queue.
@@ -270,7 +266,6 @@ impl MediaServer {
                 }
 
                 let slim = match publication.publish_and_slim(
-                    gallery.as_ref(),
                     &gallery_store,
                     &op_for_task,
                     &effective_params,

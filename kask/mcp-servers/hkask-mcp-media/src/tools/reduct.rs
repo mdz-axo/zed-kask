@@ -1300,10 +1300,9 @@ impl MediaServer {
         gallery_asset_id: &str,
     ) -> Result<serde_json::Value, McpToolError> {
         connection_status(self.reduct_api_key.as_deref())?;
-        let gallery = self.access_gallery().map_err(map_media_error)?;
         let asset = self
             .gallery_store
-            .get_by_id(&gallery.gallery_id, gallery_asset_id)
+            .get_by_id(gallery_asset_id)
             .map_err(map_gallery_store_error)?;
         if asset.missing || !matches!(asset.media_type.as_str(), "video" | "audio") {
             return Err(McpToolError::failed_precondition(

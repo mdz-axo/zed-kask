@@ -301,40 +301,6 @@ impl MediaServer {
         })
     }
 
-    /// The admission-time gallery snapshot for generation tools: the gallery
-    /// (if any) active when the operation is admitted, captured once before
-    /// the first inference await. In-flight generation must never retarget to
-    /// a gallery activated mid-operation — the snapshot travels immutably
-    /// through inference, downloads, and every variant. [P1: user work is not
-    /// redirected by a concurrent root switch]
-    pub(crate) fn capture_gallery(&self) -> Option<GalleryState> {
-        match self.try_capture_gallery() {
-            Ok(gallery) => gallery,
-            Err(error) => {
-                tracing::warn!(target: "hkask.mcp.media", %error, "Gallery state capture failed — generation proceeds gallery-less");
-                None
-            }
-        }
-    }
-
-    /// Fallible admission-time capture for operations that require a gallery.
-    /// Unlike optional provider-generation publication, local processors must
-    /// surface damaged shared state rather than misclassify it as no gallery.
-    pub(crate) fn try_capture_gallery(&self) -> Result<Option<GalleryState>, MediaError> {
-        self.gallery_state
-            .lock()
-            .map(|guard| guard.clone())
-            .map_err(|error| MediaError::Io(format!("Gallery state lock error: {error}")))
-    }
-
-    /// Capture the immutable admission-time gallery required by local media processors.
-    pub(crate) fn capture_required_gallery(&self) -> Result<GalleryState, McpToolError> {
-        self.try_capture_gallery()
-            .map_err(map_media_error)?
-            .filter(|gallery| gallery.gallery_id.is_some())
-            .ok_or_else(|| map_media_error(MediaError::GalleryNotInitialized))
-    }
-
     /// Lock the gallery and extract essential state. Drops the lock before
     /// returning, so the result is safe to hold across .await points.
     fn access_gallery(&self) -> Result<GalleryAccess, MediaError> {
@@ -1494,7 +1460,8 @@ mod tool_behavior_tests {
                 .as_str()
                 .is_some_and(|cause| !cause.is_empty())
         );
-        assert_eq!(store.count_assets(&gallery.id)?, 1);
+        assert_eq!(store.count_assets(&gallery.id)?, 0);
+        assert_eq!(store.count_assets(&generated_gallery(&store))?, 1);
         assert_eq!(
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             1,
@@ -1592,7 +1559,6 @@ mod tool_behavior_tests {
         let result = serde_json::json!({"data": [{"b64_json": b64}]});
 
         let published = persist_slim_and_enrich(
-            None,
             &server.gallery_store,
             &result,
             "generate_image",
@@ -1650,7 +1616,6 @@ mod tool_behavior_tests {
             "model": "flux-1-schnell",
         });
         let slim = persist_slim_and_enrich(
-            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "generate_image",
@@ -1686,7 +1651,6 @@ mod tool_behavior_tests {
             ],
         });
         let slim = persist_slim_and_enrich(
-            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "generate_image",
@@ -1716,7 +1680,6 @@ mod tool_behavior_tests {
         // response is never the fallback.
         let result = serde_json::json!({"something": "else"});
         let error = persist_slim_and_enrich(
-            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "generate_image",
@@ -1770,7 +1733,6 @@ mod tool_behavior_tests {
             }],
         });
         let enriched = persist_slim_and_enrich(
-            server.capture_gallery().as_ref(),
             &server.gallery_store,
             &result,
             "generate_image",
@@ -1868,6 +1830,16 @@ mod tool_behavior_tests {
     }
 
     /// Parse a tool result's `{"content": …}` envelope into its JSON value.
+    /// The gallery every produced asset is filed under (its root holds `media-mcp/generated/`).
+    fn generated_gallery(store: &GalleryStore) -> String {
+        crate::assets::owning_gallery_id(
+            store,
+            &crate::assets::generated_assets_dir(),
+            &crate::assets::generated_assets_dir(),
+        )
+        .expect("generated gallery resolves")
+    }
+
     fn content_of(result: &str) -> serde_json::Value {
         serde_json::from_str::<serde_json::Value>(result)
             .expect("tool result is JSON")
@@ -2068,7 +2040,8 @@ mod tool_behavior_tests {
                 .as_str()
                 .is_some_and(|warning| warning.contains("JavaScript runtime"))
         );
-        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        let asset = store.get_by_id(asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(&store));
         assert_eq!(asset.absolute_path, output.to_string_lossy());
         assert_eq!(asset.format, "mp4");
         assert_eq!(asset.media_type, "video");
@@ -2077,35 +2050,8 @@ mod tool_behavior_tests {
             .ok_or("video_fetch lineage missing")?;
         assert_eq!(lineage.op, "video_fetch");
         assert!(store.get_omc_creation_graph(asset_id)?.is_some());
-        assert_eq!(store.count_assets(&gallery_id)?, 1);
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::video_fetch`
-    /// expect: A fetch without an active gallery fails before the downloader starts.
-    /// [P1] Motivating: video_fetch never degrades into an unindexed local file.
-    /// pre: yt-dlp is available but no gallery is active.
-    /// post: the typed precondition failure is visible and no output is created.
-    #[tokio::test]
-    async fn video_fetch_requires_gallery_before_external_work()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let marker = artifacts.path().join("downloader-started");
-        let script = format!("touch '{}'; exit 0", marker.display());
-        let runner = fake_ytdlp(artifacts.path(), &script)?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let server = server_with_ytdlp(store, None, artifacts.path(), runner);
-
-        let error = server
-            .video_fetch(Parameters(VideoFetchRequest {
-                url: "https://93.184.216.34/video".into(),
-            }))
-            .await
-            .expect_err("missing gallery must fail");
-        assert!(error.to_string().contains("gallery"));
-        assert!(!marker.exists());
+        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(store.count_assets(&generated_gallery(&store))?, 1);
         Ok(())
     }
 
@@ -2267,7 +2213,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -2318,7 +2263,8 @@ mod tool_behavior_tests {
             content["omc_task_id"]
         );
         drop(server);
-        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        let asset = store.get_by_id(asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(&store));
         assert_eq!(asset.format, "wav");
         assert_eq!(asset.media_type, "audio");
         assert_eq!(std::path::Path::new(&asset.absolute_path), output);
@@ -2358,7 +2304,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -2386,7 +2331,8 @@ mod tool_behavior_tests {
         assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
         assert_eq!(hint["provenance"]["args"], expected);
         assert_eq!(content["effective_params"], expected);
-        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        let asset = store.get_by_id(asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(&store));
         assert_eq!(asset.format, "wav");
         assert_eq!(asset.media_type, "audio");
         let lineage = store
@@ -2417,7 +2363,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
             path: gallery_root.path().to_path_buf(),
             mode: GalleryMode::ReadOnly,
@@ -2464,7 +2409,8 @@ mod tool_behavior_tests {
         assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
         assert_eq!(hint["provenance"]["args"], expected);
         assert_eq!(content["effective_params"], expected);
-        let asset = store.get_by_id(&gallery_id, asset_id)?;
+        let asset = store.get_by_id(asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(&store));
         assert_eq!(asset.format, "wav");
         assert_eq!(asset.media_type, "audio");
         let lineage = store
@@ -2477,14 +2423,13 @@ mod tool_behavior_tests {
     }
 
     /// dcterms:identifier: `MediaServer::audio_capture`
-    /// expect: A capture admitted in Gallery A cannot be redirected by activating Gallery B.
-    /// [P1] Motivating: in-flight user work stays in the gallery where it began.
-    /// pre: Gallery A is active and capture is paused immediately after admission.
-    /// post: after switching to B, the durable recording exists only in A.
-    /// [P1] Constraining: the immutable gallery snapshot crosses the FFmpeg await.
+    /// expect: Produced media is filed under the canonical generated gallery, whatever gallery is active.
+    /// [P1] Motivating: one canonical home for every output the media server makes.
+    /// pre: an unrelated gallery A is active; capture pauses after admission and B is activated.
+    /// post: the recording is indexed in the gallery whose root contains `media-mcp/generated/`, not A or B.
     #[cfg(unix)]
     #[tokio::test]
-    async fn audio_capture_preserves_admission_gallery_across_root_switch()
+    async fn audio_capture_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
@@ -2551,10 +2496,12 @@ mod tool_behavior_tests {
             .as_str()
             .ok_or("missing stable gallery asset id")?;
 
-        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
+        let generated = store
+            .containing(&crate::assets::generated_assets_dir())?
+            .ok_or("generated gallery registered")?;
+        assert_eq!(store.get_by_id(asset_id)?.gallery_id, generated.id);
+        assert_eq!(store.count_assets(&gallery_a.id)?, 0);
         assert_eq!(store.count_assets(&gallery_b.id)?, 0);
-        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
-        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
         Ok(())
     }
 
@@ -2693,7 +2640,7 @@ mod tool_behavior_tests {
         create_real_video(&source).await?;
         let db_path = artifacts.path().join("gallery.db");
 
-        let (output_path, asset_id, gallery_id) = {
+        let (output_path, asset_id) = {
             let (store, _) = file_backed_gallery_store(&db_path)?;
             let gallery = store.open(
                 gallery_root
@@ -2702,7 +2649,6 @@ mod tool_behavior_tests {
                     .ok_or("gallery root is not UTF-8")?,
                 GalleryMode::ReadOnly,
             )?;
-            let gallery_id = gallery.id.clone();
             let server = server_with_gallery(store, gallery.id, gallery_root.path());
             let result = server
                 .video_clip(Parameters(VideoClipRequest {
@@ -2744,11 +2690,12 @@ mod tool_behavior_tests {
             });
             assert_eq!(content["effective_params"], effective_params);
             assert_eq!(hint["provenance"]["args"], effective_params);
-            (output_path, asset_id, gallery_id)
+            (output_path, asset_id)
         };
 
         let (reopened, _) = file_backed_gallery_store(&db_path)?;
-        let asset = reopened.get_by_id(&gallery_id, &asset_id)?;
+        let asset = reopened.get_by_id(&asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(&reopened));
         assert_eq!(asset.id, asset_id);
         assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
         assert_eq!(asset.format, "mp4");
@@ -2778,19 +2725,20 @@ mod tool_behavior_tests {
     /// dcterms:identifier: `MediaServer::video_clip`
     /// expect: A gallery-admission failure leaves none of my clipped output or database residue behind.
     /// [P1] Motivating: failed operations do not corrupt or clutter user work.
-    /// pre: FFmpeg succeeds but the captured gallery identity is invalid.
+    /// pre: FFmpeg succeeds but the gallery row insert is rejected.
     /// post: the cause is surfaced and no durable file, gallery row, or lineage remains.
-    /// [P1] Constraining: rollback remains armed until gallery admission succeeds.
+    /// [P1] Constraining: rollback remains armed until the gallery row is durable.
     #[tokio::test]
     async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
     -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
         let _env = ArtifactsEnvGuard::set(artifacts.path());
         let gallery_root = tempfile::tempdir()?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
         let gallery = store.open(
             gallery_root
                 .path()
@@ -2798,12 +2746,13 @@ mod tool_behavior_tests {
                 .ok_or("gallery root is not UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id;
-        let server = server_with_gallery(
-            store.clone(),
-            "missing-admission-gallery".to_string(),
-            gallery_root.path(),
-        );
+        driver.execute(
+            "CREATE TRIGGER fail_video_clip_asset BEFORE INSERT ON gallery_images \
+             BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
         let error = server
             .video_clip(Parameters(VideoClipRequest {
@@ -2815,10 +2764,11 @@ mod tool_behavior_tests {
             .expect_err("gallery publication must fail");
 
         assert!(
-            error.to_string().contains("missing-admission-gallery"),
+            error.to_string().contains("injected gallery failure"),
             "original gallery failure cause was not preserved: {error}"
         );
         assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(store.count_assets(&generated_gallery(&store))?, 0);
         let generated = crate::assets::generated_assets_dir();
         assert_eq!(std::fs::read_dir(generated)?.count(), 0);
         Ok(())
@@ -2929,7 +2879,6 @@ mod tool_behavior_tests {
     fn assert_local_publication(
         content: &serde_json::Value,
         store: &GalleryStore,
-        gallery_id: &str,
         expected_op: &str,
         expected_extension: &str,
         expected_media_type: &str,
@@ -2966,7 +2915,8 @@ mod tool_behavior_tests {
             "result metadata must use the authoritative effective parameters"
         );
 
-        let asset = store.get_by_id(gallery_id, asset_id)?;
+        let asset = store.get_by_id(asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(store));
         assert_eq!(std::path::Path::new(&asset.absolute_path), output_path);
         assert_eq!(asset.format, expected_extension);
         assert_eq!(asset.media_type, expected_media_type);
@@ -3065,7 +3015,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3083,7 +3032,6 @@ mod tool_behavior_tests {
         assert_local_publication(
             &content,
             &store,
-            &gallery_id,
             "video_to_gif",
             "gif",
             "image",
@@ -3119,7 +3067,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3136,7 +3083,6 @@ mod tool_behavior_tests {
         assert_local_publication(
             &content,
             &store,
-            &gallery_id,
             "video_add_caption",
             "mp4",
             "video",
@@ -3172,7 +3118,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3187,7 +3132,6 @@ mod tool_behavior_tests {
         let output = assert_local_publication(
             &content,
             &store,
-            &gallery_id,
             "video_remix",
             "gif",
             "image",
@@ -3239,7 +3183,6 @@ mod tool_behavior_tests {
         let second = gallery_root.path().join("second.png");
         add_test_image(&store, &gallery.id, &first, [255, 0, 0])?;
         add_test_image(&store, &gallery.id, &second, [0, 255, 0])?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let sources = serde_json::json!([first.to_string_lossy(), second.to_string_lossy()]);
         let mut outputs = Vec::new();
@@ -3256,7 +3199,6 @@ mod tool_behavior_tests {
             outputs.push(assert_local_publication(
                 &content,
                 &store,
-                &gallery_id,
                 "video_from_images",
                 format,
                 media_type,
@@ -3302,7 +3244,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3316,7 +3257,6 @@ mod tool_behavior_tests {
         assert_local_publication(
             &content,
             &store,
-            &gallery_id,
             "video_concat",
             "mp4",
             "video",
@@ -3328,12 +3268,13 @@ mod tool_behavior_tests {
     /// dcterms:identifier: `assets::stage_local_media_publication`
     /// expect: Any local-video gallery failure rolls back the final file while preserving its original cause.
     /// [P1] Motivating: failed publication leaves no partial user work.
-    /// pre: real FFmpeg produces a GIF but the admission-time gallery identity is invalid.
+    /// pre: real FFmpeg produces a GIF but the gallery row insert is rejected.
     /// post: the original gallery cause is returned and no generated file, gallery row, or lineage remains.
     /// [P1] Constraining: rollback stays armed through lineage publication.
     #[tokio::test]
     async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_storage::database::driver::DatabaseDriver;
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
         let _env = ArtifactsEnvGuard::set(artifacts.path());
@@ -3341,17 +3282,18 @@ mod tool_behavior_tests {
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
         let before = temp_media_files()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
         let gallery = store.open(
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id;
-        let server = server_with_gallery(
-            store.clone(),
-            "missing-admission-gallery".to_string(),
-            gallery_root.path(),
-        );
+        driver.execute(
+            "CREATE TRIGGER fail_remix_asset BEFORE INSERT ON gallery_images \
+             BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
+            &[],
+        )?;
+        let gallery_id = gallery.id.clone();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
         let error = server
             .video_remix(Parameters(VideoRemixRequest {
@@ -3364,10 +3306,11 @@ mod tool_behavior_tests {
             .expect_err("gallery publication must fail");
 
         assert!(
-            error.to_string().contains("missing-admission-gallery"),
+            error.to_string().contains("injected gallery failure"),
             "original gallery cause was not preserved: {error}"
         );
         assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(store.count_assets(&generated_gallery(&store))?, 0);
         assert_eq!(
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
@@ -3438,66 +3381,13 @@ mod tool_behavior_tests {
     }
 
     /// dcterms:identifier: `MediaServer::video_clip`
-    /// expect: A poisoned gallery lock surfaces its infrastructure cause instead of pretending no gallery was organized.
-    /// [P1] Motivating: operators can distinguish damaged shared state from missing setup.
-    /// pre: the gallery-state mutex was poisoned before a valid local-video request.
-    /// post: the tool error names the poisoned lock and does not report GalleryNotInitialized.
-    /// [P1] Constraining: gallery admission is fallible and occurs before FFmpeg awaits.
-    #[tokio::test]
-    async fn local_video_poisoned_gallery_preserves_causal_error()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let (server, gallery_state) =
-            server_with_gallery_state(store, gallery.id, gallery_root.path());
-        let poison_state = gallery_state.clone();
-        let poison_result = std::thread::spawn(move || {
-            let _guard = poison_state
-                .lock()
-                .expect("gallery lock available before poison");
-            panic!("inject gallery poison");
-        })
-        .join();
-        assert!(poison_result.is_err(), "poison thread must panic");
-
-        let error = server
-            .video_clip(Parameters(VideoClipRequest {
-                video_url: source.to_string_lossy().into_owned(),
-                start_sec: 0.0,
-                end_sec: 1.0,
-            }))
-            .await
-            .expect_err("poisoned gallery admission must fail");
-        let message = error.to_string();
-        assert!(
-            message.contains("Gallery state lock error") && message.contains("poisoned"),
-            "poison cause was replaced by another error: {message}"
-        );
-        assert!(
-            !message.contains("Gallery not initialized"),
-            "poison was misclassified as missing gallery: {message}"
-        );
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::video_clip`
-    /// expect: A remote video operation remains bound to the gallery active before validation begins.
-    /// [P1] Motivating: an in-flight root switch cannot redirect user work.
+    /// expect: Produced video is filed under the generated gallery, whatever gallery is active.
+    /// [P1] Motivating: one canonical home for every output the media server makes.
     /// pre: Gallery A is active, remote validation is delayed, and Gallery B becomes active before processing resumes.
-    /// post: the durable output exists only in Gallery A and carries A's asset identity.
-    /// [P1] Constraining: gallery admission precedes every await, including remote validation.
+    /// post: the output is indexed only in the gallery whose root holds `media-mcp/generated/`.
     #[cfg(unix)]
     #[tokio::test]
-    async fn local_video_remote_validation_preserves_admission_gallery()
+    async fn local_video_output_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
@@ -3569,22 +3459,23 @@ mod tool_behavior_tests {
             .as_str()
             .ok_or("missing gallery asset id")?;
 
-        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
+        assert_eq!(
+            store.get_by_id(asset_id)?.gallery_id,
+            generated_gallery(&store)
+        );
+        assert_eq!(store.count_assets(&gallery_a.id)?, 0);
         assert_eq!(store.count_assets(&gallery_b.id)?, 0);
-        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
-        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
         Ok(())
     }
 
     /// dcterms:identifier: `MediaServer::video_from_images`
-    /// expect: Image indices and their generated output resolve against one captured gallery.
-    /// [P1] Motivating: a root switch cannot combine sources from one gallery with output identity from another.
-    /// pre: Gallery A and B each have index 0, A is admitted, and B activates before source lookup.
-    /// post: source metadata and the durable output both belong only to Gallery A.
-    /// [P1] Constraining: positional indices are interpreted within the immutable admission snapshot.
+    /// expect: Image indices name images in the active gallery; the output is filed under the generated gallery.
+    /// [P1] Motivating: positional indices mean the gallery the user is looking at; outputs have one canonical home.
+    /// pre: Galleries A and B each have index 0 and A is active.
+    /// post: the source is A.s index 0 and the output is indexed only in the generated gallery.
     #[cfg(unix)]
     #[tokio::test]
-    async fn video_from_images_uses_one_gallery_snapshot_for_sources_and_output()
+    async fn video_from_images_reads_active_sources_and_files_output_under_generated()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let artifacts = tempfile::tempdir()?;
@@ -3664,10 +3555,12 @@ mod tool_behavior_tests {
             content["effective_params"]["sources"][0],
             source_a.to_string_lossy().as_ref()
         );
-        assert_eq!(store.count_assets(&gallery_a.id)?, 2);
+        assert_eq!(
+            store.get_by_id(asset_id)?.gallery_id,
+            generated_gallery(&store)
+        );
+        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
         assert_eq!(store.count_assets(&gallery_b.id)?, 1);
-        assert_eq!(store.get_by_id(&gallery_a.id, asset_id)?.id, asset_id);
-        assert!(store.get_by_id(&gallery_b.id, asset_id).is_err());
         Ok(())
     }
 
@@ -4788,7 +4681,6 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
-        let gallery_id = gallery.id.clone();
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         // Generate a real 2-second WAV via ffmpeg — the same binary the
         // render path uses; the test proves the full loop (EDL → clip plan
@@ -4913,7 +4805,7 @@ mod tool_behavior_tests {
         assert_eq!(hint["kind"], "audio");
         assert_eq!(hint["gallery_asset_id"], asset_id);
         assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::SEQUENCE);
-        assert_eq!(store.get_by_id(&gallery_id, asset_id)?.media_type, "audio");
+        assert_eq!(store.get_by_id(asset_id)?.media_type, "audio");
         let lineage = store
             .get_generation(asset_id)?
             .ok_or("EDL render lineage missing")?;
@@ -5629,10 +5521,7 @@ mod gallery_lifecycle_tests {
                 assert_eq!(std::fs::read(&source)?, b"source audio");
             }
             assert_eq!(
-                server
-                    .gallery_store
-                    .get_by_id(&gallery.gallery_id, &asset.id)
-                    .is_ok(),
+                server.gallery_store.get_by_id(&asset.id).is_ok(),
                 index_preserved
             );
             let (summary, _) = crate::transcript_store::load_transcript(
@@ -5725,12 +5614,7 @@ mod gallery_lifecycle_tests {
             source.is_dir(),
             "failed unlink must leave the source path intact"
         );
-        assert!(
-            server
-                .gallery_store
-                .get_by_id(&gallery.gallery_id, &asset.id)
-                .is_ok()
-        );
+        assert!(server.gallery_store.get_by_id(&asset.id).is_ok());
         let (summary, _) = crate::transcript_store::load_transcript(
             &**server.gallery_store.driver(),
             &transcript.id,
@@ -5854,7 +5738,7 @@ mod gallery_lifecycle_tests {
         assert!(store.list_assets(&gallery.gallery_id, 0, 10)?.is_empty());
         assert!(store.get_all_tags(&gallery.gallery_id)?.is_empty());
         assert!(store.list_album_members(&album.id)?.is_empty());
-        assert!(store.get_by_id(&gallery.gallery_id, &original.id)?.missing);
+        assert!(store.get_by_id(&original.id)?.missing);
         let detail = server
             .gallery_asset_detail(Parameters(GalleryAssetDetailRequest {
                 image_index: None,
@@ -5877,7 +5761,7 @@ mod gallery_lifecycle_tests {
         );
         png(&path, 2);
         organize(&server, &root, true).await?;
-        let changed = store.get_by_id(&gallery.gallery_id, &original.id)?;
+        let changed = store.get_by_id(&original.id)?;
         assert!(changed.metadata_stale);
         assert_ne!(changed.hash, original.hash);
         assert_eq!(store.get_tags(&original.id)?.len(), 1);
@@ -5888,11 +5772,7 @@ mod gallery_lifecycle_tests {
             "fake",
             true
         )?);
-        assert!(
-            store
-                .get_by_id(&gallery.gallery_id, &original.id)?
-                .metadata_stale
-        );
+        assert!(store.get_by_id(&original.id)?.metadata_stale);
         assert!(store.persist_analysis_for_tag_types(
             &changed,
             &[("caption".into(), "new revision".into(), 1.0)],
@@ -5900,17 +5780,13 @@ mod gallery_lifecycle_tests {
             "fake",
             true
         )?);
-        assert!(
-            !store
-                .get_by_id(&gallery.gallery_id, &original.id)?
-                .metadata_stale
-        );
+        assert!(!store.get_by_id(&original.id)?.metadata_stale);
         // Bad decode makes the entire scan conservative, even for another absent file.
         std::fs::remove_file(&path)?;
         std::fs::write(root.join("broken.png"), b"broken")?;
         let result = organize(&server, &root, true).await?;
         assert!(result.to_string().contains("degraded"));
-        assert!(!store.get_by_id(&gallery.gallery_id, &original.id)?.missing);
+        assert!(!store.get_by_id(&original.id)?.missing);
         // An unreadable/nonexistent root on refresh reports coverage, never absence.
         std::fs::rename(&root, fixture.path().join("offline"))?;
         let (scan, result) = server.rescan_gallery(&gallery, true)?;
@@ -5941,7 +5817,7 @@ mod gallery_lifecycle_tests {
         assert_eq!(copies[0].hash, copies[1].hash);
         let external = fixture.path().join("external.png");
         png(&external, 2);
-        let (external_id, _) = server.import_reference_image(&gallery, &external)?;
+        let (external_id, _) = server.import_reference_image(&external, fixture.path())?;
         for (name, kind) in [("film.mp4", "video"), ("sound.wav", "audio")] {
             let path = root.join(name);
             std::fs::write(&path, b"fixture bytes")?;
@@ -5971,10 +5847,15 @@ mod gallery_lifecycle_tests {
         }
         std::fs::remove_file(root.join("nested/c.png"))?;
         organize(&server, &root, false).await?;
-        assert_eq!(store.count_assets(&gallery.gallery_id)?, 6);
-        organize(&server, &root, true).await?;
         assert_eq!(store.count_assets(&gallery.gallery_id)?, 5);
-        assert!(!store.get_by_id(&gallery.gallery_id, &external_id)?.missing);
+        organize(&server, &root, true).await?;
+        assert_eq!(store.count_assets(&gallery.gallery_id)?, 4);
+        // A file outside the active gallery belongs to its own folder's gallery.
+        let home = store
+            .containing(&external.canonicalize()?)?
+            .ok_or("external home gallery")?;
+        assert_ne!(home.id, gallery.gallery_id);
+        assert!(!store.get_by_id(&external_id)?.missing);
         let active = store.list_assets(&gallery.gallery_id, 0, 10)?;
         for (index, asset) in active.iter().enumerate() {
             assert_eq!(
@@ -6224,7 +6105,7 @@ mod gallery_lifecycle_tests {
         assert!(
             server
                 .gallery_store
-                .get_by_id(&records[0].gallery_id, &records[0].id)?
+                .get_by_id(&records[0].id)?
                 .metadata_stale
         );
         Ok(())
@@ -6261,12 +6142,7 @@ mod gallery_lifecycle_tests {
             .await;
         assert_eq!(count, 1, "{errors:?}");
         assert!(errors.is_empty());
-        assert!(
-            !server
-                .gallery_store
-                .get_by_id(&gallery.gallery_id, &image.id)?
-                .metadata_stale
-        );
+        assert!(!server.gallery_store.get_by_id(&image.id)?.metadata_stale);
         assert!(
             server
                 .gallery_store
@@ -6417,12 +6293,7 @@ mod gallery_lifecycle_tests {
                 .any(|error| error.contains("object detection")),
             "{errors:?}"
         );
-        assert!(
-            server
-                .gallery_store
-                .get_by_id(&gallery.gallery_id, &image.id)?
-                .metadata_stale
-        );
+        assert!(server.gallery_store.get_by_id(&image.id)?.metadata_stale);
         Ok(())
     }
 
@@ -6527,12 +6398,11 @@ mod gallery_lifecycle_tests {
         }
     }
 
-    /// expect: A generation admitted under gallery A indexes every variant
-    /// into A, even when the active root switches during inference and again
-    /// during a variant download — real tool entry, not the persistence
-    /// helper. [P1]
+    /// expect: Every generated variant is filed under the generated gallery,
+    /// even when the active root switches during inference and again during a
+    /// variant download — real tool entry, not the persistence helper. [P1]
     #[tokio::test]
-    async fn generate_image_tool_entry_binds_admission_gallery() -> TestResult {
+    async fn generate_image_files_every_variant_under_the_generated_gallery() -> TestResult {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let fixture = tempfile::tempdir()?;
@@ -6575,7 +6445,6 @@ mod gallery_lifecycle_tests {
             ]));
             let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), vision.clone()));
             organize(&server, &first, true).await?;
-            let admission = server.access_gallery()?.gallery_id;
             let generation = {
                 let server = server.clone();
                 tokio::spawn(async move {
@@ -6597,16 +6466,18 @@ mod gallery_lifecycle_tests {
             let value: serde_json::Value = serde_json::from_str(&output)?;
             let content = value.get("content").unwrap_or(&value);
             assert_eq!(content["count_returned"], 2, "{output}");
-            assert_eq!(server.gallery_store.count_assets(&admission)?, 2,
-                "every variant belongs to the gallery captured at admission");
-            for gallery in [&second, &third] {
+            let generated = crate::assets::owning_gallery_id(
+                &server.gallery_store,
+                &crate::assets::generated_assets_dir(),
+                &crate::assets::generated_assets_dir(),
+            )?;
+            assert_eq!(server.gallery_store.count_assets(&generated)?, 2,
+                "every variant belongs to the generated gallery");
+            for gallery in [&first, &second, &third] {
                 organize(&server, gallery, true).await?;
                 assert_eq!(server.access_gallery()?.image_count, 0,
-                    "mid-flight roots indexed nothing");
+                    "active roots indexed nothing");
             }
-            organize(&server, &first, true).await?;
-            assert_eq!(server.access_gallery()?.image_count, 2,
-                "outside-root generated outputs survive image scans");
             Ok(())
         }.await;
         unsafe {

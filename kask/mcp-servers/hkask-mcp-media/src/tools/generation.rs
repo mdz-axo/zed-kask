@@ -29,10 +29,6 @@ impl MediaServer {
                 1,
                 hkask_types::media_limits::MAX_GENERATION_VARIANTS as usize,
             )?;
-            // Admission-time gallery capture: the gallery active when the
-            // operation is admitted is the gallery every variant is indexed
-            // into, even if the active root switches mid-inference.
-            let gallery = self.capture_gallery();
             let size = image_size.clone();
             let mut media_params = hkask_types::MediaGenerateParams {
                 prompt: Some(prompt.clone()),
@@ -64,7 +60,6 @@ impl MediaServer {
                 // metadata + display hint — the base64 payload never enters
                 // the model's context).
                 return persist_slim_and_enrich(
-                    gallery.as_ref(),
                     &self.gallery_store,
                     &result,
                     "generate_image",
@@ -120,7 +115,6 @@ impl MediaServer {
                     }
                     let variant_index = variants.len() + failures.len();
                     match persist_slim_and_enrich(
-                        gallery.as_ref(),
                         &self.gallery_store,
                         &single_result,
                         "generate_image",
@@ -184,10 +178,6 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transform_image", async {
             let _admission = self.admit_heavy_operation()?;
-            // Admission-time gallery capture — before every await (DNS
-            // validation included): the gallery active when the operation is
-            // admitted is the gallery the output is indexed into.
-            let gallery = self.capture_gallery();
             validate_tool_url_with_dns(&image_url).await?;
             if let Some(s) = strength
                 && !(0.0..=1.0).contains(&s)
@@ -221,7 +211,6 @@ impl MediaServer {
             // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "transform_image",
@@ -240,7 +229,6 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "upscale_image", async {
             let _admission = self.admit_heavy_operation()?;
-            let gallery = self.capture_gallery();
             validate_tool_url_with_dns(&image_url).await?;
             let media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
@@ -256,7 +244,6 @@ impl MediaServer {
             // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "upscale_image",
@@ -284,7 +271,6 @@ impl MediaServer {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
-            let gallery = self.capture_gallery();
             let mut media_params = hkask_types::MediaGenerateParams {
                 prompt: Some(prompt.clone()),
                 duration,
@@ -309,7 +295,6 @@ impl MediaServer {
             // payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "generate_video",
@@ -414,7 +399,6 @@ impl MediaServer {
                     "strength must be between 0.0 and 1.0",
                 ));
             }
-            let gallery = self.capture_gallery();
             let media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
                 prompt: Some(prompt.clone()),
@@ -431,7 +415,6 @@ impl MediaServer {
             // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_edit_region",

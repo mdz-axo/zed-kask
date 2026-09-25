@@ -85,19 +85,21 @@ impl MediaServer {
         Ok((record, validation))
     }
 
-    /// Import a reference image file into the captured gallery (idempotent by
-    /// canonical path) and return its gallery `image_id` plus a base64 data URL
-    /// suitable for vision LLM calls. Used by `face_scan_folder`.
+    /// Import a reference image into the gallery that owns its file (`home` is
+    /// the file's canonical folder; see `assets::owning_gallery_id`), idempotent
+    /// by canonical path, and return its gallery `image_id` plus a base64 data
+    /// URL for vision LLM calls. Used by `face_scan_folder` and frame extraction.
     ///
     /// If the image is already in the gallery (matched by canonical path), the existing
     /// record is reused — no duplicate row is inserted. The file is read from
     /// disk exactly once; the base64 URL is computed from the in-memory bytes.
     pub(crate) fn import_reference_image(
         &self,
-        ga: &GalleryAccess,
         abs_path: &std::path::Path,
+        home: &std::path::Path,
     ) -> Result<(String, String), MediaError> {
         let abs_path = abs_path.canonicalize()?;
+        let gallery_id = crate::assets::owning_gallery_id(&self.gallery_store, &abs_path, home)?;
         let data = std::fs::read(&abs_path)
             .map_err(|e| MediaError::Io(format!("Failed to read {}: {}", abs_path.display(), e)))?;
         let mut hasher = sha2::Sha256::new();
@@ -129,7 +131,7 @@ impl MediaServer {
         let record = self
             .gallery_store
             .add_image(
-                &ga.gallery_id,
+                &gallery_id,
                 &abs_path.to_string_lossy(),
                 &hash,
                 width,
@@ -189,9 +191,9 @@ impl MediaServer {
             let face_bbox = parsed.as_ref().and_then(|v| v.get("bbox").cloned());
 
             let query_url = if let Some(ref bbox) = face_bbox {
-                match self.crop_face_region(&ga.gallery_id, face_image_id, bbox) {
+                match self.crop_face_region(face_image_id, bbox) {
                     Ok(cropped_url) => cropped_url,
-                    Err(_) => match self.resolve_image_url_by_id(&ga.gallery_id, face_image_id) {
+                    Err(_) => match self.resolve_image_url_by_id(face_image_id) {
                         Ok(url) => url,
                         Err(e) => {
                             errors.push(format!("Face tag {}: {}", tag.id, e));
@@ -200,7 +202,7 @@ impl MediaServer {
                     },
                 }
             } else {
-                match self.resolve_image_url_by_id(&ga.gallery_id, face_image_id) {
+                match self.resolve_image_url_by_id(face_image_id) {
                     Ok(url) => url,
                     Err(e) => {
                         errors.push(format!("Face tag {}: {}", tag.id, e));
@@ -215,7 +217,7 @@ impl MediaServer {
                 // "embeddings" was removed: LLMs cannot emit geometrically
                 // consistent vectors, so those scores were noise.)
                 let ref_url =
-                    match self.resolve_image_url_by_id(&ga.gallery_id, &reg_entry.image_id) {
+                    match self.resolve_image_url_by_id(&reg_entry.image_id) {
                         Ok(url) => url,
                         Err(e) => {
                             errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
@@ -278,8 +280,8 @@ impl MediaServer {
     /// per-file unit of work.
     pub(crate) async fn register_one_face(
         &self,
-        ga: &GalleryAccess,
         path: &std::path::Path,
+        folder: &std::path::Path,
         ext: &str,
         force: bool,
     ) -> Result<serde_json::Value, MediaError> {
@@ -312,7 +314,7 @@ impl MediaServer {
             ))
         })?;
 
-        let (image_id, image_url) = self.import_reference_image(ga, path).map_err(|e| {
+        let (image_id, image_url) = self.import_reference_image(path, folder).map_err(|e| {
             MediaError::FaceRegistration(format!("{}: import failed: {}", fname, e))
         })?;
 
@@ -343,12 +345,11 @@ impl MediaServer {
 
     /// Internal face-folder scan logic shared by the `face_scan_folder` MCP
     /// tool and the `gallery_refresh` orchestrator. Walks `folder` for image
-    /// files with `.yaml` sidecars, imports each image into the gallery
+    /// files with `.yaml` sidecars, imports each image into its owning gallery
     /// (idempotent by canonical path), validates via the vision LLM (unless `force`),
     /// and registers in `face_registry`. Returns a JSON summary.
     pub(crate) async fn run_face_scan_folder(
         &self,
-        ga: &GalleryAccess,
         folder: &std::path::Path,
         force: bool,
     ) -> Result<serde_json::Value, McpToolError> {
@@ -381,7 +382,7 @@ impl MediaServer {
 
             scanned += 1;
 
-            match self.register_one_face(ga, path, &ext, force).await {
+            match self.register_one_face(path, folder, &ext, force).await {
                 Ok(face_json) => {
                     if face_json["status"] == FaceStatus::Valid.as_ref() {
                         registered += 1;
@@ -416,11 +417,10 @@ impl MediaServer {
     /// image URL if cropping fails (graceful degradation).
     pub(crate) fn crop_face_region(
         &self,
-        gallery_id: &str,
         image_id: &str,
         bbox: &serde_json::Value,
     ) -> Result<String, MediaError> {
-        let record = self.gallery_store.get_by_id(gallery_id, image_id)?;
+        let record = self.gallery_store.get_by_id(image_id)?;
         if record.missing {
             return Err(MediaError::ImageNotFound(image_id.into()));
         }

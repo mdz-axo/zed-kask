@@ -982,7 +982,6 @@ impl MediaServer {
                 .map(|(start_ms, end_ms)| (*start_ms as f64 / 1000.0, *end_ms as f64 / 1000.0))
                 .collect();
 
-            let gallery = self.capture_required_gallery()?;
             self.require_ffmpeg()?;
             let media_path = bundle.audio_path.clone();
             let audio = is_audio_path(&media_path);
@@ -1034,7 +1033,6 @@ impl MediaServer {
                 clips: clip_paths.len(),
             };
             crate::assets::publish_local_media_with_transcript_render(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 "educt_render_edl",

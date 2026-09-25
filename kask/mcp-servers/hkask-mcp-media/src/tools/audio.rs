@@ -227,7 +227,6 @@ impl MediaServer {
             if text.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("text must not be empty"));
             }
-            let gallery = self.capture_gallery();
             let voice = if let Some(ref vd_json) = voice_design {
                 match serde_json::from_str::<VoiceDesign>(vd_json) {
                     Ok(vd) => vd.to_elevenlabs_voice().to_string(),
@@ -251,7 +250,6 @@ impl MediaServer {
             // Persist the audio payload and compose the slim result (the
             // base64 data URI never enters the model's context).
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "generate_speech",
@@ -372,7 +370,6 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             pause_after_audio_admission().await?;
             self.require_ffmpeg()?;
@@ -388,7 +385,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &path,
                 "audio_capture",
@@ -518,7 +514,6 @@ impl MediaServer {
                     "start_sec must be >= 0 and end_sec must be > start_sec",
                 ));
             }
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             pause_after_audio_admission().await?;
             if !crate::is_local_media_path(&audio_url) {
@@ -541,7 +536,6 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 "audio_trim",
@@ -570,7 +564,6 @@ impl MediaServer {
                 1,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             pause_after_audio_admission().await?;
             for url in &audio_urls {
@@ -588,7 +581,6 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 "audio_concat",

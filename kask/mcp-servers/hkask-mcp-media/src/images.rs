@@ -90,10 +90,9 @@ impl MediaServer {
     /// not gallery indices.
     pub(crate) fn resolve_image_url_by_id(
         &self,
-        gallery_id: &str,
         image_id: &str,
     ) -> Result<String, MediaError> {
-        let record = self.gallery_store.get_by_id(gallery_id, image_id)?;
+        let record = self.gallery_store.get_by_id(image_id)?;
         image_record_url(&record)
     }
 
@@ -190,7 +189,7 @@ impl MediaServer {
         None
     }
 
-    /// Scan a captured gallery, not whichever gallery becomes active later.
+    /// Scan the given gallery (resolved by the caller before any await).
     pub(crate) fn rescan_gallery(
         &self,
         gallery: &crate::GalleryAccess,

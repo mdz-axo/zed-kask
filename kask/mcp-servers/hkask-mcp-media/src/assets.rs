@@ -4,8 +4,8 @@
 //! they belong in the open artifacts tree, not the hidden internal data dir
 //! (which holds only databases/infrastructure).
 
+use crate::GalleryStore;
 use crate::error::{MediaError, map_media_error};
-use crate::{GalleryState, GalleryStore};
 use hkask_mcp_server::server::McpToolError;
 use std::sync::Arc;
 
@@ -22,6 +22,25 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
         );
     }
     dir
+}
+
+/// The gallery a file belongs to: its canonical home folder `home` is
+/// registered (idempotent), then the most specific gallery containing the
+/// file wins. Files are filed by where they live, never by which gallery
+/// happens to be active.
+pub(crate) fn owning_gallery_id(
+    gallery_store: &GalleryStore,
+    file: &std::path::Path,
+    home: &std::path::Path,
+) -> Result<String, MediaError> {
+    let home = gallery_store.open(
+        &home.to_string_lossy(),
+        hkask_storage::GalleryMode::ReadOnly,
+    )?;
+    let file = file.canonicalize()?;
+    Ok(gallery_store
+        .containing(&file)?
+        .map_or(home.id, |gallery| gallery.id))
 }
 
 /// A job asset whose final file and gallery row remain rollback-armed until the
@@ -82,7 +101,6 @@ impl Drop for StagedPathCleanup {
 impl StagedJobAsset {
     fn publish(
         &mut self,
-        gallery: Option<&GalleryState>,
         gallery_store: &Arc<GalleryStore>,
         op: &str,
         effective_params: &serde_json::Value,
@@ -92,14 +110,8 @@ impl StagedJobAsset {
             MediaError::AssetPersistence(format!("publish {}: {error}", self.final_path.display()))
         })?;
 
-        let Some(gallery_id) = gallery.and_then(|state| state.gallery_id.as_deref()) else {
-            tracing::warn!(
-                target: "hkask.mcp.media",
-                "Gallery not initialized — generated {} has no durable gallery OMC graph",
-                self.media_type
-            );
-            return Ok(());
-        };
+        let gallery_id =
+            owning_gallery_id(gallery_store, &self.final_path, &generated_assets_dir())?;
         let hash = {
             use sha2::Digest;
             let mut hasher = sha2::Sha256::new();
@@ -152,7 +164,7 @@ impl StagedJobAsset {
             graph_json,
         };
         let records = gallery_store
-            .publish_asset_creation(gallery_id, &publication)
+            .publish_asset_creation(&gallery_id, &publication)
             .map_err(|error| {
                 MediaError::AssetPersistence(format!(
                     "publish staged Asset creation {}: {error}",
@@ -222,19 +234,14 @@ impl StagedJobPublication {
     /// Publish final paths and gallery rows while retaining rollback ownership.
     pub(crate) fn publish_and_slim(
         &mut self,
-        gallery: Option<&GalleryState>,
         gallery_store: &Arc<GalleryStore>,
         op: &str,
         effective_params: &serde_json::Value,
     ) -> Result<serde_json::Value, MediaError> {
         for asset in &mut self.assets {
-            if let Err(error) = asset.publish(
-                gallery,
-                gallery_store,
-                op,
-                effective_params,
-                &self.provider_metadata,
-            ) {
+            if let Err(error) =
+                asset.publish(gallery_store, op, effective_params, &self.provider_metadata)
+            {
                 let rollback_error = self.rollback().err();
                 return match rollback_error {
                     Some(rollback_error) => Err(MediaError::AssetPersistence(format!(
@@ -500,11 +507,10 @@ fn rollback_local_publication_error(
 
 /// expect: My locally processed media is published under one durable gallery identity.
 /// [P1] Motivating: user work survives processor and server teardown.
-/// pre: a local processor produced a supported final format and an admission-time gallery was captured.
+/// pre: a local processor produced a supported final format.
 /// post: file, gallery row, lineage, result id, provenance, and media-block id commit or roll back together.
 /// [P1] Constraining: source paths and indices never become parent identities.
 pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
-    gallery: &GalleryState,
     gallery_store: &Arc<GalleryStore>,
     output: &std::path::Path,
     op: &str,
@@ -513,7 +519,6 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
     effective_params: &T,
 ) -> Result<serde_json::Value, McpToolError> {
     publish_local_media_inner(
-        gallery,
         gallery_store,
         output,
         op,
@@ -528,7 +533,6 @@ pub(crate) fn publish_local_media<T: serde::Serialize + ?Sized>(
 /// recording its typed transcript/layer origin before rollback ownership is
 /// released.
 pub(crate) fn publish_local_media_with_transcript_render<T: serde::Serialize + ?Sized>(
-    gallery: &GalleryState,
     gallery_store: &Arc<GalleryStore>,
     output: &std::path::Path,
     op: &str,
@@ -539,7 +543,6 @@ pub(crate) fn publish_local_media_with_transcript_render<T: serde::Serialize + ?
     edl_layer_id: &str,
 ) -> Result<serde_json::Value, McpToolError> {
     publish_local_media_inner(
-        gallery,
         gallery_store,
         output,
         op,
@@ -551,7 +554,6 @@ pub(crate) fn publish_local_media_with_transcript_render<T: serde::Serialize + ?
 }
 
 fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
-    gallery: &GalleryState,
     gallery_store: &Arc<GalleryStore>,
     output: &std::path::Path,
     op: &str,
@@ -586,7 +588,7 @@ fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
     );
 
     let mut result = publication
-        .publish_and_slim(Some(gallery), gallery_store, op, &effective_value)
+        .publish_and_slim(gallery_store, op, &effective_value)
         .map_err(map_media_error)?;
     let Some(gallery_asset_id) = publication.gallery_asset_id().map(str::to_string) else {
         return Err(rollback_local_publication_error(
@@ -799,9 +801,7 @@ pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
 /// The single composition and publication path. It stages provider payloads,
 /// commits each Asset with its generation lineage and OMC creation graph, then
 /// attaches the display hint without allowing base64 payloads into model context.
-/// `gallery` is the caller's admission-time snapshot (`MediaServer::capture_gallery`).
 pub(crate) async fn persist_slim_and_enrich(
-    gallery: Option<&GalleryState>,
     gallery_store: &Arc<GalleryStore>,
     result: &serde_json::Value,
     tool: &str,
@@ -812,7 +812,7 @@ pub(crate) async fn persist_slim_and_enrich(
         .await
         .map_err(map_media_error)?;
     let slim = publication
-        .publish_and_slim(gallery, gallery_store, tool, &args)
+        .publish_and_slim(gallery_store, tool, &args)
         .map_err(map_media_error)?;
     let enriched = crate::media_block::enrich_with_omc_and_provenance(slim, tool, kind, args, None);
     publication.commit();

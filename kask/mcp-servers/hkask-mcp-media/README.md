@@ -1,6 +1,6 @@
 # hkask-mcp-media
 
-Media generation MCP server — image, video, and audio generation via the configured media providers.
+Media generation MCP server â image, video, and audio generation via the configured media providers.
 
 ## Tools (80)
 
@@ -8,7 +8,7 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 
 | Tool | Description |
 |------|-------------|
-| `gallery_organize` | Organize a photo gallery. Point at a folder — the system creates the index, scans for images, and returns status. Use gallery_search to find photos by content. |
+| `gallery_organize` | Organize a photo gallery. Point at a folder â the system creates the index, scans for images, and returns status. Use gallery_search to find photos by content. |
 | `gallery_status` | Get gallery status: path, mode, image count, and total size |
 | `gallery_search` | Search your gallery by describing what you're looking for. Mode `tags` (default) fuzzy-matches AI-generated tags; mode `semantic` matches by caption-embedding similarity (the former `gallery_find_similar`, requires `gallery_analyze` first) |
 | `gallery_add_media` | Import a video or audio file into the gallery whose folder contains it, not the active gallery (`media_type` selects the kind); path-identity upsert with SHA-256 change detection. The former `gallery_add_video`/`gallery_add_audio` pair, merged |
@@ -16,7 +16,7 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_80_registered_
 | `describe_image` | Describe an image in detail. Choose a style: descriptive (full scene), artistic (poetic), technical (photographic analysis), or alt_text (accessibility) |
 | `gallery_analyze` | Analyze gallery images with AI: detect faces, objects, colors, composition, and generate scene descriptions. Tags are persisted and become searchable |
 | `gallery_name_face` | Name a face group from gallery_analyze. Provide either a free-text name or a face_id from the face registry |
-| `face_validate` | Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage ≥15%, frontal pose, good lighting, no occlusion, sharp focus |
+| `face_validate` | Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage â¥15%, frontal pose, good lighting, no occlusion, sharp focus |
 | `face_register` | Register a face reference with a person's name. Auto-validates against 6 criteria. Pass --force to skip validation. Stored in the face_registry for automatic matching during gallery_refresh |
 | `face_scan_folder` | Scan a folder of reference face images and register each one in the face_registry. Each image must have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`, `last_name`, and optional `notes`. Default folder: `mcp/media/faces/` |
 | `face_list` | List all registered faces in the face registry. Optionally filter by status: valid, rejected, or pending |
@@ -69,8 +69,7 @@ Quotes, backslashes, newlines, and Unicode in paths are serialized, not
 interpolated into JSON. No provider routing or GPUI layout changes accompany
 this contract repair.
 
-`video_fetch` captures a required active gallery and validates the public source
-before starting `yt-dlp`. Its download is temporary input to the canonical
+`video_fetch` validates the public source before starting `yt-dlp`. Its download is temporary input to the canonical
 rollback-armed local publisher, so file, Asset row, stable identity, lineage,
 and OMC graph commit together or leave no residue. Successful yt-dlp warnings
 such as a missing JavaScript runtime remain visible; authorization, unavailable
@@ -134,7 +133,7 @@ degraded, and failed states are distinct. Queue polling uses a
 single GPUI-native timer only while the Queue tab is active and a nonterminal
 job exists; hiding the tab, reaching terminal state, or failure cancels it.
 
-## Gallery lifecycle — operator decision 2026-09-06
+## Gallery lifecycle â operator decision 2026-09-06
 
 `gallery_organize(path)` validates and canonicalizes the directory before opening
 its durable record. It activates that requested gallery, including after restart;
@@ -158,7 +157,7 @@ scan and prohibit absence inference for the entire scan. `.hkask-gallery`
 directories are excluded.
 
 `gallery_list_assets` includes stable `id` and `metadata_stale` fields and
-carries the listing's `gallery_id` — the consumer-side identity boundary. The
+carries the listing's `gallery_id` â the consumer-side identity boundary. The
 media panel reconciles against it: a response for a different gallery clears
 the previous gallery's indexed rows and pending selection/deletion actions,
 superseded listing responses (an older request epoch) are dropped, and
@@ -169,7 +168,7 @@ inspector displays `missing` and `metadata_stale` in its Record section.
 Positional indices use the same `(added_at, id)` order across listing, lookup,
 and album positions; positions are not durable identities. Panel detail and
 delete actions address assets by stable `image_id` (`gallery_delete_image`
-accepts exactly one of `image_id` or `image_index`) — a positional index
+accepts exactly one of `image_id` or `image_index`) â a positional index
 captured before a root switch can never act on the new gallery. Asset deletion
 preserves linked transcripts and atomically detaches their live gallery link;
 the immutable source Asset ID remains queryable. Index-only deletion leaves a
@@ -187,14 +186,12 @@ only a successful complete pipeline clears staleness (including faces when face
 annotations exist). Partial analysis remains retryable, reports `partial`, and
 atomically replaces prior model-derived metadata for the requested pipelines while
 preserving user-authored tags. Invalid modes, pipelines, bounds, or selection
-indices fail before inference. Structurally invalid vision output — a missing
-colors array, an empty composition object, or a blank caption — surfaces as an
+indices fail before inference. Structurally invalid vision output â a missing
+colors array, an empty composition object, or a blank caption â surfaces as an
 analysis error that retains staleness; legitimate empty face/object detections are
-valid results. Generated assets capture
-the gallery at operation admission, before the first inference await: the snapshot
-travels immutably through inference, downloads, and every variant, so a root switch
-mid-flight never retargets an in-flight generation (background jobs capture at
-submission). Provider-generated variants, job completions, and canonically
+valid results. Every produced file is
+filed under the gallery whose folder contains it — `media-mcp/generated/` — whatever
+gallery is active. Provider-generated variants, job completions, and canonically
 published local media share one rollback-armed publication aggregate. It commits
 the gallery Asset, generation lineage, effective parameters, and OMC v2.8
 creation graph in one SQLite transaction; coupled files and rows roll back on
@@ -211,7 +208,7 @@ scratch files.
 An absent file's canonicalization resolves its existing symlink ancestors (the
 deepest existing prefix is canonicalized, the absent remainder appended
 lexically), so `/alias/clip.mp4` and `/real/clip.mp4` denote one identity even
-while the file is offline — a missing file cannot split an asset record across
+while the file is offline â a missing file cannot split an asset record across
 two spellings.
 
 **Forward schema update:** add `missing`/`metadata_stale`, canonicalize existing
@@ -223,7 +220,7 @@ legacy read paths or API aliases. `GalleryStore::open` replaces `create`, and
 insertion derives the relative path rather than accepting a second path identity.
 
 Pins: `gallery_reopen_restores_requested_root`, `gallery_rescan_preserves_identity`,
-`gallery_lifecycle_tests` (including `generate_image_tool_entry_binds_admission_gallery`
+`gallery_lifecycle_tests` (including `generate_image_files_every_variant_under_the_generated_gallery`
 and `invalid_analysis_outputs_retain_staleness`), and storage's
 `path_upsert_retains_annotations_and_deterministic_positions`,
 `absent_alias_path_resolves_existing_ancestors_and_keeps_identity`,
@@ -270,7 +267,7 @@ unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
 transcript, and provider-native bounded highlight map, respectively.
 `reduct_reels_snapshot` projects bounded reel IDs/titles from project detail;
 `reduct_reel_detail` reads an existing reel's title and blocks while removing
-all nested `share_token` fields. The v3 reference (pages 29–30) says a Reel
+all nested `share_token` fields. The v3 reference (pages 29â30) says a Reel
 GET omits `publish` and presence of a share token determines publication;
 source now projects `publication_state` as `published`, `unpublished`, or
 `undetermined` for malformed token shapes, without returning the token. The logged-in v3 API
@@ -311,12 +308,12 @@ that acknowledgement did not mean successful ingestion. An indexed 116 MB
 which reached `transcribed`; no automatic retry, deletion, or fallback from educt
 occurred. These ingest paths also retain their fixture/contract tests.
 
-The operator supplied `Reduct-Video.pdf` (55-page v3 reference): pages 31–32
-specify Reel creation (`POST .../reel`, `{"title": ...}` → `{"reel": id}`);
-pages 36–38 specify block creation (`POST .../reel/{id}/block`): `doc-range`
+The operator supplied `Reduct-Video.pdf` (55-page v3 reference): pages 31â32
+specify Reel creation (`POST .../reel`, `{"title": ...}` â `{"reel": id}`);
+pages 36â38 specify block creation (`POST .../reel/{id}/block`): `doc-range`
 requires `order`, `recording`, `start`, `end`, empty `strikethrough` map;
 `title` requires `order`, `duration` and accepts `title` text. Both return
-`{"block": id}`. Pages 38–39 permit partial `POST .../block/{id}` edits and
+`{"block": id}`. Pages 38â39 permit partial `POST .../block/{id}` edits and
 an ID-keyed acknowledgement. `reduct_create_reel`, `reduct_add_reel_clip`,
 `reduct_add_reel_title` and `reduct_edit_reel_clip_range` implement only these
 scoped contracts. Clip edits read back the block type before POST; every
@@ -344,7 +341,7 @@ Strikethroughs, highlight **writes**, redactions, publishing, media download
 and transcript correction remain unimplemented. Page 41 lists strikethrough
 paths without body/response schema. DELETE is irreversible; POST can overwrite
 named fields; API audio redaction does not redact transcript text. Enter/reset
-the key in Settings → Kask → Data Services; writes/deletes refresh the child.
+the key in Settings â Kask â Data Services; writes/deletes refresh the child.
 
 ## Configuration
 
@@ -379,9 +376,9 @@ overrides with a full provider name; configure that provider's key. Remove
 model overrides for background removal/upscale. See the
 [inference routing contract](../../crates/hkask-inference/README.md#media-routing-policy--operator-decision-2026-09-06).
 
-## Face recognition — design decision
+## Face recognition â design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred** — the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates â `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` â dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred** â the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
 
 ## Quick Start
 
@@ -395,8 +392,8 @@ hkask-mcp-media
 ## Usage
 
 ```
-"Generate an image of a sunset over mountains"  → generate_image
-"Search my gallery for cat photos"              → gallery_search
-"Convert this video to GIF"                      → video_to_gif
-"Transcribe this audio recording"                → transcribe_bundle
+"Generate an image of a sunset over mountains"  â generate_image
+"Search my gallery for cat photos"              â gallery_search
+"Convert this video to GIF"                      â video_to_gif
+"Transcribe this audio recording"                â transcribe_bundle
 ```

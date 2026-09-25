@@ -214,9 +214,10 @@ supersedes the create-only activation / insert-only rescan behavior.
   invalid vision output (missing colors array, empty composition object, blank
   caption) errors and retains staleness; legitimate empty face/object detections
   are valid.
-  Generation captures the gallery at operation admission — before the first
-  inference await — and that snapshot travels immutably through inference,
-  downloads, and all variants; background jobs capture at submission.
+  Every file the server produces (generation, jobs, local processing, fetched
+  video, extracted frames) is filed under the gallery whose folder contains it;
+  produced media lives in `media-mcp/generated/`, so it is indexed in that
+  gallery whatever gallery is active (`assets::owning_gallery_id`).
 - The consumer boundary carries identity: the panel reconciles listings by
   `gallery_id` (a root switch clears the old gallery's rows and pending
   selection/deletion actions), drops superseded listing responses (request
@@ -416,25 +417,24 @@ No routing or layout change is part of this repair.
 | `image_remove_background` | Remove background from a gallery image; delegates to the configured background-removal provider. |
 | `image_apply_style` | Apply style transfer to a gallery image through the configured image-to-image provider (DeepInfra or OpenRouter). |
 | `image_create_collage` | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. |
-| `video_clip` | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the gallery active when the call was admitted. |
-| `video_to_gif` | Convert a video segment to GIF using local ffmpeg, then durably publish it in the admission-time gallery. |
+| `video_clip` | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the generated gallery. |
+| `video_to_gif` | Convert a video segment to GIF using local ffmpeg, then durably publish it in the generated gallery. |
 | `image_to_video` | Animate a gallery image into a short video clip through the configured image-to-video provider (DeepInfra or OpenRouter). |
-| `video_add_caption` | Add a text caption overlay with local ffmpeg, then durably publish the MP4 in the admission-time gallery. |
+| `video_add_caption` | Add a text caption overlay with local ffmpeg, then durably publish the MP4 in the generated gallery. |
 | `video_remix` | Clip, optionally caption, and convert to GIF; intermediates are removed before return and the final GIF is durably published. |
-| `video_from_images` | Create an MP4 or GIF from gallery images using ffmpeg, then durably publish it in the admission-time gallery. |
-| `video_concat` | Concatenate clips with ffmpeg, then durably publish the MP4 in the admission-time gallery. |
+| `video_from_images` | Create an MP4 or GIF from gallery images using ffmpeg, then durably publish it in the generated gallery. |
+| `video_concat` | Concatenate clips with ffmpeg, then durably publish the MP4 in the generated gallery. |
 | `video_caption` | Describe video content by extracting keyframes and analyzing them with a vision LLM. |
 | `video_extract_frames` | Extract keyframes from a video as searchable gallery assets, each with its own lineage. |
 | `video_meme` | Create a meme video from a gallery image with text overlay and camera motion (text rendering + AI motion generation). |
 | `video_info` | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
-| `video_fetch` | Validate a selected public video URL, download through yt-dlp, and atomically publish one durable indexed gallery asset. Missing gallery, download, file, lineage, or OMC failure leaves no residue; successful degradation is returned as a warning. |
+| `video_fetch` | Validate a selected public video URL, download through yt-dlp, and atomically publish one durable indexed gallery asset. Download, file, lineage, or OMC failure leaves no residue; successful degradation is returned as a warning. |
 
 The local final-media tools `video_clip`, `video_to_gif`,
 `video_add_caption`, `video_remix`, `video_from_images`, and `video_concat`
-require an active gallery because their result contract includes a stable
-identity. Each captures the admission-time gallery before FFmpeg runs, consumes
-the processor/downloader-owned temporary MP4 or GIF into `media-mcp/generated/`, indexes
-the durable path, marks `gallery_changed: true`, and returns the same `gallery_asset_id` in the result object
+return a stable identity. Each consumes the processor/downloader-owned temporary
+MP4 or GIF into `media-mcp/generated/`, indexes the durable path in the generated
+gallery, marks `gallery_changed: true`, and returns the same `gallery_asset_id` in the result object
 and fenced media block. The final file therefore survives `FfmpegRunner` and
 server teardown.
 

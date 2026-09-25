@@ -164,19 +164,16 @@ impl LocalVideoEffectiveParams<'_> {
 
 pub(crate) fn resolve_image_path_in_gallery(
     server: &MediaServer,
-    gallery: &GalleryState,
+    gallery: &GalleryAccess,
     image_index: usize,
 ) -> Result<std::path::PathBuf, MediaError> {
-    let gallery_id = gallery
-        .gallery_id
-        .as_deref()
-        .ok_or(MediaError::GalleryNotInitialized)?;
+    let gallery_id = &gallery.gallery_id;
     let image = server
         .gallery_store
         .get_image(gallery_id, Some(image_index), None)
         .map_err(|error| {
             MediaError::ImageNotFound(format!(
-                "Image not found at index {image_index} in captured gallery {gallery_id}: {error}"
+                "Image not found at index {image_index} in the active gallery {gallery_id}: {error}"
             ))
         })?;
     Ok(std::path::PathBuf::from(image.absolute_path))
@@ -249,7 +246,6 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_remove_background", async {
             let _admission = self.admit_heavy_operation()?;
-            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -267,7 +263,6 @@ impl MediaServer {
             // Persist the payload and compose the slim result (the provider's
             // base64 payload never enters the model's context).
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_remove_background",
@@ -297,7 +292,6 @@ impl MediaServer {
                     "style_prompt must not be empty",
                 ));
             }
-            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -318,7 +312,6 @@ impl MediaServer {
             // base64 payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_apply_style",
@@ -555,7 +548,6 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -578,7 +570,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Clip(params);
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
@@ -622,7 +613,6 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -651,7 +641,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Gif(params);
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
@@ -682,7 +671,6 @@ impl MediaServer {
             {
                 return Err(McpToolError::invalid_argument("duration must be positive"));
             }
-            let gallery = self.capture_gallery();
             let image_url = self
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
@@ -704,7 +692,6 @@ impl MediaServer {
             // payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "image_to_video",
@@ -736,7 +723,6 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -763,7 +749,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Caption(params);
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
@@ -793,7 +778,6 @@ impl MediaServer {
                 ));
             }
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -857,7 +841,6 @@ impl MediaServer {
 
             let effective_params = LocalVideoEffectiveParams::Remix(params);
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &gif,
                 effective_params.op(),
@@ -898,7 +881,7 @@ impl MediaServer {
                         "Unsupported video format {requested_format:?}; expected mp4 or gif"
                     ))
                 })?;
-            let gallery = self.capture_required_gallery()?;
+            let gallery = self.access_gallery().map_err(map_media_error)?;
             #[cfg(test)]
             pause_after_local_video_admission().await?;
             self.require_ffmpeg()?;
@@ -934,7 +917,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
@@ -960,7 +942,6 @@ impl MediaServer {
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
 
-            let gallery = self.capture_required_gallery()?;
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
             #[cfg(not(test))]
@@ -982,7 +963,6 @@ impl MediaServer {
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Concat(params);
             crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
@@ -1103,7 +1083,6 @@ impl MediaServer {
                 1,
                 hkask_types::media_limits::MAX_EXTRACTED_FRAMES as usize,
             )?;
-            let gallery = self.access_gallery().map_err(map_media_error)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -1135,7 +1114,7 @@ impl MediaServer {
                 let durable_path = durable_directory.join(format!("{}.jpg", uuid::Uuid::new_v4()));
                 let import_result = std::fs::copy(frame, &durable_path)
                     .map_err(|error| MediaError::Io(format!("durable copy failed: {error}")))
-                    .and_then(|_| self.import_reference_image(&gallery, &durable_path));
+                    .and_then(|_| self.import_reference_image(&durable_path, &durable_directory));
                 match import_result {
                     Ok((image_id, image_url)) => imported.push(serde_json::json!({
                         "frame_index": frame_index,
@@ -1207,9 +1186,6 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_meme", async {
             let _admission = self.admit_heavy_operation()?;
-            // Admission-time gallery capture — before the local composition
-            // and the motion-generation await.
-            let gallery = self.capture_gallery();
             let image_path = self
                 .resolve_image_path(image_index)
                 .map_err(map_media_error)?;
@@ -1279,7 +1255,6 @@ impl MediaServer {
             // payload never enters the model's context). Previously this
             // tool returned the raw provider response unpersisted.
             persist_slim_and_enrich(
-                gallery.as_ref(),
                 &self.gallery_store,
                 &result,
                 "video_meme",
@@ -1333,7 +1308,6 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("url must not be empty"));
             }
 
-            let gallery = self.capture_required_gallery()?;
             validate_tool_url_with_dns(&url).await?;
             let ytdlp = self.require_yt_dlp()?;
             let scratch = tempfile::Builder::new()
@@ -1368,7 +1342,6 @@ impl MediaServer {
             }
 
             let mut result = crate::assets::publish_local_media(
-                &gallery,
                 &self.gallery_store,
                 &output_path,
                 "video_fetch",
