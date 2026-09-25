@@ -1,5 +1,7 @@
 # Registration codegraph review — 2026-09-22
 
+> **Status note (2026-09-24):** `skill-router` has since merged into `skill-discovery` (route phase, `kask/registry/templates/skill-discovery/skill-discovery-route.j2`); paths below are as reviewed.
+
 Original implementation committed as `bf3f863c1a` (Share MCP tool-name build script mechanics); the skill-seeding decision was committed as `e1391f9ccc`, its separately identified publication race was fixed in `2a60c0a366`, and the skill winner correction was committed as `b4dbe897ec`. The training-template follow-up at the end of this report was committed as `e065080b27e51c94de0f3fc58b5aa0f90ed22da2`. Scope of the original implementation: kask-side only; no upstream-side edits. This is an architecture/refactor audit and static code review, not a change to registered names or behavior.
 
 ## Map (IS, at review time)
