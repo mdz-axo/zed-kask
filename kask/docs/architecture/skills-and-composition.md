@@ -699,17 +699,25 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 `company-research-deep` and `company-research-flash` retain actual source
 responses separately from generated analysis. Both render
 `company-research/verification-handoff` and delegate the retained packet to
-`grounding-verify`; rendering alone performs no verification. Deep checks the
-CompanyBoard before downstream analysis and the complete final report before
-its semantic quality gate. Flash checks the complete deliverable after
-KATA/LENS, before publication; ENTER's eligibility is provisional.
+`grounding-verify`; rendering alone performs no verification. At candidate
+commitment both run the SAME handoff before expensive synthesis on a sourced
+factual candidate note, then rerun on materially changed targets, sources,
+forecasts or as-of dates. Deep rechecks the CompanyBoard and final report;
+flash rechecks the complete deliverable after KATA/LENS before publication.
+ENTER's eligibility is provisional. The handoff's original-disclosure check
+and frozen-forecast gate report material omissions and field mutation
+separately from factual grounding. A generated answer is not original content;
+missing independent discovery stays `not_checked`. The agent-executed forms
+validate supplied bytes and logs, not the completeness of a search provider
+or a read-only capability boundary; actual verifier tool grants and discovery
+calls must be inspected before claiming those protections.
 
 The skill bodies own collection and the shared three-iteration correction
 budget. A missing/unperformed check, nil score, zero checked claims or
 in-thread self-check cannot approve a report. Material findings override an
 aggregate passing score. Corrected reports and newly composed summaries need
 new checks; prior verification records remain immutable history. The shared
-template defines the source packet and caller-executed `lisp_eval` gate; these
+template defines the source packet and caller-executed source check and `lisp_eval` gate; these
 are agent-executed process constraints, not a Rust publication interceptor.
 
 ### Gas Consumption

@@ -9,17 +9,21 @@ company-research-deep without external search, credentials or Exa Agent.
 1. Load the two research SKILL.md bodies and `verification.json`. Render
    `company-research/verification-handoff` with `packet` as its context.
    Verify that the complete target and original source records survive rendering.
-2. Execute the Lisp gate **extracted from the current handoff template** with
-   each `gate_cases` record as its environment. Compare its returned symbol
-   against `expected`; all cases must match. Do not duplicate the gate logic
-   in a test implementation.
-3. In a separate `spawn_agent`, load `grounding-verify`, execute its checks on
-   the rendered synthetic packet, and return mechanical results and source
-   assignments. Exercise each `report_cases` variation separately against the
-   same sources (adding its additional_source and corresponding fixture-log
-   record when present). Do not fetch example.invalid or claim live retrieval.
-   Use the calling research skill's gate and correction instructions, rather
-   than asking the verifier to approve publication itself.
+2. Execute the original-source check and the Lisp gate **extracted from the
+   current handoff template**. The gate fixtures consume the derived source
+   status, not an authored `checked` field. The test also varies source bytes,
+   discovery/extraction log, material-disclosure inventory and frozen forecasts;
+   it checks omission and forbidden mutation against a clean and rationale-only
+   control. Do not duplicate either decision form in test code.
+3. For a live process check, separately invoke `grounding-verify` in a
+   `spawn_agent` with the rendered packet and let it search public issuer and
+   regulator disclosures using only public identifiers. Inspect the actual
+   tool-call record, its source review and its claim-level mechanical results.
+   Synthetic `example.invalid` records must not be represented as live discovery.
+   The old `report_cases` were prose expectations with no executed oracle; they
+   were removed rather than counted as passing tests. A generated-summary-only
+   source and a material omission are now executable negative controls for the
+   shared source check, but no test here proves full claim extraction.
 4. Execute flash's final confidence/publication form against `publication_cases`.
    Its adjustment applies once to unadjusted confidence, not once per retry.
    Preserve the separate confidence band and the original ENTER eligibility.
@@ -34,13 +38,13 @@ summaries. A quote found only in generated prose cannot become an observation
 or tool_verified through any of those handoffs. Any new summary belongs in the
 final verification target.
 
-Run the deterministic gate and final publication cases (steps 2 and 4) with
+Run the deterministic source check, gate and final publication cases (steps 2 and 4) with
 `cargo test -p hkask-mcp-companies --test company_verification_gate`. The test
-extracts both current Lisp forms instead of maintaining copies of their rules.
+extracts the two current handoff forms and flash's publication form instead of maintaining copies of their rules.
 The `missing_source_packet` case supplies `checks_complete=false` as the
 caller's recorded preflight result; these scalar gate fixtures do not prove
 that a caller computed that flag honestly from retained source bytes.
-Rendered-contract checks, independent semantic/grounding exercises, and
+Rendered-contract checks, independent full semantic/grounding exercises, and
 correction/retry behavior (steps 1, 3 and 5) remain separate checks. A passing
 fixture test does not show that an agent ran the verifier or followed the
 workflow, and these fixtures are not an end-to-end live equity research run.
