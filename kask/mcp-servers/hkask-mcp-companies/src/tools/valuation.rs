@@ -408,7 +408,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Equity duration (Macaulay-style, years) of a company's projected free cash flows: D = Σ t·PV(CF_t) / Σ PV(CF_t) over the projection plus the terminal value timed at the horizon year. Also reports terminal/stage-1/stage-2 PV shares — the maturity profile of the equity claim — and cmp_tenor_gaps, the R2 maturity-transformation gap of the duration against the fixed CMP tenors (1m/3m/6m). Pair with prediction-market time_to_maturity (hkask-mcp-prediction-markets) for duration-matching across horizons."
+        description = "Equity duration (Macaulay-style, years) of a company's projected free cash flows: D = Σ t·PV(CF_t) / Σ PV(CF_t) over the projection plus the terminal value timed at the horizon year. Also reports terminal/stage-1/stage-2 PV shares — the maturity profile of the equity claim — and cmp_tenor_gaps, the maturity-transformation gap of the duration against the fixed CMP tenors (1m/3m/6m). Pair with prediction-market time_to_maturity (hkask-mcp-prediction-markets) for duration-matching across horizons."
     )]
     pub async fn equity_duration(
         &self,
@@ -467,7 +467,7 @@ impl CompaniesServer {
 
             let output = match duration {
                 Some(d) => {
-                    // R2: maturity-transformation gap against the fixed CMP tenors
+                    // Maturity-transformation gap against the fixed CMP tenors
                     // (1m/3m/6m). `duration_vs_cmp_tenors` returns None for a
                     // non-positive duration — surfaced as a note, never silently
                     // dropped.
@@ -501,7 +501,7 @@ impl CompaniesServer {
                             d.terminal_pv_share * 100.0,
                             d.horizon_years
                         ),
-                        "framework": "Macaulay-style equity duration over projected FCF (terminal value timed at the horizon year). cmp_tenor_gaps is the R2 maturity-transformation gap against the fixed CMP tenors (hkask_forecast::duration_vs_cmp_tenors). Compare against prediction-market time_to_maturity for maturity-transformation analysis.",
+                        "framework": "Macaulay-style equity duration over projected FCF (terminal value timed at the horizon year). cmp_tenor_gaps is the maturity-transformation gap against the fixed CMP tenors (hkask_forecast::duration_vs_cmp_tenors). Compare against prediction-market time_to_maturity for maturity-transformation analysis.",
                     })
                 }
                 None => serde_json::json!({
@@ -618,7 +618,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), the intrinsic value distribution (percentiles, prob-undervalued), the T8a risk core (probability-weighted expected return and sigma_scenario over the paths, plus per-node beta loadings), and — when realized_volatility is supplied — the fused volatility (root-sum-square of realized and scenario-implied sigma). Max 12 scenario nodes. This is the scenario scenario events drive the company's financial forecast, not the other way around."
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), the intrinsic value distribution (percentiles, prob-undervalued), the risk core (probability-weighted expected return and sigma_scenario over the paths, plus per-node beta loadings), and — when realized_volatility is supplied — the fused volatility (root-sum-square of realized and scenario-implied sigma). Max 12 scenario nodes. This is the scenario scenario events drive the company's financial forecast, not the other way around."
     )]
     pub async fn scenario_impact_valuation(
         &self,
@@ -690,7 +690,7 @@ impl CompaniesServer {
             )
             .map_err(map_scenario_impact_error)?;
 
-            // T8a risk core over the enumerated leaf paths. Each path is a
+            // Risk core over the enumerated leaf paths. Each path is a
             // branch: its probability (from the CPTs) and its annualized
             // return from the current price to the path's intrinsic value
             // over the DCF horizon. Skipped with a named reason (never
@@ -725,7 +725,7 @@ impl CompaniesServer {
                 None
             };
 
-            // T8a factor loadings per scenario node: β(node) =
+            // Factor loadings per scenario node: β(node) =
             // E[r | node Yes] − E[r | node No], from the path masks (bit i
             // set = node i Yes). Complements node_sensitivities (which are
             // unweighted intrinsic spreads); these are probability-weighted
@@ -830,7 +830,7 @@ impl CompaniesServer {
                     "prob_undervalued": result.distribution.prob_undervalued,
                 },
                 "node_sensitivities": node_sensitivities,
-                // T8a risk core (hkask_forecast::scenario_risk_measure) over
+                // Risk core (hkask_forecast::scenario_risk_measure) over
                 // the leaf paths.
                 "risk_measure": risk_measure.map(|rm| serde_json::json!({
                     "expected_return": rm.expected_return,
@@ -841,7 +841,7 @@ impl CompaniesServer {
                 "risk_measure_note": risk_skip_reason.map(|reason| format!(
                     "{reason} — scenario risk measure undefined (never fabricated)"
                 )),
-                // T8a factor loadings (hkask_forecast::scenario_node_loading):
+                // Factor loadings (hkask_forecast::scenario_node_loading):
                 // β(node) = E[r | node Yes] − E[r | node No].
                 "factor_loadings": factor_loadings,
                 // Volatility fusion (hkask_forecast::fuse_volatility): realized

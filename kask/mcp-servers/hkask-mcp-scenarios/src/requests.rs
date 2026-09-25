@@ -87,7 +87,7 @@ pub(crate) struct PropagateRequest {
     pub new_prior: f64,
 }
 
-/// Request for contract_price_coherence (R5 / H3 reframed).
+/// Request for contract_price_coherence.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ContractCoherenceRequest {
     /// Observed market price of the contract on the same events — a
@@ -133,7 +133,7 @@ pub struct CmpDependencySpecRequest {
 }
 
 /// Request for `scenario_from_cmp_indices`: compose CMP indices into an
-/// EventTree with optional dependency edges (R1).
+/// EventTree with optional dependency edges.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CmpBridgeRequest {
     /// ProvenancedCmpIndex objects from hkask-mcp-prediction-markets

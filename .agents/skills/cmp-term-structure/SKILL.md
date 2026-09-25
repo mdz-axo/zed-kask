@@ -19,9 +19,9 @@ ladder → context → indices → tree → coherence → duration matching.
 - Building a scenario tree from market-implied priors with full
   provenance (family, tenor, orientation, venue).
 - Testing whether a parlay/joint contract price is coherent with the
-  tree-implied joint probability (the R5 arbitrage check).
+  tree-implied joint probability (the arbitrage check).
 - Matching a prediction-market horizon against a company's cash-flow
-  duration (R2 duration matching).
+  duration (duration matching).
 
 ## When NOT to Use
 
@@ -80,7 +80,7 @@ ladder → context → indices → tree → coherence → duration matching.
    Both write transaction-ledger portfolios in the portfolio server.
 9. For horizon matching against an equity, call `equity_duration`
    (companies server) with the symbol and read `cmp_tenor_gaps` — the
-   R2 maturity-transformation gap against the fixed CMP tenors. Pair
+   maturity-transformation gap against the fixed CMP tenors. Pair
    the equity's duration with the CMP tenor whose gap is smallest.
 
 ### Convergence

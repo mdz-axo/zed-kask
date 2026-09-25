@@ -530,7 +530,7 @@ async fn scenario_quantify_rejects_out_of_range_probability_as_invalid_argument(
     );
 }
 
-// ── contract_price_coherence (R5 / H3 reframed) ───────────────────────────────
+// ── contract_price_coherence ───────────────────────────────
 
 /// Happy path: an explicit `tree_implied` within the transaction-cost band is
 /// reported coherent, with the divergence and both inputs echoed back.

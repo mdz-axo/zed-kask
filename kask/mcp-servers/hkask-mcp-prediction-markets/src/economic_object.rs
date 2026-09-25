@@ -1,4 +1,4 @@
-//! Economic-object ontology for prediction contracts (C0.1, corrected).
+//! Economic-object ontology for prediction contracts.
 //!
 //! The failure this fixes: keyword grep is not semantic mapping. "Fed
 //! decision", "FOMC meeting", "Fed funds rate", "rate cut", "how many cuts"

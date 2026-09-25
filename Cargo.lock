@@ -9053,7 +9053,6 @@ dependencies = [
 name = "hkask-mcp-prediction-markets"
 version = "0.40.0"
 dependencies = [
- "anyhow",
  "async-tungstenite",
  "chrono",
  "futures 0.3.34",

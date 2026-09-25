@@ -422,7 +422,7 @@ pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
     (0.5 + (probability - 0.5) * (1.0 + delta)).clamp(0.01, 0.99)
 }
 
-// ── Scenario risk core (T8a) ────────────────────────────────────────────────
+// ── Scenario risk core ────────────────────────────────────────────────
 //
 // The risk axis of the three-axes specification: probability-weighted risk
 // measures over scenario-tree branches. Pure math over caller-supplied branch
@@ -491,8 +491,7 @@ pub fn scenario_risk_measure(branches: &[BranchOutcome]) -> Option<ScenarioRiskM
 /// Scenario factor exposure: the company's return sensitivity to a single
 /// scenario node (factor), in the APT loading sense.
 ///
-/// Construction (per the corrected T8a design, phase2-review B2): the factor
-/// is the node's binary outcome; the loading is the difference in the
+/// Construction: the factor is the node's binary outcome; the loading is the difference in the
 /// company's branch return between branches where the node is true and
 /// branches where it is false, probability-weighted:
 ///
@@ -552,7 +551,7 @@ pub fn fuse_volatility(
     }
 }
 
-// ── R4: σ_scenario over CMP-driven branches ────────────────────────────────
+// ── σ_scenario over CMP-driven branches ────────────────────────────────
 //
 // Re-points the scenario risk measure at CMP-controlled branch probabilities.
 // A CMP branch is a `BranchOutcome` whose probability comes from a CMP index
@@ -568,7 +567,7 @@ pub fn fuse_volatility(
 /// two CMP-controlled tree roots), the contributing index ids are joined
 /// with `+` — the string names every source, never a fabricated single
 /// source. When `None`, the branch probability is from a raw contract
-/// (pre-R4 behavior) — the risk measure degrades to the uncontrolled form.
+/// (no CMP provenance) — the risk measure degrades to the uncontrolled form.
 /// Owned `String` so dynamically-generated CMP source identifiers (from
 /// `compose_cmp_tree`) can be used without leaking allocations or forcing
 /// `'static`.
@@ -628,13 +627,13 @@ pub fn cmp_scenario_risk_measure(branches: &[CmpBranchOutcome]) -> Option<CmpSce
     })
 }
 
-// ── R5: Contract-price coherence (H3 reframed) ──────────────────────────────
+// ── Contract-price coherence ──────────────────────────────
 //
 // The arbitrage analysis on the contracts: are the tree-implied joint
 // probabilities coherent with observed contract prices (incl. parlay/joint
 // contracts where listed)? Divergence = the analyzable signal.
 //
-// This is the H3 test (reframed per user correction): NO equity-return
+// This is the coherence test (reframed per user correction): NO equity-return
 // regressions, NO betas. The arbitrage-pricing apparatus applies to the
 // contracts — decomposing and bridging their prices and analyzing their
 // coherence — never to modeling stock returns.
@@ -661,7 +660,7 @@ pub struct CoherenceMeasure {
 }
 
 /// Measure the coherence between a tree-implied joint probability and a
-/// market price (R5).
+/// market price.
 ///
 /// `tree_implied` is the joint probability from the CMP-controlled tree
 /// (e.g. P(rates increase AND oil increase) from `compose_cmp_tree` output).
@@ -673,12 +672,12 @@ pub struct CoherenceMeasure {
 /// Returns `None` when either input is outside [0, 1] — a coherence measure
 /// over an invalid probability is undefined, never fabricated.
 ///
-/// The falsifier (H3): if `coherent` is systematically false across many
+/// The falsifier: if `coherent` is systematically false across many
 /// CMP-controlled trees (the tree diverges from the market beyond costs),
-/// the composition algebra adds no pricing coherence — H3 is refuted. If
+/// the composition algebra adds no pricing coherence — the hypothesis is refuted. If
 /// `coherent` is true on CMP trees but false on raw-snapshot trees, CMP is
-/// the active ingredient — H3b corroborated.
-#[must_use = "coherence measure should feed the H3 falsification log"]
+/// the active ingredient.
+#[must_use = "a computed coherence measure should be reported"]
 pub fn contract_price_coherence(
     tree_implied: f64,
     market_price: f64,
@@ -698,10 +697,10 @@ pub fn contract_price_coherence(
     })
 }
 
-// ── R2: Duration matching vs constant maturity ─────────────────────────────
+// ── Duration matching vs constant maturity ─────────────────────────────
 //
 // Compares equity duration (Macaulay years) against the fixed CMP tenors
-// (1m/3m/6m = ~0.083/0.25/0.5 years). The gap is the H2 signal: equity
+// (1m/3m/6m = ~0.083/0.25/0.5 years). The gap is the duration signal: equity
 // duration is typically 5-15+ years, while CMP tenors are sub-year. This
 // maturity-transformation gap is now a controlled quantity (CMP fixes the
 // tenor) rather than an unmeasurable confound (decaying contract snapshots).
@@ -727,12 +726,12 @@ pub struct DurationGap {
     pub ratio: f64,
 }
 
-/// Compare an equity duration against the fixed CMP tenors (R2).
+/// Compare an equity duration against the fixed CMP tenors.
 ///
 /// Returns one `DurationGap` per CMP tenor (1m, 3m, 6m). The gap is the
 /// absolute difference between the equity duration and the tenor; the ratio
-/// is how many tenors fit inside the equity duration. This is the H2/T1
-/// dataset: the maturity-transformation gap is now a controlled quantity
+/// is how many tenors fit inside the equity duration. The
+/// maturity-transformation gap is now a controlled quantity
 /// (CMP fixes the tenor) rather than an unmeasurable confound.
 ///
 /// Returns `None` when `equity_duration_years` is not positive — a duration
@@ -757,7 +756,7 @@ pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<Duration
     )
 }
 
-// ── R3: CMP index provenance (shared bridge contract) ─────────────────────
+// ── CMP index provenance (shared bridge contract) ─────────────────────
 //
 // The bridge contract between `hkask-mcp-scenarios`'s `scenario_from_cmp_indices`
 // emitter and `hkask-mcp-companies`'s `EventTreeProjection` deserializer. Both
@@ -772,7 +771,7 @@ pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<Duration
 // surfaces in the tree-weighted output so the consumer can cite the CMP index
 // provenance without re-parsing the `id` string. Each field carries
 // `#[serde(default)]` so the struct deserializes from a minimal `
-// `{"id": "..."}` entry (the pre-R3 shape) — the pin tests enforce that the
+// `{"id": "..."}` entry (the old id-only shape) — the pin tests enforce that the
 // real emitters populate all 7, but the deserializer tolerates partial output
 // rather than failing the whole tree on one malformed entry. The
 // `#[serde(default)]` per field is NOT a security gate (per the repo `.rules`
@@ -780,7 +779,7 @@ pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<Duration
 // invariant: "the real emitters populate all 7 fields" — enforced by the pin
 // tests, not by the struct's `#[serde(default)]`.
 
-/// R3: CMP index provenance — the full 7-field identity of one CMP index in a
+/// CMP index provenance — the full 7-field identity of one CMP index in a
 /// `scenario_from_cmp_indices` tree. Re-exported by both `hkask-mcp-scenarios`
 /// and `hkask-mcp-companies` as their `superforecast::CmpIndexProvenance` so the
 /// bridge contract has a single type-level source of truth.
@@ -1055,7 +1054,7 @@ mod tests {
         assert!((0.01..=0.99).contains(&adjusted));
     }
 
-    // ── Duration vs CMP tenors (R2) ────────────────────────────────
+    // ── Duration vs CMP tenors ────────────────────────────────
 
     #[test]
     fn duration_vs_cmp_tenors_one_entry_per_tenor() {
@@ -1123,7 +1122,7 @@ mod tests {
         assert!(close(isotonic_apply(&[], 0.42), 0.42));
     }
 
-    // ── Scenario risk measure (T8a) ─────────────────────────────
+    // ── Scenario risk measure ─────────────────────────────
 
     #[test]
     fn scenario_risk_measure_weighted_mean_and_sigma() {
@@ -1171,7 +1170,7 @@ mod tests {
         );
     }
 
-    // ── Scenario factor loading (T8a) ────────────────────────────
+    // ── Scenario factor loading ────────────────────────────
 
     #[test]
     fn scenario_node_loading_is_conditional_return_difference() {
@@ -1238,7 +1237,7 @@ mod tests {
         ));
     }
 
-    // ── CMP scenario risk measure (R4) ──────────────────────────
+    // ── CMP scenario risk measure ──────────────────────────
 
     #[test]
     fn cmp_risk_measure_controlled_only_when_all_branches_are_cmp() {
@@ -1284,7 +1283,7 @@ mod tests {
         assert!(cmp_scenario_risk_measure(&[]).is_none());
     }
 
-    // ── Contract-price coherence (R5) ───────────────────────────
+    // ── Contract-price coherence ───────────────────────────
 
     #[test]
     fn contract_price_coherence_within_cost_band_is_coherent() {

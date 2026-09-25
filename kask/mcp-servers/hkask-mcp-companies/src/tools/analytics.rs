@@ -260,7 +260,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity. Detailed mode (event_tree supplied) also emits the T8a risk core: a probability-weighted risk measure (expected return, sigma_scenario), APT-style factor loadings (beta per axis) over the branch revaluations, and — when the tree is CMP-built — the R4 CMP-provenance risk measure (cmp_controlled)."
+        description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity. Detailed mode (event_tree supplied) also emits the risk core: a probability-weighted risk measure (expected return, sigma_scenario), APT-style factor loadings (beta per axis) over the branch revaluations, and — when the tree is CMP-built — the CMP-provenance risk measure (cmp_controlled)."
     )]
     pub async fn scenario_analysis(
         &self,
@@ -347,7 +347,7 @@ impl CompaniesServer {
                             );
                             let expected = superforecast::expected_intrinsic(&weighted);
 
-                            // T8a risk core: probability-weighted risk measure
+                            // Risk core: probability-weighted risk measure
                             // and APT-style factor loadings over the branch
                             // revaluations. The branch return is the annualized
                             // return from the current price to the branch's
@@ -423,7 +423,7 @@ impl CompaniesServer {
                                     None
                                 };
 
-                            // R4: the same branches with CMP provenance. A
+                            // The same branches with CMP provenance. A
                             // quadrant probability derives from both tree
                             // roots, so the branch is CMP-controlled only when
                             // BOTH roots are CMP indices (a single raw root
@@ -483,7 +483,7 @@ impl CompaniesServer {
                                     "intrinsic_per_share": w.intrinsic_per_share,
                                     "probability": w.probability,
                                 })).collect::<Vec<_>>(),
-                                // T8a risk core (hkask_forecast::scenario_risk_measure).
+                                // Risk core (hkask_forecast::scenario_risk_measure).
                                 "risk_measure": risk_measure.map(|rm| serde_json::json!({
                                     "expected_return": rm.expected_return,
                                     "sigma_scenario": rm.sigma_scenario,
@@ -493,14 +493,14 @@ impl CompaniesServer {
                                 "risk_measure_note": risk_skip_reason.map(|reason| format!(
                                     "{reason} — scenario risk measure undefined (never fabricated)"
                                 )),
-                                // T8a factor exposures (hkask_forecast::scenario_node_loading):
+                                // Factor exposures (hkask_forecast::scenario_node_loading):
                                 // β(axis) = E[r | axis high] − E[r | axis low].
                                 "factor_loadings": {
                                     "revenue_growth_beta": growth_loading,
                                     "gross_margin_beta": margin_loading,
                                 },
                                 "factor_loadings_note": factor_loading_note,
-                                // R4 (hkask_forecast::cmp_scenario_risk_measure): the
+                                // hkask_forecast::cmp_scenario_risk_measure: the
                                 // risk measure with CMP provenance.
                                 "cmp_risk_measure": cmp_risk_measure.map(|rm| serde_json::json!({
                                     "expected_return": rm.inner.expected_return,
@@ -511,7 +511,7 @@ impl CompaniesServer {
                                     "cmp_branch_count": rm.cmp_branch_count,
                                 })),
                                 "cmp_controlled_note": cmp_controlled_note,
-                                // R3: cite CMP provenance when the tree was built from CMP indices.
+                                // Cite CMP provenance when the tree was built from CMP indices.
                                 "cmp_provenance": cmp_provenance.map(|p| p.iter().map(|c| serde_json::json!({
                                     "id": c.id,
                                     "family": c.family,

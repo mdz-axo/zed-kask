@@ -1,23 +1,22 @@
-//! C0.4 — CMP index construction from pulled catalogs.
+//! CMP index construction from catalog records.
 //!
 //! Builds 1m/3m/6m CMP indices per (family, orientation), per-venue, from the
-//! pre-pulled per-family contract JSONL files in
-//! `tasks/bayesian-apt/catalogs/contracts/<family>/{kalshi,gamma}.jsonl`.
+//! venue market records (Kalshi and Gamma JSONL shapes).
 //!
-//! This module is the bridge between the on-disk catalog records (written by
-//! `fetch_contracts.rs`) and the pure-math portfolio solver in
+//! This module is the bridge between catalog records and the pure-math
+//! portfolio solver in
 //! `cmp_portfolio.rs`. It:
 //!
-//! 1. Reads the per-family JSONL files (Kalshi and Gamma schemas differ).
+//! 1. Parses the record lines (Kalshi and Gamma schemas differ).
 //! 2. Adapts each record to a `CatalogAdapter` (extracting strike,
 //!    direction, days-to-expiration, probability via `BaseEvent::extract_strike`
 //!    and categorical orientation via `extract_decision_strike`).
 //! 3. Classifies orientation and builds `OrientedConstituent`s.
 //! 4. Calls `construct_cmp_index_set` to solve the portfolios.
 //! 5. Wraps each `CmpIndex` with provenance (family, venue) — the publishable
-//!    unit per cmp-foundation §6.
+//!    unit.
 //!
-//! Design rules (cmp-foundation §5, §7; plan.md "never-fabricate posture"):
+//! Design rules (never fabricate a probability):
 //! - All thresholds are passed variables in `CmpConfig`. No magic numbers here.
 //! - Per-venue indices. Kalshi and Polymarket are never pooled.
 //! - Withhold when no bracket spans the target — `CmpError::NoBracket`, not a
@@ -83,8 +82,8 @@ pub enum CmpError {
 
 // ── Venue ──────────────────────────────────────────────────────────────────
 
-/// The venue a CMP index is built from. Per-venue indices are mandated
-/// (plan.md C0.4 AC) — the law-of-one-price failure (arXiv:2601.01706) is the
+/// The venue a CMP index is built from. Per-venue indices are mandated:
+/// the law-of-one-price failure (arXiv:2601.01706) is the
 /// reason per-venue indices exist. Never pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,8 +103,7 @@ impl std::fmt::Display for Venue {
 
 // ── Provenance wrapper ─────────────────────────────────────────────────────
 
-/// A CMP index with full provenance — the publishable unit per cmp-foundation
-/// §6. Wraps `CmpIndex` with the (family, venue) the index was built from, so
+/// A CMP index with full provenance — the publishable unit. Wraps `CmpIndex` with the (family, venue) the index was built from, so
 /// downstream consumers (composition, risk core) cite the index, not a
 /// decaying contract.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -136,19 +134,19 @@ pub struct ProvenancedCmpIndexSet {
     /// How many records passed eligibility (base-event + materiality +
     /// orientation + maturity + tier). The rest were rejected with reasons.
     pub n_eligible: usize,
-    /// A sample of rejection reasons (up to 5), for human review (CP-CMP).
+    /// A sample of rejection reasons (up to 5), for human review.
     pub rejection_sample: Vec<String>,
 }
 
 // ── Catalog record adapters ────────────────────────────────────────────────
 //
-// The per-family JSONL files are written by `fetch_contracts.rs` and have a
-// pre-flattened schema (not the live `KalshiMarket`/`GammaMarket` structs).
-// These adapters deserialize that on-disk schema and expose a uniform
+// Catalog records have a pre-flattened schema (not the live
+// `KalshiMarket`/`GammaMarket` structs); the MCP tools adapt live markets
+// into it (`kalshi_catalog_lines`). These adapters deserialize it and expose a uniform
 // `(market_id, question/title, description/rules, close_time, probability,
 // volume)` interface for the eligibility pipeline.
 
-/// A Kalshi catalog record (on-disk JSONL schema from `fetch_contracts.rs`).
+/// A Kalshi catalog record (flattened JSONL schema).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KalshiCatalogRecord {
     pub source: String,
@@ -251,8 +249,8 @@ fn parse_fp_str(s: &str) -> Option<f64> {
 
 /// Map a `BaseEconomicObject` (the 7-family registry) to a `BaseEvent` (the
 /// 6-family materiality registry). `RealGdpGrowth` has no `BaseEvent` variant
-/// — it is beyond the plan's initial six and withholds until a materiality
-/// setting is reviewed for it (cmp-foundation §2; plan.md C0.1).
+/// — it is beyond the initial six and withholds until a materiality
+/// setting is reviewed for it.
 pub fn base_event_for(object: BaseEconomicObject) -> Option<BaseEvent> {
     match object {
         BaseEconomicObject::CrudeOilPrice => Some(BaseEvent::Oil),
@@ -332,10 +330,9 @@ fn build_oriented_constituents(
     let mut rejections: Vec<String> = Vec::new();
 
     for (idx, adapter) in adapters.iter().enumerate() {
-        // Base-event classification via the FIBO-anchored semantic mapping
-        // (ONT-6). The venue's curated taxonomy (Kalshi series prefix, Gamma
-        // title phrasing) is the primary signal, not substring grep. This
-        // replaces the former `classify_base_event_text` call.
+        // Base-event classification via the FIBO-anchored semantic mapping.
+        // The venue's curated taxonomy (Kalshi series prefix, Gamma title
+        // phrasing) is the primary signal, not substring grep.
         let base_object = crate::semantic_mapping::classify_base_object_from_catalog(
             &adapter.source,
             &adapter.event_ticker_or_id,
@@ -570,8 +567,8 @@ pub(crate) fn oriented_constituents_from_lines(
 /// Build CMP indices for one (family, venue) from a slice of raw catalog
 /// record JSON strings.
 ///
-/// This is the C0.4 entry point. It takes the raw JSONL lines (already read
-/// from disk by the caller), the target family,
+/// This is the index-build entry point. It takes the raw JSONL lines, the
+/// target family,
 /// the venue, the economic context (reference + volatility), and the CMP
 /// config. Returns a `ProvenancedCmpIndexSet` with all solved indices and
 /// explicit withholding for buckets that couldn't be formed.

@@ -1,4 +1,4 @@
-//! Base-event registry (C0.1) — the semantic identity of the systematic
+//! Base-event registry — the semantic identity of the systematic
 //! factors CMP indices are built over.
 //!
 //! A base event is a contract family where some semantic form of the contract
@@ -9,8 +9,8 @@
 //! series / category) to its materiality setting, so eligibility is a
 //! semantic match — not a keyword guess scattered across call sites.
 //!
-//! Continuous availability is verified live via `market_ladder` (the CP-CMP
-//! checkpoint), not assumed by the registry.
+//! Continuous availability is verified live via `market_ladder`, not assumed
+//! by the registry.
 
 use crate::cmp_portfolio::{MaterialitySetting, MaterialityType, Orientation};
 

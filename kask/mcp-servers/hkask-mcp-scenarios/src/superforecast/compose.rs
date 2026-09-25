@@ -159,7 +159,7 @@ pub(crate) fn compose_market_tree(
     Ok((tree, warnings))
 }
 
-// ── R1: Composition over CMP inputs ─────────────────────────────────────────
+// ── Composition over CMP inputs ─────────────────────────────────────────
 //
 // Re-points the composition machinery at CMP index probabilities instead of
 // raw contract probabilities. A CMP index is a constant-maturity, constant-
@@ -233,7 +233,7 @@ pub(crate) fn convert_cmp_index(
     }
 }
 
-/// Compose a set of CMP indices into an EventTree (R1).
+/// Compose a set of CMP indices into an EventTree.
 ///
 /// Each CMP index becomes a root ScenarioEvent with its index probability as
 /// the prior. The tree cites the index (family, orientation, tenor, venue) in
@@ -246,7 +246,7 @@ pub(crate) fn convert_cmp_index(
 /// CMP indices are independent root events (no caller-authored dependencies
 /// in the initial implementation — the tree is a flat set of CMP priors).
 /// Dependency edges between CMP indices (e.g. "oil price increase → inflation
-/// increase") are a future refinement (R5 coherence analysis); for now the
+/// increase") are a future refinement (coherence analysis); for now the
 /// tree is a flat prior set that downstream tools (scenario_analysis,
 /// scenario_propagate) consume.
 pub fn compose_cmp_tree(
@@ -298,11 +298,11 @@ pub(crate) struct CmpDependencySpec {
 }
 
 /// Compose a set of CMP indices into an EventTree with caller-authored
-/// dependency edges (R1 + H3 joint coherence support).
+/// dependency edges (joint coherence support).
 ///
 /// This is the extended version of `compose_cmp_tree` that supports dependency
 /// edges between CMP indices — e.g. "oil price increase → inflation increase."
-/// The dependency edges enable the H3 joint coherence test: the tree-implied
+/// The dependency edges enable the joint coherence test: the tree-implied
 /// joint P(A ∧ B) can be compared against a parlay contract price.
 ///
 /// `observation_date` is the date the CMP indices were built.

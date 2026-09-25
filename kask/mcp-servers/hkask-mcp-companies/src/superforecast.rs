@@ -212,15 +212,15 @@ pub(crate) enum WeightingMode {
 /// consumes — the `tree` object from `scenario_from_markets_set` or
 /// `scenario_propagate` output.
 ///
-/// R3: when the tree comes from `compose_cmp_tree` (CMP-driven composition),
+/// When the tree comes from `compose_cmp_tree` (CMP-driven composition),
 /// the `cmp_provenance` field records the CMP index identities so the
 /// tree-weighted output can cite them. When absent, the tree is from raw
-/// contracts (pre-R3 behavior).
+/// contracts.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EventTreeProjection {
     pub root_ids: Vec<String>,
     pub nodes: Vec<EventTreeNodeProjection>,
-    /// R3: CMP provenance — present when the tree was built from CMP indices
+    /// CMP provenance — present when the tree was built from CMP indices
     /// (via `compose_cmp_tree`). Each entry is a CMP index identity
     /// (`cmp:{family}:{tenor}:{orientation}`). Absent for raw-contract trees.
     /// The element type is the shared `hkask_forecast::CmpIndexProvenance` —
@@ -235,7 +235,7 @@ pub struct EventTreeProjection {
     pub cmp_provenance: Vec<hkask_forecast::CmpIndexProvenance>,
 }
 
-/// R3: CMP index provenance — the bridge contract between
+/// CMP index provenance — the bridge contract between
 /// `hkask-mcp-scenarios`'s `scenario_from_cmp_indices` emitter and this crate's
 /// `EventTreeProjection` deserializer. Re-exported from `hkask_forecast` so the
 /// two sides cannot drift apart at the type level; the per-field
@@ -288,7 +288,7 @@ pub(crate) fn within_tolerance(forecast: f64, actual: f64, tolerance: f64) -> bo
 }
 
 // ── Pin test ─────────────────────────────────────────────────────────────────
-// Enforces the R3 bridge contract: the JSON shape the scenarios server's
+// Enforces the CMP provenance bridge contract: the JSON shape the scenarios server's
 // `emit_cmp_provenance` produces (pinned by
 // `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` in
 // `hkask-mcp-scenarios`) round-trips through this crate's `EventTreeProjection`
@@ -345,7 +345,7 @@ mod tests {
 
     /// `cmp_provenance` is optional (absent for raw-contract trees). The
     /// `#[serde(default)]` on the outer field must tolerate its absence without
-    /// failing deserialization — a tree without CMP indices is the pre-R3
+    /// failing deserialization — a tree without CMP indices is the provenance-free
     /// shape and must still deserialize cleanly.
     #[test]
     fn event_tree_projection_tolerates_missing_cmp_provenance() {

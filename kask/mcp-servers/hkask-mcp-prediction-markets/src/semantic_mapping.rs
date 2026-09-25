@@ -1,84 +1,15 @@
-//! Semantic event mapping — ontological mapping of prediction-market events
-//! to FIBO (process axis) + Dublin Core (state axis), then graph proximity
-//! to identify constellations of related events per base economic object.
-//!
-//! This replaces the rebuked substring synonym-closure approach. The
-//! mechanism is:
-//!
-//! 1. **FIBO process axis** — each event's economic object is mapped to a
-//!    FIBO concept URI (e.g. `fibo-ind-ir-ir:PolicyInterestRate` for Fed
-//!    funds, `fibo-ind-ei-ei:CommodityPriceIndex` for WTI). The mapping
-//!    uses the venue's curated taxonomy (Kalshi `series_ticker` prefix,
-//!    Gamma `tags`) as the primary signal, with the event title as a
-//!    confirmation signal — never substring grep as the primary mechanism.
-//!
-//! 2. **Dublin Core state axis** — each event's state identity is mapped
-//!    to DC concepts (`dcterms:subject`, `dcterms:type`, `dcterms:temporal`).
-//!
-//! 3. **Graph proximity** — events that share the same FIBO concept AND
-//!    have overlapping DC state (same subject domain, close temporal
-//!    window) are clustered into a constellation. The proximity is the
-//!    cosine of the two-axis vectors: FIBO concept similarity (exact
-//!    match = 1.0, same FIBO module = 0.5, no match = 0.0) × DC state
-//!    similarity (subject overlap + temporal proximity).
-//!
-//! 4. **Base-object identification** — each constellation is matched to a
-//!    `BaseEconomicObject` (the systematic factor the CMP indices are built
-//!    over). A constellation with high proximity to `PolicyInterestRate`
-//!    becomes the rate-events constellation; the CMP index for rates is
-//!    built from that constellation's contracts.
+//! Semantic event classification — maps a prediction-market record to its
+//! base economic object and FIBO concept (process axis) with Dublin Core
+//! subjects (state axis). The venue's curated taxonomy (Kalshi series
+//! prefix, Gamma tags/question) is the primary signal, never substring grep.
+//! Used by the calibration buckets and the CMP catalog path.
 
 use crate::economic_object::BaseEconomicObject;
-use hkask_bridge_ontology::dc_bibo;
 use hkask_bridge_ontology::fibo;
-use std::collections::HashMap;
-
-/// A prediction-market event mapped to its dual-axis ontological identity.
-///
-/// The process axis is the FIBO concept the event's economic object maps to.
-/// The state axis is the Dublin Core subject/type/temporal identity. Together
-/// they form a two-dimensional vector that graph proximity is computed over.
-#[derive(Debug, Clone)]
-pub struct MappedEvent {
-    /// The event's source-venue identifier (Kalshi `event_ticker` or Gamma `id`).
-    pub event_id: String,
-    /// The event's human-readable title.
-    pub title: String,
-    /// The venue's curated series/ticker (Kalshi `series_ticker` or Gamma `slug`).
-    pub series: String,
-    /// The venue's category or tag (Kalshi `category` or Gamma first tag).
-    pub category: String,
-    /// The FIBO concept URI this event maps to (process axis).
-    pub fibo_concept: fibo::FiboConcept,
-    /// The Dublin Core subject keywords extracted from the event (state axis).
-    pub dc_subjects: Vec<String>,
-    /// The Dublin Core type (e.g. `dcmitype:Dataset` for economic data).
-    pub dc_type: dc_bibo::DcConcept,
-    /// The event's end date (RFC3339), for temporal proximity.
-    pub end_date: Option<String>,
-    /// The base economic object this event is about (if it matches one).
-    pub base_object: Option<BaseEconomicObject>,
-}
-
-/// A constellation of events clustered around a base economic object.
-///
-/// The constellation is the set of events whose graph proximity to the base
-/// object's FIBO concept exceeds a threshold. These are the events the CMP
-/// index for that base object is built from.
-#[derive(Debug, Clone)]
-pub struct EventConstellation {
-    /// The base economic object this constellation clusters around.
-    pub base_object: BaseEconomicObject,
-    /// The FIBO concept the constellation is anchored to.
-    pub fibo_concept: fibo::FiboConcept,
-    /// The events in the constellation, sorted by proximity (highest first).
-    pub events: Vec<MappedEvent>,
-}
 
 /// Classify a catalog record's base economic object using the FIBO-anchored
-/// semantic mapping (ONT-6). This is the bridge between the on-disk catalog
-/// records (written by `fetch_contracts.rs`) and the `BaseEconomicObject`
-/// registry — the venue's curated taxonomy is the primary signal, not
+/// semantic mapping. This bridges catalog records and the
+/// `BaseEconomicObject` registry — the venue's curated taxonomy is the primary signal, not
 /// substring grep.
 ///
 /// For Kalshi: the `event_ticker` contains the series prefix (`KXFED`,
@@ -89,7 +20,7 @@ pub struct EventConstellation {
 ///
 /// For Gamma (Polymarket): the `question` is the market-level question text.
 /// It's passed as the title to `resolve_gamma_event`, with empty tags/slug
-/// (the per-family catalog JSONL doesn't carry the event-level tags). The
+/// (catalog records do not carry event-level tags). The
 /// extended rates coverage in `resolve_gamma_event` handles the full
 /// Polymarket phrasing variety without needing tags.
 ///
@@ -144,40 +75,6 @@ pub fn calibration_bucket_for_gamma(question: &str, slug: &str) -> String {
         return family.label().to_string();
     }
     crate::types::canonical_bucket(slug)
-}
-
-/// Map a Kalshi event to its dual-axis ontological identity.
-///
-/// The mapping uses the Kalshi `series_ticker` as the primary signal (it's a
-/// controlled vocabulary where `KXFED*` = Fed funds, `KXUST*` = Treasury
-/// yields, `KXWTI*` = WTI, etc.) and the event title as a confirmation
-/// signal. This is the venue's curated taxonomy — the semantic work is
-/// already done; we map it to FIBO.
-pub fn map_kalshi_event(
-    event_ticker: &str,
-    series_ticker: &str,
-    title: &str,
-    category: &str,
-    end_date: Option<&str>,
-) -> Option<MappedEvent> {
-    let series_upper = series_ticker.to_uppercase();
-    let title_lower = title.to_lowercase();
-    let (fibo_concept, base_object, dc_subjects) =
-        match resolve_kalshi_series(&series_upper, &title_lower)? {
-            Some(mapping) => mapping,
-            None => return None,
-        };
-    Some(MappedEvent {
-        event_id: event_ticker.to_string(),
-        title: title.to_string(),
-        series: series_ticker.to_string(),
-        category: category.to_string(),
-        fibo_concept,
-        dc_subjects,
-        dc_type: dc_bibo::DATASET,
-        end_date: end_date.map(|s| s.to_string()),
-        base_object: Some(base_object),
-    })
 }
 
 /// Resolve a Kalshi series ticker to its FIBO concept + base object + DC subjects.
@@ -302,50 +199,20 @@ fn resolve_kalshi_series(
     Some(None)
 }
 
-/// Map a Polymarket Gamma event to its dual-axis ontological identity.
-///
-/// Gamma events embed their markets and carry `tags` (a controlled
-/// vocabulary). The mapping uses the tags as the primary signal and the
-/// event title as a confirmation signal.
-pub fn map_gamma_event(
-    event_id: &str,
-    title: &str,
-    slug: &str,
-    tags: &[String],
-    end_date: Option<&str>,
-) -> Option<MappedEvent> {
-    let title_lower = title.to_lowercase();
-    let tags_lower: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
-    let (fibo_concept, base_object, dc_subjects) =
-        resolve_gamma_event(&title_lower, &tags_lower, slug)?;
-    Some(MappedEvent {
-        event_id: event_id.to_string(),
-        title: title.to_string(),
-        series: slug.to_string(),
-        category: tags_lower.first().cloned().unwrap_or_default(),
-        fibo_concept,
-        dc_subjects,
-        dc_type: dc_bibo::DATASET,
-        end_date: end_date.map(|s| s.to_string()),
-        base_object: Some(base_object),
-    })
-}
-
 /// Resolve a Gamma event to its FIBO concept + base object + DC subjects.
 ///
 /// Gamma has no controlled series ticker like Kalshi; the tags and title
 /// are the semantic signal. The mapping checks for specific economic-object
 /// signals in the title (the venue's curated naming) and the tags.
 ///
-/// ONT-6 (2026-08-07): extended rates coverage to handle the full Polymarket
-/// phrasing variety discovered during C0.4 CP-CMP: "upper bound", "federal
+/// Rates coverage handles the full Polymarket phrasing variety: "upper bound", "federal
 /// funds rate" (full phrase, not just "fed funds"), "rates hit/stay above",
 /// and non-Fed central banks (ECB, BoE, BoC) which are the same economic
 /// object (a central-bank policy rate) under the FIBO `PolicyInterestRate`
 /// concept. The materiality defaults remain Fed-specific (the reference and
 /// volatility are Fed funds); non-Fed central bank contracts will classify
 /// correctly but use Fed-centric economic context until per-bank contexts
-/// are added (a future refinement, not a C0.4 blocker).
+/// are added.
 fn resolve_gamma_event(
     title: &str,
     tags: &[String],
@@ -456,54 +323,4 @@ fn resolve_gamma_event(
         }
     }
     None
-}
-
-/// Build constellations of events clustered around each base economic object.
-///
-/// For each base object, collect all mapped events that resolved to that
-/// object. The constellation is the set of events sharing the same FIBO
-/// concept (process axis) and overlapping DC subjects (state axis). Events
-/// are sorted by their proximity to the base object's canonical FIBO concept.
-pub fn build_constellations(events: &[MappedEvent]) -> Vec<EventConstellation> {
-    let mut by_object: HashMap<BaseEconomicObject, Vec<&MappedEvent>> = HashMap::new();
-    for event in events {
-        if let Some(base_object) = event.base_object {
-            by_object.entry(base_object).or_default().push(event);
-        }
-    }
-    let mut constellations = Vec::new();
-    for (base_object, mut events_for_object) in by_object {
-        // Sort by FIBO concept exactness (exact match to the base object's
-        // canonical concept first), then by title for stability.
-        let canonical_concept = base_object.fibo_concept();
-        events_for_object.sort_by(|a, b| {
-            let a_exact = a.fibo_concept == canonical_concept;
-            let b_exact = b.fibo_concept == canonical_concept;
-            b_exact.cmp(&a_exact).then_with(|| a.title.cmp(&b.title))
-        });
-        let fibo_concept = events_for_object
-            .first()
-            .map(|e| e.fibo_concept)
-            .unwrap_or(canonical_concept);
-        constellations.push(EventConstellation {
-            base_object,
-            fibo_concept,
-            events: events_for_object
-                .into_iter()
-                .map(|e| MappedEvent {
-                    event_id: e.event_id.clone(),
-                    title: e.title.clone(),
-                    series: e.series.clone(),
-                    category: e.category.clone(),
-                    fibo_concept: e.fibo_concept,
-                    dc_subjects: e.dc_subjects.clone(),
-                    dc_type: e.dc_type,
-                    end_date: e.end_date.clone(),
-                    base_object: e.base_object,
-                })
-                .collect(),
-        });
-    }
-    constellations.sort_by_key(|a| a.base_object);
-    constellations
 }

@@ -17,7 +17,7 @@ from the originals. Every diagram was re-verified against current code on
 
 ## CMP-First Research Pipeline
 
-The Bayesian-APT research program (v2, CMP-first) builds constant-maturity
+The CMP research pipeline builds constant-maturity
 prediction (CMP) indices from raw prediction-market catalogs, composes them
 into scenario trees, and computes risk and coherence measures. The pipeline
 spans four crates: `hkask-forecast` (pure math), `hkask-mcp-prediction-markets`
@@ -28,7 +28,7 @@ spans four crates: `hkask-forecast` (pure math), `hkask-mcp-prediction-markets`
 (`falsification_log`, `h2_duration_test`, `h3_coherence_test`, and the
 `falsification.rs` module) has been deleted from `hkask-forecast`; the former
 Phase 3 (falsification) is dropped. The risk and coherence measures remain in
-`hkask_forecast.rs`, including `duration_vs_cmp_tenors` (R2), which the
+`hkask_forecast.rs`, including `duration_vs_cmp_tenors`, which the
 companies server's `equity_duration` tool emits as `cmp_tenor_gaps`.
 `classify_base_object_from_catalog` lives in
 `hkask-mcp-prediction-markets/src/semantic_mapping.rs` and is called by the CMP
@@ -36,32 +36,32 @@ index builder (`build_oriented_constituents`).
 
 ```mermaid
 graph TD
-    subgraph catalogs["Catalogs (on-disk JSONL)"]
-        kalshi["Kalshi events"]
-        gamma["Polymarket events"]
-        contracts["Per-family contracts<br/>7 families × 2 venues"]
+    subgraph venues["Live venue markets"]
+        kalshi["Kalshi open markets"]
+        gamma["Polymarket open markets"]
+        contracts["market_cmp_indices<br/>adapted to catalog records"]
     end
 
     subgraph phase0["Phase 0 — CMP Foundation"]
         direction TB
-        build["build_cmp_indices<br/>C0.4 index builder"]
-        cohort["solve_portfolio_cohort<br/>C0.5 single-cohort fallback"]
+        build["build_cmp_indices<br/>index builder"]
+        cohort["solve_portfolio_cohort<br/>single-cohort fallback"]
         build --> cohort
     end
 
     subgraph phase1["Phase 1 — Composition"]
         direction TB
-        compose["compose_cmp_tree<br/>R1: CMP → EventTree"]
-        deps["compose_cmp_tree_with_deps<br/>R1: dependency edges"]
-        tree_weight["EventTreeProjection<br/>R3: CMP provenance in weighting"]
+        compose["compose_cmp_tree<br/>CMP → EventTree"]
+        deps["compose_cmp_tree_with_deps<br/>dependency edges"]
+        tree_weight["EventTreeProjection<br/>CMP provenance in weighting"]
         compose --> deps
         compose --> tree_weight
     end
 
     subgraph phase2["Phase 2 — Risk and Coherence"]
         direction TB
-        risk["cmp_scenario_risk_measure<br/>R4: σ_scenario with CMP provenance"]
-        coherence["contract_price_coherence<br/>R5: tree-implied vs market price"]
+        risk["cmp_scenario_risk_measure<br/>σ_scenario with CMP provenance"]
+        coherence["contract_price_coherence<br/>tree-implied vs market price"]
         risk --> coherence
     end
 
@@ -99,19 +99,18 @@ equation so the only thing that moves is the probability.
 
 The agent-reachable entry point is the `market_cmp_indices` MCP tool
 (hkask-mcp-prediction-markets): it fetches live open markets, adapts them to
-the catalog-record shapes, and runs the C0.4 builder below. Its output —
+the catalog-record shapes, and runs the index builder below. Its output —
 `ProvenancedCmpIndex[]` — is the producer for `scenario_from_cmp_indices`
-(hkask-mcp-scenarios); the `fetch_contracts` bin's on-disk JSONL catalogs
-remain the offline path.
+(hkask-mcp-scenarios).
 
 ```mermaid
 flowchart TD
     tool["market_cmp_indices MCP tool<br/>live open markets → catalog records"]
-    records["Catalog records<br/>Kalshi / Gamma JSONL"] --> build["build_cmp_indices_from_lines<br/>C0.4 index builder"]
+    records["Catalog records<br/>Kalshi / Gamma JSONL"] --> build["build_cmp_indices_from_lines<br/>index builder"]
     tool --> build
     build -->|"OrientedConstituent[]"| buckets["select_available_buckets<br/>maturity window check"]
     buckets -->|"available buckets"| bracket["solve_portfolio<br/>bracket pair interpolation"]
-    buckets -->|"available buckets"| cohort["solve_portfolio_cohort<br/>C0.5 single-cohort fallback"]
+    buckets -->|"available buckets"| cohort["solve_portfolio_cohort<br/>single-cohort fallback"]
     bracket -->|"Interpolated"| index["ProvenancedCmpIndex<br/>family + venue + portfolio"]
     cohort -->|"BucketedSparse"| index
     bracket -->|"None — no bracket"| cohort
@@ -156,7 +155,7 @@ status: VERIFIED
 The risk measure computes σ_scenario over CMP-controlled branches. The
 coherence measure compares tree-implied joint probabilities against observed
 market prices within a transaction-cost band. The former falsification
-consumers (H2 duration, H3 coherence tests, `falsification_log`) were
+consumers (duration and coherence tests, `falsification_log`) were
 deleted; the measures themselves remain in `hkask_forecast.rs`.
 
 ```mermaid
@@ -184,10 +183,10 @@ seam is caller-mediated paste bridging via `EventTreeProjection`).
 
 ```mermaid
 graph TD
-    forecast["hkask-forecast<br/>pure math: R4, R5"]
-    pm["hkask-mcp-prediction-markets<br/>C0.1–C0.5, ONT-6"]
-    scenarios["hkask-mcp-scenarios<br/>R1: compose_cmp_tree"]
-    companies["hkask-mcp-companies<br/>R3: tree-weighted valuation"]
+    forecast["hkask-forecast<br/>pure math: risk, coherence"]
+    pm["hkask-mcp-prediction-markets<br/>CMP construction"]
+    scenarios["hkask-mcp-scenarios<br/>compose_cmp_tree"]
+    companies["hkask-mcp-companies<br/>tree-weighted valuation"]
 
     pm -->|"depends on"| forecast
     scenarios -->|"depends on"| forecast

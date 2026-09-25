@@ -13,14 +13,6 @@ path = "src/hkask_mcp_prediction_markets.rs"
 name = "hkask-mcp-prediction-markets"
 path = "src/main.rs"
 
-[[bin]]
-name = "semantic_map_catalogs"
-path = "src/bin/semantic_map_catalogs.rs"
-
-[[bin]]
-name = "fetch_contracts"
-path = "src/bin/fetch_contracts.rs"
-
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
@@ -37,7 +29,6 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid.workspace = true
 reqwest.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }
 futures.workspace = true

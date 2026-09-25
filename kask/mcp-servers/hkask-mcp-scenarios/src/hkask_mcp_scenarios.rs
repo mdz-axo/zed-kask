@@ -33,7 +33,7 @@
 //! - `scenario_full` — Tetlock core batch in a single call (no persist/propagate)
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
 //! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
-//! - `contract_price_coherence` — R5/H3 coherence: tree-implied joint vs contract price
+//! - `contract_price_coherence` — coherence: tree-implied joint vs contract price
 
 use std::collections::HashSet;
 
@@ -556,7 +556,7 @@ impl ScenariosServer {
         .await
     }
 
-    /// Bridge: compose CMP indices into an EventTree (R1).
+    /// Bridge: compose CMP indices into an EventTree.
     ///
     /// Takes CMP index probabilities (from hkask-mcp-prediction-markets
     /// build_cmp_indices) and composes them into a validated EventTree. Each
@@ -565,7 +565,7 @@ impl ScenariosServer {
     /// the provenance — not a decaying contract.
     ///
     /// Optional dependency edges between CMP indices (e.g. "oil price increase
-    /// → inflation increase") enable the H3 joint coherence test.
+    /// → inflation increase") enable the joint coherence test.
     #[tool(
         description = "Compose CMP (Constant-Maturity Prediction) indices into a validated EventTree. Each CMP index becomes a root event with its index probability as the prior. Optional dependency edges between CMP indices (e.g. oil→inflation) enable joint probability computation for coherence testing. The tree cites the CMP index identity (family, tenor, orientation, venue) in the provenance — not a decaying contract. Input: an array of ProvenancedCmpIndex objects (from market_cmp_indices on hkask-mcp-prediction-markets), observation date, optional dependency specs. The composed tree is cached for contract_price_coherence's tree_implied default."
     )]
@@ -652,11 +652,11 @@ impl ScenariosServer {
         .await
     }
 
-    /// R5 / H3 (reframed): coherence between the tree-implied joint
+    /// Coherence between the tree-implied joint
     /// probability and an observed contract price. The arbitrage analysis
     /// lives on the contracts — never on equity returns.
     #[tool(
-        description = "Measure R5 contract-price coherence: the divergence between a tree-implied joint probability and an observed market price (parlay/joint contract, or a single contract for a marginal comparison). Divergence within the transaction-cost band is coherent (not actionable); beyond it, the gap is the arbitrage signal. tree_implied defaults to the cached tree's joint_probability (from scenario_quantify / scenario_from_cmp_indices / scenario_propagate). Inputs outside [0, 1] are rejected — a coherence measure over an invalid probability is never fabricated."
+        description = "Measure contract-price coherence: the divergence between a tree-implied joint probability and an observed market price (parlay/joint contract, or a single contract for a marginal comparison). Divergence within the transaction-cost band is coherent (not actionable); beyond it, the gap is the arbitrage signal. tree_implied defaults to the cached tree's joint_probability (from scenario_quantify / scenario_from_cmp_indices / scenario_propagate). Inputs outside [0, 1] are rejected — a coherence measure over an invalid probability is never fabricated."
     )]
     pub async fn contract_price_coherence(
         &self,
@@ -708,7 +708,7 @@ impl ScenariosServer {
                         measure.divergence, measure.cost_band
                     )
                 },
-                "framework": "R5 contract-price coherence (H3 reframed): the arbitrage analysis applies to the contracts — tree-implied joint probability vs observed contract price — never to equity returns. Systematic divergence on CMP-controlled trees refutes the composition algebra's pricing coherence (H3); coherence on CMP trees but divergence on raw-snapshot trees corroborates CMP as the active ingredient (H3b).",
+                "framework": "Contract-price coherence: the arbitrage analysis applies to the contracts — tree-implied joint probability vs observed contract price — never to equity returns. Systematic divergence on CMP-controlled trees refutes the composition algebra's pricing coherence; coherence on CMP trees but divergence on raw-snapshot trees corroborates CMP as the active ingredient.",
                 "ontology": dc_bibo::DATASET,
             });
             Ok(output)

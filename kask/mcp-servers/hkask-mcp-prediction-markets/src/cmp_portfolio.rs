@@ -94,7 +94,7 @@ pub struct CmpConfig {
     /// bucket. Buckets with fewer contracts are withheld (never-fabricate
     /// posture). Default 3 — enough for a bracket pair plus one tie-breaker.
     pub min_constituents_per_bucket: u32,
-    /// C0.5: max distance (days) from the nearest cohort to the target for
+    /// Max distance (days) from the nearest cohort to the target for
     /// single-cohort (`BucketedSparse`) publication. When no bracket spans
     /// the target but eligible contracts exist in the window, the builder
     /// publishes a degraded index at the nearest cohort's maturity, with the
@@ -107,8 +107,7 @@ pub struct CmpConfig {
     /// publishable as a cohort. This ensures the cohort fallback fires
     /// whenever there are eligible contracts in the window, regardless of
     /// the bucket's target maturity.
-    /// Set to 0 to disable the fallback (bracket-only publication, the
-    /// pre-C0.5 behavior).
+    /// Set to 0 to disable the fallback (bracket-only publication).
     pub cohort_tolerance_days: f64,
 }
 
@@ -126,7 +125,7 @@ impl Default for CmpConfig {
             roll_handoff_days: 3,
             min_tier: ReliabilityTier::Medium,
             min_constituents_per_bucket: 3,
-            // C0.5: default to the 1m window half-width (7.5 days) so any
+            // Default to the 1m window half-width (7.5 days) so any
             // contract in the shortest bucket's window is publishable as a
             // cohort. This is the widest practical tolerance — tighten for
             // stricter publication.
@@ -374,7 +373,7 @@ pub struct IndexPortfolio {
     pub maturity_error_days: f64,
     /// The index probability (weighted average of constituent probabilities).
     pub index_probability: f64,
-    /// C0.5: the construction method — `Interpolated` (bracket pair) or
+    /// The construction method — `Interpolated` (bracket pair) or
     /// `BucketedSparse` (single-cohort fallback). Downstream consumers use
     /// this to weight the index appropriately: a `BucketedSparse` index has
     /// wider uncertainty (the maturity error is the distance from the cohort
@@ -388,7 +387,7 @@ pub struct IndexPortfolio {
 /// Construction: choose the pair of constituents bracketing the target with
 /// the highest combined quality and solve the two-weight system exactly;
 /// when no bracket spans the target, fall back to `solve_portfolio_cohort`
-/// (C0.5 single-cohort publication). Returns `None` only when both the
+/// (single-cohort publication). Returns `None` only when both the
 /// bracket solver and the cohort solver fail — never fabricates.
 pub fn solve_portfolio(
     constituents: &[Constituent],
@@ -457,17 +456,17 @@ pub fn solve_portfolio(
             method: CmpMethod::Interpolated,
         });
     }
-    // No bracket spans the target — try the single-cohort fallback (C0.5).
+    // No bracket spans the target — try the single-cohort fallback.
     solve_portfolio_cohort(constituents, target_days, config)
 }
 
-/// C0.5: single-cohort fallback. When no bracket pair spans the target, pick
+/// Single-cohort fallback. When no bracket pair spans the target, pick
 /// the highest-quality cohort (group of contracts at the same maturity) and
 /// publish a degraded index at that maturity. The maturity error is the
 /// distance from the cohort to the target — surfaced, not hidden.
 ///
-/// This is the honest degraded publication the plan anticipated (cmp-foundation
-/// §5: "sparse coverage degrades honestly"). The `BucketedSparse` method flag
+/// This is the honest degraded publication (sparse coverage degrades
+/// honestly). The `BucketedSparse` method flag
 /// tells downstream consumers the index has wider uncertainty than a bracket-
 /// interpolated index.
 ///
@@ -624,7 +623,7 @@ pub struct CmpIndexSet {
 /// 2. For each available bucket, filter constituents into the bucket's
 ///    maturity window and group by orientation (increase, decline, stable).
 /// 3. For each (bucket, orientation) pair, solve the portfolio weights so
-///    the weighted-average maturity matches the bucket's target. C0.5: when
+///    the weighted-average maturity matches the bucket's target. When
 ///    the bracket solver fails (no bracket pair), fall back to the single-
 ///    cohort solver (`BucketedSparse`) — a degraded but honest publication
 ///    with the maturity error surfaced.
