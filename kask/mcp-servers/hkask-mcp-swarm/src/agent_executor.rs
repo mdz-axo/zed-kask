@@ -29,6 +29,10 @@ const MAX_MODEL_SUGGESTIONS: usize = 5;
 /// structured reasoning step; the executor accumulates steps and returns
 /// them in `RawDelegateResult.reasoning_steps`.
 const REASONING_TOOL_NAME: &str = "reasoning/think";
+/// The editor's skill tools, served on the IPC tool path (kask_bridge
+/// `host_skill_tools`). Offered only to cards that declare skills.
+const HOST_SKILL: &str = "host/skill";
+const HOST_SKILL_TOOLS: [&str; 3] = [HOST_SKILL, "host/render_template", "host/lisp_eval"];
 
 /// A single reasoning step recorded by the model via the `reasoning/think`
 /// tool. Inspired by Agno's `ReasoningTools.think`/`analyze` pattern: each
@@ -320,15 +324,6 @@ impl AgentExecutor {
         task_clean: &str,
         history: &[hkask_types::ChatMessage],
     ) -> Result<RawDelegateResult, LocalSwarmError> {
-        if !agent.capabilities.skills.is_empty() {
-            return Err(LocalSwarmError::Unavailable(format!(
-                "agent '{}' declares skills, but local skill execution is not wired: \
-                 project identity and non-core skill authorization are required. \
-                 Remove the declaration or use a project-bound agent thread until \
-                 the governed skill port is available",
-                agent.agent_id
-            )));
-        }
         // Build the prompt: system prompt + task.
         let system_prompt = agent
             .capabilities
@@ -340,10 +335,19 @@ impl AgentExecutor {
         // Build the declared tool set from the card's `mcp_tools` (qualified
         // `server/tool` names). This list is the allowlist: a model call for
         // any tool not declared here is never dispatched.
+        // Declared skills run through the editor's own skill tools
+        // (`host/skill`, `host/render_template`, `host/lisp_eval`) on the same
+        // allowlisted IPC path as `mcp_tools`; `host/skill` is further limited
+        // to the card's declared skill names below.
+        let skill_tools = (!agent.capabilities.skills.is_empty())
+            .then_some(HOST_SKILL_TOOLS.as_slice())
+            .unwrap_or_default();
         let declared_tools: Vec<(String, String)> = agent
             .capabilities
             .mcp_tools
             .iter()
+            .map(String::as_str)
+            .chain(skill_tools.iter().copied())
             .map(|qualified| {
                 let (server, tool) = qualified.split_once('/').ok_or_else(|| {
                     LocalSwarmError::InvalidInput(format!(
@@ -545,9 +549,17 @@ impl AgentExecutor {
                     continue;
                 }
 
+                let undeclared_skill = qualified == HOST_SKILL
+                    && !call
+                        .args
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .is_some_and(|name| {
+                            agent.capabilities.skills.iter().any(|skill| skill == name)
+                        });
                 let declared = declared_tools
                     .iter()
-                    .find(|(s, t)| format!("{s}/{t}") == qualified);
+                    .find(|(s, t)| !undeclared_skill && format!("{s}/{t}") == qualified);
                 let (outcome, summary) = match declared {
                     Some((server, tool)) => {
                         match self
@@ -1047,30 +1059,169 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn declared_skills_fail_visibly_before_local_inference() {
-        let inference = Arc::new(RecordingInference {
-            override_seen: std::sync::Mutex::new(Vec::new()),
-        });
-        let executor = AgentExecutor::new(inference.clone(), Arc::new(StubDispatch));
-        let card = LocalAgentCard {
-            agent_id: "skill-probe".into(),
+    /// Records every `host/*` dispatch; advertises any requested tool.
+    #[derive(Default)]
+    struct SkillDispatch(std::sync::Mutex<Vec<(String, serde_json::Value, Vec<String>)>>);
+
+    impl hkask_types::ToolDispatchPort for SkillDispatch {
+        fn tool_definition<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            _allowed: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            hkask_types::ChatToolDefinition,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async move {
+                Ok(hkask_types::ChatToolDefinition {
+                    tool_type: "function".into(),
+                    function: hkask_types::ChatToolFunction {
+                        name: format!("{server}/{tool}"),
+                        description: String::new(),
+                        parameters: serde_json::json!({"type": "object"}),
+                    },
+                })
+            })
+        }
+
+        fn invoke_tool<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            args: serde_json::Value,
+            allowlist: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            self.0
+                .lock()
+                .unwrap()
+                .push((format!("{server}/{tool}"), args, allowlist.to_vec()));
+            Box::pin(async { Ok(serde_json::json!("<skill_content name=\"tdd\">")) })
+        }
+    }
+
+    fn skill_card(skills: &[&str]) -> LocalAgentCard {
+        LocalAgentCard {
+            agent_id: "skill-user".into(),
             capabilities: crate::local_registry::LocalAgentCapabilities {
-                skills: vec!["code-review".into()],
+                skills: skills.iter().map(|s| s.to_string()).collect(),
                 ..Default::default()
             },
             ..Default::default()
-        };
-        let error = match executor.run(&card, "review").await {
-            Ok(_) => panic!("an unwired declared skill must not be ignored"),
-            Err(error) => error,
-        };
-        assert!(
-            error
-                .to_string()
-                .contains("project identity and non-core skill authorization")
+        }
+    }
+
+    fn skill_call(name: &str) -> ScriptedCall {
+        ScriptedCall::new("host/skill", serde_json::json!({ "name": name }))
+    }
+
+    /// expect: "A local agent that declares a skill loads it through the editor's skill tool" [P3]
+    #[tokio::test]
+    async fn declared_skill_loads_through_the_host_skill_tool() {
+        let dispatch = Arc::new(SkillDispatch::default());
+        let executor = AgentExecutor::new(Arc::new(skill_call("tdd")), dispatch.clone());
+        let result = executor
+            .run(&skill_card(&["tdd"]), "use tdd")
+            .await
+            .expect("run");
+        assert_eq!(result.tool_calls[0]["ok"], true);
+        let calls = dispatch.0.lock().unwrap();
+        assert_eq!(calls[0].0, "host/skill");
+        assert_eq!(calls[0].1["name"], "tdd");
+        for tool in ["host/skill", "host/render_template", "host/lisp_eval"] {
+            assert!(calls[0].2.iter().any(|t| t == tool), "{tool} allowlisted");
+        }
+    }
+
+    /// expect: "A skill the card does not declare is never loaded" [P1]
+    #[tokio::test]
+    async fn undeclared_skill_is_refused_before_dispatch() {
+        let dispatch = Arc::new(SkillDispatch::default());
+        let executor = AgentExecutor::new(Arc::new(skill_call("essentialist")), dispatch.clone());
+        let result = executor
+            .run(&skill_card(&["tdd"]), "use essentialist")
+            .await
+            .expect("run");
+        assert_eq!(result.tool_calls[0]["ok"], false);
+        assert!(dispatch.0.lock().unwrap().is_empty());
+    }
+
+    /// expect: "An agent without declared skills is not offered skill tools" [P1]
+    #[tokio::test]
+    async fn agent_without_skills_gets_no_host_tools() {
+        let dispatch = Arc::new(SkillDispatch::default());
+        let executor = AgentExecutor::new(
+            Arc::new(ScriptedCall::new(
+                "host/lisp_eval",
+                serde_json::json!({"form": "1"}),
+            )),
+            dispatch.clone(),
         );
-        assert!(inference.override_seen.lock().unwrap().is_empty());
+        let result = executor.run(&skill_card(&[]), "eval").await.expect("run");
+        assert_eq!(result.tool_calls[0]["ok"], false);
+        assert!(dispatch.0.lock().unwrap().is_empty());
+    }
+
+    /// Issues one scripted tool call, then answers.
+    struct ScriptedCall {
+        calls: std::sync::atomic::AtomicUsize,
+        tool: &'static str,
+        args: serde_json::Value,
+    }
+
+    impl ScriptedCall {
+        fn new(tool: &'static str, args: serde_json::Value) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                tool,
+                args,
+            }
+        }
+    }
+
+    impl hkask_types::InferencePort for ScriptedCall {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move {
+                let mut result = StubInference
+                    .generate("", &Default::default(), None)
+                    .await?;
+                if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    result.text.clear();
+                    result.tool_calls.push(hkask_types::StructuredToolCall {
+                        server: String::new(),
+                        tool: self.tool.into(),
+                        args: self.args.clone(),
+                        call_id: Some("scripted".into()),
+                    });
+                }
+                Ok(result)
+            })
+        }
     }
 
     #[tokio::test]

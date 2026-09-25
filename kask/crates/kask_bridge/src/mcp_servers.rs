@@ -699,16 +699,20 @@ pub async fn build_mcp_server_env(
     env.insert(hkask_storage::DATABASE_CATALOG_ENV.into(), catalog);
     // Update authority before credential awaits: an older env-building future
     // must not re-grant access after a newer settings pass revoked it.
-    let tools = settings
+    let loaded =
+        settings.mcp.load_default && *settings.mcp.overrides.get(server_id).unwrap_or(&true);
+    let mut tools = settings
         .mcp
         .delegated_tools
         .get(server_id)
-        .filter(|_| {
-            settings.mcp.load_default && *settings.mcp.overrides.get(server_id).unwrap_or(&true)
-        })
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, tools) {
+        .filter(|_| loaded)
+        .cloned()
+        .unwrap_or_default();
+    // Local swarm agents get the Curator's skill access by default.
+    if server_id == "swarm" && loaded {
+        tools.extend(crate::host_skill_tools::SKILL_TOOLS.map(String::from));
+    }
+    if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, &tools) {
         env.insert(crate::delegation_grants::GRANT_ENV.to_string(), grant);
     }
 
@@ -1898,6 +1902,9 @@ mod tests {
             Some(&token),
             "research/rss_fetch"
         ));
+        for tool in crate::host_skill_tools::SKILL_TOOLS {
+            assert!(crate::delegation_grants::parent_allows(Some(&token), tool));
+        }
         let again = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
         assert_eq!(
             again.get(crate::delegation_grants::GRANT_ENV),

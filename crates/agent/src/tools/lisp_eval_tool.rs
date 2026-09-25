@@ -136,23 +136,24 @@ impl AgentTool for LispEvalTool {
             let input = input.recv().await.map_err(|e| LispEvalToolOutput::Error {
                 error: format!("failed to receive input: {e}"),
             })?;
-
-            let env_value = serde_json::Value::Object(
-                input.env.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            );
-            let result = hkask_lisp::eval_sandboxed_with_budget(
-                &input.form,
-                &env_value,
-                input.max_steps,
-                input.max_depth,
-            )
-            .map_err(|e| LispEvalToolOutput::Error {
-                error: e.to_string(),
-            })?;
-
-            Ok(LispEvalToolOutput::Success { result })
+            evaluate_lisp(input)
+                .map(|result| LispEvalToolOutput::Success { result })
+                .map_err(|error| LispEvalToolOutput::Error { error })
         })
     }
+}
+
+/// The tool's evaluation, shared with delegated `host/lisp_eval` dispatch.
+pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
+    let env_value =
+        serde_json::Value::Object(input.env.into_iter().map(|(k, v)| (k, v.into())).collect());
+    hkask_lisp::eval_sandboxed_with_budget(
+        &input.form,
+        &env_value,
+        input.max_steps,
+        input.max_depth,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

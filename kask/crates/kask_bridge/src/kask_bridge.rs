@@ -30,6 +30,7 @@ pub use database_maintenance::{
     initialize_database_inventory, preview_database_inventory,
 };
 mod delegation_grants;
+mod host_skill_tools;
 mod identity;
 mod inference_chat;
 mod inference_edit_prediction;

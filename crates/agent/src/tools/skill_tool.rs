@@ -201,62 +201,9 @@ impl AgentTool for SkillTool {
             // can drop the snapshot borrow before suspending across the
             // body read and authorization awaits.
             let snapshot = cx.update(|cx| (self.skills)(cx));
-            let (skill, skill_file_path) = {
-                let Some(skill) = snapshot
-                    .iter()
-                    .find(|s| s.name == input.name && !s.disable_model_invocation)
-                else {
-                    return Err(SkillToolOutput::Error {
-                        error: format!(
-                            "Skill '{}' not found. Available skills: {}",
-                            input.name,
-                            snapshot
-                                .iter()
-                                .filter(|s| !s.disable_model_invocation)
-                                .map(|s| s.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                    });
-                };
-                let path_string = skill.skill_file_path.to_string_lossy().into_owned();
-                (skill.clone(), path_string)
-            };
-
-            // zed-kask: Check that all declared dependencies are installed
-            // before running the skill. This fails fast with a clear error
-            // instead of wasting tokens on a skill that will fail
-            // mid-execution when a delegate is missing.
-            if !skill.dependencies.is_empty() {
-                let installed_names: std::collections::HashSet<&str> =
-                    snapshot.iter().map(|s| s.name.as_str()).collect();
-                let missing: Vec<&str> = skill
-                    .dependencies
-                    .iter()
-                    .filter(|dep| !installed_names.contains(dep.as_str()))
-                    .map(|s| s.as_str())
-                    .collect();
-                if !missing.is_empty() {
-                    crate::record_skill_outcome(
-                        &skill.name,
-                        false,
-                        Some("declared dependencies not installed"),
-                    );
-                    return Err(SkillToolOutput::Error {
-                        error: format!(
-                            "Skill '{}' depends on {} that are not installed: {}. \
-                             Install or create them locally before running this skill.",
-                            input.name,
-                            if missing.len() == 1 {
-                                "a skill"
-                            } else {
-                                "skills"
-                            },
-                            missing.join(", "),
-                        ),
-                    });
-                }
-            }
+            let skill = resolve_invocable_skill(&snapshot, &input.name)
+                .map_err(|error| SkillToolOutput::Error { error })?;
+            let skill_file_path = skill.skill_file_path.to_string_lossy().into_owned();
 
             // Core skills are pre-authorized (trusted by default) since they
             // are operator-controlled, uneditable, and always-on. User skills
@@ -273,20 +220,73 @@ impl AgentTool for SkillTool {
             }
 
             // zed-kask: D1 — record resolver failures without bypassing authorization.
-            let body = match (self.body_resolver)(skill.clone(), cx).await {
-                Ok(body) => body,
-                Err(e) => {
-                    crate::record_skill_outcome(&skill.name, false, Some(&e.to_string()));
-                    return Err(SkillToolOutput::Error {
-                        error: e.to_string(),
-                    });
-                }
-            };
-            let rendered = render_skill_envelope(&skill, &body);
-
-            crate::record_skill_outcome(&skill.name, true, None);
-            Ok(SkillToolOutput::Found { rendered })
+            let body = (self.body_resolver)(skill.clone(), cx).await;
+            activate_skill(&skill, body)
+                .map(|rendered| SkillToolOutput::Found { rendered })
+                .map_err(|error| SkillToolOutput::Error { error })
         })
+    }
+}
+
+/// Find a model-invocable skill and check its declared dependencies. Shared by
+/// the `skill` tool and delegated `host/skill` dispatch.
+pub fn resolve_invocable_skill(snapshot: &[Skill], name: &str) -> Result<Skill, String> {
+    let Some(skill) = snapshot
+        .iter()
+        .find(|s| s.name == name && !s.disable_model_invocation)
+    else {
+        return Err(format!(
+            "Skill '{name}' not found. Available skills: {}",
+            snapshot
+                .iter()
+                .filter(|s| !s.disable_model_invocation)
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    };
+    // zed-kask: fail fast on missing declared dependencies instead of
+    // wasting tokens on a skill that fails mid-execution.
+    let installed: std::collections::HashSet<&str> =
+        snapshot.iter().map(|s| s.name.as_str()).collect();
+    let missing: Vec<&str> = skill
+        .dependencies
+        .iter()
+        .map(String::as_str)
+        .filter(|dep| !installed.contains(dep))
+        .collect();
+    if !missing.is_empty() {
+        crate::record_skill_outcome(
+            &skill.name,
+            false,
+            Some("declared dependencies not installed"),
+        );
+        return Err(format!(
+            "Skill '{name}' depends on {} that are not installed: {}. \
+             Install or create them locally before running this skill.",
+            if missing.len() == 1 {
+                "a skill"
+            } else {
+                "skills"
+            },
+            missing.join(", "),
+        ));
+    }
+    Ok(skill.clone())
+}
+
+/// Render a resolved skill's body as the `<skill_content>` envelope and record
+/// the activation outcome.
+pub fn activate_skill(skill: &Skill, body: Result<String>) -> Result<String, String> {
+    match body {
+        Ok(body) => {
+            crate::record_skill_outcome(&skill.name, true, None);
+            Ok(render_skill_envelope(skill, &body))
+        }
+        Err(e) => {
+            crate::record_skill_outcome(&skill.name, false, Some(&e.to_string()));
+            Err(e.to_string())
+        }
     }
 }
 

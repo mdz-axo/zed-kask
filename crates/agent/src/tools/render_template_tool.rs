@@ -90,50 +90,46 @@ impl AgentTool for RenderTemplateTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
-            let input = input.recv().await.map_err(|e| {
-                RenderTemplateToolOutput::Error {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| RenderTemplateToolOutput::Error {
                     error: format!("failed to receive input: {e}"),
-                }
-            })?;
-
-            let base_path = crate::template_base_path().ok_or_else(|| {
-                RenderTemplateToolOutput::Error {
-                    error: "Template base path not configured. The registry templates directory is wired at startup."
-                        .to_string(),
-                }
-            })?;
-
-            // Resolve the template file, trying ref as-is, .j2, then .yaml.
-            let content = read_template_file(&base_path, &input.template_ref).map_err(|e| {
-                RenderTemplateToolOutput::Error { error: e }
-            })?;
-
-            validate_contract_inputs(&content, &input.context).map_err(|error| {
-                RenderTemplateToolOutput::Error {
-                    error: format!(
-                        "Template contract validation failed for '{}': {error}",
-                        input.template_ref
-                    ),
-                }
-            })?;
-
-            // Strip YAML frontmatter (--- delimited header).
-            let template_body = strip_frontmatter(&content);
-
-            // Build minijinja environment and render. The loader resolves
-            // `{% include %}` names against the registry root — a bare
-            // render_str environment has no templates, so includes fail.
-            let mut env = minijinja::Environment::new();
-            bind_registry_loader(&mut env, &base_path);
-            let result = env.render_str(&template_body, &input.context).map_err(|e| {
-                RenderTemplateToolOutput::Error {
-                    error: format!("Template rendering failed: {e}"),
-                }
-            })?;
-
-            Ok(RenderTemplateToolOutput::Rendered { text: result })
+                })?;
+            render_registry_template(&input)
+                .map(|text| RenderTemplateToolOutput::Rendered { text })
+                .map_err(|error| RenderTemplateToolOutput::Error { error })
         })
     }
+}
+
+/// The tool's render, shared with delegated `host/render_template` dispatch.
+pub fn render_registry_template(input: &RenderTemplateToolInput) -> Result<String, String> {
+    let base_path = crate::template_base_path().ok_or_else(|| {
+        "Template base path not configured. The registry templates directory is wired at startup."
+            .to_string()
+    })?;
+
+    // Resolve the template file, trying ref as-is, .j2, then .yaml.
+    let content = read_template_file(base_path, &input.template_ref)?;
+
+    validate_contract_inputs(&content, &input.context).map_err(|error| {
+        format!(
+            "Template contract validation failed for '{}': {error}",
+            input.template_ref
+        )
+    })?;
+
+    // Strip YAML frontmatter (--- delimited header).
+    let template_body = strip_frontmatter(&content);
+
+    // Build minijinja environment and render. The loader resolves
+    // `{% include %}` names against the registry root — a bare
+    // render_str environment has no templates, so includes fail.
+    let mut env = minijinja::Environment::new();
+    bind_registry_loader(&mut env, base_path);
+    env.render_str(&template_body, &input.context)
+        .map_err(|e| format!("Template rendering failed: {e}"))
 }
 
 /// Read a template file from the registry, trying ref as-is, then `.j2`.

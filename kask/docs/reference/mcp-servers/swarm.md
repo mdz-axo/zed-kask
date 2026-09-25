@@ -513,17 +513,18 @@ executor does not silently switch to another model.
 
 ### Local-agent execution gaps (audited 2026-09-22)
 
-- **Declared skills are not yet executable locally.** `LocalAgentCapabilities::skills`
-  is persisted at create/clone/reconfigure time, but `AgentExecutor::run` does
-  not expose the Zed `skill` tool. A non-empty declaration now fails visibly
-  before inference rather than silently running without its skills. Zed's tool
-  is per-project and registered on a thread, not via the MCP `ToolDispatchPort`.
-  To close:
-  introduce an explicitly scoped skill execution/resolution port through the
-  governed IPC boundary, admit only the card's declared skills, and pin a
-  positive retrieve/use test plus undeclared-skill rejection through
-  `swarm_delegate_local`. Do not advertise runtime skill use until that test
-  exercises it.
+- **Declared skills: wired (2026-09-24).** A card with non-empty
+  `LocalAgentCapabilities::skills` is offered the editor's own skill tools —
+  `host/skill`, `host/render_template`, `host/lisp_eval` — on the existing
+  allowlisted IPC tool path (`kask_bridge/src/host_skill_tools.rs` wraps the
+  governed `ToolPort`; each tool calls the same function as its in-editor
+  tool, over the app-published `SkillIndex` catalog the Curator reads).
+  The swarm server's parent grant always includes these three tools.
+  `host/skill` is limited to the card's declared names; a card without skills
+  is not offered them. Pinned by `declared_skill_loads_through_the_host_skill_tool`,
+  `undeclared_skill_is_refused_before_dispatch`,
+  `agent_without_skills_gets_no_host_tools` (swarm) and the
+  `host_skill_tools` tests (kask_bridge).
 - **Declared MCP tool schemas: wired.** The executor requests each declared
   `server/tool` definition from the host before inference and advertises its
   registered description and JSON Schema; invalid names, absent metadata and

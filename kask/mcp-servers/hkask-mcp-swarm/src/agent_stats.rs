@@ -276,7 +276,7 @@ pub fn rank_for_slot(
         // happening is not.
         b_rate
             .partial_cmp(&a_rate)
-            .map_or(std::cmp::Ordering::Less, |order| order)
+            .unwrap_or(std::cmp::Ordering::Less)
             .then(
                 b.measured
                     .total_executions

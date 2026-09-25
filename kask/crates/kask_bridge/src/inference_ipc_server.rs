@@ -411,7 +411,25 @@ impl InferenceIpcServer {
 
         let port = inference_port.clone();
         let emb_port = embedding_port;
-        let tools = tool_port.clone();
+
+        // Delegated `host/skill` activation reads the GPUI-held skill catalog;
+        // same channel pattern as `ListModels` below.
+        let (skill_tx, mut skill_rx) =
+            tokio::sync::mpsc::unbounded_channel::<crate::host_skill_tools::SkillRequest>();
+        // Detached: see the list_models task below.
+        cx.spawn(async move |cx| {
+            while let Some((name, reply)) = skill_rx.recv().await {
+                let result = agent::activate_delegated_skill(name, cx).await;
+                if reply.send(result).is_err() {
+                    tracing::debug!(target: "reg.inference", "host/skill caller dropped before reply");
+                }
+            }
+        })
+        .detach();
+        let tools = tool_port.map(|inner| {
+            Arc::new(crate::host_skill_tools::HostSkillToolPort { inner, skill_tx })
+                as Arc<dyn hkask_tool_port::ToolPort>
+        });
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
