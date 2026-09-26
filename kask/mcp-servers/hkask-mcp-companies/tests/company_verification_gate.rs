@@ -317,6 +317,28 @@ fn unchecked_original_source_cannot_pass_the_report_gate() -> Result<()> {
     Ok(())
 }
 
+/// expect: A rejected load-bearing claim (for example a provider figure stated
+/// as audited) returns the report for repair even while independent source
+/// review is still unperformed; coverage status never masks a material failure.
+#[test]
+fn material_failure_needs_work_despite_unchecked_source_review() -> Result<()> {
+    let gate = single_lisp_form(HANDOFF)?;
+    for status in ["not_checked", "checked", "material_omission"] {
+        let result = hkask_lisp::eval_sandboxed(
+            gate,
+            &json!({"fact_score":0.906,"claims_checked":8,"decoupling":"spawn_agent",
+                "checks_complete":true,"material_failure":true,
+                "source_review_status":status, "original_forecast":null,
+                "working_forecast":null}),
+        )?;
+        ensure!(
+            result == "needs_work",
+            "{status}: material failure was not sent back: {result}"
+        );
+    }
+    Ok(())
+}
+
 /// expect: A perfect fact score cannot authorize a report when independent
 /// disclosure review was not performed or found a material omission, or when
 /// EQM silently changed the frozen forecast instead of just its rationale.
