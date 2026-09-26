@@ -10,6 +10,20 @@ Ontological anchoring in zed-kask follows one canonical pattern, defined in
 pattern's process surface for term anchoring; the `onto_anchor` tool is its
 mechanical step.
 
+## Initial and target condition
+
+- **Initial condition:** the term as it will appear in the output, and whether the claim depends on a relation to another term.
+- **Target condition (per term):** the term carries a non-core anchor (rung 1–3) cited in the output, or its core anchor plus a filed ruling request; a relational claim cites the returned directed edge path, or states `no_supported_path` within the bound.
+- **PDCA exemption:** a resolution is one deterministic tool call, so there is no in-session loop. The improvement loop is the operator ruling → `derived.rs` entry → crate test → rebuild, after which the term resolves at rung 2.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Resolve a term; traverse a relation | D | `onto_anchor` tool output |
+| Decide which words are domain terms worth anchoring | P | operator, via the ruling request and review of the output |
+| Record a ruling | D | `cargo test -p hkask-bridge-ontology` (`all_terms_are_official`) |
+
 ## When to Use
 
 - Before naming, classifying, or computing with a domain concept (a ratio,
@@ -74,8 +88,8 @@ ruling (recorded in the derived registry) improves it.
   `sumo:Quantity` (rung 3).
 - **Term resolution and relation traversal for the agent**: `onto_anchor`
   resolves any term as before. An optional `relation_query` asks for outgoing
-  neighbors (no `to`) or a bounded directed path (`to` term, optional
-  `max_hops`: 1–4). Each edge states its relation and authority. The graph
+  neighbors (no `to`; `max_hops` must be 1, its default) or a bounded directed
+  path (`to` term; `max_hops` 1–4, default 2). Each edge states its relation and authority. The graph
   currently includes resolved derived-concept constituents and the published
   schema.org `hasPart`/`isPartOf` inverse-property relation. It is deliberately
   incomplete; it contains no facts about particular instances.
@@ -118,7 +132,8 @@ ruling (recorded in the derived registry) improves it.
 - A core-rung anchor is real but coarse: surface it with the ruling request;
   do not upgrade it yourself.
 - `no_supported_path` is not proof a relation is false; `coarse_anchor`
-  cannot be traversed; `max_hops` is 1–4.
+  cannot be traversed; `max_hops` is 1–4 for a path and exactly 1 for
+    neighbors (`ontology_graph.rs` returns `InvalidQuery` otherwise).
 - Vocabulary changes land only through the derived registry with its tests
   (`all_terms_are_official` fails the build on drift).
 
