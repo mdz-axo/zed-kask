@@ -6,7 +6,20 @@ description: "Composable interaction grammar for hKask agents. Five improv modes
 
 # Improv
 
-Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector step evaluates conversation context and routes to the appropriate mode; convergence is evaluated by the model after each iteration.
+Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector step evaluates conversation context and routes to the appropriate mode; the mode then shapes one reply.
+
+## Initial and target condition
+
+- **Initial condition:** the current contribution, prior contributions, the active mode (if any), and any kata question in play.
+- **Target condition:** the reply follows the selected mode's constraints (see Constraints) as judged by the human participant.
+- **PDCA exemption:** each mode is single-pass per contribution; the conversation continues with the human, who judges every reply. The only bounds are the modes' own: Freestyling's declared time bound and Riffing's `max_steps`.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Mode selection; every mode's reply | P | the human participant |
+| Yes But literal forbidden words (partial) | D | `lisp_eval` check below; catches literal words only, not contradiction |
 
 ## When to Use
 
@@ -16,9 +29,9 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - Creative problem-solving, architecture exploration, or ensemble ideation with multiple participants → Freestyling
 - Deep-dive on a single contribution, "what if" tangents, or independent research threads → Riffing
 - Dual-presence chat, ensemble sessions, and kata coaching loops where constructive-by-default posture is required
-- When an agent is in a low-confidence regime (confidence < 0.5) and needs non-obvious paths to higher certainty — **Riffing** for divergent exploration of tangents that may surface higher-confidence findings, **Plussing** for constructive extraction of agreeable components from uncertain output
+- When the agent's own evidence is thin and it needs non-obvious paths to firmer ground — **Riffing** for divergent exploration of tangents that may surface higher-confidence findings, **Plussing** for constructive extraction of agreeable components from uncertain output
 - When standard evidence-gathering has plateaued and a perspective-shift (not more data) is the path forward — improv modes reframe rather than accumulate
-- After mode selection and application, evaluate whether convergence has been reached
+
 
 ## When NOT to Use
 
@@ -31,16 +44,16 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 ### Mode Selection (`improv-select`)
 1. Evaluate conversation context, current contribution, active mode, and prior contributions.
 2. Select the best-fit improv mode from {plussing, yes-and, yes-but, freestyling, riffing}.
-3. Do NOT apply the mode — routing to individual modes is handled by the manifest flow.
+3. Do NOT apply the mode — the agent then renders the selected mode's template.
 4. If `active_mode` is provided and still context-appropriate, keep it.
 5. Apply kata-specific overrides: Q4 → yes-but, Q5 → plussing, observation drill → plussing, five-questions drill → yes-and.
 6. Default to `plussing` when no rule fires.
 7. Return `{mode, rationale}`.
 
 ### Plussing (`improv-plussing`)
-1. Extract agreeable components from the prior contribution; score each by agreeableness confidence (0.0–1.0).
-2. Silently discard components with zero or negative agreeableness — do not mention or explain them.
-3. Build constructively on the top 3 selected seeds, extending with new dimensions, implications, or next steps.
+1. Extract agreeable components from the prior contribution; give each an agreeableness `confidence` (0.0–1.0). This is a model estimate used only to rank seeds.
+2. Silently discard components judged not agreeable — do not mention or explain them.
+3. Build constructively on the top 3 seeds by that estimate, extending with new dimensions, implications, or next steps.
 4. Never explicitly negate. Criticism is deletion-by-omission.
 5. If nothing is agreeable, redirect constructively without referencing the disagreeable content.
 6. Return `{selected_seeds, build, discarded_count, reg_span}`.
@@ -57,6 +70,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 3. Frame as additive guidance ("yes, and let's also account for…"), not rejection. Do not say "no," "wrong," "can't," or "impossible."
 4. Ensure the constraint narrows without contradicting the accepted base.
 5. Return `{accepted_base, constraint, reg_span}`.
+6. Partial check: call `lisp_eval` with `reply` bound to the reply text and `(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible")))`. A non-empty list names the literal words to remove. An empty list does not prove the reply avoids contradiction; that stays the human's judgment.
 
 ### Freestyling (`improv-freestyling`)
 1. Initiate the session with a declared time bound and participant list.
@@ -77,7 +91,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 
 | Template | Purpose |
 |----------|---------|
-| `improv-select.j2` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual modes is handled by the manifest flow. |
+| `improv-select.j2` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — the agent then renders the selected mode's template. |
 | `improv-plussing.j2` | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
 | `improv-yes-and.j2` | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
 | `improv-yes-but.j2` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
@@ -94,5 +108,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."
 - **Freestyling is time-bounded** with round-robin turns and no single owner.
 - **Riffing must resolve** — return to group, spawn a thread, or complete within a declared step limit.
-- **Convergence:** evaluate after each full iteration. Converged when stable across 3 iterations. Maximum 10 iterations; minimum 2 iterations before declaring convergence.
+
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
