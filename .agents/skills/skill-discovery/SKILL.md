@@ -28,7 +28,10 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 1. For each candidate skill in the catalog, compute a fit_score in [0.0, 1.0] across three dimensions: capability overlap (0.50), description alignment (0.25), trigger alignment (0.25).
 2. Composite fit_score = (capability × 0.50) + (description × 0.25) + (trigger × 0.25).
 3. Rank recommendations by fit_score descending; return at most `max_recommendations` (default 3), only those with fit_score ≥ 0.30.
-4. Classify coverage: `full` (≥1 skill at fit ≥ 0.80), `partial` (best fit 0.40–0.79), `none` (best fit < 0.40).
+4. Classify coverage: `full` (≥1 skill at fit ≥ 0.80), `partial` (best fit ≥ 0.40 and < 0.80), `none` (best fit < 0.40).
+   **D over P:** the three dimension scores are judgments (P); the composite, the +0.20 boost, the 0.30 floor and the band are arithmetic (D). Recompute them from the route output with `lisp_eval` before acting on it:
+   - form: `(let ((fit (min 1 (max 0 (+ (* 0.5 c) (* 0.25 d) (* 0.25 (min 1 (+ t boost)))))))) (list fit (>= fit 0.3) (cond ((>= best 0.8) "full") ((>= best 0.4) "partial") (t "none"))))`
+   - env: `{ "c": <capability>, "d": <description>, "t": <trigger>, "boost": <0.2 if the epistemic boost applies, else 0>, "best": <the highest recomputed fit> }`
 5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
 6. When `epistemic_state` is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0].
 7. Do not recommend skill-discovery as a match — it is a meta-skill.

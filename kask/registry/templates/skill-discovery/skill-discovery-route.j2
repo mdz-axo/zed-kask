@@ -81,7 +81,7 @@ Classify the overall coverage:
 | Assessment | Condition | Meaning |
 |------------|-----------|---------|
 | **full** | At least one skill has fit_score ≥ 0.80 | A well-matched skill exists |
-| **partial** | Best fit_score in [0.40, 0.79] | A skill partially covers the task; may need complement or extension |
+| **partial** | Best fit_score ≥ 0.40 and < 0.80 | A skill partially covers the task; may need complement or extension |
 | **none** | Best fit_score < 0.40 | No installed skill covers this task — emit gap signal to detect-gap |
 
 ## Uncovered Capabilities
@@ -139,7 +139,7 @@ Respond with a JSON object:
 ## Constraints
 
 - Evaluate every skill in the catalog — do not skip skills that seem irrelevant without scoring them.
-- fit_score must be a float in [0.0, 1.0], computed as the weighted sum of dimension scores.
+- fit_score must be a float in [0.0, 1.0], computed as the weighted sum of dimension scores. Report the three dimension scores; the invoking step recomputes fit_score, the boost and the coverage band with `lisp_eval`, and that result is authoritative.
 - dimension_scores must each be in [0.0, 1.0].
 - Rank recommendations by fit_score descending.
 - Return at most {{ max_recommendations | default(3) }} recommendations.
