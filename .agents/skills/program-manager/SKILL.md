@@ -201,7 +201,10 @@ each one structurally impossible to repeat:
    `program-manager/dod-checklist`) and complete every line:
    - **Validation actually run**: the command, and its observed output.
      A repair claim without a run command and its output is FALSE. If
-     validation cannot run, say so — do not claim it.
+     validation cannot run, say so — do not claim it. Run Rust tests
+     through `bash kask/scripts/cargo-test-nonzero.sh <cargo test args>`:
+     a filter that matches nothing prints `running 0 tests` and exits 0
+     under plain `cargo test`; the wrapper fails it (exit 4).
    - **Oracle match**: the validation exercises the claim itself — the
      behavior, the output, the fixed path. Compiling and a green
      existing suite are weak oracles: they verify syntax and the

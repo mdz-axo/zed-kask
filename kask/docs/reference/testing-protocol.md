@@ -300,6 +300,12 @@ bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/evaluate-test-evidence.sh CH
   The `kask-tests` CI job builds the checker and invokes this self-test
   (`.github/workflows/kask-invariants.yml`, “Test evidence” step); a local run is
   not evidence that remote CI executed.
+- For everyday agent validation (not the evidence pipeline above),
+  `kask/scripts/cargo-test-nonzero.sh <cargo test args>` passes arguments to
+  `cargo test` and exits 4 when passed+failed summed over every `test result:`
+  line is 0 — libtest reports an unmatched filter as `running 0 tests` with exit 0
+  (same contract as nextest `--no-tests=fail`). `cargo-test-nonzero-selftest.sh`
+  pins it with a fake `cargo`.
 
 **Trust and limits:** this is an operator-invoked Linux tool for trusted tests,
 not a sandbox for hostile candidates. The invoking OS account is attributed,
