@@ -277,6 +277,46 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-24; Wikidata Q2575082; Goodhart, Problems of Monetary Management (1975)",
     },
     DerivedConcept {
+        term: "viable_system_model",
+        aliases: &["viable system model", "vsm"],
+        identity: "five necessary and sufficient subsystems (S1 operations, S2 coordination, S3 control, S4 intelligence, S5 policy) for an organization to remain viable",
+        definition: "Stafford Beer's model of the organizational structure of any autonomous, viable system (Brain of the Firm, 1972). In zed-kask the operator is the policy level (S5) and algedonic signals are the escalation path from operations to policy.",
+        constituents: &["subsystem", "recursion", "algedonic signal"],
+        authority: "operator ruling 2026-09-25; Beer, Brain of the Firm (1972)",
+    },
+    DerivedConcept {
+        term: "algedonic_signal",
+        aliases: &["algedonic signal", "algedonic alert", "algedonic"],
+        identity: "a pain or pleasure signal that bypasses normal channels to alert the policy level when a subsystem breaches threshold",
+        definition: "In Beer's Viable System Model (Brain of the Firm, 1972), an alarm channel from System 1 to System 5 that carries only the signal that something is wrong or right. In zed-kask the cybernetics loop escalates threshold breaches to a durable queue that the operator reviews in algedonic-review.",
+        constituents: &["viable system model", "threshold"],
+        authority: "operator ruling 2026-09-25; Beer, Brain of the Firm (1972)",
+    },
+    DerivedConcept {
+        term: "definition_of_done",
+        aliases: &["definition of done", "dod"],
+        identity: "a formal description of the state of an increment when it meets the quality measures required for the product",
+        definition: "The Scrum commitment for the Increment (Schwaber & Sutherland, The Scrum Guide, 2020): work that does not meet the Definition of Done is not part of the increment. In zed-kask it is program-manager's Phase 4 checklist.",
+        constituents: &["increment", "quality measure"],
+        authority: "operator ruling 2026-09-25; Schwaber & Sutherland, The Scrum Guide (2020)",
+    },
+    DerivedConcept {
+        term: "requirements_engineering",
+        aliases: &["requirements engineering"],
+        identity: "the interdisciplinary function that elicits, specifies, verifies and manages stakeholder and system requirements across the life cycle",
+        definition: "As defined by ISO/IEC/IEEE 29148:2018 (Systems and software engineering, Life cycle processes, Requirements engineering). In zed-kask a requirement is the operator's falsifiable outcome claim and its acceptance criteria are its verification plan.",
+        constituents: &["requirement", "verification"],
+        authority: "operator ruling 2026-09-25; ISO/IEC/IEEE 29148:2018",
+    },
+    DerivedConcept {
+        term: "prompt_engineering",
+        aliases: &["prompt engineering"],
+        identity: "the systematic design of prompts along four aspects: profile and instruction, knowledge, reasoning and planning, and reliability",
+        definition: "The taxonomy of Liu et al., 'A comprehensive taxonomy of prompt engineering techniques for large language models', Frontiers of Computer Science 20(3) 2003601 (2026), doi:10.1007/s11704-025-50058-z. prompt-enhance's seven prompt types are this project's mapping onto the four aspects.",
+        constituents: &["prompt", "taxonomy"],
+        authority: "operator ruling 2026-09-25; Liu et al., Frontiers of Computer Science 20(3) 2003601 (2026)",
+    },
+    DerivedConcept {
         term: "expectations_gap",
         aliases: &[],
         identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
@@ -628,6 +668,11 @@ mod tests {
             ("GEPA", "Agrawal"),
             ("Pareto frontier", "Deb"),
             ("Reduct", "Reduct.video"),
+            ("Viable System Model", "Beer"),
+            ("algedonic signal", "Beer"),
+            ("definition of done", "Scrum Guide"),
+            ("requirements engineering", "29148"),
+            ("prompt engineering", "Liu et al."),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(
