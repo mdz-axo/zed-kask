@@ -5246,7 +5246,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         }
     }
 
@@ -5603,7 +5602,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         }
     }
 
@@ -6982,7 +6980,6 @@ mod internal_tests {
                 disable_model_invocation: false,
                 dependencies: Vec::new(),
                 core: false,
-                shipped: true,
             });
         }
 
@@ -7061,7 +7058,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -7073,7 +7069,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -7085,7 +7080,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -7145,7 +7139,6 @@ mod internal_tests {
             disable_model_invocation: true,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -7157,7 +7150,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);
@@ -7279,7 +7271,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
         let project_skill = Skill {
             name: "project-skill".into(),
@@ -7294,7 +7285,6 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
 
         cx.update(|cx| {

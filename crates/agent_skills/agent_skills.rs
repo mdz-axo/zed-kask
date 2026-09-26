@@ -130,9 +130,6 @@ pub struct Skill {
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
     pub core: bool,
-    /// `false` for a skill used only to develop zed-kask (`shipped: false`).
-    /// See `SkillMetadata::shipped`.
-    pub shipped: bool,
 }
 
 /// Indicates where a skill was loaded from.
@@ -351,23 +348,6 @@ pub struct SkillMetadata {
     /// skills cannot be shadowed by project-local skills of the same name.
     #[serde(default)]
     pub core: bool,
-    /// `false` marks a skill used only to develop zed-kask itself: `build.rs`
-    /// leaves it out of the embedded payload, so installed builds never show it
-    /// and a development checkout loads it as a project skill. Absent means
-    /// shipped.
-    #[serde(
-        default = "default_shipped",
-        skip_serializing_if = "is_shipped_default"
-    )]
-    pub shipped: bool,
-}
-
-fn default_shipped() -> bool {
-    true
-}
-
-fn is_shipped_default(shipped: &bool) -> bool {
-    *shipped
 }
 
 /// Minimal skill info for system prompt.
@@ -451,7 +431,6 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         dependencies: metadata.dependencies,
         core: metadata.core,
-        shipped: metadata.shipped,
     })
 }
 
@@ -997,15 +976,8 @@ async fn load_global_skills_from_source(
     global_dir: &Path,
     source: Option<&Path>,
 ) -> Vec<Result<Skill, SkillLoadError>> {
-    // zed-kask: a `shipped: false` developer skill in the checkout is not a
-    // global skill; it loads as a project skill, so it appears only while
-    // zed-kask itself is open (operator ruling 2026-09-24).
     let mut loaded = if let Some(source) = source {
-        load_skills_from_directory(fs, source, SkillSource::Global)
-            .await
-            .into_iter()
-            .filter(|result| !matches!(result, Ok(skill) if !skill.shipped))
-            .collect()
+        load_skills_from_directory(fs, source, SkillSource::Global).await
     } else {
         Vec::new()
     };
@@ -1052,23 +1024,7 @@ pub fn is_development_shipped_skill(path: &Path) -> bool {
             .file_name()
             .is_some_and(|name| name == SKILL_FILE_NAME)
             && resolved.parent().and_then(Path::parent) == Some(source.as_path())
-            && !is_developer_only_skill_file(&resolved)
     })
-}
-
-/// Whether the SKILL.md at `path` declares `shipped: false` (a skill used only
-/// to develop zed-kask). Such a skill loads as a project skill, never as a
-/// global one. Unreadable or unparsable files are treated as shipped so the
-/// normal loader reports their error.
-fn is_developer_only_skill_file(path: &Path) -> bool {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| {
-            extract_skill_frontmatter(&content)
-                .ok()
-                .map(|(metadata, _)| !metadata.shipped)
-        })
-        .unwrap_or(false)
 }
 
 /// In a development checkout, remove redundant shipped global copies and
@@ -2852,7 +2808,6 @@ description: A skill with no body content
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
-            shipped: true,
         };
 
         let summary = SkillSummary::from(&skill);
@@ -3215,13 +3170,21 @@ description: A skill with no body content
         ];
         let parsed_names: std::collections::HashSet<&str> =
             seed.iter().map(|(name, _)| *name).collect();
-        // Developer-only skills (`shipped: false`) never reach the payload.
-        for developer_only in ["create-skill", "skill-maintenance", "gpui-bench"] {
-            assert!(
-                !parsed_names.contains(developer_only),
-                "developer-only skill '{developer_only}' must not ship to users"
-            );
-        }
+        // Every authored skill ships to every install (operator ruling
+        // 2026-09-26): the payload is exactly the `.agents/skills/` tree.
+        let authored_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+        let authored: std::collections::HashSet<String> = std::fs::read_dir(&authored_dir)
+            .expect("authored skills directory")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().join(SKILL_FILE_NAME).is_file())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        let payload: std::collections::HashSet<String> =
+            parsed_names.iter().map(|name| name.to_string()).collect();
+        assert_eq!(
+            payload, authored,
+            "the shipped payload must contain every authored skill and nothing else"
+        );
         for name in known_skills {
             assert!(
                 parsed_names.contains(name),
@@ -3305,7 +3268,6 @@ description: A skill with no body content
         // reserved-name set is exactly the core-skill-name set.
         assert!(is_reserved_skill_name("metacognition"));
         assert!(is_reserved_skill_name("bug-hunt"));
-        // A developer-only skill (`shipped: false`) is not core and not reserved.
         assert!(!is_reserved_skill_name("create-skill"));
         assert!(!is_reserved_skill_name("my-user-skill"));
         assert!(!is_reserved_skill_name(""));
@@ -3426,29 +3388,29 @@ description: A skill with no body content
         )
         .await
         .expect("stale copy");
-        // A developer-only skill in the checkout is not a global skill: it
-        // loads as a project skill while zed-kask itself is open.
-        let developer = root.join("developer-tool");
-        fs.create_dir(&developer)
+        // Every authored checkout skill is a global skill (operator ruling
+        // 2026-09-26: all skills ship); a legacy `shipped: false` key is inert.
+        let authored = root.join("authoring-tool");
+        fs.create_dir(&authored)
             .await
-            .expect("developer skill directory");
+            .expect("authored skill directory");
         fs.write(
-            &developer.join(SKILL_FILE_NAME),
-            b"---\nname: developer-tool\nshipped: false\ndescription: Dev only\n---\nDEV_BODY",
+            &authored.join(SKILL_FILE_NAME),
+            b"---\nname: authoring-tool\nshipped: false\ndescription: Authoring\n---\nBODY",
         )
         .await
-        .expect("developer skill body");
+        .expect("authored skill body");
         let fs_dyn: Arc<dyn Fs> = fs.clone();
         let loaded = load_global_skills_from_source(&fs_dyn, global, Some(root)).await;
         let skills: Vec<_> = loaded.into_iter().filter_map(|entry| entry.ok()).collect();
         assert!(
-            skills.iter().all(|skill| skill.name != "developer-tool"),
-            "a shipped: false skill must not load as a global skill"
+            skills.iter().any(|skill| skill.name == "authoring-tool"),
+            "every authored skill must load as a global skill"
         );
         assert_eq!(
             skills.len(),
-            3,
-            "each shipped authored skill once plus one global-only user skill"
+            4,
+            "each authored skill once plus one global-only user skill"
         );
         let shipped = skills
             .iter()
@@ -3477,9 +3439,7 @@ description: A skill with no body content
         assert!(is_development_shipped_skill(
             &source.join("metacognition/SKILL.md")
         ));
-        // A developer-only skill in the checkout is loaded as a project skill,
-        // so it must not be skipped as a duplicate of a global entry.
-        assert!(!is_development_shipped_skill(
+        assert!(is_development_shipped_skill(
             &source.join("create-skill/SKILL.md")
         ));
         assert!(!is_development_shipped_skill(Path::new(

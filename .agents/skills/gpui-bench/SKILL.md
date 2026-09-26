@@ -1,5 +1,4 @@
 ---
-shipped: false
 name: gpui-bench
 description: >-
   Design, write, review, run, and interpret production-shaped GPUI Criterion

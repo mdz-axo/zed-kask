@@ -1,5 +1,4 @@
 ---
-shipped: false
 name: skill-bundler
 description: "Merge peer-level skill outputs into a grounded unified report, with a bounded correction if the merged report fails its target condition."
 ---

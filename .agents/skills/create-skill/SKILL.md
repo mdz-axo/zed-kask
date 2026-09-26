@@ -1,5 +1,4 @@
 ---
-shipped: false
 name: create-skill
 description: "Create a new kask skill: SKILL.md process instructions + .j2 prompt templates. The SKILL.md is the process surface the agent reads and follows; templates are readable resources for prompt structure. The agent is the executor."
 ---
@@ -131,13 +130,14 @@ skill's artifacts.
 
 ## Initial and target condition
 
-- **Initial condition:** a description or a source skill, plus the ontological anchors found in Phase 1.
+- **Initial condition:** a description or a source skill, a Phase 0 discovery verdict that no installed skill already covers it, plus the ontological anchors found in Phase 1.
 - **Target condition:** a SKILL.md and its templates that pass `skill-maintenance` validation with no blocking finding.
 
 ## Step types
 
 | Phase | Type | Oracle / critique |
 |-------|------|-------------------|
+| 0 Discover | D | `skill-discovery` route fit scores recomputed in `lisp_eval`; the operator decides extend vs create |
 | 1 Research, 2 Describe, 3 Scaffold | P | `skill-maintenance` validation; the operator |
 | Anchoring terms | D | `onto_anchor` |
 | 4 Validate | D | `skill-maintenance` checks and prescreen scripts |
@@ -148,27 +148,44 @@ skill's artifacts.
 The create-skill process itself follows a PDCA loop:
 
 ```
+Plan:   Phase 0 — Discover     → Route against installed skills; extend or fold instead of creating when one fits
 Plan:   Phase 1 — Research     → Find academic/industry ontological anchors
 Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape, delegates
 Do:     Phase 3 — Scaffold    → Generate SKILL.md + .j2 templates
 Check:  Phase 4 — Validate    → Run skill-maintenance validation
-Check:  Phase 5 — Converge     → Check validation passed; if not, re-enter
-Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
+Check:  Phase 5 — Converge     → Check validation passed
+Act:    Phase 5 — Converge     → If validation failed, re-enter at Phase 1 (at most 2 re-entries)
 ```
 
 ## Composed Skills
 
 | Skill | Role | When Invoked |
 |-------|------|-------------|
+| `skill-discovery` | Overlap gate (route, then detect-gap) | Phase 0 (discover) |
 | `skill-maintenance` | Validation | Phase 4 (validate) |
+
+`skill-bundler` is not invoked by this skill. It is a candidate component for the skill being designed: when Phase 1 finds the new capability is 3+ existing peer skills run on one task, the design is those skills plus a `skill-bundler` merge, not a new process (Phase 2, step 4).
 
 ## When NOT to Use
 
 - Validating an existing skill — use `skill-maintenance` (this skill's Phase 4 delegates there anyway).
-- Matching tasks to installed skills — use `skill-discovery` (route).
+- Matching tasks to installed skills — use `skill-discovery` (route); this skill's Phase 0 runs that route before creating anything.
+- Extending an existing skill that Phase 0 found covers the need — use `skill-maintenance`'s optimize loop.
 - Auditing template/manifest logic — use `skill-maintenance`'s template-logic audit (SKILL.md bodies go through its optimize loop).
 
 ## Instructions
+
+### Phase 0 — Discover (does an installed skill already cover this?)
+
+Run once, before any research or writing. A new skill that duplicates or belongs inside an existing one is the failure this gate prevents (observed: `adapter-lifecycle` was authored standalone and later folded into `self-improvement`, 2026-09-26).
+
+1. Call the `skill` tool with name `skill-discovery` and the proposed skill's purpose as `task`; run its route phase against the installed catalog.
+2. Recompute the best fit and coverage band with route's `lisp_eval` form, from its reported dimension scores.
+3. Act on the band:
+   - `full` (best fit ≥ 0.80): stop. Report the covering skill; the request is routed there, not built. Creating anyway requires the operator's explicit override, recorded with the reason.
+   - `partial` (0.40–0.79): run discovery's detect-gap phase on the uncovered capabilities. `extend_skill` or `route_to_existing_skill` → present to the operator the choice between extending (or folding into) that skill and creating a new one, with the fit evidence; extension goes through `skill-maintenance`'s optimize loop, not this skill. Continue to Phase 1 only on a `create_skill` recommendation or the operator's choice to create.
+   - `none` (< 0.40): continue to Phase 1, carrying `uncovered_capabilities` as the scope.
+4. Record the verdict (band, best-fitting skill and fit, decision) in the Phase 2 specification. This gate runs once; Phase 5 re-entries restart at Phase 1, not here.
 
 ### Phase 1 — Research (find ontological anchors)
 
@@ -194,7 +211,7 @@ Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
    noun-noun, no reserved prefixes.
 3. Specify the PDCA phases — these emerge from the research phase, not
    from a generic template. Each phase is grounded in an ontological anchor.
-4. Identify which skills this skill will compose (delegates via `skill` tool).
+4. Identify which skills this skill will compose (delegates via `skill` tool). If it runs 3+ peer skills on one task and needs their outputs merged, compose `skill-bundler` for the merge rather than writing a merge step.
 5. Identify which MCP tools the skill will call (e.g., `curator_memory_recall`,
    `curator_consult`, `kanban_task_list`, `stock_quote`, `web_search`).
 6. Identify which agent tools the skill will call (e.g., `lisp_eval` for

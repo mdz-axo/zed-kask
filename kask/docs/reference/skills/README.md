@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **62 skills** are authored here: **52 ship** to every zed-kask user and **10 are developer-only** (`shipped: false`). **287 Jinja2 templates across 56
+> plus a markdown body of process instructions. **61 skills** are authored here, and every one ships to every zed-kask install. **286 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -48,29 +48,24 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-24)
+## Registry counts (verified 2026-09-26)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **62** | 52 shipped + 10 developer-only; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **56** (**287** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | all shipped; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**286** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
 
-**Who a skill is for (operator ruling 2026-09-24).** Skills must be useful to the
-human user of zed-kask. A skill used only to develop zed-kask itself declares
-`shipped: false` in its frontmatter: `crates/agent_skills/build.rs` leaves it out of
-the embedded payload, so installed builds never show it, and a zed-kask checkout
-loads it as a project skill (visible only while zed-kask is the open project). A
-developer-only skill cannot be `core: true`. Pinned by
-`shipped_skill_seed_all_parse_without_errors` and
-`development_shipped_skill_has_one_live_source`
-(`crates/agent_skills/agent_skills.rs`).
+**Who a skill is for (operator ruling 2026-09-26).** Every skill in `.agents/skills/`
+ships to every install and every user; there is no developer-only tier. The 2026-09-24
+`shipped: false` flag is removed. Pinned by `shipped_skill_seed_all_parse_without_errors`
+(the embedded payload equals the authored tree) in `crates/agent_skills/agent_skills.rs`.
 
 ---
 
-## Shipped skills (54)
+## Shipped skills (61)
 
 ### Research, markets and forecasting
 
@@ -153,9 +148,7 @@ developer-only skill cannot be `core: true`. Pinned by
 | `kata-improvement` | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills) |
 | `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
 
-## Developer-only skills (13, `shipped: false`)
-
-Used to develop zed-kask itself; loaded only as project skills of this repository.
+### Skill authoring and zed-kask development
 
 | Skill | Purpose |
 |-------|---------|
