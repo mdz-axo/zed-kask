@@ -223,6 +223,7 @@ An advisory outside view on the industry's business drivers, built from scholarl
 5. The markdown file is the deliverable — full rich markdown with all sections, mermaid diagrams, source notes, and citations.
 6. Do NOT write reports to the source tree (`zed-kask/reports/` or similar) — that pollutes the user's code repository.
 7. Do NOT write reports to the hidden internal data dir (`~/.local/share/zed-kask/mcp/companies/reports/`) — that buries user-facing output where the user will never find it.
+8. Clean up (storage Cleanup rule). A revised report replaces the earlier file for the same company and date: write the new version at the same path rather than a `-v2` beside it. Delete working drafts, scratch evidence and a superseded version once the new report is persisted; keep an evidence folder only when the report cites files in it, and name it in the run summary. Never delete another company's or another date's report.
 
 ### condense-report
 

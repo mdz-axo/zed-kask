@@ -171,7 +171,10 @@ operator authorization; it is not implied by a docs edit or an ambiguous refresh
 Never purge unrelated namespaces in a shared DB. Preserve originals and valid
 extractions, keeping out-of-scope retained inputs outside the active source set.
 Record every removed artifact in the execution cleanup manifest with path, reason,
-model/protocol if known, size and disposition. Remove superseded, partial,
+model/protocol if known, size and disposition, and append each removal under
+`~/Documents/zk-data/` to `INDEX-moves-2026-09-24.log` (storage Cleanup rule).
+A calibration or pilot run superseded by a sealed successor is deleted once the
+successor is recorded. Remove superseded, partial,
 wrong-model and pre-current-protocol derived outputs from active stage directories
 and update their references in the same run; do not leave parallel abandoned
 datasets. Never reinterpret them through a compatibility adapter. Clear warm

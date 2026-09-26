@@ -145,6 +145,7 @@ DROP/HALT/BLOCK remain terminal and cannot be reopened by a passing fact_score.
 5. The markdown file is the deliverable — full rich markdown with all sections, source notes, and citations.
 6. Do NOT write reports to the source tree (`zed-kask/reports/` or similar) — that pollutes the user's code repository.
 7. Do NOT write reports to the hidden internal data dir (`~/.local/share/zed-kask/mcp/companies/reports/`) — that buries user-facing output where the user will never find it.
+8. Clean up (storage Cleanup rule). A revised flash note replaces the earlier file for the same ticker and date at the same path; delete working drafts and scratch evidence once the note is persisted, keeping only cited evidence, named in the run summary. Never delete another ticker's or another date's report.
 
 ### condense-report
 

@@ -64,6 +64,7 @@ surface that blocker. Only an explicit operator choice may override the model.
 ### Phase 2 — Build the dataset
 
 3. Call `training_bridge_rollouts` (training server) with an `output_path`
+   under this run's folder, `~/Documents/zk-data/skills/adapter-lifecycle/{date}-{run}/`,
    and `agent_name`, selecting mode `sft` for passed-rollout ChatML JSONL
    or `preference` for DPO JSONL (`prompt`, `chosen`, `rejected`) when
    passed and failed rollouts from the same harness task have retained
@@ -196,3 +197,9 @@ surface that blocker. Only an explicit operator choice may override the model.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
   with skill_name "adapter-lifecycle", the tool name, and the error;
   continue with the best available information.
+- Clean up (storage Cleanup rule). A job the run abandons, or whose
+  retrain supersedes it, is stopped with `training_cancel` and confirmed
+  with `training_status`; never leave a paid pod running. When the
+  proposal is filed, delete this run's dataset files except the exact
+  dataset the proposal cites, and list any kept file with its reason.
+  A discarded or rejected run keeps nothing but its proposal record.
