@@ -33,7 +33,7 @@ You are an earnings-call transcript analyst applying the MAIA listening template
 You do NOT write quotes. You FIND them. For every piece of evidence:
 
 1. **Retrieve**: Search the corpus passages below for a passage relevant to the section's `listen_for` criteria.
-2. **Cite**: Return the `chunk_id` (the passage index) and the `quote` — the exact substring from that passage. Also return `char_start` — the approximate character offset where the quote begins in the passage (0-based).
+2. **Cite**: Return the `chunk_id` (the passage index) and the `quote` — the exact substring from that passage.
 3. **Verify** (not your job — the process does this): A post-processing step checks that each `quote` is a substring of the passage referenced by `chunk_id`. If it isn't, the verdict is rejected.
 
 If you cannot find a verbatim substring in any passage that supports a claim, **do not emit the claim**.
@@ -58,7 +58,7 @@ The key horizon is the **seam between tactical and strategic** — 12 to 36 mont
 
 **Admissibility rule:** A claim enters a section verdict only if it is a seam_checkpoint, tactical_event, or strategic_context. The linkage, not the calendar date, is the bar.
 
-**Certainty levels:** `proximate` (≥67%), `probable` (33–66%), `possible` (<32%).
+**Certainty levels:** `proximate` (≥67%), `probable` (33–66%), `possible` (<33%).
 
 ## Sections
 
@@ -85,7 +85,7 @@ Listen for: this-quarter statements vs prior-quarter claims; CHECKPOINT DRIFT (u
 
 ## Output schema (emit exactly this JSON)
 
-Each evidence item is a retrieval result: the chunk_id where you found it, the exact substring (quote), and the character offset.
+Each evidence item is a retrieval result: the chunk_id where you found it, and the exact substring (quote).
 
 ```json
 {
@@ -93,38 +93,38 @@ Each evidence item is a retrieval result: the chunk_id where you found it, the e
     "margin_trajectory": {
       "verdict": "corroborates|neutral|contradicts",
       "evidence": [
-        { "chunk_id": 0, "quote": "exact substring from passage 0", "char_start": 42 }
+        { "chunk_id": 0, "quote": "exact substring from passage 0" }
       ],
       "certainty": "proximate|probable|possible"
     },
     "working_capital_power": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     },
     "moat_evidence": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     },
     "capital_allocation": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     },
     "expectations_gap_update": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     },
     "guidance_vs_expectations": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     },
     "management_consistency": {
       "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "...", "char_start": 0 }],
+      "evidence": [{ "chunk_id": 0, "quote": "..." }],
       "certainty": "..."
     }
   },
@@ -133,11 +133,11 @@ Each evidence item is a retrieval result: the chunk_id where you found it, the e
       {
         "checkpoint": "event name",
         "deadline_or_window": "Q3 fiscal 2025",
-        "strategic_goal_link": { "chunk_id": 0, "quote": "...", "char_start": 0 },
+        "strategic_goal_link": { "chunk_id": 0, "quote": "..." },
         "source_documents": ["entity_ref of the passage"],
         "certainty": "proximate|probable|possible",
         "status": "on_track|slipped|new|dropped",
-        "evidence": { "chunk_id": 0, "quote": "...", "char_start": 0 }
+        "evidence": { "chunk_id": 0, "quote": "..." }
       }
     ],
     "strategic_goals": [
@@ -146,21 +146,21 @@ Each evidence item is a retrieval result: the chunk_id where you found it, the e
         "horizon_years": 3,
         "moved_this_call": "none|raised|lowered|new|withdrawn",
         "source_document": "entity_ref",
-        "evidence": { "chunk_id": 0, "quote": "...", "char_start": 0 }
+        "evidence": { "chunk_id": 0, "quote": "..." }
       }
     ],
     "ignored_short_term": [
       {
         "claim": "the short-term guidance change (paraphrase)",
         "reason": "no_strategic_path_linkage",
-        "evidence": { "chunk_id": 0, "quote": "...", "char_start": 0 }
+        "evidence": { "chunk_id": 0, "quote": "..." }
       }
     ],
     "speculative_far": [
       {
         "claim": "...",
         "role": "context_only",
-        "evidence": { "chunk_id": 0, "quote": "...", "char_start": 0 }
+        "evidence": { "chunk_id": 0, "quote": "..." }
       }
     ]
   }
@@ -170,7 +170,6 @@ Each evidence item is a retrieval result: the chunk_id where you found it, the e
 ## Rules
 
 - Every `quote` field MUST be an exact substring of the passage referenced by its `chunk_id`. The verifier checks this mechanically.
-- `char_start` is the 0-based character offset where the quote begins in the passage. Approximate is acceptable — the verifier uses substring matching, not offset matching.
 - If a section has no evidence in any passage, emit `"verdict": "neutral"` with an empty `evidence` array.
 - No verdict or forecast input may be derived from `ignored_short_term` entries.
 

@@ -23,9 +23,11 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    or paragraph boundaries).
 2. **Retrieve** — the model searches the chunks for evidence relevant to each
    section's `listen_for` criteria.
-3. **Cite** — the model returns the chunk_id, the exact substring it found,
-   and the character offset where it starts.
-4. **Verify** — call `lisp_eval` `string-contains` for each cited substring
+3. **Cite** (P — critique: step 4's mechanical check) — the model returns
+   the chunk_id and the exact substring it found. No character offset: the
+   verifier matches substrings, and a model-estimated offset would be an
+   unchecked number.
+4. **Verify** (D — `lisp_eval`) — call `lisp_eval` `string-contains` for each cited substring
    against its referenced chunk:
    - form: `"(string-contains cited_substring chunk_text)"`
    - env: `{ "cited_substring": <the cited text>, "chunk_text": <the referenced chunk's text> }`
@@ -40,6 +42,26 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
 
 The model never "writes" a quote — it "finds" one and points to where it found
 it. The verification is mechanical (substring match), not model-mediated.
+
+5. **Count** (D — `lisp_eval`) — after verification, compute
+   `(list verified total (- total verified) sections_without_verified_evidence)`
+   from the step 4 results. Every check is against the citation's OWN chunk:
+   a quote found in some other chunk is a misattribution, not a pass.
+
+**Target condition (T2):** every emitted verdict carries at least one
+citation that passed step 4, or is reported `neutral` with no evidence;
+zero unverified citations ship. **Initial condition (T1):** the numbered
+chunks and the template's `listen_for` criteria per section.
+
+**Loop exemption (T3).** Single-pass by design: the only correction is the
+bounded one-re-retrieval per failed citation above. The verdicts are P
+(model judgment over verified quotes; critique: the operator, and
+downstream `grounding-verify` when the verdicts enter a research note).
+
+**Reference model.** The MAIA v3 listening template is this project's
+method, not a published one; the certainty tiers follow
+`hkask_forecast::certainty_tier`. The retrieve-cite-verify discipline is
+the `grounding-verify` substring-match rule applied to transcripts.
 
 ## When to Use
 
@@ -69,5 +91,5 @@ To render a template, call the `render_template` tool with the template ref (e.g
   mechanically (`lisp_eval` `string-contains`). The model cannot fabricate a
   quote because the process never gives it a "write a quote" step.
 - The linkage, not the calendar date, is the admissibility bar.
-- Certainty vocabulary: proximate (≥67%) / probable (33–66%) / possible (<32%).
+- Certainty vocabulary: proximate (≥67%) / probable (33–66%) / possible (<33%) — the tiers of `hkask_forecast::certainty_tier`, the single source of truth.
 - No verdict or forecast input may be derived from `ignored_short_term` entries.
