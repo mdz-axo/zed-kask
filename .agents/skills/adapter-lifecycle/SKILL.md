@@ -127,7 +127,21 @@ surface that blocker. Only an explicit operator choice may override the model.
             "pass_rate": <candidate Phase 4 accuracy>,
             "baseline_pass_rate": <baseline Phase 4 accuracy> }`
    If the approved criterion differs, encode that exact criterion instead;
-   do not use the example as a default policy. A first adapter can receive
+   do not use the example as a default policy.
+   **Noise floor (always, in addition to the operator's criterion).** A
+   difference inside sampling noise is not evidence of improvement,
+   whatever margin the operator chose. From each `training_evaluate`
+   report's `correct` and example count, compute with `lisp_eval`:
+   - form: `(let ((pc (/ kc nc)) (pb (/ kb nb))) (let ((se (sqrt (+ (/ (* pc (- 1 pc)) nc) (/ (* pb (- 1 pb)) nb))))) (cond ((or (< nc 10) (< nb 10)) (list "undetermined" "fewer than 10 held-out examples")) ((= se 0) (list (if (> pc pb) "beyond_noise" "within_noise") 0)) (t (list (if (> (- pc pb) (* 2 se)) "beyond_noise" "within_noise") (- pc pb) (* 2 se))))))`
+   - env: `{ "kc": <candidate correct>, "nc": <candidate examples>, "kb": <baseline correct>, "nb": <baseline examples> }`
+   Accept only when the operator's criterion holds AND the result is
+   `beyond_noise` (the gain exceeds twice the combined standard error of
+   the two proportions). `within_noise` is reported as no demonstrated
+   improvement, with the difference and the noise band; `undetermined`
+   (fewer than 10 examples per side) blocks acceptance and asks for a
+   larger held-out set. Example: 42/50 vs 36/50 is a 12-point gain inside
+   a 16-point noise band — not demonstrated. The practical margin — how
+   large a real gain justifies deployment — remains the operator's. A first adapter can receive
    an acceptance verdict with NO `ab_comparison`: its loss is not an input.
    For a RETRAIN, apply the same deployed, matched held-out gate against
    the agreed baseline (base model or prior deployed adapter, fixed before
