@@ -442,6 +442,24 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["trajectory", "reflection", "mutation", "pareto frontier"],
         authority: "operator ruling 2026-09-25; Agrawal et al., GEPA, arXiv:2507.19457 (2025); Deb, Pratap, Agarwal & Meyarivan, A fast and elitist multiobjective genetic algorithm: NSGA-II, IEEE TEC 6(2) (2002)",
     },
+    DerivedConcept {
+        term: "transcript_linked_media",
+        aliases: &[
+            "reduct",
+            "reduct video",
+            "transcript-based video editing",
+            "transcript reel",
+        ],
+        identity: "a transcript bundled with its media, word-aligned, so editing or selecting text edits the media and correcting the transcript never moves its timings",
+        definition: "The Reduct.video model: a recording and its word-level transcript are one linked artifact. Users correct the transcript, highlight and tag passages, and compose reels by selecting transcript ranges, and the video is cut from those ranges; the same operations are exposed through the Reduct API and user interface.",
+        constituents: &[
+            "word-aligned transcript",
+            "highlight",
+            "reel",
+            "transcript correction",
+        ],
+        authority: "operator ruling 2026-09-25; Reduct.video product and API (reduct.video)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -609,6 +627,7 @@ mod tests {
             ("code review", "Ousterhout"),
             ("GEPA", "Agrawal"),
             ("Pareto frontier", "Deb"),
+            ("Reduct", "Reduct.video"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

@@ -14,7 +14,7 @@ layers.
 
 ## Reference model and labels
 
-MovieLabs Ontology for Media Creation (OMC) — capture → post → distribution with provenance (`onto_anchor` → domain supplement `omc:Provenance`). The immutable word-level transcript is the ground truth every layer derives from.
+Reduct.video — the transcript bundled with its video as one linked artifact: correct the transcript, highlight passages, and edit the video by selecting transcript ranges, as defined by the Reduct API and user interface (`onto_anchor` → derived `transcript_linked_media`, operator ruling 2026-09-25). The educt layers are the local form of that model: corrections, speakers, highlights and the EDL are layers over an immutable word-level transcript, so the reel is cut from the text and the timings never move. The `reduct_*` tools reach the Reduct cloud workspace itself. OMC (`omc:Provenance`) names only the provenance vocabulary.
 
 - **Initial condition:** a stored transcript with word timings (Phase 1).
 - **Target condition:** the Convergence gate passes and every quote in the summary resolved with `educt_locate`.
