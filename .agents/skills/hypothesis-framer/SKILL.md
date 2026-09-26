@@ -7,6 +7,16 @@ description: "Research question framing and hypothesis formulation using FINER c
 
 Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates broad research topics through Feasibility, Interest, Novelty, Ethics, and Relevance (FINER) gates, structures questions via Population-Intervention-Comparison-Outcome (PICO) framework, derives testable hypotheses with null hypothesis formulation, operationalizes into aims and objectives, and verifies alignment. Iterative PDCA refinement until the question-hypothesis-aims chain is coherent and testable.
 
+## Reference models
+
+FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 2013). PICO — Richardson, Wilson, Nishikawa & Hayward, "The well-built clinical question", *ACP Journal Club* 123 (1995). Testability delegates to `falsifiability` (Popper). `onto_anchor` reaches only the 5W1H core for "FINER criteria" and "PICO" (coarse; no operator ruling yet).
+
+## Conditions and labels
+
+- **Initial condition (T1):** the broad topic, domain and research context, measured by step 1's per-dimension FINER scores; on a refinement cycle, the prior cycle's gate inputs (misalignments, weak dimensions, testability, admissibility, feasibility).
+- **Target condition (T2):** the step 13 gate passes.
+- **D/P:** steps 1–12 are P (judgment), critiqued by the `falsifiability-admit` delegation (step 10), the five-link alignment check (step 11), and the operator. Step 13 is D (`lisp_eval`). FINER scores are ordinal judgments; do not average them or treat a 7 as a measured quantity — the gate uses only the count of dimensions below 7.
+
 ## When to Use
 
 - When you have a broad research topic that needs evaluation against FINER criteria (Feasibility, Interest, Novelty, Ethics, Relevance) before committing to a study design
