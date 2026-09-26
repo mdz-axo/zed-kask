@@ -34,7 +34,7 @@ If the system's disturbance variety exceeds the regulator's response variety, th
 | `hkask.template.*` spans | Amplification | Prompt templates amplify consistent regulator behavior |
 | `reg.agent_pod.*` spans | Amplification | Pod delegation — specialist pods add variety (ensemble deferred 2026-06-14) |
 | `reg.inference.*` spans | Attenuation | Call caps and GovernedTool constrain inference variety |
-| Algedonic alerts | Amplification | Variety deficit > 50 → Warning to Curator; > 100 → Critical to human |
+| Algedonic alerts | Amplification | Deficit = expected distinct states − observed distinct states per window (`VarietyTracker::deficit`); Warning when deficit > threshold/2, Critical (escalated) when deficit > threshold (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`). Default expected variety: 3 distinct tools per 60 s window on an MCP-server domain. |
 | Override cooldown | Attenuation | `Dampener::override_cooldown` (120s) prevents override oscillation |
 | Persona filter | Attenuation | Strips persona-violating output variety |
 
@@ -56,7 +56,7 @@ From the loop analysis above, extract the system disturbances (what the system p
 
 1. **Enumerate** the distinct disturbance classes the system can produce.
 2. **Enumerate** the distinct response classes the regulator can produce.
-3. **Compare**: Is regulator variety ≥ system variety? If not, quantify the deficit.
+3. **Compare**: Is regulator variety ≥ system variety? Report both as counts of distinct classes you enumerated in steps 1–2, and the deficit as their difference in those same units. Do not state a deficit you did not count.
 4. **Recommend**: For each deficit, propose either attenuation (reduce system variety) or amplification (increase regulator variety).
 
 ## Output Requirements
@@ -86,7 +86,7 @@ Respond with a JSON object:
 
 - `satisfied`: Regulator variety ≥ system variety.
 - `deficit`: Regulator variety < system variety but manageable with recommended changes.
-- `critical`: Severe deficit; algedonic alert threshold exceeded. Escalation required.
+- `critical`: deficit greater than the stated threshold (the same rule as `RuntimeAlert::new`); escalation required. With no stated threshold, report `deficit` and name the missing threshold — never infer `critical`.
 
 ## Constraints
 

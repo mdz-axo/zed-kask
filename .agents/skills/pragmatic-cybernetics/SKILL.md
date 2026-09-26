@@ -52,6 +52,17 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 7. Assess overall system viability (viable, degraded, or unviable) based on the mapping.
 8. Identify unviable components and define the required structural interventions for viability.
 
+### Convergence
+
+1. Gate — call `lisp_eval` with:
+   - form: `(cond ((> broken_properties 0) "broken_loop") ((< regulator_variety system_variety) "variety_deficit") ((not algedonic_channel) "unviable") (t "viable"))`
+   - env: `{ "broken_properties": <loop properties rated broken or none>, "regulator_variety": <counted response classes>, "system_variety": <counted disturbance classes>, "algedonic_channel": <true if the S1 → S5 channel exists and is unblocked> }`
+   The three analyses are P (judgment against evidence, each grounded in named hKask mechanisms, critiqued by the operator); the gate over their counted outputs is D. On anything but `viable`, re-run the failing analysis once with its remediation applied or the missing evidence gathered; a second failure is reported as the diagnosis, not iterated.
+
+## Reference models
+
+Ashby, *An Introduction to Cybernetics* (1956) — requisite variety; Conant & Ashby, "Every good regulator of a system must be a model of that system" (1970); Beer, *Brain of the Firm* (1972) — the Viable System Model.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -71,7 +82,7 @@ Template context variables (from each template's [inference] contract):
 ## Constraints
 
 - `cybernetics-analyze-loop.j2`: Public. Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
-- `cybernetics-variety-check.j2`: Public. Every recommendation must reference a concrete hKask mechanism. Algedonic threshold: deficit > 50 → Warning, > 100 → Critical. Critical status requires explicit escalation directive.
+- `cybernetics-variety-check.j2`: Public. Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. Critical status requires explicit escalation directive.
 - `cybernetics-vsm-map.j2`: Public. Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
-- Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone.
+- Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone — defined in the Convergence section above.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
