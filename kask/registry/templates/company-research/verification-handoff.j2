@@ -64,17 +64,20 @@ As-of date: {{ as_of_date | tojson }}
 Each source record has `tool_name`, `description`, and a unique `output_key`
 (the shape consumed by grounding-verify's extraction template), plus:
 - `output`: the actual retained tool response, not a model-written substitute.
-  HTML `web_extract` quote checks read `output.content`; converted PDF quote
-  checks read `corpus_convert`'s `output.text` only when its observed `method`
-  is `text_extraction`. An `ocr_pipeline` page is model-mediated: do not
+  HTML `web_extract` quote checks read `output.content`; deterministically
+  converted PDF or DOCX quote checks read `corpus_convert`'s `output.text` only
+  when its observed `method` is `text_extraction`. An `ocr_pipeline` page is model-mediated: do not
   promote its wording to an original-source quotation without separately
   matching it against deterministic original text. A reproducible local
   `pdftotext` extraction may carry `tool_name: pdftotext`, `output.method:
   pdftotext`, `output.text`, the exact terminal command/log, original path and
   full-binary SHA-256; the independent verifier re-runs the extraction and
-  hash. The source-check form returns `not_checked` for OCR-only PDF records. A PDF record also names the retained FULL original's `origin_path` and
-  `source_sha256`, matching the observed conversion log. The independent
-  verifier must hash the full binary and confirm its URL/download identity.
+  hash. The source-check form returns `not_checked` for OCR-only PDF records. A
+  converted PDF or DOCX record also names the retained FULL original's
+  `origin_path` and `source_sha256`, matching the observed conversion log.
+  The independent verifier must hash the full binary, confirm its URL/download
+  identity, and check that relevant extracted passages faithfully represent
+  the original; converted DOCX tables can lose layout.
   Matching caller-supplied digest strings in Lisp does not prove a download;
   if this external check, relevant-page coverage or access fails, override
   the source review to `not_checked`.
