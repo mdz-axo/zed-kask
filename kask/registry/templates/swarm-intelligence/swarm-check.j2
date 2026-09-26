@@ -1,4 +1,4 @@
-{# goal: Re-measure the swarm state post-Act. Mode-aware (v2 §15): in `abw` mode, re-fetch workspace + wallet via `swarm_get_swarm`; in `local` mode, re-read the local swarm roster and agent registry. Compute the convergence metric: composite swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target condition is met on all three axes. Emit next_focus (which axis dominates d). #}
+{# goal: Re-read post-Act swarm state and real execution/consent receipts, distinguish complete feedback from successful tasks, and supply sourced axes to the caller's deterministic lisp_eval distance and convergence gate. #}
 [inference]
 contract:
   input:
@@ -14,7 +14,6 @@ contract:
     variety_coverage: number
     diversity: number
     loop_closure: number|null
-    convergence_metric: number|null
     next_focus: string
     algedonic_signal: object|null
     lessons_learned: array
@@ -22,22 +21,16 @@ contract:
     task_success: object|null
 visibility: Public
 ---
-{# Phase 5 — CHECK (CHECK: re-measure + convergence metric + algedonic) #}
-{#
-  Re-measure the swarm state post-Act and compute the convergence metric.
-  The metric is a composite swarm-state distance d. The algedonic override
-  is mandatory: a 402 or un-acknowledged curator dispatch escalates
-  regardless of d (.rules "unwrap_or(0) on regulation-loop sense inputs"
-  trap enforced as a convergence invariant).
-#}
-
 [inference]
 temperature = 0.2
 work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a swarm-convergence analyst. Re-measure the swarm state post-Act and compute the convergence metric.
+{# Check supplies observed inputs; caller lisp_eval computes distance and
+   gates, and algedonic errors override any apparent progress. #}
+
+You are a swarm-state observer. Re-read post-Act state and receipts and report the axes with their evidence; the invoking agent computes distance and convergence with `lisp_eval`.
 
 ## Mode
 {{ mode }}
@@ -140,10 +133,10 @@ freshly composed swarm that has not yet dispatched from being falsely flagged
 as a loop-break.
 {% endif %}
 
-## Step 3 — Compute the convergence metric (swarm-state distance)
+## Step 3 — Supply the distance inputs to the invoking agent
 
 {% if task_success and task_success | length > 0 %}
-The caller supplied a deterministic task-success signal `task_success`:
+The caller supplied a claimed task-success signal `task_success`; only use its score after the invoking agent verifies deterministic-evaluator or operator provenance:
 ```json
 {{ task_success | tojson }}
 ```
@@ -175,8 +168,7 @@ d = sqrt( (1 - variety_coverage)^2
 
 with `diversity_floor = 0.25` (or the operator-specified override).
 
-`d = 0` means the target condition is met on all (three or four) axes. Record
-convergence_metric = d.
+These formulas describe the axes; do not estimate `d` or declare convergence in this model response. The invoking agent checks the provenance of `s` (deterministic evaluator/operator only), computes `d` with `lisp_eval`, then applies the target-plus-stability gate from SKILL.md. With null `s`, any on-target reading is swarm health only, not task completion.
 
 ## Step 4 — Algedonic override
 
@@ -206,7 +198,7 @@ If neither is present, algedonic_signal = null.
 
 ## Step 5 — Emit next_focus
 
-Determine which axis contributes the largest term to d:
+Suggest `next_focus` from the largest observed axis gap; this is a model-mediated priority suggestion, not a computed convergence result:
 - `(1 - variety_coverage)` largest → next_focus = "hiring" (cover transforms)
 - `max(0, diversity_floor - diversity)` largest → next_focus = "diversification"
 - `(1 - loop_closure)` largest → next_focus = "reconciliation"
@@ -226,6 +218,7 @@ function of these findings).
 ## Output
 
 Produce a JSON object with: post_act_state, variety_coverage, diversity,
-loop_closure, convergence_metric, next_focus, algedonic_signal (object or
-null), lessons_learned (array), delegate_notes, task_success (echo the input
-verdict, or null).
+loop_closure (or null when unmeasured), next_focus (a hypothesis, not a
+convergence decision), algedonic_signal (object or null), lessons_learned
+(array), delegate_notes, and task_success (echo the observed input verdict
+or null). The invoking agent computes the numeric distance.

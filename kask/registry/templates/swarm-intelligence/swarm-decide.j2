@@ -185,10 +185,7 @@ below — the task-failure reconfiguration takes precedence (fix correctness
 first, then speed).
 
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
-ORIENT attributed fault to a specific agent. The `fault_count` map (threaded
-from the deterministic `swarm.converge_accumulate` compute step) carries the
-running tally of attributed faults per agent; `agent_sel` = argmax fault_count
-is the most-consistently-blamed agent across iterations. Before firing the
+ORIENT attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No live `swarm.converge_accumulate` tool produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before firing the
 blamed agent, consider **reconfiguring** it in place — the Modify-Block action
 (S5 §3.2.2) and the MASS prompt axis (S7 Stages 1+3):
 

@@ -18,19 +18,14 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Phase 2 — ORIENT (PLAN: classify gap via Ashby + PSO balance + Thagard) #}
-{#
-  Classify the gap between sensed state and target condition. This phase is
-  mode-agnostic — it operates on the state shape from SENSE, not on the data
-  source. The `mode` input is passed through for context but does not branch
-  the logic.
-#}
-
 [inference]
 temperature = 0.4
 work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
+
+{# ORIENT assesses sensed evidence; absent or model-judged success is not
+   promoted to a deterministic verdict. #}
 
 You are a swarm-orientation analyst. Classify the gap between the sensed swarm state and the target condition.
 
