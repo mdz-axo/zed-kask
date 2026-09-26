@@ -86,9 +86,9 @@ Each source record has `tool_name`, `description`, and a unique `output_key`
 - `url`, `retrieved_at`, `period`, `unit`: known metadata or explicit nulls.
 
 The caller may supply a public-only packet in a file instead of inline when
-large. The canonical file is `companies-mcp/research-runs/{run_id}/packet.json`
+large. The canonical file is `companies-mcp/research-runs/{run_folder}/packet.json`
 under the user's artifacts directory. Hash its exact bytes with SHA-256 and
-invoke `company_verification_packet_check(run_id, expected_sha256)` to run the
+invoke `company_verification_packet_check(run_folder, expected_sha256)` to run the
 SAME source-check form below over the full JSON without model argument cuts.
 The packet itself is capped at 512 KiB. Never truncate an original to fit:
 place each full converted text as a plain-named file in the same run

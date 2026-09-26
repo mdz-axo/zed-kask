@@ -119,10 +119,24 @@ pub(crate) fn publish_document<T: serde::Serialize + ?Sized>(
     effective_params: &T,
 ) -> Result<serde_json::Value, McpToolError> {
     let dir = crate::assets::generated_assets_dir().join("transcript-exports");
+    let media_label = crate::transcript_store::load_transcript(driver, transcript_id)
+        .map_err(crate::tools::educt::map_store_error)?
+        .and_then(|(summary, _)| {
+            std::path::Path::new(&summary.media_path)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "transcript".to_string());
+    let label = format!("{media_label} {}", format.label());
+    let folder = hkask_types::agent_paths::unique_child_name(
+        &dir,
+        &hkask_types::agent_paths::functional_dir_name(&label),
+    );
     publish_document_in_dir(
         driver,
         &dir,
         &uuid::Uuid::new_v4().to_string(),
+        &folder,
         transcript_id,
         format,
         content,
@@ -134,14 +148,15 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
     driver: &dyn DatabaseDriver,
     dir: &std::path::Path,
     export_id: &str,
+    folder: &str,
     transcript_id: &str,
     format: TranscriptExportFormat,
     content: &[u8],
     effective_params: &T,
 ) -> Result<serde_json::Value, McpToolError> {
     std::fs::create_dir_all(dir).map_err(|error| document_io_error("create", dir, error))?;
-    let published_dir = dir.join(export_id);
-    let staged_dir = dir.join(format!(".{export_id}.staged"));
+    let published_dir = dir.join(folder);
+    let staged_dir = dir.join(format!(".{folder}.staged"));
     std::fs::create_dir(&staged_dir)
         .map_err(|error| document_io_error("create", &staged_dir, error))?;
     let mut cleanup = DocumentPublicationCleanup::new(staged_dir.clone());
@@ -417,6 +432,7 @@ mod tests {
         let error = publish_document_in_dir(
             &*driver,
             dir.path(),
+            "export-1",
             export_id,
             "transcript-1",
             TranscriptExportFormat::Srt,

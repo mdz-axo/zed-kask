@@ -4853,6 +4853,12 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_export_srt_writes_captions() {
+        // Isolate the artifacts dir so the export never lands in the real
+        // ~/Documents/zk-data tree.
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
         let result = server
@@ -4872,7 +4878,21 @@ mod tool_behavior_tests {
         let export_id = content["export_id"].as_str().expect("export id");
         let metadata_path = content["metadata_path"].as_str().expect("metadata path");
         assert!(output.contains("transcript-exports"));
-        assert!(output.contains(export_id));
+        // The folder is named for the recording and format, not the export id.
+        let folder = std::path::Path::new(&output)
+            .parent()
+            .and_then(|dir| dir.file_name())
+            .and_then(|name| name.to_str())
+            .expect("export folder name");
+        let base = folder.trim_end_matches(|c: char| c.is_ascii_digit());
+        let base = base
+            .strip_suffix('-')
+            .filter(|b| b.ends_with("-a-srt"))
+            .unwrap_or(base);
+        assert!(
+            base.ends_with("-a-srt") && !folder.contains(export_id),
+            "export folder must be readable: {folder}"
+        );
         let metadata: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(metadata_path).expect("read export metadata"),
         )

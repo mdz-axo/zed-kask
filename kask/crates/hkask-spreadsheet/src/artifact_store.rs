@@ -82,6 +82,12 @@ impl ArtifactStore {
         self.root.join(artifact_id)
     }
 
+    /// A fresh, readable artifact id (and folder name): the dated workbook
+    /// title, numbered when that name is already taken.
+    pub fn new_artifact_id(&self, title: &str) -> String {
+        agent_paths::unique_child_name(&self.root, &agent_paths::functional_dir_name(title))
+    }
+
     /// Resolve a revision file beneath the root, rejecting containment
     /// escapes (the backstop behind the contract's single-segment rule).
     fn revision_path(

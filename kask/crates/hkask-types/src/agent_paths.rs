@@ -267,9 +267,76 @@ pub fn sanitize_name(name: &str) -> String {
     }
 }
 
+/// A human-readable folder name for a user-facing artifact under the
+/// artifacts dir: `{YYYY-MM-DD}-{slug}`, where `slug` is `label` lowercased
+/// with every run of non-alphanumeric characters collapsed to one `-`, capped
+/// at 60 characters. An empty label becomes `untitled`. Folder names in the
+/// artifacts tree say what the artifact is and when it was made, never a
+/// machine identifier (operator ruling 2026-09-26); identifiers belong in the
+/// artifact's own metadata.
+pub fn functional_dir_name(label: &str) -> String {
+    let date = chrono::Local::now().format("%Y-%m-%d");
+    format!("{date}-{}", functional_slug(label))
+}
+
+fn functional_slug(label: &str) -> String {
+    let mut slug = String::new();
+    for c in label.chars() {
+        if c.is_alphanumeric() {
+            slug.extend(c.to_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug: String = slug.chars().take(60).collect();
+    let slug = slug.trim_end_matches('-');
+    if slug.is_empty() {
+        "untitled".to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
+/// The first of `base`, `base-2`, `base-3`, … that does not yet exist under
+/// `parent`, so two artifacts with the same label on the same day stay apart.
+pub fn unique_child_name(parent: &std::path::Path, base: &str) -> String {
+    if !parent.join(base).exists() {
+        return base.to_string();
+    }
+    (2u32..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|name| !parent.join(name).exists())
+        .unwrap_or_else(|| base.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: artifact folder names are readable and dated, never machine
+    /// identifiers, and same-day duplicates get a numbered suffix.
+    #[test]
+    fn functional_dir_names_are_readable_dated_and_unique() {
+        let name = functional_dir_name("What-if staging — Drill (2026)!");
+        let (date, slug) = name.split_at(10);
+        assert!(
+            chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok(),
+            "{name}"
+        );
+        assert_eq!(slug, "-what-if-staging-drill-2026");
+        assert!(functional_dir_name("  !! ").ends_with("-untitled"));
+        assert_eq!(functional_slug(&"a".repeat(80)).len(), 60);
+        assert_eq!(functional_slug("Schrödinger SDGR"), "schrödinger-sdgr");
+
+        let parent =
+            std::env::temp_dir().join(format!("hkask-functional-names-{}", std::process::id()));
+        std::fs::create_dir_all(&parent).expect("mkdir");
+        assert_eq!(unique_child_name(&parent, "run"), "run");
+        std::fs::create_dir_all(parent.join("run")).expect("mkdir");
+        std::fs::create_dir_all(parent.join("run-2")).expect("mkdir");
+        assert_eq!(unique_child_name(&parent, "run"), "run-3");
+        std::fs::remove_dir_all(&parent).expect("cleanup");
+    }
 
     // D28 — Standardized Artifact Storage pins. The layout contract:
     // every persistent kask artifact resolves under one rooted data tree

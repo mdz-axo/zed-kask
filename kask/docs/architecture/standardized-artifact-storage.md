@@ -62,6 +62,8 @@ it came from:
 
 Nothing is written at the top level of the tree or in an agent-invented folder.
 
+**Readable names (operator ruling 2026-09-26).** Every folder a server or skill creates under this tree has a functional name that says what it holds and when it was made — `{YYYY-MM-DD}-{subject}` (e.g. `2026-09-26-viridien`, `2026-09-18-what-if-staging-drill`) — never a UUID, hash or random id. Machine ids belong inside the artifact's metadata. Servers build names with `agent_paths::functional_dir_name` and de-duplicate same-day names with `agent_paths::unique_child_name` (`-2`, `-3`). Media files the gallery indexes still carry id-based file names inside `media-mcp/generated/`; the gallery, not the folder, is how media is found.
+
 **Cleanup (operator ruling 2026-09-26).** A skill run cleans up after itself before it reports done. Durable results go only to the folders above. Temporary state the run creates — local agent cards, local swarms, kanban boards, scratch files, `/tmp` staging, partial or cancelled jobs — is deleted by the run; anything deliberately kept is listed in the run's report with the reason. A superseded run's folder is deleted once its successor is recorded, not left in place. Each deletion inside this tree is appended to `INDEX-moves-2026-09-24.log`.
 The split between `curator/proposals/` (written by executing skills) and
 `curator/reviews/` (written only by the review) is the storage form of the

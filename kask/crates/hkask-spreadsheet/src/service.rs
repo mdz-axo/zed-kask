@@ -471,7 +471,9 @@ fn handle_publish(
                 detail: format!("engine save failed: {error:?}"),
             })?;
             let digest = digest_of(&bytes);
-            let artifact_id = uuid::Uuid::new_v4().simple().to_string();
+            // The artifact id is also its folder name under the artifacts
+            // tree, so it is the workbook's dated title, not a machine id.
+            let artifact_id = state.store.new_artifact_id(&table.title);
             let revision_id = uuid::Uuid::new_v4().simple().to_string();
             let artifact =
                 SpreadsheetArtifactRef::new(artifact_id.clone(), revision_id.clone(), digest)?;

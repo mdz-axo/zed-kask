@@ -109,8 +109,11 @@ pub(crate) fn save_json_artifact(
 /// URLs, discovery completeness and materiality still require independent review.
 #[derive(Deserialize, JsonSchema)]
 pub struct VerificationPacketRequest {
-    /// Research run ID (exactly 16 lowercase hexadecimal characters).
-    pub run_id: String,
+    /// Run folder name under `companies-mcp/research-runs/`: the readable
+    /// `{YYYY-MM-DD}-{company-slug}` the skill created (lowercase letters,
+    /// digits and hyphens). The research ledger's `run_id` lives inside the
+    /// packet, not in the folder name.
+    pub run_folder: String,
     /// SHA-256 of the exact packet.json bytes. A changed snapshot fails closed.
     pub expected_sha256: String,
 }
@@ -203,16 +206,18 @@ fn load_referenced_texts(
 
 fn evaluate_packet(
     root: &Path,
-    run_id: &str,
+    run_folder: &str,
     expected_sha256: &str,
 ) -> Result<Value, McpToolError> {
-    if run_id.len() != 16
-        || !run_id
+    if run_folder.is_empty()
+        || run_folder.len() > 80
+        || run_folder.starts_with('-')
+        || !run_folder
             .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(McpToolError::invalid_argument(
-            "run_id must be exactly 16 lowercase hex characters",
+            "run_folder must be the readable run folder name: lowercase letters, digits and hyphens, e.g. 2026-09-26-viridien",
         ));
     }
     if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -225,7 +230,7 @@ fn evaluate_packet(
             "research-run packet directory unavailable: {error}"
         ))
     })?;
-    let file = root.join(run_id).join("packet.json");
+    let file = root.join(run_folder).join("packet.json");
     let canonical_file = file.canonicalize().map_err(|error| {
         McpToolError::not_found(format!("research-run packet not found: {error}"))
     })?;
@@ -309,7 +314,7 @@ fn evaluate_packet(
         ));
     }
     Ok(serde_json::json!({
-        "run_id": run_id,
+        "run_folder": run_folder,
         "packet_sha256": digest,
         "referenced_text_bytes": referenced_bytes,
         "mechanical_review": mechanical_review,
@@ -411,7 +416,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Execute the shared company-research source check over a SHA-256-pinned packet in companies-mcp/research-runs/{run_id}/packet.json. Mechanical-only: the verifier must independently confirm original downloads, materiality and discovery coverage before using checked."
+        description = "Execute the shared company-research source check over a SHA-256-pinned packet in companies-mcp/research-runs/{run_folder}/packet.json, where run_folder is the readable {YYYY-MM-DD}-{company} folder name. Mechanical-only: the verifier must independently confirm original downloads, materiality and discovery coverage before using checked."
     )]
     pub async fn company_verification_packet_check(
         &self,
@@ -421,7 +426,7 @@ impl CompaniesServer {
             let root =
                 resolve_under_artifacts_dir(&mcp_artifacts_subdir("companies", "research-runs"));
             tokio::task::spawn_blocking(move || {
-                evaluate_packet(&root, &req.run_id, &req.expected_sha256)
+                evaluate_packet(&root, &req.run_folder, &req.expected_sha256)
             })
             .await
             .map_err(|error| McpToolError::internal(format!("packet worker failed: {error}")))?
@@ -442,7 +447,7 @@ mod verification_packet_tests {
     #[test]
     fn admitted_packet_rechecks_changed_target_without_leaking_paths() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let run_id = "0123456789abcdef";
+        let run_id = "2026-09-26-exampleco";
         let directory = root.path().join(run_id);
         std::fs::create_dir(&directory)?;
         let fixtures: Value = serde_json::from_str(include_str!(
@@ -485,7 +490,7 @@ mod verification_packet_tests {
     #[test]
     fn full_original_packet_reaches_mechanical_review_without_attesting_source() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let run_id = "0123456789abcdef";
+        let run_id = "2026-09-26-exampleco";
         let directory = root.path().join(run_id);
         std::fs::create_dir(&directory)?;
         let fixtures: Value = serde_json::from_str(include_str!(
@@ -542,7 +547,7 @@ mod verification_packet_tests {
     #[test]
     fn hash_bound_text_file_carries_full_original_beyond_packet_limit() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let run_id = "0123456789abcdef";
+        let run_id = "2026-09-26-exampleco";
         let directory = root.path().join(run_id);
         std::fs::create_dir(&directory)?;
         let fixtures: Value = serde_json::from_str(include_str!(
