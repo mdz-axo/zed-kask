@@ -22,6 +22,14 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 - **Initial condition:** the selected friction's concrete reaching paths, current interfaces/callers, observed behavior and the user's stated reason to change it. Exploration without a selected candidate remains advisory, not migration authority.
 - **Target condition:** the same user-visible behavior reaches every affected surface through the agreed deeper interface; the selected friction is measurably reduced (locality, leverage or testability), dependency direction holds and duplicate business logic is gone. Tests and builds are necessary checks, not proof the original friction disappeared.
 
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| ra-explore, ra-candidates, ra-deepen, ra-audit | P | the user's candidate selection; ra-verify's observed outputs |
+| ra-route | D | the user's explicit decision signal |
+| ra-strangle tests and builds; ra-verify | D | the failing-then-passing tests, `cargo check`, `cargo test`, `./script/clippy` |
+
 ## When to Use
 
 - When architectural friction is suspected in a codebase — shallow modules, tight coupling, missing locality, wide import surfaces, or code that is hard to test through its current interface.
