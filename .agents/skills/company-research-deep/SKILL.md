@@ -5,7 +5,7 @@ description: "Produce a sourced deep background, overview and outlook report fro
 
 # Company Research — Deep Pipeline
 
-Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
+Deep company research pipeline adapted from EFRA-AI (Replicant-Partners). A request naming a company starts a sourced background, overview and outlook report; when equity evidence permits, the 16-step investment-thesis path adds valuation and independent quality gates. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly where applicable; templates synthesize over actual outputs.
 
 ## Reference models
 
