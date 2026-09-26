@@ -19,7 +19,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 - When needing dynamic pattern expansion (Ashby's Law) beyond a static bug-pattern baseline.
 - When needing missing-tests detection (Weinberg: absent tests = quality threat) and algedonic escalation for critical findings.
 - When needing oracle verdicts that separate reproducibility from confidence and enforce file:line citation (no-fiction).
-- When needing honest convergence metrics: process_stabilization + coverage_estimate, with next_charter_focus emission.
+- When needing an honest convergence signal: new findings by location across expeditions, with next_charter_focus emission.
 
 ## When NOT to Use
 
@@ -111,5 +111,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `bug-hunt-oracle.j2`: Public. Every finding must carry IS/OUGHT, epistemic mode, provenance, AND reproducibility labels. Every finding must cite a concrete file:line and include a verbatim code snippet (≤5 lines); uncited findings are rejected, not silently dropped. Reproducibility does NOT downgrade confidence. If confidence < 0.60, the finding is an OBSERVATION.
 - `bug-hunt-taxonomize.j2`: Public. Every finding has exactly one Beizer category. Severity must be justified by evidence. Pattern signatures must be concrete (grep-able or structural), not vague. The `reproducibility` field must be preserved from the oracle.
 - `bug-hunt-report.j2`: Public. Each finding must include all required fields. Summary counts must be accurate, including `rejected_findings`. `lessons_learned` must be concrete and actionable; `pattern_signatures` must be derived from actual findings, not fabricated.
-- **Convergence:** Evaluate whether the iterates have stopped moving after each full iteration. Converged when the signal is stable across 3 iterations. Maximum 10 iterations; escalate if not converged by then. Minimum 2 iterations before declaring convergence.
+- **Convergence (D over P findings):** after each expedition, compute with `lisp_eval` (1) the new confirmed or potential findings, compared by `location` (file:line) against the prior expedition's — not by `pattern_signature`, which is free text and changes with rewording; and (2) the no-fiction and tier-consistency defects — a Tier 1 BUG without a cited contract, or any finding without a location:
+  - form: `(begin (define new-locs (lambda (cur prior) (if (is_null cur) (quote ()) (if (member (car cur) prior) (new-locs (cdr cur) prior) (cons (car cur) (new-locs (cdr cur) prior)))))) (define bad (lambda (fs) (if (is_null fs) 0 (+ (if (and (string= (assoc "tier" (car fs)) "BUG") (is_null (assoc "contract" (car fs)))) 1 0) (if (is_null (assoc "location" (car fs))) 1 0) (bad (cdr fs)))))) (list (new-locs current_locations prior_locations) (bad findings)))`
+  - env: `{ "current_locations": [<file:line of this expedition's findings>], "prior_locations": [<file:line from prior_expedition>], "findings": [<oracle findings with tier, contract, location>] }`
+  A defect count above 0 sends the offending findings back to the oracle. Converged when an expedition after the first adds no new locations. The process metrics once named here (`process_stabilization`, `coverage_estimate`) are not computed by any step; report `taxonomy_coverage` from the report instead. Bound: minimum 2 expeditions, maximum 10 (the operator can set a lower cost budget); escalate if not converged. The tier boundaries follow the oracle's categorical criteria (a cited contract for Tier 1); the confidence number is P and is not re-checked.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
