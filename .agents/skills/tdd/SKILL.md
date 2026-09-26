@@ -17,6 +17,14 @@ check, and the loop is anchored as a `pko:Procedure` whose cycles are
 `pplan:Step`s, each closed by a `pko:StepVerification` (resolve other domain
 terms with `onto_anchor`).
 
+## Reference model and labels
+
+Beck, *Test-Driven Development: By Example* (2002) — red, green, one small step at a time; adapted via Pocock (above).
+
+- **Initial condition:** the confirmed seams and the slice's expectation contract.
+- **Target condition:** every cycle of the slice closes (`closed` from the cycle gate) and `./script/clippy` plus the crate's tests pass.
+- **D/P:** test runs, the red/green observations and the cycle gate are D (`cargo` output, `lisp_eval`). Seam choice, the expectation contract and the minimal implementation are P, critiqued by the user's seam confirmation, the falsifier, and the observed red before green.
+
 ## When to Use
 
 - Building a feature or fixing a bug test-first.
