@@ -273,7 +273,7 @@ above apply unchanged; then continue at Phase 4.
 Each instruction step should be concrete and tool-oriented:
 
 ```
-### Phase 3 — Analyze
+### Step: Analyze (example)
 
 1. Call `render_template` to render the analysis template:
    template: my-skill/analyze (resolves to kask/registry/templates/my-skill/analyze.j2)
@@ -317,7 +317,7 @@ The SKILL.md instructs the agent to call the `skill` tool to compose
 with another skill:
 
 ```
-### Phase 4 — Delegate validation
+### Step: Delegate validation (example)
 
 Call the `skill` tool:
   name: "skill-maintenance"
@@ -329,7 +329,7 @@ Call the `skill` tool:
 The SKILL.md instructs the agent to call an MCP tool for prior context:
 
 ```
-### Phase 0 — Prior context
+### Step: Prior context (example)
 
 Before starting, call `curator_memory_recall`:
   entity: "{{ target }}"

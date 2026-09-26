@@ -163,8 +163,8 @@ ships to every install and every user; there is no developer-only tier. The 2026
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-09-24):** `.agents/skills/` contains 66
-> `SKILL.md` directories. Merged by operator decision 2026-09-24:
+> **Filesystem reality (verified 2026-09-26):** `.agents/skills/` contains 61
+> `SKILL.md` directories, all shipped. Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
@@ -172,5 +172,5 @@ ships to every install and every user; there is no developer-only tier. The 2026
 > removed: `idiomatic-lisp`, `constraint-forces-recast`,
 > `gradient-seeded-recombination`, `capabilities-reasoner`,
 > `principle-constraints`, `goal-analysis` (its judge moved to
-> `company-research/thesis-judge`). `kask/registry/templates/` contains 59
-> template namespaces holding 291 `.j2` files.
+> `company-research/thesis-judge`). `kask/registry/templates/` contains 56
+> template namespaces holding 286 `.j2` files.
