@@ -3666,6 +3666,39 @@ mod tool_behavior_tests {
         }
     }
 
+    /// Points `HKASK_ARTIFACTS_DIR` at a fresh temp dir for one test and
+    /// restores the prior value on drop, so tests that publish exports never
+    /// write into the real ~/Documents/zk-data tree. Holds the env lock for
+    /// the test's whole lifetime.
+    struct IsolatedArtifacts {
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+        _temp: tempfile::TempDir,
+        prior: Option<String>,
+    }
+
+    impl IsolatedArtifacts {
+        async fn new() -> Self {
+            let lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+            let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+            let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+            unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+            Self {
+                _lock: lock,
+                _temp: temp,
+                prior,
+            }
+        }
+    }
+
+    impl Drop for IsolatedArtifacts {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+                None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+            }
+        }
+    }
+
     /// A server wired with the mock inference port — the capability under
     /// test (the pass pipeline needs a real generate path, not the noop).
     fn make_pass_server(response: String) -> MediaServer {
@@ -4132,6 +4165,7 @@ mod tool_behavior_tests {
     /// [P1] Motivating: Transcript correction changes the text users work with without changing its timing evidence.
     #[tokio::test]
     async fn aligned_correction_drives_inspection_locate_and_srt_export() {
+        let _artifacts = IsolatedArtifacts::new().await;
         let server = make_pass_server(
             r#"{"edits": [{"start_word": 0, "end_word": 0, "replacement": "  Alpha  ", "reason": "capitalization"}]}"#
                 .to_string(),
@@ -4305,6 +4339,7 @@ mod tool_behavior_tests {
     /// [P1] Motivating: The system surfaces alignment loss instead of inventing media precision.
     #[tokio::test]
     async fn unaligned_correction_blocks_timed_consumers_and_exports_text_with_degradation() {
+        let _artifacts = IsolatedArtifacts::new().await;
         let server = make_pass_server(
             r#"{"edits": [{"start_word": 0, "end_word": 1, "replacement": "AlphaBeta", "reason": "merged speech"}]}"#
                 .to_string(),
@@ -4853,12 +4888,7 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_export_srt_writes_captions() {
-        // Isolate the artifacts dir so the export never lands in the real
-        // ~/Documents/zk-data tree.
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
-        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        let _artifacts = IsolatedArtifacts::new().await;
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
         let result = server
@@ -4884,13 +4914,8 @@ mod tool_behavior_tests {
             .and_then(|dir| dir.file_name())
             .and_then(|name| name.to_str())
             .expect("export folder name");
-        let base = folder.trim_end_matches(|c: char| c.is_ascii_digit());
-        let base = base
-            .strip_suffix('-')
-            .filter(|b| b.ends_with("-a-srt"))
-            .unwrap_or(base);
         assert!(
-            base.ends_with("-a-srt") && !folder.contains(export_id),
+            folder.ends_with("-a-srt") && !folder.contains(export_id),
             "export folder must be readable: {folder}"
         );
         let metadata: serde_json::Value = serde_json::from_str(
@@ -4922,6 +4947,7 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_export_highlights_csv_writes_rows() {
+        let _artifacts = IsolatedArtifacts::new().await;
         use crate::transcript_layers::{
             HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
         };
@@ -4979,6 +5005,7 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_export_corpus_text_writes_the_rendered_form() {
+        let _artifacts = IsolatedArtifacts::new().await;
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
         let result = server
@@ -5007,6 +5034,7 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_export_corpus_text_surfaces_the_no_timings_degradation() {
+        let _artifacts = IsolatedArtifacts::new().await;
         use crate::transcript::TranscriptBundle;
         use crate::types::EductStoreTranscriptRequest;
 
