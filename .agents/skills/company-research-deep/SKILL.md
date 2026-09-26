@@ -96,13 +96,20 @@ An advisory outside view on the industry's business drivers, built from scholarl
 1. Name the industry from the COMPANY board's self-view and value chain. Query the industry's economics, never the company's name: e.g. `"{industry} cost structure capital intensity pricing power"`, `"{industry} cyclicality entry barriers competition"`, `"{industry} industrial organization market structure"`.
 2. Search these tiers, each with explicit `web_search(provider=...)` calls and `run_id`, and log every call's query, provider, `count` and `providers_failed`:
    - Scholarly: `openalex`, `arxiv`, `semantic_scholar` (free) and `google_scholar` (SerpAPI key). Resolve each candidate with `resolve_paper`; an unresolvable identity is excluded. Prefer systematic reviews, meta-analyses and industrial-organization or strategy journals; Google Scholar's `[cited by N]` indicates uptake, not truth.
-   - Business-school cases and faculty research: `web_search(provider="serpapi", include_domains=["hbsp.harvard.edu", "hbs.edu", "thecasecentre.org", "iveypublishing.ca", "gsb.stanford.edu", "knowledge.wharton.upenn.edu", "insead.edu", "sloanreview.mit.edu"])`.
+   - Business-school cases and faculty research: `web_search(provider="serpapi", include_domains=["hbsp.harvard.edu", "thecasecentre.org", "iveypublishing.ca", "gsb.stanford.edu"])` for case catalogues, and `["hbs.edu", "knowledge.wharton.upenn.edu", "insead.edu", "sloanreview.mit.edu"]` for faculty research. A catalogue or author listing is a lead; a case counts only when its own abstract page is retrieved.
    - Books: `google_books` (SerpAPI key). Keep academic or established trade publishers; cite without quoting unless the text itself is retrieved.
    - Industry self-regulatory organizations and standard-setting bodies: search for the industry's SROs, standards bodies and statistical associations (e.g. `"{industry} self-regulatory organization"`, `"{industry} industry standards body"`), then `web_extract` their own published standards, rules or statistics.
    - Substack: admissible only when the author is identified and the retrieved publication page shows more than 1,000 subscribers.
 3. Never search Reddit, forums or general web results for this step, and never use answer boxes. Exclude consultant and industry-association reports unless they are in an admissible tier or cited by a scholarly, case or book source. Apply the boilerplate rule: a source with no bearing on this industry's economics is dropped without being listed or counted.
 4. Retain each used source as a `source_outputs` record (`source_kind: original` only for retrieved text) and pass short keyed extracts as `source_evidence` plus the call log as `search_log` to `company-research/industry-outside-view`, with `ticker`, `industry` and `company_board`. A failed or empty tier is a `data_gaps` entry, not a block.
-5. Emit `industry_outside_view`. Pass it to FALSTAFFIAN (frame conflicts), GORILLA (Obvious Problem and Choke Point), THESIS (Business Franchise and Risks) and the late verification target.
+5. Before passing the output on, check its field names with `lisp_eval`, binding `view` to the returned JSON object:
+
+   ```lisp
+   (let ((has (lambda (k entries) (if (is_null entries) false (if (string= k (car (car entries))) true (has k (cdr entries)))))) (missing (lambda (keys) (if (is_null keys) (list) (if (has (car keys) view) (missing (cdr keys)) (cons (car keys) (missing (cdr keys)))))))) (missing (list "industry_drivers" "self_regulatory_bodies" "company_fit" "frame_conflicts" "implication_for_falstaffian" "implication_for_gorilla" "implication_for_thesis" "claim_sources" "excluded_sources" "data_gaps")))
+   ```
+
+   A non-empty result lists missing fields: re-render once with that list; if fields are still missing, pass the view with the gap recorded in `data_gaps`. It never blocks the pipeline.
+6. Emit `industry_outside_view`. Pass it to FALSTAFFIAN (frame conflicts), GORILLA (Obvious Problem and Choke Point), THESIS (Business Franchise and Risks) and the late verification target.
 
 ### falstaffian-competitive-rotation
 
