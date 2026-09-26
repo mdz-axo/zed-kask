@@ -40,14 +40,9 @@ to git-merge or mapped-re-apply.
    - `grep -c "kask_bridge::\|hkask_\|hkask-" {{ target_file }}` — kask call site count
    - `grep -c "// zed-kask:" {{ target_file }}` — marker count
 
-2. Compute marker_density = marker_count / kask_call_site_count (1.0 when kask_call_site_count is 0)
+2. Do not compute the density or apply the rule yourself. The agent computes both in `lisp_eval` from the four counts (see the skill's Step 0 decision rule) and fills `marker_density` and `strategy` from its result.
 
-3. Apply the decision rule:
-   - If fork_line_count > 2 × upstream_line_count OR marker_density < 0.5:
-     recommend "mapped-reapplication"
-   - Otherwise: recommend "git-merge"
-
-4. Produce the rationale (one paragraph explaining the recommendation).
+3. Produce the rationale (one paragraph) citing the four counts and the `lisp_eval` result.
 
 ## Output
 

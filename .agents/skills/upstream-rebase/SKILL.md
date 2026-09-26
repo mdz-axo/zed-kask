@@ -30,7 +30,29 @@ kask-wiring changes without carrying forward accumulated cruft.
 | **Mapped re-application** | File is under-marked (< 50% of kask call sites carry markers), has cruft, or has compile bugs | Medium       | High   |
 | **Destroy and rebuild**   | Never                                                                                         | Catastrophic | High   |
 
-**Decision rule:** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge.
+**Decision rule:** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge. Compute it in `lisp_eval` from the four counts `assess.j2` gathers — never by hand:
+
+```
+form: (let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> fork (* 2 upstream)) (< dens 0.5)) (quote mapped-reapplication) (quote git-merge))))
+env:  { "fork": <fork lines>, "upstream": <upstream lines>, "markers": <marker count>, "sites": <kask call sites> }
+```
+
+Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped; 201/100/10/10 → mapped; 50/100/0/0 → git-merge; 250/100/0/0 → mapped.
+
+## Initial and target condition
+
+- **Initial condition:** the merge base, `git diff --name-only <base> upstream/main`, and the live D-rows in `DIVERGENCE.md`.
+- **Target condition:** a merge commit on which Verification gate items 0–5 pass and every live D-row has a recorded retire / simplify / retain / needs-operator-decision decision.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| 0 Survival, 2 Constraint force, 3 Dependency graph | P | the operator on NEEDS OPERATOR DECISION; each record's counterexample |
+| 1 Inventory, 4 Insertion points, strategy rule | D | `git`, `grep`, `lisp_eval` |
+| 5 Re-apply | P | the Verification gate |
+| 6 Pins, 7 DIVERGENCE.md, 8 Cleanup, Verification gate | D | `cargo check`/`cargo test`, the isolation scripts |
+| 9 Reflect | P | the operator accepts or rejects each amendment |
 
 ## Instructions
 
@@ -185,6 +207,8 @@ by checking them. A lesson that no case can falsify is not an amendment.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit count.
 5. `git diff upstream/main -- <file>` — no upstream line is modified except under a live D-row (retire/simplify work may remove fork lines).
+
+If any gate fails, return to Step 5 for that file with the failing command's output. At most 2 returns per file; a third failure halts the merge and goes to the operator with the failing output.
 
 ## Composed Skills
 
