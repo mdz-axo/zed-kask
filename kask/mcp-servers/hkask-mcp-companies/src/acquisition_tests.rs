@@ -389,6 +389,60 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
         .await;
 }
 
+/// expect: [P5] The DCF prices an EODHD-routed profile (no `price` field) from
+/// the stock quote's close, converted from the listing currency into the
+/// statement currency — live-observed 2026-09-26: VIRI.PA (EUR quote, USD
+/// statements) returned "missing or invalid current price for DCF".
+/// dcterms:identifier: valuation_service::prepare_dcf
+#[tokio::test]
+async fn dcf_price_falls_back_to_normalized_quote_close() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        let endpoint = path.split('?').next().expect("endpoint");
+        if endpoint == "/fmp/profile" {
+            return (
+                200,
+                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"EUR"}]),
+            );
+        }
+        if endpoint == "/fmp/quote" {
+            return (200, json!({"symbol":"ACME","close":25.0}));
+        }
+        if endpoint.starts_with("/eodhd/eod/USDEUR.FOREX") {
+            return (200, json!([{"date":"2026-09-25","close":0.8}]));
+        }
+        if endpoint == "/fmp/income-statement" {
+            let (status, mut rows) = financial_fixture(path);
+            for row in rows.as_array_mut().expect("income rows") {
+                row["reportedCurrency"] = json!("USD");
+            }
+            return (status, rows);
+        }
+        financial_fixture(path)
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let output = content(
+                &server
+                    .dcf_valuation(Parameters(
+                        serde_json::from_value(json!({"symbol":"ACME"})).expect("request"),
+                    ))
+                    .await
+                    .expect("DCF tool"),
+            );
+            assert!(output["error"].is_null(), "{output}");
+            assert!(
+                output["valuation"]["current_price"]
+                    .as_f64()
+                    .is_some_and(|price| (price - 31.25).abs() < 1e-6),
+                "EUR quote must be converted into USD statement units: {output}"
+            );
+        })
+        .await;
+}
+
 /// expect: [P5] A quote in pence is converted through pounds into the USD
 /// statement currency before reverse DCF; raw GBX is never treated as USD.
 /// dcterms:identifier: CompaniesServer::reverse_dcf / CompaniesServer::normalize_price_for_financials

@@ -11,7 +11,7 @@ classifies them by horizon, and emits per-section verdicts with evidence.
 
 ## When NOT to Use
 
-- Non-earnings-call transcripts — the MAIA v3 template (stance block + 7 sections + horizon model) is earnings-call-shaped; a generic interview needs a different frame.
+- Documents that are not the company's own narrative — a generic interview, media coverage or sell-side reports need a different frame. A single earnings call uses `apply-template.j2`; the company's own multi-document narrative (calls, 10-K business and MD&A, investor days, shareholder letters) uses `apply-template-rag.j2`.
 - Unverified summarization — the process enforces verbatim-evidence quotes; a summary without the retrieve-cite-verify loop is a different (weaker) artifact.
 - Live capture — use `transcript-reel` for record/transcribe; this skill consumes an existing transcript.
 
@@ -80,7 +80,7 @@ the `grounding-verify` substring-match rule applied to transcripts.
 | Template | Purpose |
 |----------|---------|
 | `apply-template.j2` | Apply the MAIA v3 listening template (stance block + 7 sections + horizon model) to an earnings-call transcript. Emits per-section verdicts with verbatim evidence quotes, the checkpoint map, and ignored_short_term entries. The no-fabrication invariant is enforced: every evidence field is a verbatim substring of the source transcript. Context: `transcript_chunks` (array of `{speaker, text}` chunk objects), `prior_transcript_chunks` (array, earlier calls for trend context), `company_symbol` (string). **Cascade-invoked** (call `render_template` with template_ref `listening/apply-template` at step 2). |
-| `apply-template-rag.j2` | Apply the MAIA v3 listening template over a company knowledge graph. Takes RAG-retrieved passages from multiple documents (earnings calls, 10-Ks, investor days) plus KG triples linking them. Emits per-section verdicts with cross-source citations — a verdict can cite evidence from document A and document B. The no-fabrication invariant extends to the full corpus: every evidence field is a verbatim substring of one of the source passages. **Legacy — registered in the crate but NOT referenced by the skill execution** (the skill calls `render_template` with `apply-template.j2` at step 2 only; this template is available for standalone RAG-corpus invocation). |
+| `apply-template-rag.j2` | Apply the MAIA v3 listening template across the company's own narrative documents. Context: `corpus_passages` (array of `{source, entity_ref, text}` verbatim passages; `source` is the retained `source_outputs.output_key`), `kg_triples` (array, may be empty), `company_symbol`, `focus_query`. Emits per-section verdicts with cross-source citations, judged against the company's own stated strategy. Same retrieve-cite-verify steps (each quote checked against its OWN passage). Used by the LISTEN step of `company-research-deep` and `company-research-flash`; it filters strategic narrative and is not a materiality check. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `listening/apply-template`) and a context object with the required variables.
 

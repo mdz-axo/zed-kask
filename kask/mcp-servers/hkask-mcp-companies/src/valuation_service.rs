@@ -226,20 +226,52 @@ pub(crate) async fn prepare_dcf(
     {
         return Err(DcfPreparationError::Unavailable(error));
     }
-    let Some(current_price) = profile
-        .price()
-        .filter(|price| price.is_finite() && *price > 0.0)
-    else {
-        return Err(DcfPreparationError::Unavailable(
-            serde_json::json!({"symbol":symbol,"error":"missing or invalid current price for DCF"}),
-        ));
-    };
     let (income, balance, cash_flow, metrics) = tokio::try_join!(
         server.fetch_response("income_statement", symbol, &[("limit", "5")]),
         server.fetch_response("balance_sheet", symbol, &[("limit", "5")]),
         server.fetch_response("cash_flow_statement", symbol, &[("limit", "5")]),
         server.fetch_response("key_metrics", symbol, &[("limit", "5")]),
     )?;
+    // EODHD-routed profiles carry no `price`: fall back to the quote close,
+    // then convert the listing-currency price into the statement currency
+    // (the same path reverse DCF uses).
+    let quote = match crate::resolve_current_price(profile.raw(), None) {
+        Some(_) => None,
+        None => match server.fetch("stock_quote", symbol, &[]).await {
+            Ok(quote) => Some(quote),
+            Err(error) => {
+                tracing::warn!(target: "hkask.mcp.companies", symbol, %error, "DCF price fallback: stock quote unavailable");
+                None
+            }
+        },
+    };
+    let Some((raw_price, _)) = crate::resolve_current_price(profile.raw(), quote.as_ref())
+        .filter(|(price, _)| price.is_finite())
+    else {
+        return Err(DcfPreparationError::Unavailable(
+            serde_json::json!({"symbol":symbol,"error":"missing or invalid current price for DCF"}),
+        ));
+    };
+    let has_quote_currency = profile
+        .raw()
+        .as_array()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("currency").or_else(|| row.get("CurrencyCode")))
+        .is_some();
+    let (current_price, price_warning) = if has_quote_currency {
+        let (price, _) = server
+            .normalize_price_for_financials(raw_price, profile.raw(), &income.value)
+            .await?;
+        (price, None)
+    } else {
+        (
+            raw_price,
+            Some(
+                "profile has no quote currency; current price used without currency normalization"
+                    .to_string(),
+            ),
+        )
+    };
     let provenance = serde_json::json!({
         "company_profile": profile.provider(),
         "income_statement": income.provider, "balance_sheet": balance.provider,
@@ -251,6 +283,7 @@ pub(crate) async fn prepare_dcf(
         .chain(balance.warnings)
         .chain(cash_flow.warnings)
         .chain(metrics.warnings)
+        .chain(price_warning)
         .collect();
     let inputs = FinancialInputs {
         income: income.value,

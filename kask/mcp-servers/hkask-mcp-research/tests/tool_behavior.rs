@@ -1761,6 +1761,34 @@ async fn web_search_with_run_id_records_sources_server_side() {
         "three stub results recorded: {output}"
     );
 
+    assert_eq!(output["run_ledger"]["already_recorded"].as_u64(), Some(0));
+
+    // A repeat call in the same run keeps the first observation: the note
+    // names the held rows instead of reporting a bare zero.
+    let repeat = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "stub query".to_string(),
+            num_results: Some(10),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: Some("deep".to_string()),
+            intent: None,
+            provider: None,
+            run_id: Some(run_id.clone()),
+        }))
+        .await));
+    assert_eq!(
+        repeat["run_ledger"]["recorded"].as_u64(),
+        Some(0),
+        "{repeat}"
+    );
+    assert_eq!(
+        repeat["run_ledger"]["already_recorded"].as_u64(),
+        Some(3),
+        "{repeat}"
+    );
+
     let manifest = parse(&ok(server
         .get_research_run(Parameters(GetResearchRunRequest { run_id }))
         .await));

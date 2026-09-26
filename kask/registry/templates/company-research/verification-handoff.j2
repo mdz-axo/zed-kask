@@ -107,8 +107,13 @@ never a clean check.
 
 {{ pipeline_tool_log | tojson }}
 
-Match `source_outputs[].output_key` to the log's output keys. A cited URL or
-tool name alone does not establish that the pipeline retrieved its content.
+Each log entry is `{tool_name, output_key, status}` with `status: "ok"` for a
+successful call (the source-check form reads exactly these keys; a `tool` key
+or a missing status leaves the disclosure `not_checked`). A `pdftotext` or
+`corpus_convert` entry also carries the `origin_path` and `source_sha256` of
+the retained full original. Match `source_outputs[].output_key` to the log's
+output keys. A cited URL or tool name alone does not establish that the
+pipeline retrieved its content.
 The research-run ledger is an audit trail, not the full-content store: its
 short excerpts and agent-declared verification states cannot replace retained
 source outputs or mechanical checks.

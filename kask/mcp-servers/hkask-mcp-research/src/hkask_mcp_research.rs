@@ -1712,7 +1712,8 @@ impl ResearchServer {
     /// Append server-observed records to a run's ledger (the
     /// non-repudiation path). Best-effort by design: the outcome is
     /// returned as a `run_ledger` note for the tool's output —
-    /// `{"recorded": n}` on success, `{"recorded": 0, "error": ...}` on
+    /// `{"recorded": n, "already_recorded": m}` on success (m = URLs the
+    /// run already held; first observation wins), `{"recorded": 0, "error": ...}` on
     /// failure or when the DB is not configured. Never silent in either
     /// direction (the reliability pattern: the public response
     /// surfaces persistence outcomes).
@@ -1729,12 +1730,18 @@ impl ResearchServer {
             });
         };
         let run_id_for_task = run_id.to_string();
+        let submitted = records.len();
         let append = spawn_db(database, move |connection| {
             crate::research::runs::append_run_sources(connection, &run_id_for_task, &records)
         })
         .await;
         match append {
-            Ok(Ok(inserted)) => serde_json::json!({ "recorded": inserted }),
+            // First observation wins: a URL the run already holds is kept, not
+            // re-inserted, so name it rather than report a bare zero.
+            Ok(Ok(inserted)) => serde_json::json!({
+                "recorded": inserted,
+                "already_recorded": submitted.saturating_sub(inserted),
+            }),
             Ok(Err(error)) => {
                 tracing::warn!(
                     target: "hkask.research.runs",

@@ -1267,8 +1267,16 @@ mod tests {
         let scholar_calls = std::sync::Arc::new(AtomicUsize::new(0));
         let pool = ProviderPool::new(
             vec![
-                Box::new(CountingStub { kind: "brave", explicit: false, calls: web_calls.clone() }),
-                Box::new(CountingStub { kind: "google_scholar", explicit: true, calls: scholar_calls.clone() }),
+                Box::new(CountingStub {
+                    kind: "brave",
+                    explicit: false,
+                    calls: web_calls.clone(),
+                }),
+                Box::new(CountingStub {
+                    kind: "google_scholar",
+                    explicit: true,
+                    calls: scholar_calls.clone(),
+                }),
             ],
             Vec::new(),
             Vec::new(),
@@ -1282,13 +1290,26 @@ mod tests {
             exclude_domains: Vec::new(),
             freshness: None,
         };
-        for strategy in [SearchStrategy::Web, SearchStrategy::Deep, SearchStrategy::Quick] {
+        for strategy in [
+            SearchStrategy::Web,
+            SearchStrategy::Deep,
+            SearchStrategy::Quick,
+        ] {
             pool.search(&query, strategy, None).await?;
         }
-        assert_eq!(scholar_calls.load(Ordering::SeqCst), 0, "fused/quick search called an explicit-only provider");
+        assert_eq!(
+            scholar_calls.load(Ordering::SeqCst),
+            0,
+            "fused/quick search called an explicit-only provider"
+        );
         assert!(web_calls.load(Ordering::SeqCst) >= 3);
-        pool.search(&query, SearchStrategy::Quick, Some("google_scholar")).await?;
-        assert_eq!(scholar_calls.load(Ordering::SeqCst), 1, "named provider was not called");
+        pool.search(&query, SearchStrategy::Quick, Some("google_scholar"))
+            .await?;
+        assert_eq!(
+            scholar_calls.load(Ordering::SeqCst),
+            1,
+            "named provider was not called"
+        );
         Ok(())
     }
 }
