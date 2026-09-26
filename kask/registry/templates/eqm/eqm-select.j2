@@ -1,4 +1,4 @@
-{# goal: Choose the EQM subset (predictive_12 default, full_60, or domain_tuned) and gather the rationale corpus. Prepares the scoring batch and cost estimate. #}
+{# goal: Admit only the live predictive_12 scorer, report unsupported marker-set requests without paid calls, and prepare the observed rationale batch and indicative cost. #}
 [inference]
 contract:
   input:
@@ -7,6 +7,8 @@ contract:
     domain: string|null
   output:
     selected_subset: string
+    requested_subset: string
+    unsupported_reason: string|null
     scoring_batch: array
     cost_estimate_usd: number
     forecaster_groups: object
@@ -36,17 +38,19 @@ You are an EQM measurement coordinator. Your task is to prepare the rationale co
 
 ## Step 1 — Choose EQM Subset
 
-Select the EQM subset to score against:
+The live `market_score_rationale` tool scores exactly `predictive_12`. The 60-marker catalog is a reference, not a scoring endpoint. Requested subset: `{{ eqm_subset if eqm_subset else 'predictive_12' }}`. If it is `full_60`, `domain_tuned`, or anything else, return `selected_subset: "unsupported"`, a named `unsupported_reason`, an empty `scoring_batch`, and cost zero; do not call the 12-marker tool and label it as 60.
 
-- `predictive_12` (default): the 12 most predictive EQMs from the paper's key findings. Matches the market_score_rationale MCP tool's KEY_EQMS. Use for standard measurement.
-- `full_60`: the complete 60-EQM catalog. Use for research/validation. Note: the MCP tool scores only the predictive 12; full_60 requires multiple tool calls or a custom scoring path.
-- `domain_tuned`: weight specific EQMs higher based on the forecasting domain. Specify which markers to weight.
+{% if eqm_subset and eqm_subset != 'predictive_12' %}
+## Unsupported marker set
 
-Default to `predictive_12` unless the user specifies otherwise. The selected subset is: `{{ eqm_subset | default('predictive_12') }}`.
-
+Return only this JSON object; do not prepare or call the 12-marker scorer for a different request:
+```json
+{"selected_subset":"unsupported","requested_subset":{{ eqm_subset | tojson }},"unsupported_reason":"market_score_rationale scores predictive_12 only","scoring_batch":[],"cost_estimate_usd":0,"forecaster_groups":{}}
+```
+{% else %}
 ## Step 2 — Prepare Scoring Batch
 
-For each rationale in the corpus, prepare a scoring batch entry:
+Only for a supported `predictive_12` request, prepare one scoring batch entry per rationale:
 
 ```json
 {
@@ -61,10 +65,15 @@ Each entry maps to one `market_score_rationale` call.
 
 ## Step 3 — Estimate Cost
 
-Cost estimate: ~$0.007 per rationale (per the paper's cost figure).
+Indicative paper/tool estimate: ~$0.007 per rationale, not a provider quote. Unsupported subset → zero tool calls and zero estimated spend.
 
+{% if eqm_subset and eqm_subset != 'predictive_12' %}
+- Number of supported scorer calls: 0
+- Estimated cost: $0 (unsupported subset)
+{% else %}
 - Number of rationales: {{ rationales | length }}
 - Estimated cost: ${{ (rationales | length) * 0.007 }}
+{% endif %}
 
 ## Step 4 — Group by Forecaster
 
@@ -72,30 +81,12 @@ Group rationales by `forecaster_id` (if present) for forecaster-level aggregatio
 
 ## Output
 
-Respond with a JSON object:
-
-```json
-{
-  "selected_subset": "predictive_12",
-  "scoring_batch": [
-    {
-      "rationale": "...",
-      "forecast_probability": 0.65,
-      "question": "...",
-      "forecaster_id": "forecaster_a"
-    }
-  ],
-  "cost_estimate_usd": 0.021,
-  "forecaster_groups": {
-    "forecaster_a": [0, 1, 2],
-    "forecaster_b": [3, 4]
-  }
-}
-```
+Return JSON with `selected_subset: "predictive_12"`, the actual resolved `requested_subset`, `unsupported_reason: null`, a `scoring_batch` containing exactly the provided rationales (no example rationales), `cost_estimate_usd` equal to {{ (rationales | length) * 0.007 }} for this input, and `forecaster_groups` using only forecaster IDs and zero-based indexes present in that batch. An empty corpus has an empty batch and zero cost.
 
 ## Constraints
 
 - Do not fabricate rationales — only score what is provided.
 - If the corpus is empty, return an empty scoring_batch and cost_estimate_usd: 0.
 - Preserve forecaster_id grouping for forecaster-level aggregation.
-- The selected_subset must match what the market_score_rationale tool actually scores (predictive_12).
+- Only `selected_subset: predictive_12` produces a scoring batch; every unsupported request must remain visible rather than silently downscoring it.
+{% endif %}

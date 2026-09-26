@@ -10,7 +10,6 @@ contract:
   output:
     target_condition: object
     prioritized_markers: array
-    target_composite_score: number
 visibility: Public
 ---
 [inference]
@@ -47,7 +46,7 @@ You are an EQM improvement target-setter. Your task is to establish the target c
 ```
 {% endif %}
 
-{% if target_composite %}
+{% if target_composite is not none %}
 ## User-Specified Target Composite
 
 {{ target_composite }}
@@ -74,12 +73,12 @@ The target is one step beyond the current condition — challenging but achievab
 
 ## Step 3 — Set Target Composite
 
-If `target_composite` is user-specified, use it. Otherwise, list the per-marker target scores; `target_composite` is computed from them by `lisp_eval` (SKILL.md Improve step 3) using:
+Carry a user-specified `target_composite` inside the target condition when present (including zero). Otherwise list per-marker target scores; the invoking agent computes a target-set summary with `lisp_eval` *after* this render, using:
 
 - Default target: "no red flags" (all Hurts markers at 0). This is the paper's strong-signal threshold.
 - `target_composite = Σ(Helps target scores) - Σ(Hurts target scores)`
 
-The target composite should be achievable within the iteration budget (max 8 iterations).
+This target-set summary is computed from only the listed markers. It cannot be compared directly to the whole-rationale composite or used alone as a stop rule.
 
 ## Step 4 — Build Target Condition
 
@@ -87,43 +86,7 @@ The target condition is the full set of marker-level targets, prioritized for th
 
 ## Output
 
-Respond with a JSON object:
-
-```json
-{
-  "target_condition": {
-    "direction": "Eliminate all red flags (Hurts markers to 0), then raise green flags (Helps markers to 2).",
-    "alignment_invariant": "forecast_probability preserved",
-    "marker_targets": [
-      {
-        "id": "gut_based",
-        "name": "Gut Based",
-        "direction": "hurts",
-        "current_score": 2,
-        "target_score": 0,
-        "gap": 2,
-        "priority": 1,
-        "description": "The rationale relies on intuition... A score of 0 means no gut-based reasoning is present."
-      },
-      {
-        "id": "statistical_reasoning",
-        "name": "Statistical Reasoning",
-        "direction": "helps",
-        "current_score": 0,
-        "target_score": 2,
-        "gap": 2,
-        "priority": 3,
-        "description": "The rationale explicitly uses statistical concepts... A score of 2 means the rationale clearly applies statistical thinking."
-      }
-    ]
-  },
-  "prioritized_markers": [
-    {"id": "gut_based", "priority": 1},
-    {"id": "statistical_reasoning", "priority": 3}
-  ],
-  "target_composite_score": 8.0
-}
-```
+Return JSON with `target_condition` (direction, `alignment_invariant: "forecast_probability preserved"`, `user_target_composite: {{ target_composite | tojson }}`, and `marker_targets`), plus `prioritized_markers`. Each marker target must carry the **actual** input marker ID, name, direction, observed current score, directional target score, gap, priority and the source EQM description. Do not add example markers absent from `failing_markers`; the invoking agent computes any numeric target-set summary from these records after rendering.
 
 ## Constraints
 

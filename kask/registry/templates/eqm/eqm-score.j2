@@ -33,62 +33,25 @@ You are an EQM scoring orchestrator. Call the `market_score_rationale` MCP tool 
 
 ## Selected EQM Subset
 
-{{ selected_subset | default('predictive_12') }}
+{{ selected_subset }}
+
+Call the tool only when this is exactly `predictive_12`; any other value
+is an unsupported request, not a reason to score a different subset.
 
 ## Per-Rationale Results
 
-For each rationale in the batch, the `market_score_rationale` tool returns an `EqmResult`:
-
-```json
-{
-  "composite_score": 4.0,
-  "scores": [
-    {"id": "statistical_reasoning", "name": "Statistical Reasoning", "score": 2, "direction": "helps"},
-    {"id": "fact_based", "name": "Fact Based", "score": 1, "direction": "helps"},
-    ...
-  ],
-  "red_flags": ["Gut Based", "Extreme Confidence"],
-  "green_flags": ["Statistical Reasoning"],
-  "interpretation": "Adequate rationale; strengths: Statistical Reasoning; red flags: Gut Based, Extreme Confidence",
-  "model": "glm-5.2",
-  "caveat": "EQMs are a red-flag screen, not a green-flag detector...",
-  "missing_eqms": []
-}
-```
+For each rationale, preserve the *actual* `market_score_rationale` `EqmResult` verbatim: `composite_score`, `scores[]` (id, name, score, direction), red/green flags, interpretation, provider-returned model ID, caveat and `missing_eqms`. This template supplies no scores or model name. A failed call has no EqmResult to substitute.
 
 If `missing_eqms` is non-empty, the LLM omitted those dimensions from its response — the composite is pulled toward 0 for those dimensions. Flag this in `scoring_notes` so the operator treats the result as an incomplete assessment, not a low-quality score.
 
 ## Output
 
-Collect all per-rationale results into `per_rationale_scores`. Each entry should carry the forecaster_id (if present) for forecaster-level aggregation:
-
-```json
-{
-  "per_rationale_scores": [
-    {
-      "forecaster_id": "forecaster_a",
-      "question": "...",
-      "rationale_index": 0,
-      "eqm_result": {
-        "composite_score": 4.0,
-        "scores": [...],
-        "red_flags": [...],
-        "green_flags": [...],
-        "interpretation": "...",
-        "model": "...",
-        "caveat": "...",
-        "missing_eqms": []
-      }
-    }
-  ],
-  "scoring_notes": "All rationales scored successfully. 3 red flags detected across the corpus."
-}
-```
+Return JSON with `per_rationale_scores`: one entry per requested rationale in original order, carrying its actual `forecaster_id` (if supplied), question, index and the tool-returned `eqm_result` unchanged. `scoring_notes` states observed coverage or the exact failure. Never supply example scores, model IDs or red-flag counts in place of returned data.
 
 ## Constraints
 
 - Do not fabricate EQM scores — only report what the MCP tool returned.
-- If a tool call failed, note it in scoring_notes and exclude that rationale from per_rationale_scores (do not default to 0).
+- If any tool call fails, propagate the failure and stop the batch. Preserve already returned results as diagnostic partial data, but do not aggregate them or label the batch complete.
 - Preserve the forecaster_id grouping for the aggregation step.
 - The caveat field from the tool must be preserved verbatim — it carries the paper's asymmetry warning.
-- If `missing_eqms` is non-empty, note it in scoring_notes — the composite for that rationale is an incomplete assessment.
+- If `missing_eqms` is non-empty, mark the batch incomplete and stop before aggregation or overconfidence-bias calculation; the tool's zero-filled composite is not an observed low score.

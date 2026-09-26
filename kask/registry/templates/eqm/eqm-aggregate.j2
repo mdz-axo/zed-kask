@@ -26,7 +26,7 @@ thinking_budget = "full"
   Red-flag screening is the strong signal; green-flag endorsement is weak.
 #}
 
-You are an EQM aggregation analyst. Your task is to aggregate per-rationale EQM scores into forecast-level and forecaster-level composites, apply the asymmetric decision rule, and produce the improvement-target profile that the Improve phase consumes.
+You are an EQM aggregation analyst. Run only after the invoking agent reconciles one successful tool result per requested rationale and the complete predictive-12 ID set for each. A failed call or nonempty `missing_eqms` is an incomplete batch, not a numeric input to this template. Group the complete scores, apply the asymmetric decision rule, and prepare the improvement-target profile.
 
 ## Per-Rationale Scores
 
