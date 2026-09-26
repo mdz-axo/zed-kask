@@ -7,7 +7,7 @@ contract:
   output:
     sk_body: string
     template_bodies: array
-    translation_summary: string
+    translation_summary: object
 visibility: Private
 ---
 
@@ -76,8 +76,8 @@ Respond with a JSON object:
   "translation_summary": {
     "steps_mapped": 0,
     "tools_mapped": 0,
-    "unresolved_concepts": ["[unresolved: ...] markers, if any"],
-    "dropped_nothing": true
+    "source_steps": 0,
+    "unresolved_concepts": ["[unresolved: ...] markers, if any"]
   }
 }
 ```
@@ -89,3 +89,7 @@ Respond with a JSON object:
 - Do not generate manifest.yaml, process manifests, `input_mapping`,
   `ordinal`, `compute_ref`, or `step_N_result` references.
 - Every `[unresolved: ...]` marker must name the source concept it carries.
+- Report counts, not verdicts: `source_steps` is the number of process steps
+  in the source skill, `steps_mapped` the number carried into the body. The
+  caller reconciles `source_steps = steps_mapped + len(unresolved_concepts)`
+  with `lisp_eval`; do not assert that nothing was dropped.

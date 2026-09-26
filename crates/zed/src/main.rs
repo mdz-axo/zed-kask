@@ -985,16 +985,17 @@ fn main() {
             let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
             let ledger_for_skill_outcomes = regulation_ledger.clone();
             agent::set_skill_outcome_recorder(std::sync::Arc::new(
-                move |skill_id, success, error| {
+                move |skill_id, invoker, success, error| {
                     let skill_id = skill_id.to_string();
                     let error = error.map(str::to_string);
+                    let invoker = invoker.to_string();
                     // Clone per call — the closure is `Fn` (invoked for every
                     // skill activation), so it cannot move the captured ledger
                     // into the spawned future.
                     let ledger = ledger_for_skill_outcomes.clone();
                     tokio_handle.spawn(async move {
                         let ledger = ledger.read().await;
-                        let mut payload = serde_json::json!({ "success": success });
+                        let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
                         if let Some(error) = error {
                             payload["error"] = serde_json::json!(error);
                         }
@@ -1677,8 +1678,8 @@ fn main() {
                                     let ledger_for_outcomes = regulation_ledger_for_deferred.clone();
                                     let outcome_runtime = operator_feedback_runtime.clone();
                                     agent::set_skill_outcome_recorder(std::sync::Arc::new(
-                                        move |skill_id, success, error| {
-                                            let mut payload = serde_json::json!({ "success": success });
+                                        move |skill_id, invoker, success, error| {
+                                            let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
                                             if let Some(error) = error {
                                                 payload["error"] = serde_json::json!(error);
                                             }
@@ -1806,7 +1807,11 @@ fn main() {
                         // resolve them. Before this, the escalation sink is
                         // `None` (alerts not persisted to the reviewable
                         // backlog).
-                        match kask_bridge::open_curator_escalation_queue(&passphrase) {
+                        // zed-kask: D8 — the same queue also feeds the status
+                        // tool's "awaiting review" count (provider upgrade below).
+                        let escalation_queue_for_status =
+                            kask_bridge::open_curator_escalation_queue(&passphrase);
+                        match escalation_queue_for_status.clone() {
                             Some(queue) => {
                                 let sink: std::sync::Arc<dyn hkask_regulation::AlertEscalationSink> =
                                     std::sync::Arc::new(kask_bridge::BridgeAlertEscalationSink::new(queue));
@@ -1954,12 +1959,16 @@ fn main() {
                                 // provider (set at startup, without the probe)
                                 // is replaced; `set_metacognition_provider` is
                                 // Mutex-based and re-settable.
-                                let provider_with_memory = std::sync::Arc::new(
+                                let mut provider_with_memory =
                                     kask_bridge::BridgeMetacognitionProvider::new(
                                         metacognition_loop_for_deferred.clone(),
                                     )
-                                    .with_memory_port(real_memory_typed.clone()),
-                                );
+                                    .with_memory_port(real_memory_typed.clone());
+                                if let Some(queue) = escalation_queue_for_status.clone() {
+                                    provider_with_memory =
+                                        provider_with_memory.with_escalation_queue(queue);
+                                }
+                                let provider_with_memory = std::sync::Arc::new(provider_with_memory);
                                 agent::set_metacognition_provider(Some(provider_with_memory));
                                 log::info!(
                                     "Curator metacognition provider upgraded with memory-health probe"

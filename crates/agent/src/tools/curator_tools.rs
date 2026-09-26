@@ -70,7 +70,13 @@ pub struct CuratorStatusOutput {
     /// Observed share of regulation outcomes accepted by the loop; not a
     /// causal effectiveness measure. Unavailable when the source has no sample.
     pub regulation_acceptance_rate: Option<f64>,
+    /// Alerts the metacognition loop raised in its most recent cycle only.
     pub escalation_count: Option<usize>,
+    /// Escalations pending operator review in the durable queue that
+    /// `curator_escalations` lists. `None` when that queue is not wired or
+    /// cannot be read — rendered as unknown, never 0.
+    #[serde(default)]
+    pub pending_escalations: Option<usize>,
     pub critical_alerts: Option<usize>,
     /// Per-domain variety deficit (gap from set-point, not a raw counter).
     /// Renamed from `variety_counters` — the value is a deficit, and calling
@@ -187,6 +193,7 @@ mod status_snapshot_tests {
             status: status_line(None, None, None),
             regulation_acceptance_rate: Some(0.75),
             escalation_count: None,
+            pending_escalations: None,
             critical_alerts: None,
             variety_deficit: None,
             memory_degraded: None,
@@ -199,6 +206,43 @@ mod status_snapshot_tests {
         let value = serde_json::to_value(output).expect("status output serializes");
         assert_eq!(value["regulation_acceptance_rate"], serde_json::json!(0.75));
         assert!(value.get("regulation_effectiveness").is_none());
+    }
+
+    fn rendered(escalation_count: Option<usize>, pending: Option<usize>) -> String {
+        let output = CuratorStatusOutput {
+            status: status_line(None, None, None),
+            regulation_acceptance_rate: None,
+            escalation_count,
+            pending_escalations: pending,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: None,
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// The latest-cycle alert count is labelled as such, and the review
+    /// backlog is shown separately; an unreadable queue is "unknown", never 0
+    /// (observed: "Escalations: 1" while 5 awaited review).
+    #[test]
+    fn status_labels_cycle_alerts_and_review_backlog_separately() {
+        let text = rendered(Some(1), Some(5));
+        assert!(text.contains("New Alerts (latest cycle): 1\n"));
+        assert!(text.contains("Escalations Awaiting Review: 5\n"));
+        assert!(!text.contains("\nEscalations: "));
+
+        let unknown = rendered(Some(0), None);
+        assert!(
+            unknown.contains("Escalations Awaiting Review: unknown (review queue not readable)")
+        );
     }
 }
 
@@ -232,6 +276,7 @@ impl AgentTool for CuratorStatusTool {
                 status: "error: invalid input".to_string(),
                 regulation_acceptance_rate: None,
                 escalation_count: None,
+                pending_escalations: None,
                 critical_alerts: None,
                 variety_deficit: None,
                 memory_degraded: None,
@@ -252,6 +297,7 @@ impl AgentTool for CuratorStatusTool {
                     status: "provider not wired".to_string(),
                     regulation_acceptance_rate: None,
                     escalation_count: None,
+                    pending_escalations: None,
                     critical_alerts: None,
                     variety_deficit: None,
                     memory_degraded: None,
@@ -267,6 +313,7 @@ impl AgentTool for CuratorStatusTool {
                     status: "snapshot unavailable".to_string(),
                     regulation_acceptance_rate: None,
                     escalation_count: None,
+                    pending_escalations: None,
                     critical_alerts: None,
                     variety_deficit: None,
                     memory_degraded: None,
@@ -283,13 +330,14 @@ impl AgentTool for CuratorStatusTool {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
             let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
-            // The metacognition loop's `compare` phase produces
-            // `EscalationAlert`s when a threshold is breached; the
-            // count is threaded through `HealthSnapshot` ->
-            // `BridgeMetacognitionProvider` -> here. Zero means no
-            // threshold was breached in the most recent cycle.
+            // New alerts from the metacognition loop's most recent cycle —
+            // not the review backlog, which is `pending_escalations`.
             let escalation_count = snapshot
                 .get("escalation_count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let pending_escalations = snapshot
+                .get("pending_escalations")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
             let memory_degraded = snapshot
@@ -348,6 +396,7 @@ impl AgentTool for CuratorStatusTool {
                 status,
                 regulation_acceptance_rate: acceptance_rate,
                 escalation_count,
+                pending_escalations,
                 critical_alerts: critical,
                 variety_deficit: if input.include_variety {
                     deficit.map(|d| vec![("overall".to_string(), d)])
@@ -370,7 +419,8 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
         let text = format!(
             "Curator Status: {}\n\
              Regulation Acceptance Rate: {}\n\
-             Escalations: {}\n\
+             New Alerts (latest cycle): {}\n\
+             Escalations Awaiting Review: {}\n\
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
              Memory: {}\n\
@@ -386,6 +436,10 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 .escalation_count
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "not available".to_string()),
+            output
+                .pending_escalations
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "unknown (review queue not readable)".to_string()),
             output
                 .critical_alerts
                 .map(|c| c.to_string())

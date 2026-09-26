@@ -127,6 +127,10 @@ pub type SkillBodyResolver =
 pub struct SkillTool {
     skills: SkillsResolver,
     body_resolver: SkillBodyResolver,
+    /// Who ran the skill (the session's agent id, e.g. `Curator` or
+    /// `Zed Agent`), stamped onto every outcome record so the gemba walk can
+    /// attribute skill use per agent.
+    invoker: SharedString,
 }
 
 impl SkillTool {
@@ -151,7 +155,13 @@ impl SkillTool {
         Self {
             skills: Arc::new(skills),
             body_resolver: Arc::new(body_resolver),
+            invoker: crate::ZED_AGENT_ID.0.clone(),
         }
+    }
+
+    pub fn with_invoker(mut self, invoker: impl Into<SharedString>) -> Self {
+        self.invoker = invoker.into();
+        self
     }
 }
 
@@ -201,7 +211,7 @@ impl AgentTool for SkillTool {
             // can drop the snapshot borrow before suspending across the
             // body read and authorization awaits.
             let snapshot = cx.update(|cx| (self.skills)(cx));
-            let skill = resolve_invocable_skill(&snapshot, &input.name)
+            let skill = resolve_invocable_skill(&snapshot, &input.name, &self.invoker)
                 .map_err(|error| SkillToolOutput::Error { error })?;
             let skill_file_path = skill.skill_file_path.to_string_lossy().into_owned();
 
@@ -221,7 +231,7 @@ impl AgentTool for SkillTool {
 
             // zed-kask: D1 — record resolver failures without bypassing authorization.
             let body = (self.body_resolver)(skill.clone(), cx).await;
-            activate_skill(&skill, body)
+            activate_skill(&skill, body, &self.invoker)
                 .map(|rendered| SkillToolOutput::Found { rendered })
                 .map_err(|error| SkillToolOutput::Error { error })
         })
@@ -230,7 +240,11 @@ impl AgentTool for SkillTool {
 
 /// Find a model-invocable skill and check its declared dependencies. Shared by
 /// the `skill` tool and delegated `host/skill` dispatch.
-pub fn resolve_invocable_skill(snapshot: &[Skill], name: &str) -> Result<Skill, String> {
+pub fn resolve_invocable_skill(
+    snapshot: &[Skill],
+    name: &str,
+    invoker: &str,
+) -> Result<Skill, String> {
     let Some(skill) = snapshot
         .iter()
         .find(|s| s.name == name && !s.disable_model_invocation)
@@ -258,6 +272,7 @@ pub fn resolve_invocable_skill(snapshot: &[Skill], name: &str) -> Result<Skill, 
     if !missing.is_empty() {
         crate::record_skill_outcome(
             &skill.name,
+            invoker,
             false,
             Some("declared dependencies not installed"),
         );
@@ -277,14 +292,18 @@ pub fn resolve_invocable_skill(snapshot: &[Skill], name: &str) -> Result<Skill, 
 
 /// Render a resolved skill's body as the `<skill_content>` envelope and record
 /// the activation outcome.
-pub fn activate_skill(skill: &Skill, body: Result<String>) -> Result<String, String> {
+pub fn activate_skill(
+    skill: &Skill,
+    body: Result<String>,
+    invoker: &str,
+) -> Result<String, String> {
     match body {
         Ok(body) => {
-            crate::record_skill_outcome(&skill.name, true, None);
+            crate::record_skill_outcome(&skill.name, invoker, true, None);
             Ok(render_skill_envelope(skill, &body))
         }
         Err(e) => {
-            crate::record_skill_outcome(&skill.name, false, Some(&e.to_string()));
+            crate::record_skill_outcome(&skill.name, invoker, false, Some(&e.to_string()));
             Err(e.to_string())
         }
     }

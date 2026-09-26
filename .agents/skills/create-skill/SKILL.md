@@ -131,17 +131,19 @@ skill's artifacts.
 ## Initial and target condition
 
 - **Initial condition:** a description or a source skill, a Phase 0 discovery verdict that no installed skill already covers it, plus the ontological anchors found in Phase 1.
-- **Target condition:** a SKILL.md and its templates that pass `skill-maintenance` validation with no blocking finding.
+- **Target condition:** a SKILL.md and its templates with zero findings from the mechanical checks (prescreen, contract audit, S9/S10 sweep, corpus render tests) and zero unresolved S/T validation failures, plus one recorded functional trial in which a representative task run through the new skill meets its predeclared expected result. Structural validity alone is not the target: a skill can pass every check and still not do its job.
 
 ## Step types
 
 | Phase | Type | Oracle / critique |
 |-------|------|-------------------|
-| 0 Discover | D | `skill-discovery` route fit scores recomputed in `lisp_eval`; the operator decides extend vs create |
-| 1 Research, 2 Describe, 3 Scaffold | P | `skill-maintenance` validation; the operator |
-| Anchoring terms | D | `onto_anchor` |
-| 4 Validate | D | `skill-maintenance` checks and prescreen scripts |
-| 5 Converge | D | the validation result; at most 2 re-entries |
+| 0 Discover | P + D | dimension scores are the model's (P, critiqued by the operator's extend-vs-create decision); fit, floor and band are recomputed in `lisp_eval` (D) |
+| 1 Research, 2 Describe, 3 Scaffold | P | Phase 4 checks; the operator |
+| Anchoring terms (Phase 1 step 3) | D | `onto_anchor` |
+| 4 Validate — mechanical | D | audit scripts and `cargo test -p agent --lib corpus_` exit counts |
+| 4 Validate — S1–S13 read | P | `skill-maintenance` validate, critiqued by the mechanical counts and the operator |
+| 4 Functional trial | D | the predeclared expected result for the trial task |
+| 5 Converge | D | the `lisp_eval` gate over the Phase 4 counts; at most 2 re-entries |
 
 ## PDCA Loop
 
@@ -152,9 +154,9 @@ Plan:   Phase 0 — Discover     → Route against installed skills; extend or f
 Plan:   Phase 1 — Research     → Find academic/industry ontological anchors
 Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape, delegates
 Do:     Phase 3 — Scaffold    → Generate SKILL.md + .j2 templates
-Check:  Phase 4 — Validate    → Run skill-maintenance validation
-Check:  Phase 5 — Converge     → Check validation passed
-Act:    Phase 5 — Converge     → If validation failed, re-enter at Phase 1 (at most 2 re-entries)
+Check:  Phase 4 — Validate    → Count mechanical findings, S1–S13 failures, and run one functional trial
+Check:  Phase 5 — Converge     → lisp_eval gate over the counts
+Act:    Phase 5 — Converge     → Re-enter at the phase that owns the failure (3 for artifact/trial defects, 1 for missing anchors); at most 2 re-entries
 ```
 
 ## Composed Skills
@@ -185,7 +187,7 @@ Run once, before any research or writing. A new skill that duplicates or belongs
    - `full` (best fit ≥ 0.80): stop. Report the covering skill; the request is routed there, not built. Creating anyway requires the operator's explicit override, recorded with the reason.
    - `partial` (0.40–0.79): run discovery's detect-gap phase on the uncovered capabilities. `extend_skill` or `route_to_existing_skill` → present to the operator the choice between extending (or folding into) that skill and creating a new one, with the fit evidence; extension goes through `skill-maintenance`'s optimize loop, not this skill. Continue to Phase 1 only on a `create_skill` recommendation or the operator's choice to create.
    - `none` (< 0.40): continue to Phase 1, carrying `uncovered_capabilities` as the scope.
-4. Record the verdict (band, best-fitting skill and fit, decision) in the Phase 2 specification. This gate runs once; Phase 5 re-entries restart at Phase 1, not here.
+4. Record the verdict (band, best-fitting skill and fit, decision) in the Phase 2 specification. This gate runs once; Phase 5 re-entries never return here. The dimension scores are the model's judgment; only the arithmetic is deterministic, so a borderline band (within 0.05 of 0.40 or 0.80) is presented to the operator rather than acted on automatically.
 
 ### Phase 1 — Research (find ontological anchors)
 
@@ -200,8 +202,10 @@ Run once, before any research or writing. A new skill that duplicates or belongs
      or domain-specific ontology that formalizes this domain?
 2. Record the ontological anchors: for each anchor, cite the source
    (author, year, paper/standard) and describe how it shapes the skill.
-3. Select the ontology reference set.
-4. Derive the PDCA shape from the anchors.
+3. Call `onto_anchor` for each domain term the skill will name, classify or compute (its process, entity types and quality criteria). Record each resolved anchor and its rung; a coarse (core-rung) anchor carries its ruling path, never a private definition. Count the terms that resolved only to the core rung.
+4. Select the ontology reference set.
+5. Derive the PDCA shape from the anchors.
+6. Write the functional trial now, before any scaffolding: one representative task for the new skill and its expected result, stated so a tool, test or the operator can check it (e.g. a deterministic contains/regex evaluator, an expected output field, or a named operator judgment). The trial is fixed before the artifact exists so the artifact cannot be fitted to it.
 
 ### Phase 2 — Describe (capture specification)
 
@@ -253,7 +257,8 @@ Generate the skill artifacts:
    `bash kask/scripts/audit/skill-corpus-prescreen.sh` and
    `bash kask/scripts/audit/skill-corpus-contract-audit.sh` via `terminal`.
    A new template that either script flags is a scaffold defect: fix it and
-   re-run, at most twice, before Phase 4.
+   re-run, at most twice, before Phase 4. The scaffold and translate
+   templates do not report validation; these scripts are the check.
 
 ### From a source skill (translation entry)
 
@@ -265,8 +270,12 @@ tool calls to kask tools (deterministic computation → `lisp_eval`, data
 retrieval → the MCP tool, composition → `skill`, prompts →
 `render_template`, files → `read_file`/`write_file`/`edit_file`). Mark any
 source concept with no kask equivalent `[unresolved: no kask equivalent for
-<source_ref>]` instead of inventing one. The artifact contract and pre-check
-above apply unchanged; then continue at Phase 4.
+<source_ref>]` instead of inventing one. Reconcile the returned
+`translation_summary` with `lisp_eval`: form
+`(= source_steps (+ steps_mapped (length unresolved_concepts)))`; a false
+result means a source step was silently dropped — re-render before Phase 4.
+The artifact contract and pre-check above apply unchanged; then continue at
+Phase 4.
 
 #### How to write SKILL.md instructions that use tools
 
@@ -283,8 +292,8 @@ Each instruction step should be concrete and tool-oriented:
    step 2. Produce a JSON object with the fields specified in the template.
 
 3. Call `lisp_eval` to check structural invariants:
-   form: "(let ((results (assoc \"findings\" step_3_result))) (length results))"
-   env: { "step_3_result": <your analysis output> }
+   form: "(let ((results (assoc \"findings\" analysis))) (length results))"
+   env: { "analysis": <your analysis output> }
    If the result is 0, return to step 2 and produce more findings.
 
 4. Call `curator_consult` to check prior analyses:
@@ -348,18 +357,50 @@ If any MCP tool call fails, call `curator_report_skill_use_issue` with:
 Then continue with the best available information — do not abort.
 ```
 
-### Phase 4 — Validate (delegate to skill-maintenance)
+### Phase 4 — Validate (mechanical counts, S1–S13, functional trial)
 
-Call the `skill` tool:
-  name: "skill-maintenance"
-  task: "validate skill {{ skill_name }}"
+1. **Mechanical checks (D).** Run via `terminal` and count the findings
+   that name the new skill or its templates:
+   - `bash kask/scripts/audit/skill-corpus-prescreen.sh`
+   - `bash kask/scripts/audit/skill-corpus-contract-audit.sh`
+   - `bash kask/scripts/audit/skill-corpus-callsite-audit.sh`
+   - `bash kask/scripts/audit/skill-corpus-s9-s10-sweep.sh`
+   - `cargo test -p agent --lib corpus_` (template render and metadata strip; a failure counts once per failing test)
+   Count from the full output (`grep -c` on the saved output), never from a truncated display. The sum is `scaffold_findings`.
+2. **S1–S13 read (P).** Call the `skill` tool with name
+   `skill-maintenance` and task "validate skill <name>", and work its
+   validate phase. The `skill` tool returns instructions only: you perform
+   the checks. Add each failed S/T check to `scaffold_findings`. A check you
+   could not perform is reported `unverified`, never passed.
+3. **Functional trial (D).** Run the trial task fixed in Phase 1 step 6
+   through the new skill (follow its SKILL.md, or delegate it via
+   `swarm_delegate_local` to a card declaring the skill), and check the
+   result against the expected result with the named evaluator
+   (`swarm_evaluate_local` for contains/not_contains/regex). Set
+   `functional` to 1 if it met the expectation, else 0. If the trial cannot
+   run (a required tool, key or spend is unavailable), set `functional` to 0
+   and record the blocker; the skill is not done.
+4. Set `research_findings` to the number of Phase 5-relevant research gaps:
+   PDCA phases with no cited anchor, plus required domain terms that
+   `onto_anchor` could not resolve beyond the core rung without a ruling.
 
 ### Phase 5 — Converge
 
-Check that validation passed. If validation failed, identify the specific
-failures and re-enter at Phase 1 with the failure report as prior context.
-At most 2 re-entries; if validation still fails, stop and report the
-remaining failures to the operator.
+Call `lisp_eval` with the Phase 4 counts and the number of re-entries so far:
+  form: "(cond ((and (= scaffold 0) (= research 0) (= functional 1)) (quote done)) ((>= reentries 2) (quote stop-and-report)) ((> research 0) (quote reenter-phase-1)) (t (quote reenter-phase-3)))"
+  env: { "scaffold": <scaffold_findings>, "research": <research_findings>, "functional": <0 or 1>, "reentries": <0-based count> }
+
+- `done`: report the skill with its counts and the trial evidence.
+- `reenter-phase-3`: fix the artifacts against the listed findings or the
+  trial failure, then rerun Phase 4. Do not redo research for an artifact
+  defect.
+- `reenter-phase-1`: research the missing anchors, then continue through
+  Phases 2–4.
+- `stop-and-report`: deliver what exists with every open finding and the
+  trial result listed; the operator decides.
+
+The trial task and its expected result never change between re-entries;
+changing them to pass is fitting the test to the artifact.
 
 Every scaffolded SKILL.md states: an initial condition (inputs and how the
 current state is measured), an observable target condition, its bounded
@@ -370,7 +411,7 @@ labelling each step D (naming its oracle) or P (naming its critic).
 
 | Template | Purpose |
 |----------|---------|
-| `scaffold.j2` | Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows, typed `[inference]` contracts, and a prescreen-ready validation block. |
+| `scaffold.j2` | Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows and typed `[inference]` contracts; validation is left to the Phase 3 scripts and Phase 4. |
 | `translate.j2` | Translate a classified source skill from another agent system into a SKILL.md body plus .j2 templates under the same artifact contract, marking concepts with no kask equivalent as unresolved. |
 
 To render a template, call `render_template` with the ref (e.g. `create-skill/scaffold`):

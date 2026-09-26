@@ -1010,10 +1010,13 @@ impl NativeAgent {
             // zed-kask: D1 — use upstream's project-aware body resolver while
             // retaining the skill outcome hook. The operator's evaluation tool
             // is Curator-only (see `new_session`).
-            thread.add_tool(SkillTool::with_body_resolver(
-                skills_resolver_for_project(weak.clone(), project_id),
-                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
-            ));
+            thread.add_tool(
+                SkillTool::with_body_resolver(
+                    skills_resolver_for_project(weak.clone(), project_id),
+                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
+                )
+                .with_invoker(agent_id.0.clone()),
+            );
             // `lisp_eval` and `render_template` are already registered via
             // `add_default_tools` — they are stateless tools available to all
             // threads. Only `SkillTool` needs per-session registration because
@@ -4678,7 +4681,7 @@ pub fn activate_delegated_skill(name: String, cx: &mut AsyncApp) -> Task<Result<
             .chain(index.project_skills.iter().flat_map(|group| &group.skills))
             .cloned()
             .collect();
-        resolve_invocable_skill(&apply_skill_overrides(&all), &name)
+        resolve_invocable_skill(&apply_skill_overrides(&all), &name, DELEGATED_SKILL_INVOKER)
             .map(|skill| (skill, <dyn Fs>::global(cx)))
     });
     let (skill, fs) = match resolved {
@@ -4689,9 +4692,13 @@ pub fn activate_delegated_skill(name: String, cx: &mut AsyncApp) -> Task<Result<
         let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
             .await
             .map_err(Into::into);
-        activate_skill(&skill, body)
+        activate_skill(&skill, body, DELEGATED_SKILL_INVOKER)
     })
 }
+
+/// Invoker stamped on skill outcomes activated over inference IPC
+/// (`host/skill`) by delegated swarm agents.
+pub const DELEGATED_SKILL_INVOKER: &str = "delegated";
 
 /// Global hook for the kask registry templates directory (D1).
 /// Wired in `main.rs` at startup. The `render_template` tool reads this
@@ -4787,7 +4794,9 @@ pub fn record_mcp_tool_outcome(
 /// (success, missing dependencies, unreadable body). A skill-not-found is a
 /// request error with no skill to attribute; an authorization denial is the
 /// operator's choice, not a skill reliability signal — neither is recorded.
-pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, bool, Option<&str>) + Send + Sync>;
+/// Arguments: skill id, invoker (the session agent id, or
+/// [`DELEGATED_SKILL_INVOKER`]), success, error.
+pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
 
 /// Global hook for skill outcome recording. Wired in `main.rs` to a closure
 /// that stores each outcome as a `reg.skill.<id>.outcome` span payload in the
@@ -4817,7 +4826,7 @@ pub(crate) fn scoped_skill_outcome_recorder_for_test(
 /// Record a skill execution outcome. Best-effort by design: when no recorder
 /// is wired (tests, non-kask embedders) the outcome is dropped with a debug
 /// log — telemetry must never fail a tool call.
-pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) {
+pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error: Option<&str>) {
     // Same unlocked-dispatch pattern as `record_mcp_tool_outcome` above.
     #[cfg(test)]
     let recorder =
@@ -4825,7 +4834,7 @@ pub fn record_skill_outcome(skill_id: &str, success: bool, error: Option<&str>) 
     #[cfg(not(test))]
     let recorder = SKILL_OUTCOME_RECORDER.get();
     match recorder {
-        Some(record) => record(skill_id, success, error),
+        Some(record) => record(skill_id, invoker, success, error),
         None => log::debug!(
             "record_skill_outcome: recorder not wired — outcome for \
              {skill_id} not recorded"
@@ -5315,14 +5324,14 @@ mod internal_tests {
     fn scoped_skill_outcome_recorder_is_thread_local_and_panic_safe() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let captured = calls.clone();
-        let recorder: SkillOutcomeRecorder = Arc::new(move |_, _, _| {
+        let recorder: SkillOutcomeRecorder = Arc::new(move |_, _, _, _| {
             captured.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         });
 
         let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _override = scoped_skill_outcome_recorder_for_test(recorder);
-            record_skill_outcome("owner", true, None);
-            std::thread::spawn(|| record_skill_outcome("concurrent", true, None))
+            record_skill_outcome("owner", "Zed Agent", true, None);
+            std::thread::spawn(|| record_skill_outcome("concurrent", "Zed Agent", true, None))
                 .join()
                 .expect("concurrent recorder call");
             assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -5330,7 +5339,7 @@ mod internal_tests {
         }));
 
         assert!(unwind.is_err());
-        record_skill_outcome("after-unwind", true, None);
+        record_skill_outcome("after-unwind", "Zed Agent", true, None);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
@@ -5339,50 +5348,61 @@ mod internal_tests {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
         let mut recorder_override = scoped_skill_outcome_recorder_for_test(std::sync::Arc::new(
-            move |skill_id, success, error| {
+            move |skill_id, invoker, success, error| {
                 if let Ok(mut entries) = captured.lock() {
-                    entries.push((skill_id.to_string(), success, error.map(str::to_string)));
+                    entries.push((
+                        skill_id.to_string(),
+                        invoker.to_string(),
+                        success,
+                        error.map(str::to_string),
+                    ));
                 }
             },
         ));
-        record_skill_outcome("bug-hunt", true, None);
-        record_skill_outcome("tdd", false, Some("declared dependencies not installed"));
-        let relevant: Vec<(String, bool, Option<String>)> = {
+        record_skill_outcome("bug-hunt", "Zed Agent", true, None);
+        record_skill_outcome(
+            "tdd",
+            "Curator",
+            false,
+            Some("declared dependencies not installed"),
+        );
+        let relevant: Vec<(String, String, bool, Option<String>)> = {
             let recorded = recorded.lock().expect("recorded lock");
             recorded
                 .iter()
-                .filter(|(id, _, _)| id == "bug-hunt" || id == "tdd")
+                .filter(|(id, _, _, _)| id == "bug-hunt" || id == "tdd")
                 .cloned()
                 .collect()
         };
         assert_eq!(
             relevant,
             vec![
-                ("bug-hunt".to_string(), true, None),
+                ("bug-hunt".to_string(), "Zed Agent".to_string(), true, None),
                 (
                     "tdd".to_string(),
+                    "Curator".to_string(),
                     false,
                     Some("declared dependencies not installed".to_string())
                 )
             ],
-            "this test's two calls are recorded in order"
+            "both calls are recorded in order with the agent that ran them"
         );
 
         // Re-settable: a second set replaces the first.
         let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
         let flag = replaced_called.clone();
-        recorder_override.replace(std::sync::Arc::new(move |_, _, _| {
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _, _| {
             if let Ok(mut called) = flag.lock() {
                 *called = true;
             }
         }));
-        record_skill_outcome("media-workflow", true, None);
+        record_skill_outcome("media-workflow", "Zed Agent", true, None);
         assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
         let relevant_after: Vec<_> = {
             let recorded = recorded.lock().expect("recorded lock");
             recorded
                 .iter()
-                .filter(|(id, _, _)| id == "bug-hunt" || id == "tdd" || id == "media-workflow")
+                .filter(|(id, _, _, _)| id == "bug-hunt" || id == "tdd" || id == "media-workflow")
                 .cloned()
                 .collect()
         };

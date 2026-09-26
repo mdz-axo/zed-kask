@@ -94,6 +94,7 @@ fn format_state_block(snapshot: &serde_json::Value) -> String {
             .unwrap_or_else(|| "unavailable".to_string())
     };
     let escalations = measured_count("escalation_count");
+    let pending_escalations = measured_count("pending_escalations");
     let critical = measured_count("critical_alerts");
     let memory_degraded = snapshot
         .get("memory")
@@ -129,6 +130,7 @@ fn format_state_block(snapshot: &serde_json::Value) -> String {
         "## Current System State (snapshot at session start — pull curator_status for live updates)\n\
         - Regulation acceptance rate: {acceptance_rate}\n\
         - Escalations (current cycle): {escalations}\n\
+        - Escalations awaiting review: {pending_escalations}\n\
         - Critical alerts: {critical}\n\
         - Memory degraded: {memory_degraded}\n\
         - Alert log: {alert_log} ({alert_log_status})\n\
@@ -253,6 +255,7 @@ mod status_snapshot_tests {
         let state = format_state_block(&json!({}));
         assert!(state.contains("Regulation acceptance rate: unavailable"));
         assert!(state.contains("Escalations (current cycle): unavailable"));
+        assert!(state.contains("Escalations awaiting review: unavailable"));
         assert!(state.contains("Critical alerts: unavailable"));
         assert!(state.contains("Memory degraded: unavailable"));
         assert!(state.contains("Alert log: unavailable (unavailable)"));

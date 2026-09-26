@@ -1,4 +1,4 @@
-{# goal: Scaffold a complete skill (SKILL.md body + .j2 templates) from a user description. The SKILL.md body is the source of truth and carries the PDCA loop; templates are companion step-leaves. Every generated template's goal annotation is stamped verbatim from the generated SKILL.md's own Registry Templates row, and the generated corpus must pass the prescreen before the build responds. #}
+{# goal: Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows and typed `[inference]` contracts; validation is left to the Phase 3 scripts and Phase 4. #}
 [inference]
 contract:
   input:
@@ -9,7 +9,6 @@ contract:
     sk_description: string
     sk_body: string
     template_bodies: array
-    validation: object
 visibility: Private
 ---
 
@@ -57,9 +56,15 @@ Generate the SKILL.md body:
   This table is the single source for every template's goal annotation.
 - The body must carry the skill's core PDCA loop itself (Plan → Do → Check →
   Act): a named Check signal, a threshold or convergence criterion, a bound
-  (max iterations or a stability condition), and an Act re-entry. Templates
+  (a maximum iteration count), and an Act re-entry. Templates
   are leaves of this loop, never its carrier. Derive the loop's shape from
   the ontological anchors found in Phase 1.
+- The Check signal comes from a tool, a test or the operator, never from
+  the model scoring its own output. The bound is a maximum iteration count;
+  a stability condition may stop the loop earlier but never replaces the
+  maximum.
+- An "Initial and target condition" section and a step-type table labelling
+  each step D (naming its oracle) or P (naming its critic).
 
 ## Artifact 2 — .j2 templates (companion step-leaves)
 
@@ -76,16 +81,12 @@ For each reasoning phase in the Instructions section, generate one template:
 - Jinja2 variables matching the contract inputs, and only the contract inputs.
 - An expected JSON output shape.
 
-## Validation gate
+## Validation
 
-Before responding, check the generated corpus mechanically:
-
-- Every template's goal parses as a complete sentence (terminal punctuation).
-- Every contract input is consumed by the template body; every declared
-  output appears in the body's output instructions.
-- The generated set would pass `kask/scripts/audit/skill-corpus-prescreen.sh`
-  (goal presence, length, overlap). A generated template that fails the
-  prescreen is a build defect, not a triage candidate.
+Do not report whether the output is valid. The create-skill Phase 3
+pre-check scripts and Phase 4 measure it; a self-reported pass is not
+evidence. Write so those checks pass: each goal one complete sentence on one
+line, every contract input consumed, every declared output named.
 
 ## Output Requirements
 
@@ -98,15 +99,7 @@ Respond with a JSON object:
   "sk_body": "<complete SKILL.md markdown content>",
   "template_bodies": [
     { "path": "<basename>.j2", "content": "<complete .j2 content>" }
-  ],
-  "validation": {
-    "name_valid": true,
-    "description_specific": true,
-    "pdca_loop_in_body": true,
-    "goals_stamped_from_rows": true,
-    "contracts_match_bodies": true,
-    "prescreen_would_pass": true
-  }
+  ]
 }
 ```
 
