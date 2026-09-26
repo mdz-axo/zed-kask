@@ -126,7 +126,12 @@ fail→0.0) — a healthy swarm that fails the task must NOT converge. When
 swarm-health axes only; the human Go See loop (C2) covers the task-success gap,
 never an LLM judge.
 The sequence `d_1, d_2, …` has converged when `|d_i − d_{i−1}| < 0.03` for 3
-consecutive iterations. **Algedonic override:** a 402 or un-acknowledged
+consecutive iterations. The inputs (`variety_coverage`, `diversity`,
+`loop_closure`) are measured by the check phase (P for any judged component,
+critiqued by the Go See loop); the distance and the stability test are D —
+compute them with `lisp_eval`, never estimate them:
+- distance form: `(let ((base (+ (* (- 1 vc) (- 1 vc)) (let ((g (max 0 (- 0.25 div)))) (* g g)) (* (- 1 lc) (- 1 lc))))) (sqrt (if (is_null s) base (+ base (* (- 1 s) (- 1 s))))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "s": <task_success score, or null> }`
+- stability form over the last four distances, newest last: `(and (= (length ds) 4) (< (abs (- (nth 1 ds) (nth 0 ds))) 0.03) (< (abs (- (nth 2 ds) (nth 1 ds))) 0.03) (< (abs (- (nth 3 ds) (nth 2 ds))) 0.03))`, env `{ "ds": [d_{i-3}, d_{i-2}, d_{i-1}, d_i] }`. Fewer than four distances cannot converge. **Algedonic override:** a 402 or un-acknowledged
 curator dispatch escalates regardless of `d` — a broken algedonic channel is
 never read as "no deviation" (the `.rules` "unwrap_or(0)" trap enforced as a
 convergence invariant).
