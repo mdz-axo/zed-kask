@@ -30,7 +30,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 3. Classify the entity type (person, organization, date, quantity, location, etc.).
 4. Map the entity to the corresponding schema field it populates.
 5. Assign a confidence score (0.0-1.0) reflecting genuine extraction certainty.
-6. Record the location of the entity in the source text using character offsets.
+6. Record the approximate location of the entity in the source text using character offsets (a locating hint; the exact text is what is verified).
 7. Identify any text segments that contain structured information but do not clearly map to a specific schema field as unmapped text.
 
 ### extract-relations
@@ -52,6 +52,12 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 4. Resolve conflicts if multiple entities map to the same field by selecting the most confident or most recent.
 5. Infer missing but required fields from surrounding context if possible.
 6. Report fields that cannot be populated from available information as unresolved fields.
+
+### Verify (D — `lisp_eval`)
+
+Before mapping, check every entity's `entity_text` and every relation trigger against the source with `lisp_eval` `(string-contains entity_text source_text)`. Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
+
+**D/P.** Entity identification, typing, relation extraction, confidence and field inference are P, critiqued by this substring check and by the operator; the substring check and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007), ACE2005 standoff annotation, CoNLL-2012 coreference.
 
 ### Convergence
 
