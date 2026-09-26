@@ -33,7 +33,7 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
    - form: `(let ((fit (min 1 (max 0 (+ (* 0.5 c) (* 0.25 d) (* 0.25 (min 1 (+ t boost)))))))) (list fit (>= fit 0.3) (cond ((>= best 0.8) "full") ((>= best 0.4) "partial") (t "none"))))`
    - env: `{ "c": <capability>, "d": <description>, "t": <trigger>, "boost": <0.2 if the epistemic boost applies, else 0>, "best": <the highest recomputed fit> }`
 5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
-6. When `epistemic_state` is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0].
+6. `epistemic_state` is optional and self-reported by the caller; no skill or tool measures it today. When it is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0]. Record `boost_applied` (true/false) and its reason in the output so the boost can be checked.
 7. Do not recommend skill-discovery as a match — it is a meta-skill.
 8. Respond with a JSON object: `coverage_assessment`, `recommendations`, `uncovered_capabilities`.
 9. Re-entry: when coverage is partial or none AND the catalog has changed since this route ran (a candidate was installed), re-run route once against the grown catalog. Bound: max 2 routing passes per task; a second partial result emits the gap signals and stops.
@@ -59,11 +59,25 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 2. Validate the format by checking for YAML frontmatter, a valid name, a specific description, and the absence of deprecated markers.
 3. Assess instruction quality to ensure steps are imperative, concrete, actionable, bounded in scope, and have clear trigger conditions.
 4. Check Magna Carta compliance and system constraints, including user sovereignty (P1), affirmative consent (P2), generative space (P3), clear boundaries (P4), headless compliance, Regulation span validity, and crate path validity.
-5. Score each check from 0 to 2, where 0 is fail, 1 is partial, and 2 is pass.
+5. Score each of the 16 checks (4 format, 5 quality, 7 safety) from 0 to 2, where 0 is fail, 1 is partial, and 2 is pass. The maximum is 32.
 6. Respond with a JSON object containing `format_validation`, `quality_evaluation`, `safety_evaluation`, `overall_score`, and `recommendation`.
 7. Score every check without omitting any.
-8. Reject the skill if any safety check scores 0.
-9. Revise the skill if the overall score is less than 16 but there are no safety failures.
+8. Compute `overall_score` and the recommendation in `lisp_eval`, never by hand. Bind `fmt`, `q` and `s` to the format, quality and safety score lists and `threshold` to the installable minimum:
+   `(begin (define sum (lambda (xs) (if (= (length xs) 0) 0 (+ (car xs) (sum (cdr xs)))))) (let ((total (+ (sum fmt) (sum q) (sum s)))) (list total (if (member 0 s) "reject" (if (< total threshold) "revise" "install")))))`
+   Tested: all 2s → `[32, install]`; one safety 0 → `reject`; all 1s at threshold 24 → `[16, revise]`. Any safety score of 0 rejects deterministically, including judgment checks such as P3.
+9. The installable threshold is 16. It was set when the template counted 11 checks (maximum 22); with 16 checks it is an operator decision pending (see Constraints).
+
+## Initial and target condition
+
+- **Initial condition:** the task or gap description, its context, and the installed skill catalog (plus, for evaluate, the candidate skill's content).
+- **Target condition:** route returns recommendations whose fit, floor and coverage band were recomputed in `lisp_eval`; evaluate returns a recommendation computed in `lisp_eval` from all 16 scores. Installation stays the operator's decision.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Dimension scores, gap classification and impact, check scores | P | the operator, who decides installation |
+| Composite fit, boost, floor, band; overall score and recommendation | D | the `lisp_eval` forms above |
 
 ## Pipeline
 
@@ -101,6 +115,6 @@ Template context variables (from each template's [inference] contract):
 
 - `skill-discovery-route.j2`: Public. Evaluates every skill in the catalog — do not skip seemingly-irrelevant skills without scoring. fit_score and each dimension score are floats in [0.0, 1.0]. If coverage is `full`, `uncovered_capabilities` must be empty; if `none`, recommendations may be empty but `uncovered_capabilities` must be non-empty.
 - `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to route.
-- `skill-discovery-evaluate.j2`: Public. 11 checks scored 0–2; max score 22; min installable 16; safety 0 → reject.
+- `skill-discovery-evaluate.j2`: Public. 16 checks scored 0–2; max score 32; min installable 16 pending operator decision (the 16 dates from an 11-check count); safety 0 → reject.
 - `lisp_eval` is available for deterministic scoring formulas (e.g., weighted combinations of quality, safety, and fit scores).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

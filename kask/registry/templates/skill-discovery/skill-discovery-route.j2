@@ -10,6 +10,7 @@ contract:
     recommendations: array
     uncovered_capabilities: array
     coverage_assessment: string
+    boost_applied: object
 visibility: Public
 ---
 {# goal: ROUTE phase of skill-discovery — match a task or capability gap against the installed skill catalog and return ranked skill recommendations with fit scores plus uncovered capabilities for detect-gap. #}
@@ -33,7 +34,7 @@ You are a skill routing analyst. Given a task description and the installed skil
 {% if epistemic_state %}
 ## Epistemic State (Optional)
 
-The calling agent has reported its epistemic state. Use this to boost trigger-alignment for certainty-finding skills.
+The calling agent has self-reported its epistemic state; nothing measures it, so record in `boost_applied` whether you applied the boost and why. Use this to boost trigger-alignment for certainty-finding skills.
 
 - **Confidence**: {{ epistemic_state.confidence }} (0.0–1.0)
 - **Uncertainty type**: {{ epistemic_state.uncertainty_type }}
@@ -110,6 +111,7 @@ Respond with a JSON object:
 ```json
 {
   "coverage_assessment": "full|partial|none",
+  "boost_applied": {"applied": false, "reason": "no epistemic_state supplied (self-reported by the caller when present)"},
   "recommendations": [
     {
       "rank": 1,

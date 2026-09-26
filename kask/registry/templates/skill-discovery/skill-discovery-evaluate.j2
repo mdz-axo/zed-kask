@@ -75,7 +75,7 @@ Each check scores 0–2:
 | 1 | Partially passes (minor issue) |
 | 0 | Fails |
 
-Maximum possible score: 22 (11 checks × 2). Minimum installable score: 16.
+Maximum possible score: 32 (16 checks × 2). Minimum installable score: 16 (pending operator review; it was set for 11 checks). Report the scores; the agent computes `overall_score` and the recommendation in `lisp_eval`.
 
 ## Output Requirements
 
@@ -106,9 +106,9 @@ Respond with a JSON object:
     "headless_compliance": {"score": 0|1|2, "notes": "..."},
     "reg_span_validity": {"score": 0|1|2, "notes": "..."},
     "crate_path_validity": {"score": 0|1|2, "notes": "..."},
-    "subtotal": 4
+    "subtotal": 14
   },
-  "overall_score": 22,
+  "overall_score": 32,
   "recommendation": "install|revise|reject",
   "recommendation_reason": "Why this recommendation was made"
 }
