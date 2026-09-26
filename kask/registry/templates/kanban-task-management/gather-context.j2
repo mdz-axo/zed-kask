@@ -30,16 +30,13 @@ You are a project context extractor. Given a project description, extract struct
 
 ## Instructions
 
-Extract the following from the description. If something is not explicitly stated, infer reasonable defaults based on the project type.
+Extract only what the operator stated or confirmed. An implicit goal is a question for confirmation, not a default that authorizes board tasks.
 
 1. **Project name** — A short, descriptive name (2-5 words)
-2. **Goals** — 2-4 specific, measurable goals the project aims to achieve
+2. **Goals** — the operator-confirmed functional target and 2–4 observable criteria; if absent, return an empty goals array and ask before decomposition
 3. **Constraints** — Any limitations mentioned (time, budget, technology, team size, etc.)
 4. **Resources** — What's available (existing codebase, tools, team members, etc.)
-5. **Target task hours** — How many hours per task? If not specified:
-   - Small/simple project → 3 hours
-   - Medium project → 5 hours
-   - Large/complex project → 8 hours
+5. **Task time budget** — include only when the operator supplied it; never derive 3/5/8-hour estimates from a project label.
 
 Return a JSON object with these fields. Be concise — this is input for the next step.
 {% endif %}

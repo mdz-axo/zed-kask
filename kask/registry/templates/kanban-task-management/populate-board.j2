@@ -4,6 +4,8 @@ contract:
   input:
     triage_phase: string
     project_name: string
+    goal_id: string
+    goal_criteria: array
     accepted_tasks: array
     recomposition: object
   output:
@@ -28,6 +30,10 @@ You are a kanban board population planner. Convert reviewed, accepted tasks into
 ## Project
 {{ project_name }}
 
+## Confirmed Goal and Criteria
+Goal ID: {{ goal_id }}
+{{ goal_criteria | tojson }}
+
 ## Accepted Tasks
 {{ accepted_tasks | tojson }}
 
@@ -38,9 +44,9 @@ You are a kanban board population planner. Convert reviewed, accepted tasks into
 
 ## Instructions
 
-For each accepted task, produce one board task. Preserve the task title, description, estimate, labels, priority, dependencies, and acceptance criteria. Set every new task's initial status to `Todo` unless a dependency requires it to remain `Blocked`.
+For each accepted task that advances a confirmed criterion, produce one board task with its title, description, criteria, and `advances` citations. Each citation contains the actual `goal_id`, criterion index, and exact criterion text from `goal_criteria`. A task with no defensible citation is not ready for creation. New tasks start in Backlog; the create tool has no Todo/Blocked status input.
 
-Assign a phase when the recomposition plan identifies one. A phase must reflect the plan's task labels or integration order; do not invent a delivery phase. Include dependency titles exactly as supplied so the board can resolve them.
+Keep any operator-provided estimate, priority, labels, phase or dependency in the task description when needed for readers; `kanban_task_create` does not persist those as typed fields. Do not claim a dependency is automatically enforced by the board.
 
 ## Output Format
 
@@ -52,61 +58,30 @@ Return a JSON object:
     {
       "title": "Task title",
       "description": "Board-ready task description",
-      "status": "Todo|Blocked",
-      "priority": "low|medium|high|critical",
-      "estimated_hours": 0,
-      "story_points": 0,
-      "labels": ["label"],
       "criteria": ["Verifiable acceptance criterion"],
-      "dependencies": ["Prerequisite task title"],
-      "phase": "Recomposition phase name or null"
+      "advances": [{"goal_id": "confirmed goal ID", "criterion_index": 0, "criterion_text": "exact confirmed criterion"}]
     }
   ]
 }
 ```
 
-`board_tasks` is the complete, creation-ready list for the board. Do not add rejected, duplicate, or new tasks.
+`board_tasks` contains only accepted, goal-linked tasks. Reconcile task IDs and criterion text before creation; do not add rejected, duplicate or orphan tasks.
 
 ## MCP Tool Calls (Agent Action — Post-Process)
 
 These instructions are for the agent running the skill, not for the template's LLM. The process produces `board_tasks`; the agent then materializes the board by calling these MCP tools:
 
-1. Call `kanban_board_create` with `{"name": "{{ project_name }}", "columns": null}` (standard 5-column layout). Record the returned `board_id`. If this call fails, abort — all subsequent task creates depend on the board_id.
+1. Call `kanban_board_create` with the confirmed project name, `columns: null`, and a stable idempotency key. Record its `board_id`; a failed create blocks task creation. Reuse the same key on an uncertain retry, never create another board speculatively.
 2. For each task in `board_tasks`, call `kanban_task_create` with:
    - `board_id`: the board_id from step 1
    - `title`: the task title
    - `description`: the task description
    - `criteria`: the acceptance criteria array
-   If a task creation fails, record the error and continue with remaining tasks.
-3. Call `kanban_task_list` with `{"board_id": "..."}` to get all tasks. Verify the count matches.
-4. Emit the combined result as a ```kanban fenced block for KanbanWidget rendering:
-
-````
-```kanban
-{
-  "viz": "kanban",
-  "board_id": "<board_id from step 1>",
-  "board_name": "{{ project_name }}",
-  "columns": [
-    {"status": "backlog"},
-    {"status": "ready"},
-    {"status": "in_progress"},
-    {"status": "review"},
-    {"status": "done"}
-  ],
-  "tasks": [
-    {"task_id": "...", "title": "...", "status": "backlog"}
-  ],
-  "provenance": {
-    "tool": "kanban_task_list",
-    "span_id": "<span_id from the kanban_task_list tool response>",
-    "server": "hkask-mcp-kata-kanban"
-  }
-}
-```
-````
-
-The `provenance` field is critical — it makes the move chips clickable in the widget. The `server` must be `"hkask-mcp-kata-kanban"` and `span_id` must come from the actual tool response.
+   - `advances`: the verified goal-criterion citations
+   - `idempotency_key`: a stable, distinct key for this task, reused on retry.
+   A failed creation is a named partial board, not a complete success; never invent its task ID.
+3. Re-read with `kanban_task_list`; reconcile returned task IDs against successful creation receipts and each task's `advances_count` against its submitted citations. A count mismatch leaves board population incomplete.
+4. Report only the returned board and task IDs/statuses. If the owning tool provides a `display_hint`, copy that widget block verbatim; do not construct a `span_id` or clickable provenance absent from the response.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 {% endif %}

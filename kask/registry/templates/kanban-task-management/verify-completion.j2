@@ -1,8 +1,9 @@
-{# goal: Evaluate deliverables against acceptance criteria. Includes post-step instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. #}
+{# goal: Assess Review evidence criterion by criterion, record failed feedback without a pass signal, and call kanban_task_verify only after the operator confirms a supported pass. #}
 [inference]
 contract:
   input:
     triage_phase: string
+    task_id: string
     task_title: string
     criteria: array
     deliverables: array
@@ -30,6 +31,7 @@ This step is not active for the current phase ({{ triage_phase }}). Return:
 You are a task verification evaluator. Your job is to determine whether submitted work satisfies a task's acceptance criteria. Be rigorous but fair. If something is missing, say exactly what and why.
 
 ## Task
+ID: {{ task_id }}
 **{{ task_title }}**
 
 ## Acceptance Criteria
@@ -67,14 +69,14 @@ Return a JSON object:
 
 ```json
 {
-  "passed": true or false,
+  "passed": false,
   "reasoning": "Overall assessment in 2-3 sentences. If failed, state the primary gap.",
-  "verification_tier": "ran-and-pasted | demonstrated | asserted — the weakest oracle class among satisfied criteria",
+  "verification_tier": "asserted",
   "criteria_results": [
     {
       "criterion": "The exact criterion text",
-      "satisfied": true or false,
-      "oracle_class": "ran-and-pasted | demonstrated | asserted",
+      "satisfied": false,
+      "oracle_class": "asserted",
       "evidence": "What in the submission addresses this criterion",
       "feedback": "If satisfied: brief confirmation. If not: what's missing and how to fix it."
     }
@@ -87,18 +89,18 @@ Return a JSON object:
 - "It could work" is not sufficient — demand demonstration
 - A criterion is satisfied only by `ran-and-pasted` or `demonstrated` evidence — `asserted` does not satisfy (the floor tier is never the ceiling). "Tests pass" without the pasted output is asserted.
 - `verification_tier` is the weakest oracle class among the satisfied criteria — the task's verification provenance, visible on the board.
-- If a criterion is ambiguous, interpret it in favor of the submitter
+- If a criterion is ambiguous, ask the operator to clarify it; ambiguity is not evidence of a pass
 - If ALL criteria pass → passed: true
 - If ANY criterion fails → passed: false, with specific feedback on each failure
 
 ## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The process produces the verification result; the agent then records it on the task:
+These instructions are for the invoking agent. The template's `passed` is an assessment, not the operator's confirmation and not a field accepted by `kanban_task_verify`.
 
-1. Call `kanban_task_verify` with `{"task_id": "...", "evidence": "[oracle: <verification_tier>] " + reasoning}`. The tier prefix records the verification provenance on the task. This records the verification result and (if passed) advances the task to `done`.
-2. If `passed` is true, call `kanban_task_move` with `{"task_id": "...", "target_status": "done"}` to advance the task to Done (the verify call may do this automatically, but the move is idempotent).
-3. If `passed` is false, call `kanban_task_comment` with the per-criterion feedback so the assigned agent can see what to fix. Then call `kanban_task_move` with `{"target_status": "in_progress"}` to return the task to InProgress.
-4. If a completed task needs rework, call `kanban_task_reopen` to move it back to InProgress.
+1. If `passed` is false, post per-criterion gaps via `kanban_task_comment` for `task_id` and move that Review task to InProgress for rework. **Do not call `kanban_task_verify`: any nonempty `evidence` is a pass signal.**
+2. If `passed` is true, show the cited oracle evidence to the operator and wait for their ground-truth confirmation. Without that confirmation, leave the task in Review; a model's `passed: true` cannot close it.
+3. Only on confirmed pass, call `kanban_task_verify` once on the Review task with nonempty evidence containing the operator's confirmation and the observed oracle (`[oracle: <verification_tier>] ...`). The service moves the task to Done. Re-read it; do not send an additional `kanban_task_move` to Done.
+4. If a previously completed task needs rework, use `kanban_task_reopen` on the operator's correction and preserve the original verification history.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 {% endif %}
