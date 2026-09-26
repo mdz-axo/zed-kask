@@ -90,6 +90,11 @@ large. The canonical file is `companies-mcp/research-runs/{run_id}/packet.json`
 under the user's artifacts directory. Hash its exact bytes with SHA-256 and
 invoke `company_verification_packet_check(run_id, expected_sha256)` to run the
 SAME source-check form below over the full JSON without model argument cuts.
+The packet itself is capped at 512 KiB. Never truncate an original to fit:
+place each full converted text as a plain-named file in the same run
+directory and replace `output.text` with `output.text_file` (file name) and
+`output.text_sha256` (its exact SHA-256); the tool admits it only when the
+hash matches. The packet digest then binds every referenced text hash.
 The tool returns the paired mechanical review and the packet digest, NOT a
 download attestation. The verifier still reads the entire target and source
 records and checks original PDF/file identities. A changed target or packet gets a NEW digest and receipt; old

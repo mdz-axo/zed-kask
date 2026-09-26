@@ -121,7 +121,85 @@ const MAX_VERIFICATION_PACKET_BYTES: u64 = 512 * 1024;
 // Lisp charges large source strings at admission and again during each source
 // lookup. Bound work in proportion to the admitted packet, not a tiny fixed
 // budget that rejects a valid full-original 10-K before checking any claim.
-const MAX_SOURCE_CHECK_WORK: u64 = MAX_VERIFICATION_PACKET_BYTES * 32;
+const SOURCE_CHECK_WORK_PER_BYTE: u64 = 32;
+// Full originals too large to inline travel as hash-bound sibling files in the
+// same run directory; the total admitted text (packet plus files) is bounded.
+const MAX_ADMITTED_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Replace each `output.text_file` reference with the file's verified text.
+/// Returns the admitted file bytes. The file must be a plain name inside the
+/// packet's own run directory and match `output.text_sha256` exactly.
+fn load_referenced_texts(
+    run_dir: &Path,
+    fields: &mut serde_json::Map<String, Value>,
+) -> Result<u64, McpToolError> {
+    let mut admitted = 0u64;
+    let Some(sources) = fields
+        .get_mut("source_outputs")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(0);
+    };
+    for source in sources {
+        let Some(output) = source.get_mut("output").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let Some(name) = output.get("text_file") else {
+            continue;
+        };
+        let name = name
+            .as_str()
+            .filter(|n| {
+                !n.is_empty() && !n.contains('/') && !n.contains('\\') && *n != "." && *n != ".."
+            })
+            .ok_or_else(|| {
+                McpToolError::invalid_argument("output.text_file must be a plain file name")
+            })?
+            .to_string();
+        let expected = output
+            .get("text_sha256")
+            .and_then(Value::as_str)
+            .filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+            .ok_or_else(|| {
+                McpToolError::invalid_argument(format!(
+                    "text_file {name} requires a 64-hex text_sha256"
+                ))
+            })?
+            .to_ascii_lowercase();
+        if output.contains_key("text") {
+            return Err(McpToolError::invalid_argument(format!(
+                "source with text_file {name} must not also carry inline text"
+            )));
+        }
+        let path = run_dir.join(&name).canonicalize().map_err(|error| {
+            McpToolError::not_found(format!("referenced text {name} not found: {error}"))
+        })?;
+        if !path.starts_with(run_dir) || !path.is_file() {
+            return Err(McpToolError::permission_denied(format!(
+                "referenced text {name} resolves outside the run directory"
+            )));
+        }
+        let bytes = std::fs::read(&path).map_err(|error| {
+            McpToolError::unavailable(format!("cannot read referenced text {name}: {error}"))
+        })?;
+        admitted += bytes.len() as u64;
+        if admitted > MAX_ADMITTED_SOURCE_BYTES {
+            return Err(McpToolError::invalid_argument(
+                "referenced source texts exceed the 8 MiB admitted total",
+            ));
+        }
+        if format!("{:x}", Sha256::digest(&bytes)) != expected {
+            return Err(McpToolError::failed_precondition(format!(
+                "referenced text {name} digest changed: rebind the exact source snapshot"
+            )));
+        }
+        let text = String::from_utf8(bytes).map_err(|_| {
+            McpToolError::invalid_argument(format!("referenced text {name} is not UTF-8"))
+        })?;
+        output.insert("text".to_string(), Value::String(text));
+    }
+    Ok(admitted)
+}
 
 fn evaluate_packet(
     root: &Path,
@@ -196,26 +274,32 @@ fn evaluate_packet(
             )));
         }
     }
+    let run_dir = canonical_file
+        .parent()
+        .ok_or_else(|| McpToolError::internal("packet has no run directory"))?;
+    let referenced_bytes = load_referenced_texts(run_dir, fields)?;
+    let work_ceiling = (metadata.len() + referenced_bytes) * SOURCE_CHECK_WORK_PER_BYTE
+        + MAX_VERIFICATION_PACKET_BYTES * SOURCE_CHECK_WORK_PER_BYTE;
     let disclosures = fields["disclosure_inventory"].clone();
     fields.insert("disclosures".to_string(), disclosures);
     let form = HANDOFF
         .split_once("```source-check-lisp")
         .and_then(|(_, rest)| rest.split_once("```").map(|(form, _)| form.trim()))
         .ok_or_else(|| McpToolError::failed_precondition("shared source-check form missing"))?;
-    let mechanical_review =
-        hkask_lisp::eval_sandboxed_with_budget(form, &packet, MAX_SOURCE_CHECK_WORK, 4096)
-            .map_err(|error| match error {
-                hkask_lisp::LispError::StepLimitExceeded(_)
-                | hkask_lisp::LispError::DepthLimitExceeded(_)
-                | hkask_lisp::LispError::OutputDepthLimitExceeded(_) => {
-                    McpToolError::failed_precondition(format!(
-                        "source check not performed: {error}"
-                    ))
-                }
-                _ => {
-                    McpToolError::invalid_argument(format!("invalid source-check packet: {error}"))
-                }
-            })?;
+    let mechanical_review = hkask_lisp::eval_sandboxed_with_budget(
+        form,
+        &packet,
+        work_ceiling,
+        4096,
+    )
+    .map_err(|error| match error {
+        hkask_lisp::LispError::StepLimitExceeded(_)
+        | hkask_lisp::LispError::DepthLimitExceeded(_)
+        | hkask_lisp::LispError::OutputDepthLimitExceeded(_) => {
+            McpToolError::failed_precondition(format!("source check not performed: {error}"))
+        }
+        _ => McpToolError::invalid_argument(format!("invalid source-check packet: {error}")),
+    })?;
     if !mechanical_review
         .as_array()
         .is_some_and(|items| items.len() == 2)
@@ -227,6 +311,7 @@ fn evaluate_packet(
     Ok(serde_json::json!({
         "run_id": run_id,
         "packet_sha256": digest,
+        "referenced_text_bytes": referenced_bytes,
         "mechanical_review": mechanical_review,
         "evidence_mode": "packet_mechanical_only",
         "source_review_status": "not_checked",
@@ -447,6 +532,73 @@ mod verification_packet_tests {
         ensure!(
             unchecked["mechanical_review"] == json!(["not_checked", "not_checked"]),
             "absent original quote was falsely checked: {unchecked}"
+        );
+        Ok(())
+    }
+
+    /// expect: Full originals larger than the inline packet limit travel as
+    /// hash-bound run-directory files, are checked in full, and a changed or
+    /// escaping file fails closed.
+    #[test]
+    fn hash_bound_text_file_carries_full_original_beyond_packet_limit() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let run_id = "0123456789abcdef";
+        let directory = root.path().join(run_id);
+        std::fs::create_dir(&directory)?;
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../registry/company-research-fixtures/verification.json"
+        ))?;
+        let mut packet = fixtures["packet"].clone();
+        let original = format!(
+            "{}We announced partnerships.",
+            "This is synthetic filing context. ".repeat(20_000)
+        );
+        ensure!(
+            original.len() > 512 * 1024,
+            "fixture must exceed inline limit"
+        );
+        let text_path = directory.join("original.txt");
+        std::fs::write(&text_path, &original)?;
+        let text_sha = format!("{:x}", Sha256::digest(original.as_bytes()));
+        let source_path = directory.join("synthetic-source.docx");
+        std::fs::write(&source_path, b"Synthetic source bytes")?;
+        let source_sha = format!("{:x}", Sha256::digest(std::fs::read(&source_path)?));
+        let source_path = source_path.to_string_lossy().into_owned();
+        packet["source_outputs"][0]["tool_name"] = json!("corpus_convert");
+        packet["source_outputs"][0]["output"] = json!({"method": "text_extraction",
+            "text_file": "original.txt", "text_sha256": text_sha});
+        packet["source_outputs"][0]["origin_path"] = json!(source_path);
+        packet["source_outputs"][0]["source_sha256"] = json!(source_sha);
+        packet["pipeline_tool_log"][0]["tool_name"] = json!("corpus_convert");
+        packet["pipeline_tool_log"][0]["origin_path"] = json!(source_path);
+        packet["pipeline_tool_log"][0]["source_sha256"] = json!(source_sha);
+        let file = directory.join("packet.json");
+        let bytes = serde_json::to_vec(&packet)?;
+        std::fs::write(&file, &bytes)?;
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let checked = evaluate_packet(root.path(), run_id, &digest)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        ensure!(
+            checked["mechanical_review"] == json!(["checked", "not_found_in_reviewed"])
+                && checked["referenced_text_bytes"] == json!(original.len())
+                && checked["source_review_status"] == "not_checked",
+            "file-referenced original was not fully checked: {checked}"
+        );
+        std::fs::write(&text_path, format!("{original} tampered"))?;
+        let tampered = evaluate_packet(root.path(), run_id, &digest)
+            .err()
+            .context("changed referenced text must fail closed")?;
+        ensure!(
+            tampered.to_string().contains("digest"),
+            "wrong error: {tampered}"
+        );
+        packet["source_outputs"][0]["output"]["text_file"] = json!("../escape.txt");
+        let escaping = serde_json::to_vec(&packet)?;
+        std::fs::write(&file, &escaping)?;
+        let escaping_digest = format!("{:x}", Sha256::digest(&escaping));
+        ensure!(
+            evaluate_packet(root.path(), run_id, &escaping_digest).is_err(),
+            "path-escaping text_file must be rejected"
         );
         Ok(())
     }
