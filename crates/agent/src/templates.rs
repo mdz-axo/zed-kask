@@ -1111,7 +1111,32 @@ mod tests {
             "CURATOR_STATIC_CONTEXT must advertise at least one curator tool"
         );
 
+        // Curator-MCP tools the overlay routes to (the learning loop) are
+        // checked against the curator server's source at test time, so a
+        // rename or removal there breaks this pin instead of the loop.
+        let curator_server_src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs"
+        ))
+        .expect("curator MCP server source");
+        let mcp_registered = |name: &str| {
+            curator_server_src.contains(&format!("pub async fn {name}("))
+                || curator_server_src.contains(&format!("execute_tool(self, \"{name}\""))
+        };
+        assert!(
+            CURATOR_STATIC_CONTEXT.contains("`memory_insert`"),
+            "the overlay's learning loop must route lessons to `memory_insert`"
+        );
+        assert!(
+            mcp_registered("memory_insert"),
+            "CURATOR_STATIC_CONTEXT advertises `memory_insert` but the curator MCP \
+             server no longer registers it"
+        );
+
         for token in advertised {
+            if mcp_registered(token) {
+                continue;
+            }
             assert!(
                 NAMES.contains(&token),
                 "CURATOR_STATIC_CONTEXT advertises `{token}` but no Curator tool \

@@ -54,7 +54,7 @@ Select and bind inputs — do not author your own form when one of these fits. E
 - P/S: `"(/ market_cap revenue)"`
 - Growth %: `"(* 100 (/ (- revenue_current revenue_prior) revenue_prior))"`
 - Discount %: `"(* 100 (/ (- price_a price_b) price_b))"`
-- Median (any n) — the one recursive library form. It ships pre-wrapped with the grading wrapper (its helper defines cannot sit inside a `let` binding): bind `values`, `claimed`, `unit` only, call it as-is, and pass `max_depth` >= 8 x list length:
+- Median (any n) — the one recursive library form. It is provided pre-wrapped with the grading wrapper (its helper defines cannot sit inside a `let` binding): bind `values`, `claimed`, `unit` only, call it as-is, and pass `max_depth` >= 8 x list length:
 
 ```
 (define insert-sorted (lambda (x lst) (cond ((is_null lst) (list x)) ((<= x (car lst)) (cons x lst)) (t (cons (car lst) (insert-sorted x (cdr lst))))))) (define isort (lambda (lst) (cond ((is_null lst) '()) (t (insert-sorted (car lst) (isort (cdr lst))))))) (define drop-last (lambda (lst) (cond ((is_null (cdr lst)) '()) (t (cons (car lst) (drop-last (cdr lst))))))) (define middle-of (lambda (s) (cond ((= (length s) 1) (car s)) ((= (length s) 2) (/ (+ (car s) (car (cdr s))) 2)) (t (middle-of (cdr (drop-last s))))))) (let ((computed (middle-of (isort values)))) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))

@@ -62,7 +62,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      dispatch-key sweep).
    - **S10**: SKILL.md does not use removed vocabulary (`compute_ref`,
      `action:`, `template_ref` as a manifest dispatch key, `convergence_signal`,
-     `input_mapping`, `on_failure`, `ordinal:`) or vestigial `steps` frontmatter with
+     `input_mapping`, `on_failure`, `ordinal:`, a `shipped` key or release-state
+     wording for skills and templates) or vestigial `steps` frontmatter with
      `id`/`tools` dispatch structure (manifest-executor remnant). The
      `render_template` tool's `template_ref` parameter, named in call
      instructions, is the live contract — not a violation. Mechanical
@@ -156,7 +157,7 @@ This loop runs within one session and ends in a **proposal**, never an applied c
 2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, run the template-logic audit below on the template as a leaf; the optimize loop owns SKILL.md changes and integration. Do not use a legacy manifest as the process specification.
 3. **Check (measure, do not judge):** Run baseline and candidate implementations against the **same** tasks and evaluator when a deterministic harness can run them; validate S1–S13/T1–T5 and render reachability for every finalist. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain logs under `~/Documents/zk-data/skills/skill-maintenance/{date}-{run}/`. A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable harnesses are `unverified`, never wins. The local swarm runtime executes a card's declared skills through `host/skill`, so `swarm_eval_agent_local` can run a skill-declaring agent on the fixed task set.
 4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
-5. **Act (file or drop):** A candidate that satisfies hard constraints and has measured evidence is written as a proposal — full diff, predeclared tasks, measured before/after (or `unverified`), open falsifiers — via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Otherwise drop it and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement; the operator decides the proposal in the gemba walk, and only an accepted proposal is applied.
+5. **Act (file or drop):** A candidate that satisfies hard constraints and has measured evidence is written as a proposal — full diff, predeclared tasks, measured before/after (or `unverified`), open falsifiers — via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Otherwise drop it and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement in this session. The proposal is decided in the gemba walk by the operator, or by the Curator under an operator grant; an accepted proposal is applied by a delegated agent and is done only when verified (`algedonic-review`, Proposal authority and done).
 
 ### skill-maintenance template-logic audit (formerly `skill-logic-audit`)
 
@@ -206,7 +207,11 @@ Template context variables (from each template's [inference] contract):
 - SKILL.md must not use removed vocabulary: `compute_ref`, `action:`,
   `template_ref` as a manifest dispatch key (the `render_template` parameter
   of the same name is the live contract), `convergence_signal`,
-  `input_mapping`, `on_failure`, `ordinal:`, `category:`.
+  `input_mapping`, `on_failure`, `ordinal:`, `category:`, `shipped`.
+- Skills and templates are evolving drafts with no release state (operator
+  ruling 2026-09-26): never describe a skill or template as shipped,
+  unshipped, released or done. "Shipped" survives only as Rust identifiers,
+  whose change cadence is quarterly or annual, not weekly or monthly.
 - Core skills (`core: true`) must have names in `CORE_SKILL_NAMES`.
 - Material SKILL.md process changes are never self-accepted. This skill
   files them as proposals under `zk-data/curator/proposals/`; the operator

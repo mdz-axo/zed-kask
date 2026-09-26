@@ -26,7 +26,7 @@ Templates do NOT live next to the SKILL.md. The `render_template` tool
 resolves template refs against the registry base path
 (`kask/registry/templates/`, wired via `agent::set_template_base_path()` in
 `crates/zed/src/main.rs`); a template placed in `.agents/skills/<name>/` is
-unreachable by `render_template`. Every shipped skill follows this split —
+unreachable by `render_template`. Every skill follows this split —
 zero `.j2` files exist under `.agents/skills/`.
 
 ### SKILL.md — the process surface

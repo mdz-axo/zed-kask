@@ -2,7 +2,7 @@
 # Skill-corpus prescreen — the mechanical layer of skill-maintenance's template-logic audit
 # corpus pass, and the embryo of the body-side validator.
 #
-# For every shipped .j2 template under kask/registry/templates/:
+# For every .j2 template under kask/registry/templates/:
 #   1. Goal presence — the `{# goal: ... #}` annotation that
 #      the template-logic audit's logic-load-goal step parses.
 #   2. Goal length sanity — a placeholder goal is not a goal.

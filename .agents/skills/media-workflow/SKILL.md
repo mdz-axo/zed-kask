@@ -107,7 +107,7 @@ meme — the caption is visible in the rendered video; NFT — the style is
 applied and the caption generated; logo — `describe_image` confirms the name
 is spelled correctly and the icon mark carries no text. Only `video_info` is a deterministic check; every `describe_image` check is a vision model judging generated media, so show the artifact to the operator before reporting it done. If the property fails, re-run the failing
 step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
-a second failure ships the artifact with the imperfection named — never
+a second failure delivers the artifact with the imperfection named — never
 silently.
 
 ## Cleanup (all pipelines)

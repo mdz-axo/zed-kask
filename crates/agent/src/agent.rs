@@ -957,6 +957,7 @@ impl NativeAgent {
         } else {
             ZED_AGENT_ID.clone()
         };
+        let skill_invoker = agent_id.0.clone();
         let connection = Rc::new(NativeAgentConnection(cx.entity(), agent_id));
 
         let thread = thread_handle.read(cx);
@@ -1015,7 +1016,7 @@ impl NativeAgent {
                     skills_resolver_for_project(weak.clone(), project_id),
                     skill_body_resolver_for_project(project.clone(), self.fs.clone()),
                 )
-                .with_invoker(agent_id.0.clone()),
+                .with_invoker(skill_invoker),
             );
             // `lisp_eval` and `render_template` are already registered via
             // `add_default_tools` — they are stateless tools available to all

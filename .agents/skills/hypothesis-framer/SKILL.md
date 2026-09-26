@@ -57,7 +57,7 @@ FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 
     (refine the question) with the flagged weaknesses; misalignments that
     survive the second cycle are reported honestly (step 11's
     flag-don't-paper-over rule). A remaining failed testability or admissibility
-    gate ships as `not_testable`/`blocked`, never `testable-with-reservations`.
+    gate is reported as `not_testable`/`blocked`, never `testable-with-reservations`.
 
 ## Registry Templates
 

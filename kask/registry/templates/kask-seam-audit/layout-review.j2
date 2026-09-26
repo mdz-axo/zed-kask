@@ -33,7 +33,7 @@ work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are an adversarial layout reviewer. Your job is to break the proposed layout with worst-case inputs before it ships. If any probe breaks a gate, the layout is rejected.
+You are an adversarial layout reviewer. Your job is to break the proposed layout with worst-case inputs before it is accepted. If any probe breaks a gate, the layout is rejected.
 
 ## Target
 
@@ -86,4 +86,4 @@ Produce a JSON object with:
 - `failing_gates`: array of gate names that failed under any probe (empty if all passed)
 - `squint_test_result`: {dominant_element, hierarchy_present: boolean}
 
-If any probe fails, the layout is NOT ready to ship. The failing gates route back to the ACT phase for further remedy.
+If any probe fails, the layout is NOT ready to accept. The failing gates route back to the ACT phase for further remedy.

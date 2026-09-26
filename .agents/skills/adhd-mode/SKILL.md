@@ -13,7 +13,7 @@ compose passes the per-turn gate below before sending.
 
 - The reader has said "adhd mode on" (or asked for ADHD-shaped output) and the mode is active for the session
 - Composing any response — answer, report, status, error explanation — while the mode is on
-- A process skill (e.g., coding-guidelines) is active and its report must be delivered ADHD-shaped: content obligations ship, shape rules arrange them
+- A process skill (e.g., coding-guidelines) is active and its report must be delivered ADHD-shaped: content obligations are delivered, shape rules arrange them
 
 ## When NOT to Use
 
@@ -52,21 +52,21 @@ Auto-clarity exceptions suspend compression (not the structural shape):
 security warnings, irreversible-action confirmations, and any multi-step
 sequence where fragment order risks misread. Resume compression after the
 clarity-requiring part. When a process skill is active, its content
-obligations ship in full — compression arranges prose, never deletes
+obligations are delivered in full — compression arranges prose, never deletes
 content.
 
 ### Per-turn gate
 
 Initial condition: the composed draft and its turn type. Target condition:
 Form G returns `send` and Form C returns `content-complete`, or the best
-draft ships with a one-line note after 2 revision passes.
+draft is sent with a one-line note after 2 revision passes.
 
 Run this gate on every response while the mode is on. Apply the Constraints
 (including the six overrides) first — the gate checks the override-adjusted
 draft.
 
 1. Compose the draft under Constraints. If a process skill is active, its
-   content obligations must all ship. When the turn has a known type (assess,
+   content obligations must all be delivered. When the turn has a known type (assess,
    directives, verify, code-answer) and you are not yet fluent in its shape,
    call `render_template` with template `adhd-mode/turn-shape` and context
    `{ "turn_type": "<type>", "content_obligations": [<obligations from the

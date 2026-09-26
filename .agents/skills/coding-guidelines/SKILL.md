@@ -44,7 +44,7 @@ The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang
             "overall_score": <the mean of the four principle scores, computed with lisp_eval `(/ (+ s1 s2 s3 s4) 4)` — not the model's stated total> }`
    The four principle scores and the violation list are P (the audit's judgment, critiqued by the operator); the mean and the gate are D.
    Bound: max 2 audit cycles (initial + one correction pass); a second
-   failing audit ships with the violations report and the score — the
+   failing audit is delivered with the violations report and the score — the
    failure is surfaced, never silently passed.
 
 ## Interaction with output-shaping skills
@@ -52,7 +52,7 @@ The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang
 When an output-shaping skill (e.g., adhd-mode) is active in the session:
 
 1. The content obligations above (assumptions, risks, goals, guardrails,
-   violations, scores) always ship. Shape rules arrange that content; they
+   violations, scores) are always delivered. Shape rules arrange that content; they
    never delete it.
 2. Lead with the verdict or the decision request; the structured report
    follows.

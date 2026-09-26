@@ -128,7 +128,7 @@ The former single inside-view step is split into three steps. Generation and cou
 - **Plan:** the gate's fix notes predict which stage's output, if revised, lifts the failing dimension to ≥ 0.60.
 - **Do:** re-run only the stage(s) the fix notes name, then every downstream stage.
 - **Check (D):** re-render the gate; pass iff all four scores ≥ 0.60, checked with `lisp_eval` `(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))`.
-- **Act:** stop on pass, or after 2 gate cycles. On a second failure, ship the forecast with the failing dimensions and their scores recorded as the remaining gap.
+- **Act:** stop on pass, or after 2 gate cycles. On a second failure, deliver the forecast with the failing dimensions and their scores recorded as the remaining gap.
 
 Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts.
 

@@ -88,7 +88,7 @@ quantified backbone.
    narratives, then `scenario-planning/scenario-quality-gate` — a separate
    render that scores divergence, consistency and coverage (0–1). A failing
    gate revises the narratives its fix notes name and re-runs once (max 2
-   cycles); a second failure ships the scenarios with the fix notes shown.
+   cycles); a second failure delivers the scenarios with the fix notes shown.
 9. Render `scenario-planning/implications-indicators` for robust and
    contingent strategies and observable early-warning indicators. Carry the
    indicator count into Phase 5's `scenario_assess`

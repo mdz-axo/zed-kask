@@ -125,7 +125,7 @@ to make every documented claim verifiable against the current tree.
 ### Phase 4 — Diagrams
 
 1. Every Mermaid diagram is verified against current structure before it
-   ships: node names exist, counts match, flows match the code path.
+   is committed: node names exist, counts match, flows match the code path.
 2. Each diagram carries a `DIAGRAM_ALIGNMENT` metadata block (unique id,
    `verified_date`, `verified_against` citing code files, `status`).
 3. If a diagram's subject was deleted, drop it and note the deletion in the
@@ -135,7 +135,7 @@ to make every documented claim verifiable against the current tree.
    `diataxis-diagram` skill on the code it describes (it classifies the
    type, extracts from source, and scores against the doc's Diataxis
    quadrant) — do not hand-draw it here. For quantity flows use
-   `sankey-flow`. Then apply steps 1–2 to its output before it ships.
+   `sankey-flow`. Then apply steps 1–2 to its output before it is committed.
 
 ### Phase 5 — Reconcile
 

@@ -565,3 +565,53 @@ pub(crate) fn block_severity(worsening: f64, block_ratio: f64) -> crate::algedon
         crate::algedonic::AlertSeverity::Warning
     }
 }
+
+/// Minimum attempts on each side before a proportion drop may Block.
+pub(crate) const MIN_BLOCK_SAMPLE: u64 = 10;
+/// A drop must exceed this many standard errors of the difference to Block.
+pub(crate) const BLOCK_STD_ERRORS: f64 = 2.0;
+
+/// Why a proportion drop cannot support a Block verdict, or `None` when the
+/// evidence is sufficient. Uses the binomial standard error of the
+/// difference, √(p₁(1−p₁)/n₁ + p₂(1−p₂)/n₂). Unknown sample sizes are
+/// insufficient: an unverifiable sample is never treated as a large one.
+pub(crate) fn insufficient_block_sample(
+    before: f64,
+    after: f64,
+    sizes: Option<(u64, u64)>,
+) -> Option<String> {
+    let Some((n_before, n_after)) = sizes else {
+        return Some("sample sizes not recorded for this metric".to_string());
+    };
+    if n_before < MIN_BLOCK_SAMPLE || n_after < MIN_BLOCK_SAMPLE {
+        return Some(format!(
+            "n_before={n_before}, n_after={n_after}; at least {MIN_BLOCK_SAMPLE} attempts per run required"
+        ));
+    }
+    let variance = |p: f64, n: u64| p.clamp(0.0, 1.0) * (1.0 - p.clamp(0.0, 1.0)) / n as f64;
+    let std_error = (variance(before, n_before) + variance(after, n_after)).sqrt();
+    let delta = (after - before).abs();
+    if delta <= BLOCK_STD_ERRORS * std_error {
+        return Some(format!(
+            "|delta|={delta:.3} within {BLOCK_STD_ERRORS} standard errors ({std_error:.3}) at n_before={n_before}, n_after={n_after}"
+        ));
+    }
+    None
+}
+
+#[cfg(test)]
+mod sample_guard_tests {
+    use super::*;
+
+    #[test]
+    fn small_or_noisy_samples_cannot_block() {
+        // 3/3 → 1/3: too few attempts.
+        assert!(insufficient_block_sample(1.0, 1.0 / 3.0, Some((3, 3))).is_some());
+        // Unknown sizes are insufficient, never large.
+        assert!(insufficient_block_sample(1.0, 0.0, None).is_some());
+        // 12/12 → 4/12 (E4's observed runs): a real, significant drop.
+        assert!(insufficient_block_sample(1.0, 4.0 / 12.0, Some((12, 12))).is_none());
+        // 0.60 → 0.45 at n=12: within noise.
+        assert!(insufficient_block_sample(0.60, 0.45, Some((12, 12))).is_some());
+    }
+}

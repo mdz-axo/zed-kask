@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **61 skills** are authored here, and every one ships to every zed-kask install. **286 Jinja2 templates across 56
+> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **286 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,20 +52,22 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | all shipped; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
 | Template namespaces (`kask/registry/templates/*/`) | **56** (**286** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
 
-**Who a skill is for (operator ruling 2026-09-26).** Every skill in `.agents/skills/`
-ships to every install and every user; there is no developer-only tier. The 2026-09-24
-`shipped: false` flag is removed. Pinned by `shipped_skill_seed_all_parse_without_errors`
-(the embedded payload equals the authored tree) in `crates/agent_skills/agent_skills.rs`.
+**Skills are evolving drafts (operator ruling 2026-09-26).** Every skill in `.agents/skills/`
+is available to every install and every user. Skills and templates have no release state,
+draft flag or developer-only tier: they change weekly or monthly through measured proposals,
+not releases. Release vocabulary belongs to the Rust code, whose cadence is quarterly or
+annual. The embedded seed payload equals the authored tree (pinned in
+`crates/agent_skills/agent_skills.rs`).
 
 ---
 
-## Shipped skills (61)
+## Skills (61)
 
 ### Research, markets and forecasting
 
@@ -164,7 +166,7 @@ ships to every install and every user; there is no developer-only tier. The 2026
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
 > **Filesystem reality (verified 2026-09-26):** `.agents/skills/` contains 61
-> `SKILL.md` directories, all shipped. Merged by operator decision 2026-09-24:
+> `SKILL.md` directories. Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,

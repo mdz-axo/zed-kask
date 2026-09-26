@@ -991,9 +991,14 @@ mod tests {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
         let _recorder_override = crate::scoped_skill_outcome_recorder_for_test(
-            std::sync::Arc::new(move |skill_id, success, error| {
+            std::sync::Arc::new(move |skill_id, invoker, success, error| {
                 if let Ok(mut entries) = captured.lock() {
-                    entries.push((skill_id.to_string(), success, error.map(str::to_string)));
+                    entries.push((
+                        skill_id.to_string(),
+                        invoker.to_string(),
+                        success,
+                        error.map(str::to_string),
+                    ));
                 }
             }),
         );
@@ -1031,10 +1036,10 @@ mod tests {
         .await;
         parent.dependencies = vec!["no-such-dep".to_string()];
         let skills = Arc::new(vec![parent]);
-        let tool = Arc::new(SkillTool::new(
-            move |_cx| skills.clone(),
-            fs.clone() as Arc<dyn Fs>,
-        ));
+        let tool = Arc::new(
+            SkillTool::new(move |_cx| skills.clone(), fs.clone() as Arc<dyn Fs>)
+                .with_invoker("Curator"),
+        );
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "outcome-parent" }));
         let (event_stream, _rx) = ToolCallEventStream::test();
@@ -1058,9 +1063,15 @@ mod tests {
         assert_eq!(
             relevant,
             vec![
-                ("outcome-skill".to_string(), true, None),
+                (
+                    "outcome-skill".to_string(),
+                    "Zed Agent".to_string(),
+                    true,
+                    None
+                ),
                 (
                     "outcome-parent".to_string(),
+                    "Curator".to_string(),
                     false,
                     Some("declared dependencies not installed".to_string())
                 ),

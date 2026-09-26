@@ -6,7 +6,7 @@
 # S10: removed manifest-executor vocabulary as *dispatch structure*:
 #   - frontmatter keys: visibility / steps / compute_ref /
 #     convergence_signal / input_mapping / on_failure / ordinal /
-#     action / template_ref (frontmatter is structural — no live-contract
+#     action / template_ref / shipped (frontmatter is structural — no live-contract
 #     reading exists there; a `steps:` key is the vestigial executor remnant)
 #   - body key-form lines of the tokens with NO live contract
 #     (compute_ref, convergence_signal, input_mapping, on_failure, ordinal:)
@@ -14,6 +14,8 @@
 #   `template_ref` / `action` have live contracts (the render_template
 #   parameter; tool parameters), so body key-form usages are NOT flagged
 #   here — S10's carve-out adjudicates them at read-triage.
+#   `shipped` is removed (operator ruling 2026-09-26): skills and templates
+#   are evolving drafts with no release state.
 #
 # Advisory instrument: findings are proposals for read-triage, not edits.
 # Usage: ./skill-corpus-s9-s10-sweep.sh
@@ -30,7 +32,7 @@ for file in "$SKILLS"/*/SKILL.md; do
     hits=$(awk -v rel="$rel" '
         NR==1 { infm = ($0 == "---"); next }
         infm && $0 == "---" { infm = 0; next }
-        infm && /^[[:space:]]*-?[[:space:]]*(visibility|steps|compute_ref|convergence_signal|input_mapping|on_failure|ordinal|action|template_ref)[[:space:]]*:/ {
+        infm && /^[[:space:]]*-?[[:space:]]*(visibility|steps|compute_ref|convergence_signal|input_mapping|on_failure|ordinal|action|template_ref|shipped)[[:space:]]*:/ {
             print "  " rel ": FRONTMATTER " $0
             next
         }

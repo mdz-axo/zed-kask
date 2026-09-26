@@ -34,7 +34,7 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    Fabricated quotes are rejected — the check is mechanical, not
    model-mediated. On a failed citation, re-retrieve once from the chunks
    (the Act); a citation that fails verification twice is dropped and the
-   claim is reported as unverifiable — never shipped. Bound: one
+   claim is reported as unverifiable — never delivered as verified. Bound: one
    re-retrieval per cited claim; the overall process stays single-pass
    (sense→act). For stored transcripts, `educt_locate` is the
    deterministic word-aligned locator — prefer it when the transcript is
@@ -50,7 +50,7 @@ it. The verification is mechanical (substring match), not model-mediated.
 
 **Target condition (T2):** every emitted verdict carries at least one
 citation that passed step 4, or is reported `neutral` with no evidence;
-zero unverified citations ship. **Initial condition (T1):** the numbered
+zero unverified citations are delivered. **Initial condition (T1):** the numbered
 chunks and the template's `listen_for` criteria per section.
 
 **Loop exemption (T3).** Single-pass by design: the only correction is the

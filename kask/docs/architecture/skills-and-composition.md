@@ -481,7 +481,7 @@ A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kas
 
 - **`SKILL.md`** has YAML frontmatter (`name`, `description`, and optional metadata) and a markdown body. The body is the process instructions the model reads and follows when the skill is invoked. This is the source of truth — there is no derived manifest.
 - **Template crates** under `kask/registry/templates/<name>/` are optional companion resources. A skill body may instruct the model to call the `render_template` tool to render a Jinja2 template from a template crate. The template crate is not required for skill execution — it is a resource the skill body may reference.
-- **Development shipped-skill identity:** when this checkout exists, discovery reads shipped skills directly from `.agents/skills/<name>/` as global catalog entries and skips those files in project discovery. Redundant global shipped copies are removed, not linked or archived. The model and `skill` tool therefore see one body per shipped name; global-only user skills remain separate. Installed binaries without a source checkout seed a disk body from the bundled payload.
+- **Development skill identity:** when this checkout exists, discovery reads authored skills directly from `.agents/skills/<name>/` as global catalog entries and skips those files in project discovery. Redundant global copies of authored skills are removed, not linked or archived. The model and `skill` tool therefore see one body per authored skill name; global-only user skills remain separate. Installed binaries without a source checkout seed a disk body from the bundled payload.
 
 ### The Body-Injection Model
 

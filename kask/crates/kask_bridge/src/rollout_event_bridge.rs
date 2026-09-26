@@ -235,6 +235,48 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         }
     }
 
+    fn metric_sample_sizes(
+        &self,
+        rollout_id: &str,
+        metric: &str,
+        before_position: i64,
+    ) -> Result<Option<(u64, u64)>, RolloutEventError> {
+        // Only pass_rate is a proportion; its attempts are the harness
+        // summary's `total_rollouts`, taken from the same events (latest
+        // pass-rate-valued event on each side) that supplied the values.
+        if metric != "pass_rate" {
+            return Ok(None);
+        }
+        let events = self
+            .store
+            .query(&hkask_event_store::EventFilter {
+                rollout: Some(rollout_id.to_string()),
+                ..hkask_event_store::EventFilter::default()
+            })
+            .map_err(|e| RolloutEventError::Query {
+                detail: e.to_string(),
+            })?;
+        let valued = |event: &&hkask_event_store::EventRecord| {
+            event.payload.get("overall_pass_rate").is_some()
+        };
+        let size_of = |event: &hkask_event_store::EventRecord| {
+            event.payload.get("total_rollouts").and_then(|v| v.as_u64())
+        };
+        let before = events
+            .iter()
+            .filter(|event| event.position <= before_position)
+            .filter(valued)
+            .next_back()
+            .and_then(size_of);
+        let after = events
+            .iter()
+            .filter(|event| event.position > before_position)
+            .filter(valued)
+            .next_back()
+            .and_then(size_of);
+        Ok(before.zip(after))
+    }
+
     fn append_impact_verdict(
         &self,
         rollout_id: &str,
@@ -487,6 +529,28 @@ mod tests {
             .metric_before_and_after("alpha", "pass_rate", second)
             .unwrap();
         assert_eq!(result, None, "no event after the last — absence, not zero");
+    }
+
+    /// Sample sizes come from the same summaries as the pass-rate values,
+    /// and are absent (not invented) for metrics without attempt counts.
+    #[test]
+    fn metric_sample_sizes_reads_total_rollouts_for_pass_rate() {
+        let store = memory_store();
+        let first = write_summary(&store, "alpha", 0.8);
+        write_summary(&store, "alpha", 0.5);
+        let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
+        assert_eq!(
+            bridge
+                .metric_sample_sizes("alpha", "pass_rate", first)
+                .unwrap(),
+            Some((10, 10))
+        );
+        assert_eq!(
+            bridge
+                .metric_sample_sizes("alpha", "connector_latency", first)
+                .unwrap(),
+            None
+        );
     }
 
     /// The before/after extraction preserves the EXACT detector→

@@ -856,11 +856,46 @@ impl super::CyberneticsLoop {
                 .read()
                 .await
                 .block_worsening_ratio;
-            let decision = classify_decision(
+            let mut decision = classify_decision(
                 worsening,
                 self.set_points.stage_worsening_ratio,
                 block_worsening_ratio,
             );
+            // A Block on a proportion (pass rate) needs enough attempts to
+            // separate a real drop from chance; otherwise it is reviewed as
+            // Stage with the reason named, never silently accepted.
+            if decision == ActionDecision::Block && metric == SignalMetric::PassRate {
+                let sizes = match source.metric_sample_sizes(
+                    &check.rollout_id,
+                    &check.metric,
+                    check.before_position,
+                ) {
+                    Ok(sizes) => sizes,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "reg.cybernetics",
+                            rollout = %check.rollout_id,
+                            error = %error,
+                            "rollout impact check sample-size query failed — treating sample as unverifiable"
+                        );
+                        None
+                    }
+                };
+                if let Some(reason) =
+                    regulation_policy::insufficient_block_sample(before_val, after_val, sizes)
+                {
+                    tracing::warn!(
+                        target: "reg.cybernetics",
+                        rollout = %check.rollout_id,
+                        metric = %check.metric,
+                        before = before_val,
+                        after = after_val,
+                        reason = %reason,
+                        "insufficient sample — Block downgraded to Stage for review"
+                    );
+                    decision = ActionDecision::Stage;
+                }
+            }
 
             let action_type = ActionType::Notify;
             let action_type_str = action_type.as_str();
@@ -1235,6 +1270,7 @@ mod tests {
         /// does not force `Clone` onto the port's error type.
         before_after: Mutex<Result<Option<(f64, f64)>, String>>, // string-error-ok
         verdicts: Mutex<Vec<RecordedVerdict>>,
+        sample_sizes: Mutex<Option<(u64, u64)>>,
     }
 
     impl MockRolloutEventSource {
@@ -1242,18 +1278,25 @@ mod tests {
             Self {
                 before_after: Mutex::new(Ok(Some((before, after)))),
                 verdicts: Mutex::new(Vec::new()),
+                sample_sizes: Mutex::new(None),
             }
+        }
+        fn with_sample_sizes(self, before: u64, after: u64) -> Self {
+            *self.sample_sizes.lock().expect("sample_sizes lock") = Some((before, after));
+            self
         }
         fn empty() -> Self {
             Self {
                 before_after: Mutex::new(Ok(None)),
                 verdicts: Mutex::new(Vec::new()),
+                sample_sizes: Mutex::new(None),
             }
         }
         fn failing(error: &str) -> Self {
             Self {
                 before_after: Mutex::new(Err(error.to_string())),
                 verdicts: Mutex::new(Vec::new()),
+                sample_sizes: Mutex::new(None),
             }
         }
         fn recorded(&self) -> Vec<RecordedVerdict> {
@@ -1273,6 +1316,14 @@ mod tests {
                 .expect("before_after lock")
                 .clone()
                 .map_err(|detail| RolloutEventError::Query { detail })
+        }
+        fn metric_sample_sizes(
+            &self,
+            _rollout_id: &str,
+            _metric: &str,
+            _before_position: i64,
+        ) -> Result<Option<(u64, u64)>, RolloutEventError> {
+            Ok(*self.sample_sizes.lock().expect("sample_sizes lock"))
         }
         fn append_impact_verdict(
             &self,
@@ -1813,7 +1864,9 @@ mod tests {
     /// default 20% block threshold even though the absolute delta is only 0.03.
     #[tokio::test]
     async fn verify_impact_classifies_relative_worsening() {
-        let source = Arc::new(MockRolloutEventSource::answering(0.10, 0.07));
+        // n large enough that 0.10 → 0.07 clears the sample-size guard.
+        let source =
+            Arc::new(MockRolloutEventSource::answering(0.10, 0.07).with_sample_sizes(2000, 2000));
         let escalation = Arc::new(RecordingEscalationSink::new());
         let mut regulation = loop_with_source(source);
         regulation.set_alert_escalation_sink(Some(escalation.clone()));
@@ -1833,6 +1886,37 @@ mod tests {
             "ActionDecision::Block: impact check for pass_rate observed 30.0% relative worsening (threshold: 20.0%)",
             "the alert reports an observation, not unsupported causation"
         );
+    }
+
+    /// A pass-rate drop on too few attempts (3/3 → 1/3) is not Blocked and
+    /// raises no Critical alert; it is staged for review with the
+    /// insufficient-sample reason logged. Unknown sample sizes behave the same.
+    #[tokio::test]
+    async fn verify_impact_refuses_block_on_insufficient_sample() {
+        for source in [
+            MockRolloutEventSource::answering(1.0, 1.0 / 3.0).with_sample_sizes(3, 3),
+            MockRolloutEventSource::answering(1.0, 1.0 / 3.0),
+        ] {
+            let escalation = Arc::new(RecordingEscalationSink::new());
+            let mut regulation = loop_with_source(Arc::new(source));
+            regulation.set_alert_escalation_sink(Some(escalation.clone()));
+
+            let reports = regulation
+                .verify_impact(&[rollout_impact_check("small", "pass_rate")])
+                .await;
+
+            assert_eq!(
+                reports.first().expect("impact report").decision,
+                ActionDecision::Stage
+            );
+            let messages = escalation.persisted.lock().expect("persisted lock");
+            assert!(
+                messages
+                    .iter()
+                    .all(|m| !m.contains("ActionDecision::Block")),
+                "no block alert on an insufficient sample: {messages:?}"
+            );
+        }
     }
 
     /// S1 + happy path: a store-answered pass_rate regression writes a verdict

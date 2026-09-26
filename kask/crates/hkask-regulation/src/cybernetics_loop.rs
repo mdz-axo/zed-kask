@@ -76,6 +76,19 @@ pub trait RolloutEventSource: Send + Sync {
         before_position: i64,
     ) -> Result<Option<(f64, f64)>, RolloutEventError>;
 
+    /// Sample sizes (attempts) behind the before and after values of a
+    /// proportion metric, selected exactly as `metric_before_and_after`
+    /// selects its values. `None` when the store does not record them —
+    /// the impact check then treats the sample as unverifiable, not large.
+    fn metric_sample_sizes(
+        &self,
+        _rollout_id: &str,
+        _metric: &str,
+        _before_position: i64,
+    ) -> Result<Option<(u64, u64)>, RolloutEventError> {
+        Ok(None)
+    }
+
     /// Write the regulation loop's impact verdict back to the event store
     /// as a `verdict` event with `source: regulation_impact`. Closes the
     /// feedback loop: the loop measured the action's impact and persists
@@ -413,7 +426,6 @@ impl CyberneticsLoop {
         self.curator_directive_rx = Some(Arc::new(RwLock::new(rx)));
         self
     }
-
 
     /// Replace the inference resilience source after model wiring or rewiring.
     pub fn set_inference_resilience_source(

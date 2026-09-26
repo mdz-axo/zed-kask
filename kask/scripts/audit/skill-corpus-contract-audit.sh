@@ -2,7 +2,7 @@
 # Skill-corpus contract audit — the second mechanical layer of the
 # skill-maintenance template-logic audit corpus pass (the prescreen is the first: goal shape).
 #
-# For every shipped .j2 template under kask/registry/templates/ that carries
+# For every .j2 template under kask/registry/templates/ that carries
 # an [inference] contract, checks contract↔body agreement:
 #   1. UNUSED INPUT — a declared input the body never consumes
 #      ({{ field }}, {% if field %}, {% for x in field %}).

@@ -254,7 +254,7 @@ returns.
    - form: `"(let ((computed <cross_check form>)) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))"`
    - env: the input values the derivation names, plus `claimed` (the
      value the report states) and `unit` (from Step 2)
-   - If the `cross_check` form already ships pre-wrapped (the library
+   - If the `cross_check` form is already provided pre-wrapped (the library
      median), call it as-is — do not wrap it again.
    - The `1.001` slack on the warn boundary absorbs binary64
      representation error: `(- 18.0 17.9)` computes to
