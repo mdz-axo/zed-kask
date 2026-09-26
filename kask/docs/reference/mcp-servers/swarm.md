@@ -354,48 +354,41 @@ steers swarms. The skill lives in `.agents/skills/swarm-intelligence/`
 (its steering loop absorbed the former `swarm-steering` skill, 2026-09-25); this
 section documents how it consumes the server's tool surface.[^pso-swarm-ecosystem][^aco-swarm-ecosystem]
 
-### The 10-step PDCA cascade (`swarm-intelligence`)
+### Observed swarm-composition loop (`swarm-intelligence`)
 
-The `swarm-intelligence` skill is a 10-step PDCA cascade that senses swarm
-state, orients via Ashby's requisite variety and PSO cognitive/social balance,
-decides composition adjustments isomorphic to PSO velocity tuning / ACO
-pheromone deposition / Reynolds separation-alignment-cohesion, acts via gated
-`swarm_delegate` / `swarm_delegate_local` calls, checks spend against the
-algedonic channel, and converges via a Cauchy criterion on the swarm-state
-distance metric. It is **mode-aware** (v2 §15): it branches on `abw`/`local`
-at SENSE, ACT, and CHECK.
+The skill senses real ABW or local roster state, orients against a target,
+proposes moves using PSO/ACO/Reynolds as *analogies*, and emits an action plan.
+Advisory is the safe default; only explicit steering causes the Curator/human
+to execute a local batch once and reconcile its returned ordered receipts.
+ABW spend requires operator consent. CHECK rereads state and receipts;
+`lisp_eval` computes receipt coverage, distance and target-plus-stability from
+those observed inputs. A plan or a stable off-target distance is not convergence.
 
 | Step | Name                 | What it does                                                                                                                                     |
 | ---- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | SENSE                | Fetch swarm state. ABW: `swarm_get_swarm` + `swarm_run_status`. Local: `swarm_list_local_agents` + `swarm_observed_seams_local` / `swarm_task_board`. |
-| 2    | ORIENT               | Attribute observed tool failures and evaluator-stamped task failure from `delegate_results`; update `fault_count` deterministically.             |
-| 3    | DECIDE               | Propose composition adjustments (PSO velocity / ACO pheromone / Reynolds moves).                                                                 |
-| 4    | FILTER               | Drop cloud moves that violate authorized spend and local moves that violate the `mcp_tools` allowlist (`swarm.filter_proposed_moves`, deterministic). |
-| 5    | ACT                  | Execute the plan. ABW: `swarm_delegate`. Local: `swarm_delegate_local` / `swarm_fanout_local`.                                                   |
-| 6    | CHECK                | Read `delegate_results`, measure swarm-state distance, and surface cloud spend or local execution outcomes.                                      |
-| 7    | CONVERGE_CHECK       | Cauchy criterion on the swarm-state distance metric.                                                                                             |
-| 8    | CONVERGE_ACCUMULATE  | Append to `iteration_log` (`swarm.converge_accumulate` compute primitive — deterministic).                                                       |
-| 9    | SECOND_ORDER_MONITOR | C1 monitor over the iteration log (`swarm.second_order_monitor` compute primitive — deterministic).                                              |
-| 10   | LOOP                 | Re-invoke or terminate.                                                                                                                          |
+| Phase | Observed handoff |
+|---|---|
+| SENSE → ORIENT | Read real roster, task board and any prior execution receipts; missing sensors remain unknown. |
+| DECIDE → preflight | Propose roster/dispatch moves, check recorded failed signatures and actual tool/consent contracts. |
+| ACT | Emit intents. In explicit steering, execute once and retain the tool response; advisory stops at the plan. |
+| CHECK | Re-read state; distinguish an error receipt from task success; surface execution and algedonic failures. |
+| Gate → next cycle | Caller uses `lisp_eval` on observed axes for distance and target-plus-stability; carry actual history forward, or stop with the open gap. |
 
 ### Cybernetic Swarm Plan components (C0–C8)
 
-The deterministic accumulators that drive convergence live in **compute
-primitives** (`swarm.converge_accumulate`, `swarm.second_order_monitor`,
-`swarm.filter_proposed_moves`) — **not** in LLM templates. An LLM that
-hallucinates a fault count is overruled by the deterministic counter.
+There are no registered `swarm.*` filter, accumulator or second-order monitor
+primitives. Failed-edit and influence evidence must come from actual prior
+receipts/task-board entries; the caller uses `lisp_eval` only for the pinned
+arithmetic and exact-signature checks. An unavailable history never becomes a
+deterministic fault count.
 
 | Component | Name                              | Where it lives                                                                                    |
 | --------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| C0        | Deterministic task-success        | compute primitive (the cascade's ground truth)                                                    |
-| C1        | Second-order monitor              | `swarm.second_order_monitor` compute primitive                                                    |
-| C2        | Go See cadence                    | the SENSE step (operator-visible)                                                                 |
-| C3        | Failed-edit memory                | `failed_edits` accumulator (deterministic)                                                        |
-| C4        | Latency `T_q`                     | `LocalDelegateResult.latency_ms`                                                                  |
-| C5        | Fault attribution + `fault_count` | ORIENT step, fed by observed tool-call outcomes and evaluator-stamped `task_success` (deterministic) |
-| C6        | `reconfigure_agent`               | ACT step, calls `swarm_reconfigure_local_agent` on the most-blamed agent                          |
-| C7        | Influence-weighted rejection      | `influence_scores` accumulator (deterministic)                                                    |
-| C8        | Task-gated alignment              | SENSE step `alignment` definition (OFA-MAS TAGSE port)                                            |
+| C0 | Task success | Only observed `deterministic_evaluator`/operator verdicts; absent oracle leaves the task unassessed. |
+| C1–C2 | Second-order / Go See | Human/Curator review of recorded traces and explicit task failures; no registered automatic monitor. |
+| C3 / C7 | Failed edits / influence | Caller compares recorded signatures and measured influence; missing history is unverified. |
+| C4–C6 | Latency, fault, reconfiguration | Tool latency/receipts and task-board evidence feed ORIENT; a reconfiguration is a separately observed action. |
+| C8 | Task-gated alignment | SENSE assesses task-relevant roster edges; its judgment is not a tool-computed fact. |
 
 **Absent `delegate_results`, C5/C6 are inert** — the planning cascade emits
 intents, not executed results. This is why the steering modes (below) matter:
