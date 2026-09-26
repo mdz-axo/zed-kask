@@ -707,13 +707,12 @@ flash rechecks the complete deliverable after KATA/LENS before publication.
 ENTER's eligibility is provisional. The handoff's original-disclosure check
 and frozen-forecast gate report material omissions and field mutation
 separately from factual grounding. A generated answer is not original content;
-missing independent discovery stays `not_checked`. The source check returns
-coverage and known-omission signals separately, so an unextracted search hit
-cannot erase a corroborated material omission; neither is part of `fact_score`.
-The agent-executed forms validate supplied bytes and complete bounded search
-result lists, not the completeness of a search provider
-or a read-only capability boundary; actual verifier tool grants and discovery
-calls must be inspected before claiming those protections.
+only disclosures bearing on the company's economics or thesis are listed;
+boilerplate is never retrieved, listed or counted, and its absence is not a
+gap. The source check returns coverage and known-omission signals separately;
+unmatched coverage is reported as `not_checked` without blocking, and only a
+material omission blocks. Neither is part of `fact_score`. The agent-executed
+forms validate supplied bytes, not a read-only capability boundary.
 
 The skill bodies own collection and the shared three-iteration correction
 budget. A missing/unperformed check, nil score, zero checked claims or

@@ -87,11 +87,9 @@ large. The canonical file is `companies-mcp/research-runs/{run_id}/packet.json`
 under the user's artifacts directory. Hash its exact bytes with SHA-256 and
 invoke `company_verification_packet_check(run_id, expected_sha256)` to run the
 SAME source-check form below over the full JSON without model argument cuts.
-The tool returns the paired mechanical review and the packet digest, NOT an
-independent discovery or download attestation. The verifier still reads the
-entire target and source records, checks original PDF/file identities and
-source materiality, then binds `not_checked` when any required check was not
-performed. A changed target or packet gets a NEW digest and receipt; old
+The tool returns the paired mechanical review and the packet digest, NOT a
+download attestation. The verifier still reads the entire target and source
+records and checks original PDF/file identities. A changed target or packet gets a NEW digest and receipt; old
 receipts remain history. Never store private unpublished source text in this
 user-facing plaintext packet; without an authorized private packet path,
 return `not_checked`. An unread or inaccessible file is missing evidence,
