@@ -8,6 +8,10 @@ description: "Disciplined diagnosis loop for hard bugs and performance regressio
 
 Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic debugging: build feedback loop → reproduce → hypothesise → instrument → fix → regression-test. Aligned with Regulation sense→orient→decide→act.
 
+## Reference models
+
+Zeller, *Why Programs Fail: A Guide to Systematic Debugging* (2009) — scientific debugging (observe, hypothesize, predict, experiment, conclude); Agans, *Debugging: The 9 Indispensable Rules* (2002) — make it fail, quit thinking and look, change one thing at a time. Hypothesis elimination delegates to `falsifiability` (`onto_anchor` → derived `falsifiability`). "Root cause analysis" reaches only the 5W1H core (coarse; no operator ruling yet).
+
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis
@@ -76,7 +80,7 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 6. **Apply fix with regression test written before the fix.** If a correct seam exists: turn the minimised reproduction into a failing regression test at that seam, watch it fail, apply the fix, watch it pass, re-run the original feedback loop. If no correct seam exists, that itself is the finding — the architecture is preventing the bug from being locked down. Document this for architecture review. Do NOT write a shallow regression test that gives false confidence. Clean up: remove all `[DIAG-...]` instrumentation, delete throwaway prototypes, state the confirmed hypothesis in the commit/PR message. Verify `cargo clippy -p <crate> -- -D warnings` and `cargo test -p <crate>` pass. Write a post-mortem: what was the bug, root cause, fix, and what would have prevented it. If the fix reveals an architectural issue (no good test seam, tangled callers, hidden coupling), document it in an architecture note.
 
-7. **Check convergence (step 7).** Measure whether root cause and fix confidence are sufficient to exit the diagnosis loop. Start at 1.0 and subtract for each satisfied check: root cause confidence (−0.25 if ambiguous), bug reproduced (−0.15 if not), fix validated (−0.20 if unvalidated), alternatives eliminated (−0.15 if not), contract strengthened (−0.10 if not). Clamp to [0,1]. Convergence threshold is 0.25 — diagnosis can't improve past evidence, so a looser threshold is appropriate. 0.00 = root cause confirmed, fix validated, regression tests pass. 0.50 = competing hypotheses, insufficient evidence to discriminate. 1.00 = no root cause identified, no fix proposed. If blockers remain, state the specific gap preventing convergence.
+7. **Check convergence (step 7).** Measure whether root cause and fix confidence are sufficient to exit the diagnosis loop. Each unmet check adds its weight: root cause ambiguous (0.25), bug not reproduced (0.15), fix not validated (0.20), alternatives not eliminated (0.15), contract not strengthened (0.10). The weights sum to 0.85, so normalize by it: all met = 0.00, none met = 1.00. The five met/unmet readings are P (judged from the loop's evidence); the arithmetic is D — compute with `lisp_eval`, form `(/ (+ (* 0.25 a) (* 0.15 r) (* 0.20 f) (* 0.15 e) (* 0.10 c)) 0.85)`, env `{ "a": <1 if root cause ambiguous else 0>, "r": <1 if not reproduced>, "f": <1 if fix unvalidated>, "e": <1 if alternatives not eliminated>, "c": <1 if contract not strengthened> }`. Convergence threshold is 0.25 — diagnosis can't improve past evidence, so a looser threshold is appropriate. 0.00 = root cause confirmed, fix validated, regression tests pass. 0.50 = competing hypotheses, insufficient evidence to discriminate. 1.00 = no root cause identified, no fix proposed. If blockers remain, state the specific gap preventing convergence.
 
 ## Registry Templates
 
