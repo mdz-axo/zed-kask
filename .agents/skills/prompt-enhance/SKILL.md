@@ -44,6 +44,8 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 ## The 7-Type Taxonomy
 
+The *Taxonomy anchor* column uses the four aspects of Liu et al., "A comprehensive taxonomy of prompt engineering techniques for large language models", *Frontiers of Computer Science* 20(3), 2003601 (2026; online 2025), doi:10.1007/s11704-025-50058-z. The seven types are this project's mapping onto those aspects; the paper does not define them. The term "prompt engineering" reaches only the core rung of `onto_anchor`; a derived-registry ruling is pending with the operator.
+
 | Type             | Taxonomy anchor       | Rewrite focus                                                                          | Key risk                  |
 | ---------------- | --------------------- | -------------------------------------------------------------------------------------- | ------------------------- |
 | `coding`         | reasoning & planning  | contract clarity, I/O spec, error cases, test-first framing                            | vague acceptance criteria |
@@ -53,6 +55,15 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `extraction`     | knowledge             | schema-first output, field definitions, missing-field policy, type discipline          | underspecified schema     |
 | `agent-task`     | reliability           | tool-use contracts, failure modes, context budget, bounded loops, termination criteria | unbounded tool loops      |
 | `meta`           | reliability           | self-reference safety, eval harness, convergence criteria, critic decoupling           | self-confirming loop      |
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| 1 Classify, 2 Rewrite | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
+| 3 Verify | P | decoupled grill-me critic; its verdict is reported, never upgraded |
+| 4 Output render | D | `render_template` (no model call) |
+| File write (`file`/`both`) | D | the write tool's success receipt |
 
 ## Instructions
 
