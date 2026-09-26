@@ -51,6 +51,10 @@ which phase to run:
 Templates for non-active phases are not rendered — the model executing this
 skill runs only the active phase's templates; the triage result names it.
 
+### Reference models and labels
+
+Anderson, *Kanban: Successful Evolutionary Change* (2010) — visualize work, limit WIP, manage flow; Wake, "INVEST in Good Stories" (2003) for task shape. Board state and every transition are D (the kanban tools are the oracle; `kanban_task_list` re-reads confirm a move took). Decomposition, delegation briefs and the judgment that Review evidence is sufficient are P, critiqued by `kanban_task_verify` evidence and by the operator, who owns acceptance.
+
 ### Operate-phase sweep loop
 
 When running the operate phase, close it with a board sweep:
