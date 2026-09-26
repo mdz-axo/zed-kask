@@ -6,7 +6,9 @@ description: "Idiomatic Rust design through Graydon Hoare's lens, grounded by ru
 # Idiomatic Rust
 
 Idiomatic Rust design through Graydon Hoare's lens, grounded by rust-analyzer
-and clippy as extrinsic oracles. The LLM reasons about design through Hoare's
+and clippy as extrinsic oracles. Checkable references: the Rust API Guidelines
+(rust-lang.github.io/api-guidelines) and *The Rust Programming Language*
+(Klabnik & Nichols); Hoare's principles are the design lens, not a citable spec. The LLM reasons about design through Hoare's
 principles; the compiler verifies whether the reasoning is correct.
 
 ## The compiler as extrinsic oracle
@@ -36,7 +38,7 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 - Assessing a Rust design problem against Graydon Hoare's principles to identify invariants, invalid states, ownership graphs, and error domains.
 - Proposing type-driven Rust solutions with code examples, applying algebraic types, ownership patterns, error propagation, and trait design.
 - Conducting adversarial reviews of a Rust design proposal to find gaps, test edge cases, challenge assumptions, and identify deeper ecosystem connections.
-- Computing a normalized convergence metric for an idiomatic-rust inquiry cycle to determine if further design refinement is needed.
+- Deciding whether an idiomatic-rust design has converged, from compiler diagnostics and clippy counts rather than a self-scored critique.
 
 ## When NOT to Use
 
@@ -61,13 +63,11 @@ findings → re-assess → re-design → re-challenge.
 
 ## Improvement Measure
 
-**Field**: the result of step 4's `convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
+**Gate (D — the compiler and clippy are the oracles):** after each challenge, count from the actual tool output: `diagnostics` errors on the proposed code, new `./script/clippy` warnings versus the baseline, and compiler-confirmed findings. Compute with `lisp_eval`:
+- form: `(cond ((not clippy_ran) "undetermined") ((> errors 0) "continue") ((> new_warnings 0) "continue") ((and (>= (length confirmed) 3) (< (* (- (nth 1 confirmed) (nth 0 confirmed)) (- (nth 2 confirmed) (nth 1 confirmed))) 0)) "oscillating") (t "converged"))`
+- env: `{ "clippy_ran": <true only if clippy ran on the proposed code>, "errors": <diagnostics errors>, "new_warnings": <clippy warnings not in the baseline>, "confirmed": [<compiler-confirmed finding counts, last three iterations, oldest first>] }`
 
-The critique score (0.0 = design survives all challenges, 1.0 = design is
-broken) is pushed into `kata_hypotenuse` for the stability check.
-Oscillating scores (design improves on one dimension, challenge finds new
-issues on another) indicate the design is not converging and may need
-escalation.
+**Max iterations**: 3. `oscillating` (the confirmed-finding count went up then down, or down then up) escalates to the operator rather than looping. `undetermined` — no clippy run, so the challenge was LLM-only — never counts as converged. The challenge's `critique_score` is the model's own assessment (P): report it, never gate on it.
 
 ## Instructions
 
