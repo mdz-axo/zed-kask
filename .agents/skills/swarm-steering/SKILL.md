@@ -41,6 +41,11 @@ Curator's normal tool-call turn IS the execution).
   opens. The Good Regulator theorem: the steering directive must model the
   swarm it steers (the roster + the plan).
 
+## Initial and target condition
+
+- **Initial condition:** the emitted plan, an existing local `swarm_id`, the current roster, its ordered delegation entries (up to the tool's 10-entry cap), and any caller-supplied deterministic evaluators. A missing result is not a failed result.
+- **Target condition:** each admitted delegation has one actual tool result or explicit per-entry error in input order; only the returned `results` array becomes `delegate_results`. A tool-level error or missing receipt blocks feedback rather than manufacturing success. First-pass completeness closes locally without rerunning agents.
+
 ## When to Use
 
 - Execute a swarm-intelligence plan (emitted_calls) on a local swarm and feed
@@ -74,10 +79,14 @@ Collect:  the delegate_results collection shape (LocalDelegateResult array with 
 Feedback: the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering)
 ```
 
-One-shot directive producer — the Curator/human executes the directive; this
-skill does not execute delegations itself (no direct tool execution). The
-shape emerges from PKO's specification/execution separation + the Good
-Regulator's "model the system you control."
+The skill prepares the directive; the Curator/human executes it with the real tool. Rendering a directive is not executing it. The local loop checks the directive and its subsequent execution receipt; `swarm-intelligence` owns any re-planning or reconfiguration.
+
+### Local PDCA — directive and receipt
+
+1. **Plan:** identify the intended delegation subset of `emitted_calls` and render `swarm-steering/swarm-steering-direct` with `task`, `swarm_id`, and the unmodified plan. Check a nonempty array of at most 10 delegations, membership in the actual roster, and evaluator shape before labeling the directive `ready`. Composition changes are not delegation receipts.
+2. **Do:** the Curator/human calls `swarm_execute_plan_local` once using that directive. Rendering it is not evidence of execution. If the tool returns an error rather than a complete `results` array, report the execution state unknown—some earlier calls may have run—and do not retry or fabricate receipts.
+3. **Check:** for a successful tool response, derive `expected_names` from the submitted delegations and `observed_names` in order from each returned success `agent_id` or error entry `agent_name`. Run `lisp_eval` with `(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (> (length expected_names) 0) (<= (length expected_names) 10) (same-names expected_names observed_names)))`. Preserve per-entry `{agent_name, ok:false, error}` objects; do not map them to success. The tool's `succeeded` counts dispatches, not passed tasks; a deterministic `task_success.pass=false` is still a returned execution, and absent `task_success` is unscored.
+4. **Act:** on a malformed *pre-execution* directive, correct its mapping once and repeat only the read-only preflight. After execution, a count/order mismatch or tool error blocks feedback and requires investigation; never automatically replay delegations. On a complete matched array, feed precisely `results` to `swarm-intelligence` as `delegate_results` and close the local loop. Its next iteration, not this actuator, decides any reconfiguration.
 
 ## The delegate_results contract (C5/C6 activation)
 
@@ -86,8 +95,10 @@ Regulator's "model the system you control."
 `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), `task_success` (optional
 deterministic verdict stamped by the tool when an evaluator was provided).
 `swarm_execute_plan_local` returns an object with `results`, `total_tokens`,
-`failed`, `succeeded` and `task_board`. Feed its `results` array back as
-`delegate_results`, preserving error entries for failed attempts.
+`failed`, `succeeded` and `task_board`. Only after the ordered receipt check,
+feed its `results` array back as `delegate_results`. Dispatch errors have
+`agent_name`, `ok: false`, `error` instead of success fields; a failed evaluator
+is a successful dispatch with `task_success.pass: false`.
 ORIENT attributes fault from `delegate_results[].task_success.pass` (highest
 fidelity, when present) and `delegate_results[].tool_calls[].ok` /
 `response` failure when observable; `fault_count` accumulates (deterministic, in
@@ -112,13 +123,7 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
   DECIDE proposes `reconfigure_agent` for slow agents. The directive's
   collection shape is unchanged (it already collected `latency_ms`); the
   regulation is downstream in the planner.
-- **Loop A closure — now structural (Gap 4 fix, 2026-08-18).** The
-  `swarm-intelligence` manifest's default `steering_mode` is now `steering`,
-  and a post-Act step (step 8) calls `swarm_execute_plan_local`
-  deterministically and feeds `delegate_results` into the next LOOP
-  iteration. This skill's directive is now the human-inspectable representation
-  of what the manifest does structurally — the operator can still use it to
-  understand or override the manifest's execution.
+- **Loop A closure depends on an actual receipt.** A rendered directive is not a structural tool call; the Curator/human executes `swarm_execute_plan_local`, checks its result, then re-invokes `swarm-intelligence`. Without that observed call and complete handoff, closure is unverified.
 
 ## Composed with
 
@@ -128,7 +133,6 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 
 ## Registry
 
-**Open S13 gap:** `swarm-intelligence` owns the composition loop, but this actuator still needs its own initial/target condition and bounded check of the emitted directive and returned result handoff. The former single-pass exemption was superseded on 2026-09-25; do not rerun a successful delegation merely to manufacture a second cycle.
 
 This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
@@ -150,4 +154,4 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - The directive is derived from the swarm-intelligence plan — steering sequences and collects, it never re-plans.
 - Stamp a deterministic `task_success` per `LocalDelegateResult` when an evaluator exists; leave it null for open tasks (the Go See loop covers them) — never LLM-judge.
 - `latency_ms` is collected on every delegation result (C4) and flows into ORIENT's `latency_outliers`.
-- In `steering` mode the manifest's step 8 calls `swarm_execute_plan_local` deterministically; in `advisory` mode the plan is the final output and the operator executes manually.
+- In steering mode, only a real `swarm_execute_plan_local` receipt may close this skill's handoff. In advisory mode, leave the plan to the operator without claiming execution.

@@ -12,17 +12,16 @@ company-research-deep without external search, credentials or Exa Agent.
 2. Execute the original-source check and the Lisp gate **extracted from the
    current handoff template**. The gate fixtures consume the derived source
    status, not an authored `checked` field. The test also varies source bytes,
-   discovery/extraction log, material-disclosure inventory and frozen forecasts;
+   the extraction log, the listed material disclosures and frozen forecasts;
    it checks omission and forbidden mutation against a clean and rationale-only
-   control. A returned official-domain search URL with no extracted original,
-   an absent search-results field, a mismatched result count, or a mismatched
-   original URL must leave coverage `not_checked` even with a perfect fact
-   score. The same source-check result separately preserves a known material
-   omission when another discovery hit is unresolved; a corrected target
-   removes only the omission, not the unresolved hit.
+   control. Two controls pin the boilerplate rule: an unrelated ownership
+   threshold notice retrieved but not listed leaves the gate `passed`, while a
+   wrong audited revenue claim (a rejected load-bearing claim) is `needs_work`.
+   A listed disclosure with no matching retained original stays `not_checked`,
+   reported without blocking; a known material omission is preserved.
    Converted-PDF fixtures accept actual `corpus_convert` text only with a
    retained full-file path and matching digest in the observed conversion log;
-   missing identity stays `not_checked`. Search fixtures are synthetic; they
+   missing identity stays `not_checked`. Fixtures are synthetic; they
    do not attest actual download/hash provenance or complete page review.
    The retained-original-size control shows the default 100,000-step Lisp
    budget rejects a 20,000-character original while the documented bounded
@@ -33,12 +32,11 @@ company-research-deep without external search, credentials or Exa Agent.
    executes that same source-check form from a SHA-256-pinned `packet.json`
    beneath a 16-hex research run directory; disposable-root tests cover a
    changed target/digest and a symlink path escape. This is mechanical packet
-   evaluation, not independent proof of discovery or original URL retrieval.
+   evaluation, not independent proof of original URL retrieval.
 3. For a live process check, separately invoke `grounding-verify` in a
-   `spawn_agent` with the rendered packet and let it search public issuer and
-   regulator disclosures using only public identifiers. Inspect the actual
+   `spawn_agent` with the rendered packet. Inspect the actual
    tool-call record, its source review and its claim-level mechanical results.
-   Synthetic `example.invalid` records must not be represented as live discovery.
+   Synthetic `example.invalid` records must not be represented as live retrieval.
    The old `report_cases` were prose expectations with no executed oracle; they
    were removed rather than counted as passing tests. A generated-summary-only
    source and a material omission are now executable negative controls for the

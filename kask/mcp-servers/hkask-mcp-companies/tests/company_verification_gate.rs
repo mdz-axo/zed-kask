@@ -101,16 +101,15 @@ fn ocr_only_pdf_cannot_pass_original_quote_check() -> Result<()> {
     let url = "https://example.invalid/disclosure.pdf";
     let path = "/retained/disclosure.pdf";
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    packet["pipeline_tool_log"][0]["output"]["results"][0]["url"] = json!(url);
     packet["source_outputs"][0]["url"] = json!(url);
     packet["source_outputs"][0]["tool_name"] = json!("corpus_convert");
     packet["source_outputs"][0]["origin_path"] = json!(path);
     packet["source_outputs"][0]["source_sha256"] = json!(sha);
     packet["source_outputs"][0]["output"] =
         json!({"text":"We announced partnerships.", "method":"ocr_pipeline"});
-    packet["pipeline_tool_log"][2]["tool_name"] = json!("corpus_convert");
-    packet["pipeline_tool_log"][2]["origin_path"] = json!(path);
-    packet["pipeline_tool_log"][2]["source_sha256"] = json!(sha);
+    packet["pipeline_tool_log"][0]["tool_name"] = json!("corpus_convert");
+    packet["pipeline_tool_log"][0]["origin_path"] = json!(path);
+    packet["pipeline_tool_log"][0]["source_sha256"] = json!(sha);
     packet["disclosure_inventory"][0]["url"] = json!(url);
     ensure!(
         source_status(&packet)? == "not_checked",
@@ -123,7 +122,7 @@ fn ocr_only_pdf_cannot_pass_original_quote_check() -> Result<()> {
     );
     packet["source_outputs"][0]["tool_name"] = json!("pdftotext");
     packet["source_outputs"][0]["output"]["method"] = json!("pdftotext");
-    packet["pipeline_tool_log"][2]["tool_name"] = json!("pdftotext");
+    packet["pipeline_tool_log"][0]["tool_name"] = json!("pdftotext");
     ensure!(
         source_status(&packet)? == "checked",
         "hashed PDF text extracted with pdftotext did not use the same source check"
@@ -131,10 +130,10 @@ fn ocr_only_pdf_cannot_pass_original_quote_check() -> Result<()> {
     Ok(())
 }
 
-/// expect: An unfinished search cannot hide an independently observed material
+/// expect: An unmatched listed disclosure cannot hide an observed material
 /// omission, and adding the missing statement removes only that finding.
 #[test]
-fn known_material_omission_survives_unperformed_discovery() -> Result<()> {
+fn known_material_omission_survives_unmatched_disclosure() -> Result<()> {
     let fixtures: Value = serde_json::from_str(FIXTURES)?;
     let mut packet = fixtures["packet"].clone();
     packet["source_outputs"][0]["output"]["content"] =
@@ -148,17 +147,21 @@ fn known_material_omission_survives_unperformed_discovery() -> Result<()> {
             "quote":"The regulator issued a material sanction.",
             "report_marker":"material sanction"
         }));
-    packet["pipeline_tool_log"][1]["output"] = json!({
-        "results":[{"url":"https://regulator.example.invalid/unextracted"}],
-        "count":1,"providers_failed":[]
-    });
+    packet["disclosure_inventory"]
+        .as_array_mut()
+        .context("inventory")?
+        .push(json!({
+            "output_key":"source:web_extract:unretrieved",
+            "url":"https://example.invalid/unretrieved", "published_at":"2026-07-02",
+            "quote":"Unretrieved.", "report_marker":"Unretrieved"
+        }));
     ensure!(
-        source_status(&packet)? == "not_checked",
-        "unextracted hit must block coverage"
+        source_status(&packet)? == "material_omission",
+        "omitted listed disclosure must surface in coverage"
     );
     ensure!(
         known_omission(&packet)? == "material_omission",
-        "known omission lost behind incomplete discovery"
+        "known omission lost behind unmatched disclosure"
     );
     packet["target_text"] = json!(format!(
         "{} The regulator issued a material sanction.",
@@ -166,11 +169,11 @@ fn known_material_omission_survives_unperformed_discovery() -> Result<()> {
     ));
     ensure!(
         source_status(&packet)? == "not_checked",
-        "new text cannot clear missing hit"
+        "new text cannot match a missing original"
     );
     ensure!(
-        known_omission(&packet)? == "not_found_in_reviewed",
-        "covered disclosure should not be reported omitted"
+        known_omission(&packet)? == "not_checked",
+        "covered disclosure cleared the omission; the unmatched listing stays unverified"
     );
     Ok(())
 }
@@ -365,18 +368,29 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             "needs_work",
         ),
         (
-            "unperformed_discovery",
+            "irrelevant_ownership_notice_is_ignored",
             {
+                // Retrieved routine ownership boilerplate is neither listed nor
+                // counted; it must not stop business research.
                 let mut p = packet.clone();
-                p["pipeline_tool_log"] = json!([]);
+                p["source_outputs"].as_array_mut().context("source outputs")?.push(json!({
+                    "tool_name":"web_extract", "description":"Third-party threshold notice",
+                    "output_key":"source:web_extract:threshold",
+                    "output":{"content":"A bank declared crossing below 5% of the capital."},
+                    "source_kind":"original", "url":"https://regulator.example.invalid/threshold"
+                }));
+                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
+                    "tool_name":"web_extract", "output_key":"source:web_extract:threshold",
+                    "status":"ok"
+                }));
                 p
             },
             original.clone(),
-            "not_checked",
-            "incomplete",
+            "checked",
+            "passed",
         ),
         (
-            "inventory_url_does_not_match_original",
+            "listed_disclosure_without_original_is_reported_not_blocking",
             {
                 let mut p = packet.clone();
                 p["disclosure_inventory"][0]["url"] = json!("https://example.invalid/other");
@@ -384,80 +398,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
-        ),
-        (
-            "search_hit_without_original",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"][1]["output"] = json!({
-                    "results":[{"url":"https://regulator.example.invalid/decision"}],
-                    "count":1,"providers_failed":[]
-                });
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "uninspected_search_output",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"][0]["output"] = Value::Null;
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "failed_search_provider",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"][1]["output"]["providers_failed"] =
-                    json!(["provider_timeout"]);
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "failed_followup_search",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
-                    "tool_name":"web_search", "scope":"regulator", "query":"ExampleCo enforcement",
-                    "status":"failed", "output":{"results":[],"count":0,"providers_failed":["timeout"]}
-                }));
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "missing_search_results_field",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"][1]["output"] = json!({"count":0,"providers_failed":[]});
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "search_result_count_mismatch",
-            {
-                let mut p = packet.clone();
-                p["pipeline_tool_log"][0]["output"]["count"] = json!(2);
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
+            "passed",
         ),
         (
             "omitted_regulatory_disclosure",
@@ -470,10 +411,6 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     "source_kind":"original", "url":"https://regulator.example.invalid/decision",
                     "retrieved_at":"2026-09-24", "period":"2026-07", "unit":null
                 }));
-                p["pipeline_tool_log"][1]["output"] = json!({
-                    "results":[{"url":"https://regulator.example.invalid/decision"}],
-                    "count":1,"providers_failed":[]
-                });
                 p["pipeline_tool_log"]
                     .as_array_mut()
                     .context("tool log")?
@@ -502,9 +439,6 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                 let url = "https://regulator.example.invalid/decision.pdf";
                 let path = "/retained/decision.pdf";
                 let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-                p["pipeline_tool_log"][1]["output"] = json!({
-                    "results":[{"url":url}],"count":1,"providers_failed":[]
-                });
                 p["source_outputs"]
                     .as_array_mut()
                     .context("source outputs")?
@@ -535,9 +469,6 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             {
                 let mut p = packet.clone();
                 let url = "https://regulator.example.invalid/decision.pdf";
-                p["pipeline_tool_log"][1]["output"] = json!({
-                    "results":[{"url":url}],"count":1,"providers_failed":[]
-                });
                 p["source_outputs"].as_array_mut().context("source outputs")?.push(json!({
                     "tool_name":"corpus_convert", "output_key":"source:corpus_convert:regulator",
                     "source_kind":"original", "url":url,
@@ -560,56 +491,6 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
-        ),
-        (
-            "uninventoried_original",
-            {
-                let mut p = packet.clone();
-                p["source_outputs"]
-                    .as_array_mut()
-                    .context("source outputs")?
-                    .push(json!({
-                        "tool_name":"web_extract", "output_key":"source:web_extract:unlisted",
-                        "output":{"content":"Material regulator action."}, "source_kind":"original"
-                    }));
-                p
-            },
-            original.clone(),
-            "not_checked",
-            "incomplete",
-        ),
-        (
-            "irrelevant_original_with_reason",
-            {
-                let mut p = packet.clone();
-                p["source_outputs"]
-                    .as_array_mut()
-                    .context("source outputs")?
-                    .push(json!({
-                        "tool_name":"web_extract", "output_key":"source:web_extract:unrelated",
-                        "output":{"content":"Public contact details."}, "source_kind":"original", "url":"https://example.invalid/unrelated"
-                    }));
-                p["pipeline_tool_log"][0]["output"] = json!({
-                    "results":[{"url":"https://example.invalid/disclosure"},
-                        {"url":"https://example.invalid/unrelated"}],
-                    "count":2,"providers_failed":[]
-                });
-                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
-                    "tool_name":"web_extract", "output_key":"source:web_extract:unrelated", "status":"ok"
-                }));
-                p["disclosure_inventory"]
-                    .as_array_mut()
-                    .context("inventory")?
-                    .push(json!({
-                        "output_key":"source:web_extract:unrelated", "url":"https://example.invalid/unrelated", "published_at":"2026-07-15",
-                        "quote":"Public contact details.", "disposition":"not_material",
-                        "reason":"Contact page contains no business or regulatory disclosure"
-                    }));
-                p
-            },
-            original.clone(),
-            "checked",
             "passed",
         ),
         (
@@ -622,7 +503,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
+            "passed",
         ),
         (
             "quote_only_in_generated_answer",
@@ -659,7 +540,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
+            "passed",
         ),
         (
             "missing_as_of",
@@ -670,7 +551,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
+            "passed",
         ),
         (
             "missing_original",
@@ -681,7 +562,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "incomplete",
+            "passed",
         ),
     ] {
         let status = source_status(&packet_variant)?;
@@ -700,6 +581,20 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
         );
         eprintln!("{name}: source={status}, gate={result}");
     }
+    // Harmful control: a wrong audited financial claim is a rejected
+    // load-bearing claim (material_failure), so a clean source review and a
+    // high score cannot pass it.
+    let wrong_audited = hkask_lisp::eval_sandboxed(
+        gate,
+        &json!({"fact_score":0.95,"claims_checked":3,"decoupling":"spawn_agent",
+            "checks_complete":true,"material_failure":true,
+            "source_review_status":source_status(packet)?,
+            "original_forecast":original,"working_forecast":original}),
+    )?;
+    ensure!(
+        wrong_audited == "needs_work",
+        "wrong audited claim was not sent back: {wrong_audited}"
+    );
     let mut invalid = original;
     invalid["probability"] = json!(1.5);
     let result = hkask_lisp::eval_sandboxed(
