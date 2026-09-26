@@ -298,6 +298,25 @@ fn company_handoff_gate_controls_flash_publication() -> Result<()> {
     Ok(())
 }
 
+/// expect: Independent source review is required for a verified report, but
+/// an incomplete gate still permits an explicitly labelled background draft.
+#[test]
+fn unchecked_original_source_cannot_pass_the_report_gate() -> Result<()> {
+    let gate = single_lisp_form(HANDOFF)?;
+    let result = hkask_lisp::eval_sandboxed(
+        gate,
+        &json!({"fact_score":1.0,"claims_checked":3,"decoupling":"spawn_agent",
+            "checks_complete":true,"material_failure":false,
+            "source_review_status":"not_checked", "original_forecast":null,
+            "working_forecast":null}),
+    )?;
+    ensure!(
+        result == "incomplete",
+        "unchecked source passed gate: {result}"
+    );
+    Ok(())
+}
+
 /// expect: A perfect fact score cannot authorize a report when independent
 /// disclosure review was not performed or found a material omission, or when
 /// EQM silently changed the frozen forecast instead of just its rationale.
@@ -379,10 +398,13 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
                     "output":{"content":"A bank declared crossing below 5% of the capital."},
                     "source_kind":"original", "url":"https://regulator.example.invalid/threshold"
                 }));
-                p["pipeline_tool_log"].as_array_mut().context("tool log")?.push(json!({
-                    "tool_name":"web_extract", "output_key":"source:web_extract:threshold",
-                    "status":"ok"
-                }));
+                p["pipeline_tool_log"]
+                    .as_array_mut()
+                    .context("tool log")?
+                    .push(json!({
+                        "tool_name":"web_extract", "output_key":"source:web_extract:threshold",
+                        "status":"ok"
+                    }));
                 p
             },
             original.clone(),
@@ -390,7 +412,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             "passed",
         ),
         (
-            "listed_disclosure_without_original_is_reported_not_blocking",
+            "listed_disclosure_without_original_blocks_verified_release_but_not_draft",
             {
                 let mut p = packet.clone();
                 p["disclosure_inventory"][0]["url"] = json!("https://example.invalid/other");
@@ -398,7 +420,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
         (
             "omitted_regulatory_disclosure",
@@ -491,7 +513,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
         (
             "generated_summary_only",
@@ -503,7 +525,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
         (
             "quote_only_in_generated_answer",
@@ -540,7 +562,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
         (
             "missing_as_of",
@@ -551,7 +573,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
         (
             "missing_original",
@@ -562,7 +584,7 @@ fn company_handoff_requires_source_and_forecast_integrity() -> Result<()> {
             },
             original.clone(),
             "not_checked",
-            "passed",
+            "incomplete",
         ),
     ] {
         let status = source_status(&packet_variant)?;

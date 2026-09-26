@@ -118,6 +118,10 @@ pub struct VerificationPacketRequest {
 const HANDOFF: &str =
     include_str!("../../../../registry/templates/company-research/verification-handoff.j2");
 const MAX_VERIFICATION_PACKET_BYTES: u64 = 512 * 1024;
+// Lisp charges large source strings at admission and again during each source
+// lookup. Bound work in proportion to the admitted packet, not a tiny fixed
+// budget that rejects a valid full-original 10-K before checking any claim.
+const MAX_SOURCE_CHECK_WORK: u64 = MAX_VERIFICATION_PACKET_BYTES * 32;
 
 fn evaluate_packet(
     root: &Path,
@@ -198,15 +202,20 @@ fn evaluate_packet(
         .split_once("```source-check-lisp")
         .and_then(|(_, rest)| rest.split_once("```").map(|(form, _)| form.trim()))
         .ok_or_else(|| McpToolError::failed_precondition("shared source-check form missing"))?;
-    let mechanical_review = hkask_lisp::eval_sandboxed_with_budget(form, &packet, 1_000_000, 4096)
-        .map_err(|error| match error {
-            hkask_lisp::LispError::StepLimitExceeded(_)
-            | hkask_lisp::LispError::DepthLimitExceeded(_)
-            | hkask_lisp::LispError::OutputDepthLimitExceeded(_) => {
-                McpToolError::failed_precondition(format!("source check not performed: {error}"))
-            }
-            _ => McpToolError::invalid_argument(format!("invalid source-check packet: {error}")),
-        })?;
+    let mechanical_review =
+        hkask_lisp::eval_sandboxed_with_budget(form, &packet, MAX_SOURCE_CHECK_WORK, 4096)
+            .map_err(|error| match error {
+                hkask_lisp::LispError::StepLimitExceeded(_)
+                | hkask_lisp::LispError::DepthLimitExceeded(_)
+                | hkask_lisp::LispError::OutputDepthLimitExceeded(_) => {
+                    McpToolError::failed_precondition(format!(
+                        "source check not performed: {error}"
+                    ))
+                }
+                _ => {
+                    McpToolError::invalid_argument(format!("invalid source-check packet: {error}"))
+                }
+            })?;
     if !mechanical_review
         .as_array()
         .is_some_and(|items| items.len() == 2)
@@ -220,6 +229,8 @@ fn evaluate_packet(
         "packet_sha256": digest,
         "mechanical_review": mechanical_review,
         "evidence_mode": "packet_mechanical_only",
+        "source_review_status": "not_checked",
+        "independent_source_review_required": true,
         "limitation": "A packet hash does not attest original URL downloads, search completeness, materiality or a verified report; independently reconcile those before binding checked",
     }))
 }
@@ -380,6 +391,62 @@ mod verification_packet_tests {
         ensure!(
             revised["mechanical_review"] == json!(["material_omission", "material_omission"]),
             "changed report inherited old approval: {revised}"
+        );
+        Ok(())
+    }
+
+    /// expect: A valid full-original packet near the admitted size limit can
+    /// complete the mechanical source check; its result never attests the URL.
+    #[test]
+    fn full_original_packet_reaches_mechanical_review_without_attesting_source() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let run_id = "0123456789abcdef";
+        let directory = root.path().join(run_id);
+        std::fs::create_dir(&directory)?;
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../registry/company-research-fixtures/verification.json"
+        ))?;
+        let mut packet = fixtures["packet"].clone();
+        let original = "This is synthetic filing context. ".repeat(13_000);
+        let original = format!("{original}We announced partnerships.");
+        packet["source_outputs"][0]["tool_name"] = json!("corpus_convert");
+        packet["source_outputs"][0]["output"] =
+            json!({"method": "text_extraction", "text": original});
+        packet["pipeline_tool_log"][0]["tool_name"] = json!("corpus_convert");
+        let source_path = directory.join("synthetic-source.docx");
+        std::fs::write(&source_path, b"Synthetic source bytes, not a real DOCX")?;
+        let source_sha = format!("{:x}", Sha256::digest(std::fs::read(&source_path)?));
+        let source_path = source_path.to_string_lossy().into_owned();
+        packet["source_outputs"][0]["origin_path"] = json!(source_path);
+        packet["source_outputs"][0]["source_sha256"] = json!(source_sha);
+        packet["pipeline_tool_log"][0]["origin_path"] = json!(source_path);
+        packet["pipeline_tool_log"][0]["source_sha256"] = json!(source_sha);
+        let file = directory.join("packet.json");
+        let bytes = serde_json::to_vec(&packet)?;
+        ensure!(
+            bytes.len() > 400_000 && bytes.len() <= 512 * 1024,
+            "fixture must exercise a full-sized admitted packet: {} bytes",
+            bytes.len()
+        );
+        std::fs::write(&file, &bytes)?;
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let checked = evaluate_packet(root.path(), run_id, &digest)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        ensure!(
+            checked["mechanical_review"] == json!(["checked", "not_found_in_reviewed"])
+                && checked["evidence_mode"] == "packet_mechanical_only"
+                && checked["source_review_status"] == "not_checked",
+            "full-sized packet did not receive bounded mechanical-only review: {checked}"
+        );
+        packet["disclosure_inventory"][0]["quote"] = json!("Quote absent from source");
+        let absent = serde_json::to_vec(&packet)?;
+        std::fs::write(&file, &absent)?;
+        let absent_digest = format!("{:x}", Sha256::digest(&absent));
+        let unchecked = evaluate_packet(root.path(), run_id, &absent_digest)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        ensure!(
+            unchecked["mechanical_review"] == json!(["not_checked", "not_checked"]),
+            "absent original quote was falsely checked: {unchecked}"
         );
         Ok(())
     }
