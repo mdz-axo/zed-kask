@@ -41,6 +41,16 @@ Before editing, establish or derive:
 
 Ask only for inputs that cannot be derived from the repository, issue, trace, or existing benchmark.
 
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Plan | P | the predeclared target and falsifier, set before any candidate run |
+| Do, Check | D | Criterion output, `BenchReport` frame data, the fixture's completion and work-count assertions |
+| Act | P | bounded to one fixture correction; the implementation owner decides the next experiment |
+
+No template: the arithmetic is Criterion's and the work is benchmark code.
+
 ## Local PDCA — benchmark evidence, not a formatting loop
 
 1. **Plan:** state which target above applies, the expected observation and falsifier, the baseline and candidate identities (when applicable), workload, competing-frame signal, correctness invariant, and a predeclared target. The target may be a directional improvement with uncertainty rather than an arbitrary fixed millisecond cutoff.
