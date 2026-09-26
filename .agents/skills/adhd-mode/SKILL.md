@@ -57,6 +57,10 @@ content.
 
 ### Per-turn gate
 
+Initial condition: the composed draft and its turn type. Target condition:
+Form G returns `send` and Form C returns `content-complete`, or the best
+draft ships with a one-line note after 2 revision passes.
+
 Run this gate on every response while the mode is on. Apply the Constraints
 (including the six overrides) first — the gate checks the override-adjusted
 draft.
