@@ -9,6 +9,7 @@ contract:
     rotated_board: object|null
     economic_trajectory: object|null
     simon_inquiry: object|null
+    industry_outside_view: object|null
   output:
     business_franchise: object
     management_quality: object
@@ -88,6 +89,14 @@ The Valuation terminal stage MUST be consistent with this trajectory. If the sub
 {{ simon_inquiry | tojson }}
 
 In Business Franchise, use only source-supported niche leadership and its customer-value mechanism. Address concentration, saturation and exceptions when they change durability. Unknown leadership stays unknown; a missing Simon characteristic is not a quality-gate failure. Do not translate this inquiry into the fixed GORILLA score or a hidden-champion certificate.
+{% endif %}
+
+{% if industry_outside_view %}
+## Industry outside view (advisory, not a thesis grade)
+
+{{ industry_outside_view | tojson }}
+
+In Business Franchise, explain the company's advantage in terms of the industry's source-supported drivers, and name the drivers the company does not yet show. Carry `contested` drivers and frame conflicts into Risks. Keep only statements that stay true for years; the outside view is not a list of expected events.
 {% endif %}
 
 ## The Three Pillars (firm methodology)

@@ -21,8 +21,8 @@ use std::collections::HashMap;
 
 use providers::{
     ArxivProvider, BraveProvider, FirecrawlProvider, OpenAlexProvider, RawFetchProvider,
-    SemanticScholarProvider, SerapiProvider, TavilyProvider, WebBrowseProvider, WebExtractProvider,
-    WebSearchProvider,
+    SemanticScholarProvider, SerapiProvider, SerpEngine, TavilyProvider, WebBrowseProvider,
+    WebExtractProvider, WebSearchProvider,
 };
 
 // ── Re-exports ──
@@ -98,6 +98,15 @@ pub(crate) fn build_provider_pool(
     }
     if let Some(ref key) = serpapi_api_key {
         search_providers.push(Box::new(SerapiProvider::new(key.clone())?));
+        // Same key; explicit-only engines for scholarly and book search.
+        search_providers.push(Box::new(SerapiProvider::with_engine(
+            key.clone(),
+            SerpEngine::Scholar,
+        )?));
+        search_providers.push(Box::new(SerapiProvider::with_engine(
+            key.clone(),
+            SerpEngine::Books,
+        )?));
     }
     if let Some(ref exa) = exa_provider {
         search_providers.push(Box::new(exa.clone()));

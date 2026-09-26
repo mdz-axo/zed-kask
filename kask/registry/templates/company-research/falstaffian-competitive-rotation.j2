@@ -4,6 +4,7 @@ contract:
     ticker: string
     company_board: object
     prior_rotated_board: object|null
+    industry_outside_view: object|null
   output:
     rotated_board: object
     shapes_applied: array
@@ -36,6 +37,16 @@ Your role is Falstaffian: you challenge authority (the analyst consensus), you s
 ```json
 {{ company_board | tojson }}
 ```
+
+{% if industry_outside_view %}
+## Industry outside view (advisory; scholarly, case, book and self-regulatory sources)
+
+```json
+{{ industry_outside_view | tojson }}
+```
+
+Use its `frame_conflicts` as candidate framing errors: where the company's self-description departs from how outside sources explain the industry. Rotate only on source-supported conflicts; a driver with `no evidence yet` is a question, not a framing error.
+{% endif %}
 
 {% if prior_rotated_board %}
 ## Prior Rotated Board (from previous PDCA iteration — advisory)

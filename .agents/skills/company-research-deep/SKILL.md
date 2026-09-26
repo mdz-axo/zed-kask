@@ -1,11 +1,11 @@
 ---
 name: company-research-deep
-description: "Equity research deep pipeline (EFRA-AI conversion). Sequential 15-step scientific-method process: COMPANY 8-part analysis → VERIFY early anchor → FALSTAFFIAN rotation → WARDLEY map → ECONOMIC TRAJECTORY → GORILLA fixed-weight lisp_eval scoring + capability-limit check → SIMON niche inquiry (advisory) → IMAGINE 5/10Y scenarios → optional EQM forecast-rationale improvement → THESIS three pillars + essentialist gates → VERIFY late gate → PERSIST → CONDENSE ≤5000-word summary. Converges on THESIS investment_grade verdict."
+description: "Equity research deep pipeline (EFRA-AI conversion). Sequential 16-step scientific-method process: COMPANY 8-part analysis → VERIFY early anchor → INDUSTRY OUTSIDE VIEW (scholarly, case, book and self-regulatory sources) → FALSTAFFIAN rotation → WARDLEY map → ECONOMIC TRAJECTORY → GORILLA fixed-weight lisp_eval scoring + capability-limit check → SIMON niche inquiry (advisory) → IMAGINE 5/10Y scenarios → optional EQM forecast-rationale improvement → THESIS three pillars + essentialist gates → VERIFY late gate → PERSIST → CONDENSE company-template write-up (<1,000 words). Converges on THESIS investment_grade verdict."
 ---
 
 # Company Research — Deep Pipeline
 
-Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 15-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
+Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process producing a deep company analysis and investment thesis. MCP tool calls (company_transcript, dcf_valuation, comparable_analysis, web_search, scenario_build) are called directly; templates do LLM synthesis over their outputs.
 
 ## Reference models
 
@@ -24,13 +24,13 @@ The pipeline is converted from EFRA-AI (Replicant-Partners), a project source. T
 
 ## When NOT to Use
 
-- A quick take or initiation note — use `company-research-flash` (the flash pipeline; 23 steps vs this 15-step deep pipeline).
+- A quick take or initiation note — use `company-research-flash` (the flash pipeline; 23 steps vs this 16-step deep pipeline).
 - Subjects SCOUT gates out — the coverage/market-cap/valuation gates exist to spend deep-pipeline effort where it pays.
 - Live trading signals — the deliverable is an investment thesis with a falsifiable prediction set, not an execution signal.
 
 ## Instructions
 
-Execution order: collect-evidence + verify-early-anchor at candidate commitment → COMPANY → verify-early-anchor on changed CompanyBoard → FALSTAFFIAN
+Execution order: collect-evidence + verify-early-anchor at candidate commitment → COMPANY → verify-early-anchor on changed CompanyBoard → INDUSTRY OUTSIDE VIEW → FALSTAFFIAN
 → WARDLEY → ECONOMIC TRAJECTORY → GORILLA assessment + capability checks →
 SIMON niche inquiry → IMAGINE → optional EQM forecast-rationale improvement → THESIS → essentialist review → verify-late-gate → semantic quality
 gate → PERSIST/CONDENSE. Render each named synthesis template with the actual
@@ -91,9 +91,24 @@ A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Le
 4. After COMPANY, gate `incomplete` (including nil/zero-claim/unperformed checks): stop downstream analysis and surface the missing measurement. At the candidate stage, `incomplete` is recorded as `data_gaps` and does not stop COMPANY (step 1). Gate `needs_work` (score < 0.60 or unresolved material failure): return to collect-evidence/COMPANY, repair the source or claim and rerun verification within the shared three-iteration bound. Only `passed` can proceed. Scores 0.60–0.79 retain the verifier's -0.10 adjustment; a higher score never overrides a high/critical finding or load-bearing conflict.
 5. Preserve this verification record unchanged. Later passes produce new records keyed by pipeline iteration and stage; corrections retain both versions and their source snapshots. The early registry is history, not permission to skip checking a changed claim.
 
+### industry-outside-view
+
+An advisory outside view on the industry's business drivers, built from scholarly and institutional sources rather than web opinion. It runs after COMPANY (which anchors on how the company sees itself) and before FALSTAFFIAN, never blocks, and never scores.
+
+1. Name the industry from the COMPANY board's self-view and value chain. Query the industry's economics, never the company's name: e.g. `"{industry} cost structure capital intensity pricing power"`, `"{industry} cyclicality entry barriers competition"`, `"{industry} industrial organization market structure"`.
+2. Search these tiers, each with explicit `web_search(provider=...)` calls and `run_id`, and log every call's query, provider, `count` and `providers_failed`:
+   - Scholarly: `openalex`, `arxiv`, `semantic_scholar` (free) and `google_scholar` (SerpAPI key). Resolve each candidate with `resolve_paper`; an unresolvable identity is excluded. Prefer systematic reviews, meta-analyses and industrial-organization or strategy journals; Google Scholar's `[cited by N]` indicates uptake, not truth.
+   - Business-school cases and faculty research: `web_search(provider="serpapi", include_domains=["hbsp.harvard.edu", "hbs.edu", "thecasecentre.org", "iveypublishing.ca", "gsb.stanford.edu", "knowledge.wharton.upenn.edu", "insead.edu", "sloanreview.mit.edu"])`.
+   - Books: `google_books` (SerpAPI key). Keep academic or established trade publishers; cite without quoting unless the text itself is retrieved.
+   - Industry self-regulatory organizations and standard-setting bodies: search for the industry's SROs, standards bodies and statistical associations (e.g. `"{industry} self-regulatory organization"`, `"{industry} industry standards body"`), then `web_extract` their own published standards, rules or statistics.
+   - Substack: admissible only when the author is identified and the retrieved publication page shows more than 1,000 subscribers.
+3. Never search Reddit, forums or general web results for this step, and never use answer boxes. Exclude consultant and industry-association reports unless they are in an admissible tier or cited by a scholarly, case or book source. Apply the boilerplate rule: a source with no bearing on this industry's economics is dropped without being listed or counted.
+4. Retain each used source as a `source_outputs` record (`source_kind: original` only for retrieved text) and pass short keyed extracts as `source_evidence` plus the call log as `search_log` to `company-research/industry-outside-view`, with `ticker`, `industry` and `company_board`. A failed or empty tier is a `data_gaps` entry, not a block.
+5. Emit `industry_outside_view`. Pass it to FALSTAFFIAN (frame conflicts), GORILLA (Obvious Problem and Choke Point), THESIS (Business Franchise and Risks) and the late verification target.
+
 ### falstaffian-competitive-rotation
 
-1. Rotate the competitive framing of the Company Board before GORILLA scores it — structural defense against frame capture by analyst narratives.
+1. Rotate the competitive framing of the Company Board before GORILLA scores it — structural defense against frame capture by analyst narratives. Render `company-research/falstaffian-competitive-rotation` with `industry_outside_view` (or null) so outside-source frame conflicts are candidate framing errors.
 2. Apply Falstaffian semantic rotation shapes (predicate hollow, subject expansion, object inversion, direction reversal) to expose framing errors.
 3. Emit rotated_board with competitor-complement analysis, market creator vs participant classification, framing errors detected, and rotated competitive position.
 4. GORILLA consumes the rotated board, not the raw Company Board.
@@ -147,7 +162,7 @@ A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Le
 1. After GORILLA's capability check, render `company-research/hidden-champions-inquiry` with `ticker`, `rotated_board`, `wardley_map`, `source_evidence` and `demand_context` (null unless a dated, category-matched demand source is retained). Construct `source_evidence` as short extracts keyed by the original `source_outputs.output_key` with URL, period and unit; keep full originals in `source_outputs` for late verification. Search for independent niche-market and competitor evidence if a leadership claim matters to the thesis; record all retrieved originals and failures in that same packet.
 2. Use Hermann Simon's *Hidden Champions of the 21st Century* as a flexible inquiry into the customer's need, narrow market boundary, focus, deep solution, customer proximity, innovation, globalization and the tradeoff between niche leadership and market saturation. These are observed patterns, **not** a required eight-item checklist, revenue limit, score or investment gate. The existing fixed-weight GORILLA verdict remains untouched.
 3. Emit `simon_inquiry`: a source-keyed niche definition, `supported | contested | unknown` **leadership claim**, mechanism and contrary evidence, concentration and growth options, exceptions, implications for scenarios/thesis, and data gaps. A share requires compatible numerator, denominator, geography and period; management's “number one” alone is not verification. Distinguish company integrity and price expectations from this strategic lens. Missing source evidence yields `unknown`, never a favorable classification or automatic exclusion.
-4. Pass `simon_inquiry` (or explicit null with the named failure in `data_gaps`) to `company-research/imagine-longrange` and `company-research/thesis-three-pillars`. Reconcile it with Wardley and Falstaffian findings; contradictions remain visible in the late verification target. Neither a favorable inquiry nor a passing fact score bypasses the independent quality gate.
+4. Pass `simon_inquiry` (or explicit null with the named failure in `data_gaps`) to `company-research/imagine-longrange` and `company-research/thesis-three-pillars`. Pass `industry_outside_view` (or null) to `company-research/gorilla-4dim` and `company-research/thesis-three-pillars` the same way. Reconcile it with Wardley and Falstaffian findings; contradictions remain visible in the late verification target. Neither a favorable inquiry nor a passing fact score bypasses the independent quality gate.
 
 ### imagine-longrange
 
@@ -202,7 +217,7 @@ A company citing "60+ MNO partners covering 3B+ subscribers" in a transcript (Le
 ### condense-report
 
 1. The full markdown report written in persist-report IS the deliverable.
-2. If it exceeds ~5,000 words, produce a condensed executive summary as a separate markdown file at `~/Documents/zk-data/companies-mcp/reports/{ticker}-summary-{date}.md`.
+2. Produce the team write-up in the MAIA company-template format as a separate markdown file at `~/Documents/zk-data/companies-mcp/reports/{ticker}-summary-{date}.md`: header (Name and Ticker, Website, As of Date, Closing Price, Shares Outstanding, Market Cap), then Business, Management, Valuation, Risks and Future sections, fewer than 1,000 words in total, with at least one source link per section (MAIA Substack, Company Template). Future covers what to watch for in the next 18 months and how those expected events relate to our expectations; it is not part of the thesis statement.
 3. Both files are markdown in `~/Documents/zk-data/companies-mcp/reports/`. Include the summary in verify-late-gate's target before release; do not inherit verification from the longer report if wording or factual claims changed.
 
 ## Convergence
@@ -246,6 +261,7 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `imagine-longrange.j2` | Agent 11 IMAGINE. Projects the business at 5 and 10 years, emits a rationale and original source keys per dated prediction for optional EQM improvement, and walks it back analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN / SOURCE), Growth Driver Classification (innovation / demographic / both / neither). Scenarios are ANCHORED on the economic trajectory probe (falling cost, constraint removal, adjacent possible) and CHALLENGED by the Falstaffian rotations (rotated competitive framing, framing errors detected). Consumes `scenario_build` MCP tool output and the `economic_trajectory` probe. Emits `ImagineBoard` with digital stage, growth driver, 3 scenarios (each with trajectory_anchor and falstaffian_challenge), 3–5 falsifiable predictions (tagged by horizon, each with trajectory_basis), what's not on the page (anchored on adjacent possible), what's not in the price (anchored on trajectory implications), trajectory_anchoring, falstaffian_challenge. |
 | `thesis-three-pillars.j2` | Agent 12 THESIS. Synthesizes all prior research into a formal investment thesis covering the three pillars: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Quality gate verdict `investment_grade` / `needs_work` / `incomplete` is the deep pipeline convergence signal. Per .rules (LLM-improves-against-LLM-scored-target trap): the quality gate uses the separate `company-research/thesis-judge` semantic evaluation, not self-assessment — rendered as its own step, not inside this template. |
 | `intel-semantic-classify.j2` | Cross-skill adapter. Adapts pragmatic-semantics/ semantics-classify-statement to the INTEL mosaic. Classifies every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance — BEFORE downstream steps consume the intel. Prevents certainty-level drift: a management quote treated as an ontological fact, a scenario treated as a forecast. Emits semantic_tags and certainty_drift_risk that downstream templates (forensic, critical- factor, valuation) consume via intel_bundle.semantic_tags. |
+| `industry-outside-view.j2` | Advisory outside view after COMPANY: industry profitability and growth drivers from scholarly (OpenAlex, arXiv, Semantic Scholar, Google Scholar), business-school case, book (Google Books), self-regulatory-organization and qualifying Substack sources; company fit per driver, frame conflicts for FALSTAFFIAN, and implications for GORILLA and THESIS. Forums, Reddit and general web search are excluded. Never a gate or score. |
 | `hidden-champions-inquiry.j2` | Advisory Simon niche inquiry after GORILLA capability checks: customer-defined market and substitutes, independently sourced leadership claim (supported/contested/unknown), strategic focus/depth/customer proximity, concentration and growth exceptions. Its `simon_inquiry` output reaches IMAGINE and THESIS; no eight-trait score or investment gate. |
 | `gorilla-capability-reason.j2` | Tests the GORILLA 4-dim scores against capability floor, ceiling and maturity-gate limits. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. Emits capability_assessments, floor_violations, ceiling_violations, maturity_blocks. A maturity block contributes 0 for that dimension in the fixed-weight `lisp_eval` calculation while preserving the block and source gaps. |
 | `thesis-essentialist.j2` | Cross-skill adapter. Adapts essentialist/essentialist-flow to the three-pillar investment thesis. Runs a single pass of the 3-gate protocol (Exist, Surface, Contract) on the thesis to enforce parsimony — does each pillar earn its place? Is the thesis at the right abstraction level? Can it be stated more tersely? Mode is autonomous (no human in the loop during the pipeline). The elimination_report feeds the thesis-judge quality gate as additional evidence — it does not block the thesis directly. |

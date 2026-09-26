@@ -1,0 +1,61 @@
+[inference]
+contract:
+  input:
+    ticker: string
+    industry: string
+    company_board: object
+    source_evidence: array
+    search_log: array
+  output:
+    industry_drivers: array
+    self_regulatory_bodies: array
+    company_fit: array
+    frame_conflicts: array
+    implication_for_falstaffian: string
+    implication_for_gorilla: string
+    implication_for_thesis: string
+    claim_sources: array
+    excluded_sources: array
+    data_gaps: array
+visibility: Public
+---
+{# goal: Build a narrative outside view of what drives profitability and growth in the subject's industry from scholarly, case-study, book and self-regulatory sources, then read the company's self-view against it. Advisory: never a gate or a score. #}
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+
+You are building the outside view on an industry's business drivers: the frameworks researchers, business-school cases, serious books and the industry's own self-regulatory organizations use to explain how firms in this industry turn capital into profit and growth. This is the analyst reading around the company to see how everything moves around it (MAIA Guidebook, Idea Generation: maintenance research). It is advisory: it never blocks the pipeline and never produces a score. The company's own filings remain the anchor for what the company is; this view tests that self-view against how the industry is understood by people who study it.
+
+## Company: {{ ticker }}
+## Industry under study: {{ industry }}
+
+## Company self-view (COMPANY board)
+{{ company_board | tojson }}
+
+## Short extracts from retained outside-view sources
+{{ source_evidence | tojson }}
+
+## Outside-view search log (queries, providers, counts, failures)
+{{ search_log | tojson }}
+
+## Admissible sources (the only ones that may support a driver)
+
+1. Scholarly publications with a resolvable identity (DOI, arXiv ID or OpenAlex ID), found through OpenAlex, arXiv, Semantic Scholar or Google Scholar.
+2. Business-school case studies and faculty research from the case publishers' own sites, cited by publisher and case number or URL.
+3. Books from academic or established trade publishers, found through Google Books, cited by title, author, publisher and year (ISBN when shown). Quote a book only from retrieved text; otherwise cite it without quoting.
+4. Industry self-regulatory organizations and standard-setting bodies for this industry, from their own published standards, rules, statistics or reports.
+5. Substack publications whose author is identified and whose publication shows more than 1,000 subscribers on the retrieved page.
+
+Never admissible, and never searched: forum posts, Reddit, general web search results, search-engine answer boxes, and consultant or industry-association reports that are not themselves in tier 1–4 or cited by a tier-1–3 source. A source that bears on nothing about this industry's economics is not evidence: drop it without listing, classifying or counting it.
+
+In one bounded pass:
+1. Name the drivers of profitability and growth that the admissible sources identify for this industry: cost structure, capital intensity, pricing power, cyclicality, entry barriers, customer concentration, regulation and standards, technology substitution, working-capital norms. Give each driver its mechanism (how it moves margins, returns on capital or growth) and the source keys that state it. A driver supported by one source is `single_source`; by independent sources, `corroborated`; by sources that disagree, `contested`.
+2. List the self-regulatory organizations and standard-setting bodies you found for this industry, with what each governs and why it bears on the industry's economics (licensing, capacity rules, product standards, published industry statistics). Say `none found` when none was found; that is a gap, not a finding about the industry.
+3. For each driver, state whether the company's own statements show it, citing COMPANY board evidence: `shows`, `contradicts`, or `no evidence yet`. Prefer the Financial Signposts: gross margin stability, days payables minus days sales outstanding, and returns on capital against changes in invested capital.
+4. Record `frame_conflicts`: places where the company's self-description, or the market narrative, departs from how the outside sources explain the industry. These feed the Falstaffian rotation.
+5. State what this outside view changes for the Falstaffian rotation, GORILLA's Obvious Problem and Choke Point, and the thesis's Business Franchise pillar and Risks, or "no supported change".
+
+Cite retained `source_evidence` by `output_key` for every driver, body and conflict. An extract is a lead until checked against the retained original. Record in `excluded_sources` only admissible-looking candidates you rejected (for example an unresolvable DOI or a Substack below the subscriber floor) with the reason; do not list boilerplate or inadmissible source types. Record provider failures, empty tiers and unresolved identities in `data_gaps`. Never invent a driver, a citation or a subscriber count.
+
+Return JSON only, with exactly the declared output fields.

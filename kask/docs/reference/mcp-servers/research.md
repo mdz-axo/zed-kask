@@ -15,8 +15,11 @@ mds_categories: [domain, composition, lifecycle]
 **Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted RSS and research-run persistence require `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:283-325`).
 
 The research server is the web-research surface: a provider pool
-(Exa/Tavily/Brave/SerpAPI/Firecrawl plus free Semantic Scholar/arXiv/RawFetch)
-with RRF fusion, content extraction, headless browsing, RSS feed management,
+(Exa/Tavily/Brave/SerpAPI/Firecrawl plus free Semantic Scholar/arXiv/OpenAlex/RawFetch)
+with RRF fusion. The SerpAPI key also registers two explicit-only engines,
+`google_scholar` and `google_books`, that run only when named with
+`web_search(provider=...)` and never join fused, `quick` or intent-routed
+searches (`src/research/providers/serapi.rs`), content extraction, headless browsing, RSS feed management,
 response caching, and rate limiting.
 
 ## Architecture
@@ -170,7 +173,7 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_EXA_API_KEY` | Exa search API key |
 | `HKASK_TAVILY_API_KEY` | Tavily search API key |
 | `HKASK_BRAVE_API_KEY` | Brave search API key |
-| `HKASK_SERPAPI_API_KEY` | SerpAPI key (YouTube transcript search) |
+| `HKASK_SERPAPI_API_KEY` | SerpAPI key (Google search, YouTube transcripts, and the explicit-only `google_scholar` and `google_books` engines) |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl extraction API key |
 | `HKASK_RESEARCH_DB` | Research SQLite DB path (feed substrate + run ledger; defaults to `<data-dir>/mcp/research/research.db`) |
 | `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS and research-run tools) |

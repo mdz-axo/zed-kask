@@ -222,7 +222,9 @@ pub struct SearchRequest {
     /// pattern, folded in.
     pub intent: Option<String>,
     /// Explicit provider override: "tavily", "brave", "exa", "firecrawl",
-    /// "serpapi". When set, only that provider is queried — no fusion, no
+    /// "serpapi", and the free scholarly providers "openalex", "arxiv",
+    /// "semantic_scholar". "google_scholar" and "google_books" (SerpAPI key)
+    /// run only when named here. When set, only that provider is queried — no fusion, no
     /// fallback. When `None` with an `intent`, the top-recommended provider
     /// is queried; with neither, the `strategy` field selects providers
     /// (quick = best-scored single keyword provider; web/news/deep = fan out

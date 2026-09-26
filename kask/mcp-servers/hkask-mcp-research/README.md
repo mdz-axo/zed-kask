@@ -44,7 +44,7 @@ The `web_search.strategy` input schema advertises `quick`, `web` (`semantic` ali
 | `HKASK_EXA_API_KEY`           | Exa search API key                                |
 | `HKASK_TAVILY_API_KEY`        | Tavily search API key                             |
 | `HKASK_BRAVE_API_KEY`         | Brave search API key                              |
-| `HKASK_SERPAPI_API_KEY`       | SerpAPI key (YouTube transcript search)           |
+| `HKASK_SERPAPI_API_KEY`       | SerpAPI key (Google search, YouTube transcripts, explicit-only `google_scholar` and `google_books`) |
 | `HKASK_FIRECRAWL_API_KEY`     | Firecrawl extraction API key                      |
 | `HKASK_RESEARCH_DB`                | Research SQLite DB path (optional — defaults to `<data-dir>/mcp/research/research.db`) |
 | `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS and research-run tools) |

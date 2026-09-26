@@ -5,6 +5,7 @@ contract:
     ticker: string
     company_board: object
     wardley_map: object
+    industry_outside_view: object|null
   output:
     obvious_problem: number
     invisible_gorilla: number
@@ -34,6 +35,16 @@ You are evaluating whether a company's strategic position meets the GORILLA crit
 ```json
 {{ company_board | tojson }}
 ```
+
+{% if industry_outside_view %}
+## Industry outside view (advisory context, not an input to the fixed weights)
+
+```json
+{{ industry_outside_view | tojson }}
+```
+
+When scoring Obvious Problem and Choke Point, check the claimed problem and choke point against the industry drivers the outside sources identify. A company claim that contradicts a `corroborated` driver needs its own evidence. The fixed methodology weights are unchanged.
+{% endif %}
 
 ## Wardley Map (from WARDLEY agent)
 

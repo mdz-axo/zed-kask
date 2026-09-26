@@ -23,7 +23,7 @@ pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use openalex::OpenAlexProvider;
 pub(crate) use raw_fetch::{RawFetchProvider, truncate_str, validated_fetch_client};
 pub(crate) use semantic_scholar::SemanticScholarProvider;
-pub(crate) use serapi::SerapiProvider;
+pub(crate) use serapi::{SerapiProvider, SerpEngine};
 pub(crate) use tavily::TavilyProvider;
 
 /// Build the shared HTTP client used by all research providers.
@@ -70,6 +70,12 @@ pub struct ProviderSearchOutput {
 pub(crate) trait WebSearchProvider: Send + Sync {
     fn kind(&self) -> &str;
     fn capabilities(&self) -> Vec<SearchCapability>;
+    /// A provider that runs only when named explicitly (`provider=`), never in
+    /// fused, `quick`, or intent-routed searches — used for paid specialty
+    /// engines (Google Scholar, Google Books) the caller must choose on purpose.
+    fn explicit_only(&self) -> bool {
+        false
+    }
     async fn search(&self, query: &SearchQuery) -> Result<ProviderSearchOutput, WebError>;
     async fn health(&self) -> Result<(), WebError>;
 }
@@ -391,10 +397,16 @@ impl ProviderPool {
         strategy: SearchStrategy,
     ) -> CompoundSearchResult {
         let filtered: Vec<&dyn WebSearchProvider> = match strategy.provider_filter() {
-            ProviderFilter::All => self.search_providers.iter().map(|p| p.as_ref()).collect(),
+            ProviderFilter::All => self
+                .search_providers
+                .iter()
+                .filter(|p| !p.explicit_only())
+                .map(|p| p.as_ref())
+                .collect(),
             ProviderFilter::Capabilities(caps) => self
                 .search_providers
                 .iter()
+                .filter(|p| !p.explicit_only())
                 .filter(|p| {
                     let p_caps = p.capabilities();
                     caps.iter().all(|c| p_caps.contains(c))
@@ -871,6 +883,7 @@ impl WebSearchPort for ProviderPool {
             let candidates: Vec<&dyn WebSearchProvider> = self
                 .search_providers
                 .iter()
+                .filter(|p| !p.explicit_only())
                 .filter(|p| p.capabilities().contains(&SearchCapability::Keyword))
                 .map(|p| p.as_ref())
                 .collect();
@@ -1216,5 +1229,66 @@ mod tests {
         // Live stats should be None (below threshold).
         assert!(brave_rec.live_sample_count.is_none());
         assert!(brave_rec.live_success_rate.is_none());
+    }
+
+    /// Stub that records whether it was searched, for routing tests.
+    struct CountingStub {
+        kind: &'static str,
+        explicit: bool,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl WebSearchProvider for CountingStub {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        fn capabilities(&self) -> Vec<SearchCapability> {
+            vec![SearchCapability::Keyword, SearchCapability::Semantic]
+        }
+        fn explicit_only(&self) -> bool {
+            self.explicit
+        }
+        async fn search(&self, _query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ProviderSearchOutput::default())
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// expect: fused and quick searches never call an explicit-only provider
+    /// (paid Google Scholar/Books), while `provider=` reaches it.
+    #[tokio::test]
+    async fn explicit_only_providers_run_only_when_named() -> Result<(), WebError> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let web_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let scholar_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(CountingStub { kind: "brave", explicit: false, calls: web_calls.clone() }),
+                Box::new(CountingStub { kind: "google_scholar", explicit: true, calls: scholar_calls.clone() }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+        );
+        let query = SearchQuery {
+            query: "industry economics".to_string(),
+            num_results: 5,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+        };
+        for strategy in [SearchStrategy::Web, SearchStrategy::Deep, SearchStrategy::Quick] {
+            pool.search(&query, strategy, None).await?;
+        }
+        assert_eq!(scholar_calls.load(Ordering::SeqCst), 0, "fused/quick search called an explicit-only provider");
+        assert!(web_calls.load(Ordering::SeqCst) >= 3);
+        pool.search(&query, SearchStrategy::Quick, Some("google_scholar")).await?;
+        assert_eq!(scholar_calls.load(Ordering::SeqCst), 1, "named provider was not called");
+        Ok(())
     }
 }
