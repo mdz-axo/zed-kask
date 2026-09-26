@@ -3,7 +3,7 @@
 //! Mirrors the `LocalDelegateResult` array returned by the
 //! `swarm_execute_plan_local` MCP tool (see
 //! `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs`). The agent (or the
-//! swarm-steering skill) emits the array wrapped in a `{"viz": ...,
+//! swarm-intelligence skill's steering loop) emits the array wrapped in a `{"viz": ...,
 //! "results": [...]}` envelope as a fenced block; the widget parses it
 //! passively (no `ToolInvoker` — the data is already in the chat stream).
 //!

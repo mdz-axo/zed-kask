@@ -64,7 +64,7 @@ Do NOT use for:
 ## When NOT to Use
 
 - Single-agent tasks — delegate directly; the SENSE→ORIENT→DECIDE→ACT→CHECK→CONVERGE loop buys nothing without a swarm to regulate.
-- Executing the plan yourself — `swarm-steering` closes the execute-and-feed-back loop; in steering mode the manifest's step 8 does it structurally.
+- Executing a plan without its receipt check — in steering mode, run the "Steering a local swarm" loop below (directive → one `swarm_execute_plan_local` call → receipt check → feed back); never replay delegations or feed back an unverified array.
 - Unbudgeted ABW spend calls — cloud delegations require `credits_authorized` and consent; local delegations have neither.
 
 ## Instructions
@@ -200,12 +200,51 @@ capture is Xaman Ek's built-in capability, then `delegate_results` flow back.
 
 ### Local swarms — the Kask Curator (continued)
 
-Locally, the Kask Curator steers using the `swarm-intelligence` skill itself
-(the process plans, the Curator executes), OR the focused **swarm-steering**
-skill (a narrower skill that codifies just the execute-and-feed-back loop:
-call `swarm_execute_plan_local` with the plan, collect the returned
-`LocalDelegateResult` array with `task_success` verdicts, re-invoke with
-`delegate_results`).
+Locally, the Kask Curator (or a human) steers by running the loop below on
+the plan this skill emitted. It is this skill's execute-and-feed-back step
+(formerly the separate `swarm-steering` skill, folded in 2026-09-25): it
+sequences and collects, it never re-plans — DECIDE owns composition.
+
+### Steering a local swarm — directive and receipt (PDCA)
+
+PKO's specification/execution split: the plan is the Procedure; the
+delegation array and its results are the StepExecutions.
+
+- **Initial condition:** the emitted plan, an existing local `swarm_id`, the
+  current roster, its ordered delegation entries (up to the tool's 10-entry
+  cap), and any deterministic evaluators. A missing result is not a failed
+  result.
+- **Target condition:** each admitted delegation has one actual tool result
+  or explicit per-entry error, in input order; only the returned `results`
+  array becomes `delegate_results`.
+
+1. **Plan (P):** take the delegation subset of `emitted_calls` and render
+   `swarm-intelligence/swarm-steer-direct` with `task`, `swarm_id` and the
+   unmodified plan. No delegations → report `empty` and make no call.
+   Otherwise check 1–10 entries, roster membership and evaluator shape before
+   labelling the directive `ready`. Rendering a directive is not executing it.
+2. **Do (D):** call `swarm_execute_plan_local` once with that directive. If
+   the tool errors instead of returning a complete `results` array, report
+   the execution state unknown (earlier calls may have run); do not retry or
+   fabricate receipts.
+3. **Check (D):** derive `expected_names` from the submitted delegations and
+   `observed_names`, in order, from each returned `agent_id` (success) or
+   `agent_name` (error entry), then call `lisp_eval`:
+   `(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (> (length expected_names) 0) (<= (length expected_names) 10) (same-names expected_names observed_names)))`.
+   Keep per-entry `{agent_name, ok:false, error}` objects as errors. The
+   tool's `succeeded` counts dispatches, not passed tasks; a
+   `task_success.pass=false` is still a returned execution, and an absent
+   `task_success` is unscored.
+4. **Act:** a malformed *pre-execution* directive is corrected once and only
+   the read-only preflight repeats. After execution, a count/order mismatch
+   or tool error blocks feedback and needs investigation — never replay
+   delegations. On a complete matched array, feed exactly `results` back as
+   `delegate_results` on the next iteration.
+
+Stamp a deterministic `task_success` per result when an evaluator exists;
+leave it null for open tasks (the Go See loop covers them) — never
+LLM-judge. In advisory mode, leave the plan to the operator without claiming
+execution.
 
 ### The `delegate_results` contract (C5/C6 activation)
 
@@ -337,6 +376,7 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 | `swarm-decide.j2` | Propose composition adjustments mapped onto the swarm's hire/fire/delegate vocabulary (redundant duplicates are fired via `swarm_fire`, not just flagged), isomorphic to swarm-algorithm tuning: variety deficit → hire agents covering missing transforms (ACO pheromone deposition); coherence + low diversity → hire diverse agent (raise PSO c1, lower omega) and fire redundant duplicates (ACO evaporation, via `swarm_fire`); coherence + high diversity + low alignment → assign coordinator compound agent (raise PSO c2, Reynolds alignment); loop-break → emit reconciliation repair, not a composition change. Mode-agnostic (v2 §15): operates on the state shape, not the data source. In local mode, "hire" means creating the agent card via `swarm_create_local_agent` (programmatic) or cloning from ABW via `swarm_clone_to_local` (no `swarm_hire_local` tool — §15.1.1 rejected; the team is emergent from the call pattern). When ORIENT attributes fault to a specific agent (Cybernetic Swarm Plan C6), propose a `reconfigure_agent` move via `swarm_generate_prompt` (seeded with the blamed agent's failure log) + `swarm_reconfigure_local_agent` (preserves id/type/deps, reloads the registry). Respects the no-delegation-chains invariant (delegates lose delegate_to_agent/execute_agent). References swarm-patterns.yaml for the tuning palette. |
 | `swarm-act.j2` | Emit consent-gated ABW spend calls or scoped local member calls without a credit gate. For ABW only, include estimated credits and curator data-sharing consent in dispatch intents. If the operator Aborts, record the abort reason and emit no spend. Enforces the .rules "Advertised invariants need enforcement points" trap: the gate must actually block, not just warn. |
 | `swarm-check.j2` | Re-measure the swarm state post-Act. In `abw` mode, re-fetch workspace and wallet; in `local` mode, re-read the local roster and agent registry. Compute the convergence metric: composite swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target condition is met on all three axes. Emit next_focus (which axis dominates d). Emit the algedonic signal: ABW 402 or unacknowledged curator dispatch, or a surfaced local execution error. Vacuous-truth default: zero dispatches → loop_closure 1.0 (vacuously satisfied). |
+| `swarm-steer-direct.j2` | Steering a local swarm, step 1: from the plan and local swarm id, check member agents and produce one scoped `swarm_execute_plan_local` call with optional deterministic evaluators, the `LocalDelegateResult` collection shape, and the feedback instruction. |
 | `swarm-compose-guide.j2` | Reference/authoring template for agent and swarm composition. Given a composition request (surface: agent|swarm, mode: abw|local, action: suggest|validate, plus partial fields), it produces either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Encodes the canonical field definitions (name, agent_type, description, system_prompt, mission, agents) and the ABW/local backend considerations (credit-cost consent-gated catalogue vs local filesystem registry without credits). Mirrors the inline prompt used by the `swarm_ai_assist` MCP tool — this template is the single source of truth the panel and the process share. Consumed by the DECIDE phase when it proposes an `author_agent` move (no catalogue agent covers a required transform); also available for standalone invocation from the swarm panel. |
 | `swarm-patterns.yaml` | Reference: the swarm-algorithm tuning palette mapped onto ABW's hire/fire/delegate vocabulary (fire via `swarm_fire` — redundancy moves fire duplicates via `swarm_fire`, not flag-for-manual-pruning). PSO velocity terms (c1 cognitive, c2 social, omega inertia) → ABW composition moves. ACO pheromone deposition/evaporation → hire/fire-redundant. Reynolds separation/alignment/cohesion → diversity/coordination/coherence. Onto4MAT team properties as the measurable substrate. Includes the three deficit classes and their tuning responses, plus the canonical failure mode (premature convergence / diversity collapse) and its detection signal. |
 

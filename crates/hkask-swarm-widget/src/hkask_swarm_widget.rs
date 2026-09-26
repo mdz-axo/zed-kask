@@ -8,7 +8,7 @@
 //!
 //! Wired behind the D18 seam via [`hkask_viz_core::block_renderer`], which
 //! composes this renderer with the media, graph, kanban, portfolio, and
-//! scenarios renderers. The agent (or the swarm-steering skill) calls
+//! scenarios renderers. The agent (or swarm-intelligence's steering loop) calls
 //! `swarm_execute_plan_local` and emits the result array wrapped in a
 //! `{"viz": "swarm_delegate_results", "results": [...]}` envelope as a fenced
 //! block, e.g.:

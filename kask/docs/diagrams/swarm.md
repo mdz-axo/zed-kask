@@ -62,14 +62,11 @@ flowchart TD
 
     subgraph ui[UI + Skills]
         PANEL[Swarm Panel<br/>crates/swarm_panel]
-        SI[swarm-intelligence skill<br/>10-step PDCA cascade]
-        SS[swarm-steering skill<br/>execute-and-feed-back]
+        SI[swarm-intelligence skill<br/>PDCA cascade + steering loop]
     end
     PANEL -->|Steer mode| CURATOR[Kask Curator<br/>Agent::Curator]
     CURATOR -->|runs| SI
-    CURATOR -->|runs| SS
-    SI -->|emitted_calls plan| SS
-    SS -->|steering directive| CURATOR
+    SI -->|steering directive| CURATOR
     CURATOR -->|swarm_delegate_local| SWARM
     SWARM -->|LocalDelegateResult<br/>bind_matched| CURATOR
     CURATOR -->|delegate_results feedback| SI
@@ -78,7 +75,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
 verified_date: 2026-09-23
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:179-185 (four routers),1029-1052 (90-tool count and partitions); crates/zed/src/main.rs:3350-3364 (single spawn authority); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:179-185 (four routers),1029-1052 (90-tool count and partitions); crates/zed/src/main.rs:3350-3364 (single spawn authority); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md
 status: VERIFIED
 -->
 
@@ -286,8 +283,8 @@ status: VERIFIED
 
 The swarm system runs four coupled feedback loops. **Loop A** (PDCA
 convergence) is the planner's inner loop; **Loop B** (C5/C6 steering
-execution) closes only when the `swarm-steering` skill or the Curator in
-steering mode feeds `delegate_results` back; **Loop C** (credit/consent
+execution) closes only when swarm-intelligence's steering loop (the Curator
+or a human in steering mode) feeds `delegate_results` back; **Loop C** (credit/consent
 algedonic) is the strongest — the 402 / un-acknowledged curator dispatch
 escalates regardless of the swarm-state distance `d` (the "never read as no
 deviation" invariant); **Loop D** (Go See) is the intentionally-human outer
@@ -366,7 +363,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-008
 verified_date: 2026-08-28
-verified_against: .agents/skills/swarm-intelligence/SKILL.md (10-phase cascade L67-76, C0/C2 rows L123-125); .agents/skills/swarm-steering/SKILL.md; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; crates/swarm_panel/src/swarm_panel.rs
+verified_against: .agents/skills/swarm-intelligence/SKILL.md (10-phase cascade L67-76, C0/C2 rows L123-125); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; crates/swarm_panel/src/swarm_panel.rs
 status: VERIFIED
 -->
 

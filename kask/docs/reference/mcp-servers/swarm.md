@@ -84,7 +84,7 @@ Both substrates dispatch through the kask MCP runtime (per-agent call metering,
 `hkask.mcp.swarm` telemetry targets; tool reach itself is
 bounded by the card's `mcp_tools` allowlist, not by the runtime). The server is the
 substrate for the **Agent Swarm panel** (`crates/swarm_panel`), the
-**`swarm-intelligence` skill**, and the **`swarm-steering` skill**.
+**`swarm-intelligence` skill** (including its local steering loop).
 
 ## The three surfaces
 
@@ -245,8 +245,7 @@ registry is read by `swarm_list_local_agents` and
 ### `LocalDelegateResult` shape
 
 Every `swarm_delegate_local` and `swarm_fanout_local` entry returns this shape.
-It is the contract the `swarm-intelligence` ORIENT/CHECK steps and the
-`swarm-steering` skill consume. Absent fields are `None`/empty arrays, never
+It is the contract the `swarm-intelligence` ORIENT/CHECK steps and its steering loop consume. Absent fields are `None`/empty arrays, never
 fabricated.
 
 ```json
@@ -350,10 +349,10 @@ delegation has no balance: local agents run on the operator's own substrate
 
 ## The swarm-intelligence skill ecosystem
 
-The swarm server is the substrate for two convergent skills that compose and
-steer swarms. The skills live in `.agents/skills/swarm-intelligence/` and
-`.agents/skills/swarm-steering/`; this section documents how they consume the
-server's tool surface.[^pso-swarm-ecosystem][^aco-swarm-ecosystem]
+The swarm server is the substrate for the convergent skill that composes and
+steers swarms. The skill lives in `.agents/skills/swarm-intelligence/`
+(its steering loop absorbed the former `swarm-steering` skill, 2026-09-25); this
+section documents how it consumes the server's tool surface.[^pso-swarm-ecosystem][^aco-swarm-ecosystem]
 
 ### The 10-step PDCA cascade (`swarm-intelligence`)
 
@@ -416,8 +415,8 @@ and execution.
 | **steering**           | The Kask Curator (local) or Xaman Ek (cloud, steering built-in) | The Curator / Xaman Ek autonomously | Autonomous closed-loop composition.        |
 
 In **advisory** mode, the cascade emits `emitted_calls` (a list of
-`swarm_delegate_local` invocations) and stops. The operator — or the
-`swarm-steering` skill — executes them and feeds the resulting
+`swarm_delegate_local` invocations) and stops. The operator — or
+swarm-intelligence's steering loop — executes them and feeds the resulting
 `LocalDelegateResult[]` back as `delegate_results` on the next invocation. In
 **steering** mode, the Curator or Xaman Ek executes the plan in-process and
 feeds the results back autonomously, closing C5/C6 within a single cascade run.
@@ -448,20 +447,14 @@ returns). The contract:
 - If `delegate_results` is absent or empty, C5/C6 are inert (the cascade emits
   intents, not executed results).
 
-### The `swarm-steering` skill
+### Steering a local swarm
 
-`swarm-steering` is a focused, single-pass skill that codifies the
-execute-and-feed-back loop for local swarms. It is the mechanical counterpart
-to `swarm-intelligence`'s advisory mode: given a swarm-intelligence plan
-(`emitted_calls`), it produces the `swarm_delegate_local` execution sequence,
-the `delegate_results` collection shape (a `LocalDelegateResult[]`), and the
-re-invoke instruction. The Kask Curator or a human in the loop executes the
-directive and feeds `delegate_results` back to `swarm-intelligence`, closing
-the C5/C6 feedback loop.
-
-Anchored to PKO (procedure execution) and the Conant-Ashby Good Regulator (the
-actuator must model the swarm it steers). Pairs with `swarm-intelligence` (the
-planner). Emits `reg.skill.swarm-steering.*` spans. Any agent may invoke it.
+swarm-intelligence's "Steering a local swarm" loop (formerly the separate
+`swarm-steering` skill) is the execute-and-feed-back step for local swarms:
+from the plan (`emitted_calls`) it renders the `swarm-steer-direct` directive,
+makes one `swarm_execute_plan_local` call, checks the ordered receipt with
+`lisp_eval`, and feeds only the returned `results` back as `delegate_results`,
+closing C5/C6. It sequences and collects; it never re-plans.
 
 ## Single launch path (2026-08-29 migration)
 
