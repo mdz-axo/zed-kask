@@ -9,26 +9,9 @@ Dynamic, example-anchored Sankey diagramming. Given a prompt, match it against a
 
 ## Ontological Grounding
 
-A Sankey diagram is a visualization of a **PKO Procedure** (Procedural Knowledge Ontology, Carriero et al. 2025, arXiv:2503.20634). The mapping is:
+A Sankey is a weighted-flow diagram, not inherently a financial entity or a procedure. Keep the user's actual unit and flow vocabulary: widget counts, energy, currency, requests, and other flows all qualify. `onto_anchor` currently gives “Sankey diagram” only a coarse core anchor; do not invent a more specific identity. For a real procedure, `pko:Procedure` may describe the depicted process; for a financial line item, use FIBO only when that *term* resolves there. Neither ontology applies to every diagram or edge. Record sourced quantities using PROV-O provenance (`prov:wasDerivedFrom`); DC+BIBO describes the output document, not its conservation rule.
 
-| Sankey element | PKO concept | Role |
-|---|---|---|
-| The whole diagram | `pko:Procedure` | A sequence of actions to achieve an outcome |
-| Each node | `pko:Step` | A stage in the procedure |
-| Each edge | `pko:nextStep` (flow) | Sequential flow between steps |
-| Each weight | `pko:StepExecution` quantity | The magnitude flowing through a step execution |
-| Conservation rule | `pko:StepVerification` | How the flow's correctness is verified |
-| Interrogation questions | `pko:UserQuestionOccurrence` | Questions asked during the procedure |
-| Refinement directives | `pko:UserFeedbackOccurrence` | Feedback driving iteration |
-| Data sources | `prov:wasDerivedFrom` (PROV-O) | Provenance of each weight |
-
-The state axis (DC+BIBO) anchors the *artifact*: the output markdown is a `bibo:Document`, the Mermaid source is a `dcterms:Dataset`, each weight carries `dcterms:source`.
-
-Domain-specific ontology supplements layer on top:
-- **Financial domains** (cost-breakdown, resource-allocation): FIBO (Financial Industry Business Ontology) — line items map to FIBO concepts (e.g., `fibo:CashAndCashEquivalents`, `fibo:OperatingCashFlow`).
-- **Process domains** (process, data-pipeline, system-architecture): PKO alone suffices.
-- **Energy/material domains**: PKO + domain units (kWh, kg) — no standard OWL ontology is assumed; units are stated in the description.
-- **User-journey/conversion**: PKO + the user's own funnel ontology (stages as named Steps).
+Domain vocabulary is conditional: resolve financial terms individually before using FIBO; use PKO only for a flow that actually describes a procedure; retain the user's stage names and sourced units for widget, energy, data-pipeline, journey, and other flows. A coarse result stays coarse pending an operator ontology ruling.
 
 ## Canonical References
 
@@ -43,7 +26,10 @@ The skill builds on these established resources. Cite them in the output descrip
 - **PKO** (Carriero et al. 2025): `https://w3id.org/pko` — the ontology for procedural knowledge, used for flow structure.
 - **Mermaid Sankey docs**: `https://mermaid.js.org/syntax/sankey.html` — the rendering target.
 
-**Open S13 gap:** match → adapt → render is currently single-pass; the adapt check is not a bounded, observable Check→Act route from an initial to a target condition. The former single-pass exemption was superseded on 2026-09-25. Preserve the one-pass success path while designing a correction only for measured failures.
+## Initial and target condition
+
+- **Initial condition:** the user's stated nodes, edges, weights, units, and source (or explicit absence), plus the inferred domain and conservation mode. A unitless `value=1` placeholder is not a measured count.
+- **Target condition:** the rendered Mermaid edges match the sourced edge list one-to-one, no nodes or weights are invented, and the conservation status is `observed_balanced`, `discrepancy`, `unverified`, or `skipped` according to the domain and available measurements. A passing first Check requires no extra inference.
 
 ## When to Use
 
@@ -95,16 +81,16 @@ Classify the prompt against these domains. Each domain carries: (a) a canonical 
 
 | Domain | Node taxonomy | Weight semantics (unit) | Conservation | Ontology anchor |
 |---|---|---|---|---|
-| **process** | Process steps / stages | Throughput per unit time (items/hr, req/s) | **asserted** — flag discrepancies as questions | PKO |
-| **data-pipeline** | Sources → transformers → sinks | Record/byte volume | **asserted** — flag loss branches | PKO |
-| **resource-allocation** (financial) | Budget / capacity pools | Currency or resource units (FTE, GB, CPU) | **mandatory** — inflow = outflow | FIBO |
-| **user-journey** | Funnel stages / touchpoints | User count (or conversion %) | **none** — users can appear in multiple branches | PKO |
-| **energy-material** | Energy/material stocks and conversions | Energy (kWh) or mass (kg) | **mandatory** — first law | PKO + domain units |
-| **decision-funnel** | Decision branches with outcomes | Count of decisions per branch | **mandatory** — every decision goes somewhere | PKO |
-| **value-stream** | Value-stream map (lean) stages | Time (hr) or cost ($) per stage | **none** — time is not conserved; cost accumulates | PKO |
-| **cost-breakdown** (financial) | Cost categories → subcategories → outputs | Currency | **mandatory** — total = sum of parts | FIBO |
-| **conversion** (attribution) | Multi-channel attribution paths | Conversions or revenue | **none** — a conversion may be credited to multiple touches | PKO |
-| **system-architecture** | Services and request/data paths | Request volume or bandwidth | **asserted** — flag where requests are dropped | PKO |
+| **process** | Process steps / stages | Throughput per unit time (items/hr, req/s) | **asserted** — flag discrepancies as questions | PKO only if a procedure |
+| **data-pipeline** | Sources → transformers → sinks | Record/byte volume | **asserted** — flag loss branches | Source vocabulary |
+| **resource-allocation** | Budget / capacity pools | Currency or resource units (FTE, GB, CPU) | **mandatory** when the quantities are conserved | FIBO only for resolved financial terms |
+| **user-journey** | Funnel stages / touchpoints | User count (or conversion %) | **none** — users can appear in multiple branches | User's stage names |
+| **energy-material** | Energy/material stocks and conversions | Energy (kWh) or mass (kg) | **mandatory** — first law | Sourced units |
+| **decision-funnel** | Decision branches with outcomes | Count of decisions per branch | **mandatory** — every decision goes somewhere | PKO only if a procedure |
+| **value-stream** | Value-stream map (lean) stages | Time (hr) or cost ($) per stage | **none** — time is not conserved; cost accumulates | Source vocabulary |
+| **cost-breakdown** | Cost categories → subcategories → outputs | Currency | **mandatory** for conserved allocations | FIBO only for resolved financial terms |
+| **conversion** (attribution) | Multi-channel attribution paths | Conversions or revenue | **none** — a conversion may be credited to multiple touches | Source vocabulary |
+| **system-architecture** | Services and request/data paths | Request volume or bandwidth | **asserted** — flag where requests are dropped | Source vocabulary |
 
 **Conservation modes**:
 - **mandatory**: the domain's physics/finance require conservation. Inflow must equal outflow at every node. If the user's numbers don't balance, flag the discrepancy as a question — do not silently "balance" by inventing a loss branch.
@@ -115,11 +101,11 @@ If the prompt does not match any domain, default to **process** with conservatio
 
 ## Instructions
 
-The process is example-anchored match → adapt → render (single pass, 2 LLM calls + 1 deterministic render). The old 7-step PDCA loop (classify → gather → draft → evaluate → converge → loop → write) was overengineered — it made up to 21 LLM calls and never converged because the evaluate step kept flagging intentional design choices (e.g., non-conserving loss-making income statements) as quality gaps.
+The first pass is example-anchored MATCH → ADAPT → deterministic Check → render (2 LLM calls + 1 render). Only a measured edge-mapping error permits one ADAPT correction; intentional non-conservation or missing user data is disclosed, not optimized away. No open-ended quality-scoring loop.
 
-1. **MATCH.** Read the prompt and select the single best-fit domain from the catalog above, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
+1. **MATCH.** Render `sankey-flow/sankey-match` with the user's `prompt`/`task`, an optional `hint`, and `example_registry: {}` (the included canonical library supplies the examples; do not author a private registry). Select the best-fit flow domain by observed unit and shape, then extract only the user's actual nodes, edges and weights. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
 
-2. **ADAPT.** Fill the user's extracted data into the matched canonical example's structure. Verify structure against the example (node count, edge pattern, conservation mode), render the Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — self-correct against the example structure if the draft deviates.
+2. **ADAPT.** Fill only the user's extracted data into the example layout. Render Mermaid CSV with `verification_gap: ""` on the first pass. The example is never authority to invent a branch. Compare the rendered CSV rows one-to-one with the sourced edge list (IDs, weights, extras, omissions); ADAPT's own `conservation_check` string is not proof. On a mapping error, rerender ADAPT once with that exact mismatch as `verification_gap`, preserving the original edges. If mapping still differs, stop rather than show an unverified diagram.
    - Node labels: title case, ≤ 30 characters. If a label is longer, abbreviate and document the abbreviation in the description paragraph.
    - Node IDs: identical to labels (Mermaid Sankey uses labels as IDs).
    - Order edges so that sources appear before targets in the CSV — this improves Mermaid's layout heuristics.
@@ -132,24 +118,34 @@ The process is example-anchored match → adapt → render (single pass, 2 LLM c
    - **`structured-extraction`**: when the source is a document (PDF, HTML, financial statement) and you need to extract entities (line items, stages, services) and relations (flows) into a structured schema. Provide a schema matching the Sankey spec: `{nodes: [{id, label, ontology_concept}], edges: [{source, target, weight, weight_unit, weight_source}]}`.
    - **`metacognition` (inquiry experiment)**: when the source is ambiguous or multi-step (e.g., "research how our competitors handle onboarding and map the flow") and you need to reason through what the flow actually is before extracting weights. Template: `metacognition/inquiry-engine`.
    - **`grep` + manual analysis**: when the source is a codebase and you need to trace data flow through services/modules via the code graph. Use grep + manual analysis.
-   - **`firecrawl_scrape` / `firecrawl_extract`**: when the source is a URL and you need to pull structured data (e.g., a financial statement from a 10-K filing).
+   - **`web_extract`**: for an authorized URL, extract content or structured fields with a declared schema; cite only returned fields and sources.
 
    After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, mark them as placeholders — do not re-delegate the whole task.
 
-3. **Conservation check (deterministic).** Call `lisp_eval` to sum source-side and sink-side edge weights for mandatory conservation mode and compare for equality (within epsilon 0.01). Returns conservation_verified, source_total, sink_total, delta. Non-mandatory modes return verified: true (skipped). No LLM call.
+3. **CHECK.** A grand-total comparison can hide unbalanced internal nodes. For `mandatory` mode, require numeric sourced weights with comparable units and no unitless placeholders; otherwise the status is `unverified` with the missing inputs named. On measured edges, call `lisp_eval` with `edges` bound to reconciled `{source,target,weight}` records and this form, which emits `[node,inflow,outflow]` for each target that also has outgoing flow:
 
-4. **Surface the diagram.** A final render step (`present-sankey.j2`, Rendering template — deterministic, no LLM call) wraps the adapt step's mermaid source in a titled, annotated markdown document with a title, description, the mermaid diagram, the conservation check, a data table annotating each flow with its weight and provenance, and references. This becomes the process's final output — the fenced ```mermaid block reaches the chat stream directly, not buried inside a JSON object field.
+   ```lisp
+   (begin
+     (define sum-for (lambda (node es field) (if (= (length es) 0) 0 (+ (if (string= (assoc field (car es)) node) (assoc "weight" (car es)) 0) (sum-for node (cdr es) field)))))
+     (define has-out (lambda (node es) (if (= (length es) 0) nil (or (string= node (assoc "source" (car es))) (has-out node (cdr es))))))
+     (define rows (lambda (rest all) (if (= (length rest) 0) (list) (let ((node (assoc "target" (car rest)))) (if (has-out node all) (cons (list node (sum-for node all "target") (sum-for node all "source")) (rows (cdr rest) all)) (rows (cdr rest) all))))))
+     (rows edges edges))
+   ```
+
+   Check its `node_rows` with `lisp_eval` form `(begin (define balanced (lambda (rows epsilon) (if (= (length rows) 0) t (and (<= (abs (- (nth 1 (car rows)) (nth 2 (car rows)))) epsilon) (balanced (cdr rows) epsilon))))) (balanced node_rows epsilon))`, with `epsilon: 0.01`. Duplicate rows for a node are harmless; report its discrepancy once. An empty `node_rows` means no internal node was checked: mark `unverified`, not vacuously balanced. A false result is `discrepancy` with node-level values; true over nonempty rows is `observed_balanced`. In `asserted` mode, check measured values and flag discrepancies, but only enforce conservation if the user claims it. In `none` mode return `skipped`, never `verified: true`. Arithmetic on supplied edges does not prove extraction accuracy.
+
+4. **ACT / surface.** On a reconciled first pass, render `present-sankey.j2` immediately. Override ADAPT's proposed `conservation_check` with the observed node-level result or the explicit `discrepancy`, `unverified`, or `skipped` status. A real discrepancy is reported, never balanced by inventing a branch. On an edge-mapping error, the one ADAPT correction in step 2 is the only re-entry. Surface the fenced ```mermaid block directly rather than burying it in JSON.
 
 ## Research Delegation — Detailed Protocol
 
 When the gather step takes Path B (research delegation), follow this protocol:
 
-1. **Identify the source type**: URL (use `firecrawl_scrape` or `firecrawl_extract`), file in project (use `read_file` or `structured-extraction`), codebase (use grep + manual analysis), ambiguous/multi-step (use `metacognition`'s inquiry experiment).
+1. **Identify the source type**: URL (`web_extract`), file in project (`read_file` or `structured-extraction`), codebase (`grep` + manual analysis), ambiguous/multi-step (`metacognition`'s inquiry experiment).
 
-2. **Define the extraction schema**: Always provide a schema matching the Sankey spec. For financial statements, anchor to FIBO concepts:
+2. **Define the extraction schema**: Provide the same source/target/weight shape for any flow. Resolve domain terms with `onto_anchor`; FIBO is conditional on an actual financial concept:
    ```json
    {
-     "nodes": [{"id": "string", "label": "string", "ontology_concept": "fibo:ConceptName"}],
+     "nodes": [{"id": "string", "label": "string", "ontology_concept": "tool-returned concept or coarse anchor"}],
      "edges": [{"source": "string", "target": "string", "weight": "number", "weight_unit": "string", "weight_source": "string"}]
    }
    ```
@@ -178,7 +174,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 - **Zed rendering constraints**: no `%%{init}%%`, no `classDef`, no inline color styles. Use the front-matter `config` block.
 - **Node labels ≤ 30 characters.** Abbreviate longer labels and document the abbreviation.
 - **No duplicate node IDs.** Mermaid Sankey uses labels as IDs; duplicates silently break rendering.
-- Single pass — no iteration loop. `max_iterations: 1`; the adapt step self-corrects against the matched example's structure.
+- One passing pass closes the local PDCA; on an observed edge-mapping error, at most one ADAPT correction and recheck. Never rerun merely to improve style or hide a true discrepancy.
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
 - **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
@@ -190,7 +186,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 |----------|---------|
 | `sankey-examples.j2` | Include | Library of canonical Sankey structural templates (income statement, budget, data pipeline, funnel, balance sheet, process flow) with match triggers, node patterns, edge patterns, conservation modes, and filled instances. Included by the match and adapt templates as few-shot context. |
 | `sankey-match.j2` | Classify the prompt's domain, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). |
-| `sankey-adapt.j2` | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
+| `sankey-adapt.j2` | Render sourced edges as Mermaid CSV, with one bounded correction for an observed mapping error; its proposed conservation note is replaced by the invoking agent's deterministic node check. |
 | `present-sankey.j2` | Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `sankey-flow/sankey-examples`) and a context object with the required variables.
@@ -201,14 +197,9 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 **Prompt**: "show how our data flows"
 
-**Classification**: domain = `data-pipeline` (trigger phrase "data flows"; weight semantics = record/byte volume; conservation = asserted; ontology = PKO). Candidate nodes: none. Candidate edges: none.
+**Classification**: the prompt suggests a `data-pipeline` flow with record/byte units, but names no nodes or edges. Stop before rendering rather than inventing a Kafka/Snowflake graph. Do not assign a PKO procedure identity from the diagram type alone.
 
-**Interrogation round 1** (3 questions, batched):
-1. "What are the sources of your data? (e.g., 'Kafka, Postgres CDC, S3 uploads' — list as many as apply)"
-2. "What are the sinks? (e.g., 'Snowflake warehouse, S3 archive, real-time dashboard')"
-3. "Do you have approximate volumes per source? (absolute numbers, relative ratios, or 'no idea' are all fine — I will mark unknowns as unweighted)"
-
-**User answer**: "Sources: Kafka events, Postgres CDC. Sinks: Snowflake, S3 archive. Volumes: Kafka ~1.2M events/day, Postgres ~300K rows/day, Snowflake gets everything, S3 archive gets 10% of Kafka."
+**If the user later supplies actual nodes and weights**: "Sources: Kafka events, Postgres CDC. Sinks: Snowflake, S3 archive. Volumes: Kafka ~1.2M events/day, Postgres ~300K rows/day, Snowflake gets everything, S3 archive gets 10% of Kafka."
 
 **Draft**:
 ````
@@ -226,17 +217,17 @@ sankey-beta
 Kafka Events,Enricher,1200
 Postgres CDC,Enricher,300
 Enricher,Snowflake,1500
-Enricher,S3 Archive,120
+Kafka Events,S3 Archive,120
 ```
 ````
 
-**Description**: Data pipeline flow (PKO Procedure, 4 Steps). Weights in thousands of records/day. Conservation: asserted — Enricher inflow (1500) = outflow (1500+120=1620). **Discrepancy flagged**: outflow exceeds inflow by 120; the user stated S3 Archive receives 10% of Kafka (120K), which implies the Enricher is not the source of S3 Archive, or there is an unreported loss branch. User should clarify.
+**Description**: Data pipeline flow in thousands of records/day, with no automatic PKO identity. Enricher has 1500 in and 1500 out. The user said S3 receives 10% of Kafka, so the 120 edge originates at Kafka; Kafka's 1200 to Enricher plus 120 copied to S3 is not a conserved one-to-one split. Report that duplication under asserted mode rather than inventing a loss or treating the copied 120 as new records.
 
 ### Example 2: Specific prompt, no interrogation
 
 **Prompt**: "Sankey of our Q3 budget: $500K engineering, $300K sales, $200K marketing. Engineering splits into platform $200K and product $300K. Sales splits into direct $200K and partner $100K."
 
-**Classification**: domain = `cost-breakdown` (trigger "budget"; weight = currency; conservation = mandatory; ontology = FIBO). Candidate nodes: Q3 Budget, Engineering, Sales, Marketing, Platform, Product, Direct, Partner. Candidate edges: 7, all weighted.
+**Classification**: domain = `cost-breakdown` (trigger "budget"; weight = currency; conservation = mandatory). Nodes and seven edges are user-stated; financial line-item ontology terms are resolved individually, not assigned FIBO by chart type.
 
 **Spec gap**: none. Skip interrogation.
 
@@ -263,15 +254,13 @@ Sales,Partner,100
 ```
 ````
 
-**Convergence**: 0.00 on first draft (all weights user-stated, all nodes present, conservation holds: 500+300+200=1000 in; 200+300+200+100=800 out via sub-allocations, root inflow 1000 = sum of root outflows). CONVERGED.
+**Check:** Engineering 500 in = 200+300 out; Sales 300 in = 200+100 out. The root allocation is 500+300+200 = 1000. No fabricated weights or unverified FIBO local names are needed.
 
-**References**: FIBO (`fibo:Budget`, `fibo:MonetaryAmount`).
-
-### Example 3: Conservation discrepancy (mandatory domain)
+### Example 3: Funnel with unknown exits (none mode)
 
 **Prompt**: "Map our lead funnel: 1000 visitors → 200 signups → 50 demos → 10 closed."
 
-**Classification**: domain = `user-journey` (trigger "funnel"; weight = user count; conservation = **none** — users can appear in multiple branches; ontology = PKO).
+**Classification**: domain = `user-journey` (trigger "funnel"; weight = user count; conservation = **none**). Keep user-supplied stage names; do not infer a PKO procedure identity.
 
 **Draft**:
 ````
@@ -287,47 +276,42 @@ config:
 sankey-beta
 %% source,target,value
 Visitors,Signups,200
-Visitors,Churned at Signup,800
 Signups,Demos,50
-Signups,Churned at Demo,150
 Demos,Closed,10
-Demos,Churned at Close,40
 ```
 ````
 
-**Description**: User journey funnel (PKO Procedure, 6 Steps). Weights are user counts. Conservation mode: **none** — this is a funnel, not a conserved flow. "Churned at Signup", "Churned at Demo", and "Churned at Close" are inferred loss branches added to make the funnel readable as a Sankey (Sankey widths encode flow magnitude; the implicit loss is the whole point). If the user does not want loss branches shown, the diagram can be redrawn as a pure chain, but then it is not a true Sankey.
-
-**Evaluate**: data integrity = 0.20 (loss branches inferred but flagged, not silently balanced — and conservation mode is `none` so this is acceptable). All other criteria = 0.00. Weighted total = 0.07. CONVERGED.
+**Description**: The user supplied 1000 visitors, 200 signups, 50 demos and 10 closed. The three drawn edges carry only stated continuing counts; the destination of the other visitors is unknown, not a fabricated churn branch. Conservation status: `skipped` for this non-conserved journey. Note the unplotted 1000-visitor total in prose, not as an invented weighted edge.
 
 ### Example 4: Research delegation (financial statement)
 
 **Prompt**: "Sankey of Apple's latest income statement from their 10-K."
 
-**Classification**: domain = `cost-breakdown` (financial; conservation = mandatory; ontology = FIBO). Source: Apple 10-K (URL needed).
+**Classification**: domain = `cost-breakdown` (financial; conservation = mandatory). Source: Apple 10-K (URL needed). Resolve actual extracted financial terms before applying FIBO to any node.
 
 **Gather — Path B (delegation)**:
 1. Source type: URL (SEC EDGAR or Apple investor relations).
-2. Delegate to `firecrawl_extract` with schema:
+2. Call `web_extract` with a structured schema for the authorized source URL:
    ```json
    {
-     "nodes": [{"id": "string", "label": "string", "ontology_concept": "fibo:Revenue|fibo:CostOfRevenue|fibo:OperatingExpense|fibo:NetIncome"}],
+     "nodes": [{"id": "string", "label": "string", "ontology_concept": "actual onto_anchor result (including coarse when applicable)"}],
      "edges": [{"source": "string", "target": "string", "weight": "number", "weight_unit": "USD millions", "weight_source": "Apple 10-K page X"}]
    }
    ```
 3. Validate: all weights sourced? Conservation holds (Revenue = COGS + OpEx + NetIncome)?
 4. If gaps (e.g., extraction missed a line item), mark them as placeholders: "Extraction found Revenue, COGS, NetIncome but not R&D or SG&A — those edges are marked value=1 (unweighted placeholders)."
 
-**Draft**: (structure mirrors Example 2, with FIBO-anchored node labels)
+**Draft**: use Example 2's layout only; retain sourced node labels and their actual ontology-resolution tiers.
 
 **Data sources**: Every weight carries `prov:wasDerivedFrom <Apple 10-K URL, page X>`.
 
-**References**: FIBO (`fibo:Revenue`, `fibo:CostOfRevenue`, `fibo:OperatingExpense`, `fibo:NetIncome`); Schmidt 2008 Part II (cost-flow Sankeys); GuruFocus (canonical example of financial-statement Sankeys).
+**References**: the returned financial-concept anchors (FIBO only if resolved), Schmidt 2008 Part II (cost-flow Sankeys), and the cited statement.
 
 ### Example 5: Multi-diagram family (three financial statements)
 
 **Prompt**: "Visualize Apple's financial statements."
 
-**Classification**: three domains, all `cost-breakdown`, all FIBO-anchored:
+**Classification**: three financial-statement flows; resolve each term independently rather than claiming all nodes are FIBO-anchored:
 1. Income statement (Revenue → COGS, OpEx → NetIncome)
 2. Balance sheet (Assets = Liabilities + Equity)
 3. Cash flow statement (Operating → Investing → Financing → Net change in cash)

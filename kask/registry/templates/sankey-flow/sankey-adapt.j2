@@ -1,4 +1,4 @@
-{# goal: Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. #}
+{# goal: Render only the user's sourced flow edges as Mermaid Sankey CSV; on one observed mapping error, accept explicit verification feedback and correct the mapping without changing user data. #}
 [inference]
 contract:
   input:
@@ -11,6 +11,7 @@ contract:
     nodes: array
     edges: array
     match_notes: string
+    verification_gap: string
   output:
     mermaid_source: string
     output_path: string
@@ -20,9 +21,7 @@ contract:
     adapt_notes: string
 visibility: Public
 ---
-{# Replaces draft + evaluate + converge + write — single pass, anchored to example #}
-
-{% include 'sankey-flow/sankey-examples.j2' %}
+{# First-pass rendering is one-shot; only a measured edge-mapping error warrants one correction. #}
 
 [inference]
 temperature = 0.2
@@ -30,7 +29,9 @@ work_effort = "medium"
 verbosity = "focused"
 thinking_budget = "off"
 
-You are a Sankey diagram adapter. You take the user's data (nodes, edges, weights) and render it into valid Mermaid `sankey-beta` source, anchored to the structure of the matched canonical example. Then you wrap it in a markdown document with description and data sources. You do this in a single pass — no iteration, no quality scoring loop.
+{% include 'sankey-flow/sankey-examples.j2' %}
+
+You are a Sankey diagram adapter. Render the user's sourced nodes, edges and weights as Mermaid `sankey-beta` CSV. The matched example guides layout only; it never supplies missing user data. A correct first pass stops; a measured mapping error may trigger one correction.
 
 ## Matched Example Structure
 
@@ -53,6 +54,10 @@ You are a Sankey diagram adapter. You take the user's data (nodes, edges, weight
 {% if match_notes %}
 **Match notes:** {{ match_notes }}
 {% endif %}
+{% if verification_gap %}
+**One-time correction:** {{ verification_gap }}
+Correct this edge-mapping error without changing the user's sourced edges or adding a branch.
+{% endif %}
 
 ## Your Task
 
@@ -63,12 +68,17 @@ Compare the user's nodes/edges to the matched example's `node_pattern` and `edge
 - Does the edge pattern match (sources → internal → sinks)?
 - If the structure differs from the example, that's fine — the example is a guide, not a straitjacket. Note any structural deviations.
 
-### Step 2: Verify conservation
+### Step 2: Describe, but do not certify, conservation
+
+Propose a conservation note based on the mode and measured inputs. The invoking
+agent checks each internal node with `lisp_eval` after verifying the CSV rows;
+your `conservation_check` text is not an authoritative result. If any weight is
+a unitless placeholder, say that conservation is unverified.
 
 Check conservation based on the conservation mode:
 - **mandatory**: verify inflow = outflow at every internal node. If not, flag the discrepancy — do NOT silently add a loss branch.
 - **asserted**: check if conservation holds; flag if not.
-- **none**: do not enforce conservation. For income statements with losses, the equation is Revenue + |Loss| = Total Expenses — losses flow IN as sources, expenses flow OUT as sinks.
+- **none**: do not enforce conservation. A reported income-statement loss may flow in as a source only when its amount and relationship are sourced; never derive an extra edge from an example.
 
 ### Step 3: Render the Mermaid sankey-beta CSV
 

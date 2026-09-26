@@ -21,7 +21,7 @@
 
 {# ── Description ── #}
 
-This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ node_count }} nodes and {{ edge_count }} edges. Weights are in {{ weight_unit }}. Conservation mode: **{{ conservation_mode }}**{% if conservation_mode == "mandatory" %} — inflow equals outflow at every internal node.{% elif conservation_mode == "asserted" %} — conservation may or may not hold; discrepancies are flagged.{% elif conservation_mode == "none" %} — flows are not conserved; asymmetry is intentional and not balanced with fabricated loss branches.{% endif %}
+This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ node_count }} nodes and {{ edge_count }} edges. Measured weights are in {{ weight_unit }}; any `value=1` placeholders are unitless and named in the flow annotations. Conservation mode: **{{ conservation_mode }}**{% if conservation_mode == "mandatory" %} — each internal node requires an observed inflow/outflow check; see status below.{% elif conservation_mode == "asserted" %} — report observed discrepancies; enforce only if the user requires conservation.{% elif conservation_mode == "none" %} — conservation is skipped; do not invent balancing branches.{% endif %}
 
 {# ── Mermaid diagram ── #}
 
