@@ -290,7 +290,7 @@ MCP server took ownership of the ledger; they are pinned absent by the
 | `report_list` | List saved report or screen artifact names |
 | `report_load` | Load a saved report or screen JSON artifact by name |
 | `report_save` | Persist a report or screen JSON artifact |
-| `company_verification_packet_check` | Read one contained public-only research-run `packet.json` by 16-hex run ID, check expected SHA-256, and execute the shared company source-check form with a bounded Lisp budget; returns mechanical statuses, **not** source completeness or fact score |
+| `company_verification_packet_check` | Read one contained public-only research-run `packet.json` by readable run folder (`{YYYY-MM-DD}-{company-slug}`), check expected SHA-256, and execute the shared company source-check form with a bounded Lisp budget; returns mechanical statuses, **not** source completeness or fact score |
 
 ## Configuration
 

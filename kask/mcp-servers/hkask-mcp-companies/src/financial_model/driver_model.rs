@@ -34,6 +34,10 @@ pub(crate) struct ProjectionAssumptions {
     pub sga_to_revenue: f64,
     pub other_operating_expense_to_revenue: f64,
     pub da_to_revenue: f64,
+    /// D&A is embedded in cost of revenue and operating expenses (reported
+    /// GAAP presentation), so EBIT does not subtract it a second time. It
+    /// still drives the cash-flow add-back and the PP&E roll-forward.
+    pub da_embedded_in_costs: bool,
     pub tax_rate: f64,
     pub capex_to_revenue: f64,
     pub capex_explicit: f64,
@@ -72,6 +76,7 @@ impl Default for ProjectionAssumptions {
             sga_to_revenue: 0.15,
             other_operating_expense_to_revenue: 0.0,
             da_to_revenue: 0.03,
+            da_embedded_in_costs: false,
             tax_rate: 0.21,
             capex_to_revenue: 0.03,
             capex_explicit: 0.0,
@@ -139,8 +144,8 @@ impl ProjectionAssumptions {
         hist: &HistoricalSnapshot,
         investor_required_return: f64,
     ) -> Result<Self, ProjectionError> {
-        let other_operating_expense_to_revenue = hist
-            .other_operating_expense_to_revenue()
+        let bridge = hist
+            .operating_cost_bridge()
             .ok_or(ProjectionError::OperatingExpensesUnreconciled)?;
         let debt = hist.latest_debt().max(0.0);
         let equity = hist.latest_equity();
@@ -161,8 +166,9 @@ impl ProjectionAssumptions {
             revenue_growth: hist.revenue_cagr(),
             gross_margin: hist.gross_margin(),
             sga_to_revenue: hist.sga_to_revenue(),
-            other_operating_expense_to_revenue,
+            other_operating_expense_to_revenue: bridge.other_operating_expense_to_revenue,
             da_to_revenue: hist.da_to_revenue(),
+            da_embedded_in_costs: bridge.da_embedded,
             tax_rate: hist.tax_rate,
             capex_to_revenue: hist.capex_to_revenue(),
             dso_days: hist.dso_days(),
@@ -508,7 +514,12 @@ fn project_industrial(
         let da = assumptions
             .capex_da_ratio
             .map_or(revenue * assumptions.da_to_revenue, |ratio| capex / ratio);
-        let ebit = gross_profit - sga - other_operating_expenses - da;
+        let expensed_da = if assumptions.da_embedded_in_costs {
+            0.0
+        } else {
+            da
+        };
+        let ebit = gross_profit - sga - other_operating_expenses - expensed_da;
         let provisional_debt =
             previous_debt + assumptions.debt_issuance - assumptions.debt_repayment;
         let debt = assumptions
@@ -732,7 +743,11 @@ pub(crate) fn implied_net_margin_at_growth(
             candidate.gross_margin = net_margin / (1.0 - assumptions.tax_rate)
                 + assumptions.sga_to_revenue
                 + assumptions.other_operating_expense_to_revenue
-                + assumptions.da_to_revenue
+                + if assumptions.da_embedded_in_costs {
+                    0.0
+                } else {
+                    assumptions.da_to_revenue
+                }
                 + interest_to_revenue;
             project_financial_model(hist, &candidate)
                 .ok()
@@ -797,7 +812,41 @@ mod tests {
     #[test]
     fn reported_operating_income_reconciles_other_operating_expense() {
         let history = worked_history();
-        assert_eq!(history.other_operating_expense_to_revenue(), Some(0.05));
+        let bridge = history.operating_cost_bridge().expect("worked bridge");
+        assert_eq!(bridge.other_operating_expense_to_revenue, 0.05);
+        assert!(!bridge.da_embedded);
+    }
+
+    /// Reported GAAP income statements (e.g. Microsoft FY2026: revenue
+    /// 331,839; COGS 106,374; SG&A 34,666; R&D 35,562; operating income
+    /// 155,237; cash-flow D&A 38,534) carry D&A inside COGS and opex. The
+    /// bridge must not subtract D&A again: the residual is R&D, and projected
+    /// base-year EBIT reproduces reported operating income.
+    #[test]
+    fn embedded_da_bridge_reproduces_reported_operating_income() {
+        let mut history = worked_history();
+        for (series, value) in [
+            (&mut history.revenue, 331_839.0),
+            (&mut history.cogs, 106_374.0),
+            (&mut history.sga, 34_666.0),
+            (&mut history.da, 38_534.0),
+            (&mut history.operating_income, 155_237.0),
+        ] {
+            for (_, v) in series.iter_mut() {
+                *v = value;
+            }
+        }
+        let bridge = history.operating_cost_bridge().expect("GAAP bridge");
+        assert!(bridge.da_embedded);
+        assert!((bridge.other_operating_expense_to_revenue * 331_839.0 - 35_562.0).abs() < 1e-6);
+        let mut assumptions =
+            ProjectionAssumptions::from_history(&history, 0.15).expect("embedded D&A reconciles");
+        assumptions.revenue_growth = 0.0;
+        assumptions.total_years = 2;
+        assumptions.stage1_years = 1;
+        let model = project_financial_model(&history, &assumptions).expect("projection");
+        let first = model.periods.first().expect("period");
+        assert!((first.ebit - 155_237.0).abs() < 1e-3, "ebit {}", first.ebit);
     }
 
     /// Damodaran FCFF identity and Gordon-growth terminal value are reproduced

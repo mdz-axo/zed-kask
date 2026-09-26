@@ -709,9 +709,12 @@ and frozen-forecast gate report material omissions and field mutation
 separately from factual grounding. A generated answer is not original content;
 only disclosures bearing on the company's economics or thesis are listed;
 boilerplate is never retrieved, listed or counted, and its absence is not a
-gap. The source check returns coverage and known-omission signals separately;
-unmatched coverage is reported as `not_checked` without blocking, and only a
-material omission blocks. Neither is part of `fact_score`. The agent-executed
+gap. The source check returns coverage and known-omission signals separately.
+The gate reads a material failure, known omission or fact score below 0.60
+first and returns `needs_work` (repair); only then does unmatched or
+unperformed coverage (`not_checked`) return `incomplete`, which blocks a
+verified report but permits a labelled draft. Neither signal is part of
+`fact_score`. The agent-executed
 forms validate supplied bytes, not a read-only capability boundary.
 
 The skill bodies own collection and the shared three-iteration correction

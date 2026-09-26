@@ -139,6 +139,14 @@ fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f6
     }
 }
 
+/// How reported costs bridge gross profit to operating income.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct OperatingCostBridge {
+    pub other_operating_expense_to_revenue: f64,
+    /// D&A is already inside cost of revenue and operating expenses.
+    pub da_embedded: bool,
+}
+
 /// Historical financial data extracted from API responses.
 #[derive(Debug, Clone)]
 pub(crate) struct HistoricalSnapshot {
@@ -652,22 +660,32 @@ impl HistoricalSnapshot {
         self.latest_sga() / revenue
     }
 
-    /// Residual operating expense share required to reconcile gross profit to
-    /// reported operating income after SG&A and D&A. A negative residual means
-    /// the provider components overlap or disagree and is therefore unavailable.
-    pub fn other_operating_expense_to_revenue(&self) -> Option<f64> {
+    /// Reconcile gross profit to reported operating income. Returns the
+    /// residual operating expense share and whether D&A is embedded in cost of
+    /// revenue and operating expenses. Cash-flow-statement D&A is a separate
+    /// income-statement line only when subtracting it still leaves a
+    /// non-negative residual; otherwise it is already inside the reported
+    /// costs (the common GAAP presentation) and must not be subtracted again.
+    /// `None` means the components disagree even without D&A.
+    pub fn operating_cost_bridge(&self) -> Option<OperatingCostBridge> {
         let revenue = self.latest_revenue();
         let operating_income = self.operating_income.last().map(|(_, value)| *value)?;
         if revenue <= 0.0 {
             return None;
         }
-        let residual = self.latest_revenue()
-            - self.latest_cogs()
-            - self.latest_sga()
-            - self.latest_da()
-            - operating_income;
-        let ratio = residual / revenue;
-        (ratio.is_finite() && ratio >= -1e-6).then_some(ratio.max(0.0))
+        let before_da = revenue - self.latest_cogs() - self.latest_sga() - operating_income;
+        let separate = (before_da - self.latest_da()) / revenue;
+        if separate.is_finite() && separate >= -1e-6 {
+            return Some(OperatingCostBridge {
+                other_operating_expense_to_revenue: separate.max(0.0),
+                da_embedded: false,
+            });
+        }
+        let embedded = before_da / revenue;
+        (embedded.is_finite() && embedded >= -1e-6).then_some(OperatingCostBridge {
+            other_operating_expense_to_revenue: embedded.max(0.0),
+            da_embedded: true,
+        })
     }
 
     pub fn latest_total_assets(&self) -> f64 {

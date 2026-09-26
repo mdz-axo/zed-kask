@@ -87,20 +87,17 @@ FORMER_SKILL_NAMES=(
   'web-deep-research'
 )
 
-for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
-  skill=$(basename "$(dirname "$skill_md")")
-  while IFS=: read -r line_no line; do
-    for former in "${FORMER_SKILL_NAMES[@]}"; do
-      # A former name that has since been restored is no longer deleted —
-      # references to it resolve, so it must not flag (eqm/eqm-improvement
-      # were deleted in 9bcfe558a0 and restored in 9ec1df0ca0).
-      [ -f "$SKILLS_DIR/$former/SKILL.md" ] && continue
-      if printf '%s' "$line" | grep -qF "\`$former\`"; then
-        echo "UNRESOLVED: $skill_md:$line_no references deleted skill \`$former\`"
-        FAIL=1
-      fi
-    done
-  done < <(grep -n '`' "$skill_md" || true)
+# One grep per former name over all SKILL.md files (not one fork per line ×
+# name — that took ~45s and timed out agent gates at 30s).
+for former in "${FORMER_SKILL_NAMES[@]}"; do
+  # A former name that has since been restored is no longer deleted —
+  # references to it resolve, so it must not flag (eqm/eqm-improvement
+  # were deleted in 9bcfe558a0 and restored in 9ec1df0ca0).
+  [ -f "$SKILLS_DIR/$former/SKILL.md" ] && continue
+  while IFS=: read -r skill_md line_no _; do
+    echo "UNRESOLVED: $skill_md:$line_no references deleted skill \`$former\`"
+    FAIL=1
+  done < <(grep -nF "\`$former\`" "$SKILLS_DIR"/*/SKILL.md || true)
 done
 
 # ── Check 2: `<skill>/<file>.j2` / `<skill>/<file>.yaml` registry refs must

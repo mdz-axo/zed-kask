@@ -312,17 +312,19 @@ fn scan_harness_summaries(
                 continue;
             }
         };
-        // Find the previous harness_summary for this agent: all
-        // harness_summary events with the same rollout_id, take the last one
-        // before the current event's position.
+        // One query per summary serves both lookups: the previous summary
+        // (the baseline) and any regulation verdict already written for this
+        // detection.
         let all_for_agent = store
             .query(&EventFilter {
                 rollout: Some(agent_name.clone()),
-                kind: Some("harness_summary".to_string()),
                 ..EventFilter::default()
             })
             .map_err(|e| format!("harness_summary previous-query failed: {e}"))?;
-        let previous = all_for_agent.iter().rfind(|e| e.position < event.position);
+        let previous = all_for_agent
+            .iter()
+            .filter(|e| e.kind == "harness_summary")
+            .rfind(|e| e.position < event.position);
         let Some(previous) = previous else {
             // First run for this agent — no baseline to regress from.
             scanned.push(ScannedHarnessSummary {
@@ -352,7 +354,24 @@ fn scan_harness_summaries(
             }
         };
         let drop = previous_pass_rate - current_pass_rate;
-        let regression = if drop > REGRESSION_THRESHOLD {
+        // The monitor's cursor is process-local, so a restart rescans history.
+        // A regulation_impact verdict after this summary means the regression
+        // was already assessed; offering it again duplicates the escalation.
+        let already_assessed = all_for_agent.iter().any(|e| {
+            e.kind == "verdict"
+                && e.position > event.position
+                && e.payload.get("source").and_then(|s| s.as_str())
+                    == Some(hkask_event_store::VerdictSource::RegulationImpact.as_str())
+        });
+        let regression = if drop > REGRESSION_THRESHOLD && already_assessed {
+            tracing::debug!(
+                target: "hkask.bridge.harness",
+                agent = %agent_name,
+                position = event.position,
+                "harness regression already assessed by a regulation verdict — not re-offered"
+            );
+            None
+        } else if drop > REGRESSION_THRESHOLD {
             tracing::info!(
                 target: "hkask.bridge.harness",
                 agent = %agent_name,
@@ -582,6 +601,40 @@ mod tests {
         let (cursor, regressions) = scan_results(&store, cursor);
         assert_eq!(regressions.len(), 1);
         assert_eq!(cursor, Some(second));
+    }
+
+    /// A restart resets the process-local cursor and rescans history. A
+    /// regression already assessed (a regulation_impact verdict follows it)
+    /// must not be re-offered — observed live 2026-09-26: one 1.0→0.333 drop
+    /// escalated at 18:08 and again after the 22:31 restart.
+    #[test]
+    fn scan_harness_summaries_skips_regression_already_assessed() {
+        let store = memory_store();
+        write_summary(&store, "alpha", 1.0);
+        write_summary(&store, "alpha", 0.3);
+        store
+            .append(
+                "alpha",
+                "verdict",
+                &serde_json::json!({"pass": false, "source": "regulation_impact"}),
+            )
+            .unwrap();
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert!(regressions.is_empty(), "assessed regression re-offered");
+
+        // A deterministic verdict is not a regulation assessment.
+        let store = memory_store();
+        write_summary(&store, "alpha", 1.0);
+        write_summary(&store, "alpha", 0.3);
+        store
+            .append(
+                "alpha",
+                "verdict",
+                &serde_json::json!({"pass": false, "source": "deterministic"}),
+            )
+            .unwrap();
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert_eq!(regressions.len(), 1);
     }
 
     #[test]

@@ -18,7 +18,9 @@ company-research-deep without external search, credentials or Exa Agent.
    threshold notice retrieved but not listed leaves the gate `passed`, while a
    wrong audited revenue claim (a rejected load-bearing claim) is `needs_work`.
    A listed disclosure with no matching retained original stays `not_checked`,
-   reported without blocking; a known material omission is preserved.
+   which blocks a verified report (`incomplete`) but permits a labelled draft;
+   a known material omission is preserved. A material failure returns
+   `needs_work` even while source review is still `not_checked`.
    Converted-PDF fixtures accept actual `corpus_convert` text only with a
    retained full-file path and matching digest in the observed conversion log;
    missing identity stays `not_checked`. Fixtures are synthetic; they
@@ -30,7 +32,7 @@ company-research-deep without external search, credentials or Exa Agent.
    Do not duplicate either decision form in test code. For a public-only
    packet too large for model arguments, `company_verification_packet_check`
    executes that same source-check form from a SHA-256-pinned `packet.json`
-   beneath a 16-hex research run directory; disposable-root tests cover a
+   beneath a readable `{YYYY-MM-DD}-{company-slug}` run folder; disposable-root tests cover a
    changed target/digest and a symlink path escape. This is mechanical packet
    evaluation, not independent proof of original URL retrieval.
 3. For a live process check, separately invoke `grounding-verify` in a
