@@ -7,12 +7,14 @@ contract:
     prediction: object|null
     calibration_brier: object|null
     resolved_outcomes: object|null
+    calibration_gap_measured: object|null
     context_text: string|null
   output:
     current_artifacts: object
     current_procedure: object
     applied_calibration: string
-    calibration_gap: float
+    calibration_gap: float|null
+    calibration_direction: string
     result_description: string
     rationale: string
 visibility: Public
@@ -87,29 +89,24 @@ These are previously resolved market outcomes. Compare the analyst's prior forec
 
 ## What to Do
 
-1. **Measure the calibration gap**: Compare the analyst's `process_confidence` (from KATA step 20) against the `calibration_brier` score. A large gap (high process_confidence + high Brier) = overconfidence. A small gap = calibrated. No prediction recorded = maximum gap (1.0).
+1. **Report the measured calibration gap** from `calibration_gap_measured` (below) — do not compute it.
 
 2. **Re-measure the current condition**: After measuring the gap, what artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced?
 
 3. **Describe the result**: What is the calibration state? Is the analyst overconfident, well-calibrated, or under-confident? What is the next PDCA experiment that would close the gap?
 
-## Calibration Gap Computation
+## Calibration Gap (computed before this render — do not recompute)
 
-```
-if no prediction recorded:
-    calibration_gap = 1.0  # maximum — no prediction means no calibration
-elif calibration_brier is available:
-    # gap = brier score (higher brier = larger gap)
-    # but also factor in whether process_confidence matches brier
-    if process_confidence is high (>0.7) and brier is high (>0.33):
-        calibration_gap = brier  # overconfidence — the gap IS the brier
-    elif process_confidence is low (<0.5) and brier is low (<0.25):
-        calibration_gap = brier  # well-calibrated — small gap
-    else:
-        calibration_gap = max(brier, 1.0 - process_confidence)  # mismatch
-else:
-    calibration_gap = 0.5  # no brier — unknown calibration, neutral
-```
+The gap is measured on the ANALYST's own resolved forecasts (stated `forecast_probability` from `forecast_persist`, outcome from `forecast_record`, read with `forecast_list`) — not on a market bucket's Brier score, which measures the market, not the analyst. The invoking step computes it with `lisp_eval` and passes it here:
+
+{{ calibration_gap_measured | tojson }}
+
+Copy its `calibration_gap` and `calibration_direction` into your output unchanged:
+- no prediction recorded → `calibration_gap` 1.0, direction `no_prediction` (a broken feedback loop, not neutral)
+- fewer than 5 resolved forecasts → `calibration_gap` null, direction `undetermined`
+- otherwise → `calibration_gap` = |mean stated probability − observed hit rate|, direction `overconfident`, `underconfident` or `calibrated`
+
+`calibration_brier` (the market bucket) is context for the ellipsis analysis only.
 
 ## Output
 
@@ -129,8 +126,9 @@ else:
       {"name": "experiment", "status": "complete"}
     ]
   },
-  "applied_calibration": "measured the calibration gap using market_calibration Brier score and resolved outcomes",
-  "calibration_gap": 0.0,
+  "applied_calibration": "reported the lisp_eval calibration gap over the analyst's own resolved forecasts",
+  "calibration_gap": null,
+  "calibration_direction": "no_prediction | undetermined | overconfident | underconfident | calibrated",
   "result_description": "the analyst is overconfident / well-calibrated / under-confident; the next PDCA experiment is X",
   "rationale": "what the calibration measurement revealed and why"
 }
@@ -141,6 +139,6 @@ else:
 - This is the measurement half only. Do NOT set a new direction — flash step 20 already did that.
 - `calibration_gap` ranges 0.0 (calibrated) to 1.0 (maximum gap). This is the signal LENS (step 23) consumes as a 6th axis alongside the existing five frameworks.
 - If no prediction was recorded by the KATA step, `calibration_gap` must be 1.0 — this is a broken feedback loop, not a neutral state.
-- If `calibration_brier` is absent, do not fabricate a Brier score. Set `calibration_gap` to 0.5 (unknown) and flag the missing data in `rationale`.
+- With fewer than 5 resolved analyst forecasts, `calibration_gap` is null (undetermined), never 0.5 — an unmeasured gap is not a neutral one. Flag it in `rationale`.
 - Do not re-run the KATA direction step. You are closing the loop, not restarting it.
 - The `result_description` must state the calibration verdict (overconfident / well-calibrated / under-confident) and the next PDCA experiment — this is what LENS consumes.

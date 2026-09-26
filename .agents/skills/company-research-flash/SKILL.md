@@ -114,8 +114,11 @@ DROP/HALT/BLOCK remain terminal and cannot be reopened by a passing fact_score.
 ### kata-calibration-measure
 
 1. Close the open kata loop — step 20 (kata-improvement-step1-direction) sets the direction but never measures the gap.
-2. Measure the analyst's calibration gap using the market_calibration Brier score and resolved_outcomes (step 18 mcp_batch).
-3. Emit calibration_gap (0.0 calibrated → 1.0 maximum gap). No prediction recorded = 1.0 (broken feedback loop, not neutral).
+2. (D) Measure the analyst's own calibration, not the market's: read the analyst's resolved price-target forecasts for this symbol with `forecast_list` (stated `forecast_probability`, outcome in band 1/0), then compute with `lisp_eval`:
+   - form: `(begin (define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l)))))) (define mean (lambda (l) (/ (sum l) (length l)))) (cond ((is_null ps) (list 1.0 "no_prediction")) ((< (length ps) 5) (list nil "undetermined")) (t (let ((d (- (mean ps) (mean os)))) (list (abs d) (if (> d 0) "overconfident" (if (< d 0) "underconfident" "calibrated")))))))`
+   - env: `{ "ps": <stated probabilities>, "os": <outcomes 1/0> }`
+   Pass the result as `calibration_gap_measured` when rendering `company-research/kata-calibration-measure`. The `market_calibration` bucket Brier is market context, not the analyst's calibration.
+3. Emit calibration_gap (0.0 calibrated → 1.0 maximum gap) and its direction. No prediction recorded = 1.0 (broken feedback loop, not neutral); fewer than 5 resolved forecasts = null (undetermined), not a number.
 4. LENS consumes calibration_gap as a 6th axis alongside the existing five frameworks.
 
 ### verify-before-publish

@@ -80,7 +80,7 @@ You are the LENS agent — the consistency auditor for an institutional equity r
 ```json
 {{ calibration_gap | tojson }}
 ```
-The `calibration_gap` field ranges 0.0 (calibrated) to 1.0 (maximum gap). A high gap means the analyst's process_confidence does not match the market_calibration Brier score — an overconfidence or under-confidence signal. If absent, Lens 3 (Dunning-Kruger) cannot cross-reference the calibration measurement and must flag the gap.
+The `calibration_gap` field ranges 0.0 (calibrated) to 1.0 (maximum gap). It is |mean stated probability − observed hit rate| over the analyst's own resolved forecasts, and `calibration_direction` says which way (overconfident / underconfident). A null gap with direction `undetermined` means fewer than 5 resolved forecasts — report it as unmeasured, not as calibrated. If absent, Lens 3 (Dunning-Kruger) cannot cross-reference the calibration measurement and must flag the gap.
 
 ### Semantic Tags (from intel-semantic-classify — pragmatic-semantics adapter)
 ```json
@@ -126,7 +126,7 @@ Score 0–1. Flag round probabilities, missing outside view, vague invalidation,
 - Does the analyst know what they don't know?
 - Is high confidence consistent with evidence quality? (cross-reference `evidence_audit`)
 - Cross-reference `process_confidence` (KATA) vs `final_confidence` (COMMUNICATION) — a large gap = overconfidence risk
-- Cross-reference `calibration_gap` (from kata-calibration-measure) — a high gap (0.7+) means the analyst's process_confidence does not match the market_calibration Brier score. This is a direct overconfidence signal, not an inferred one.
+- Cross-reference `calibration_gap` (from kata-calibration-measure) — read `calibration_direction` for the sign: `overconfident` with a gap above 0.10 is a direct overconfidence signal over the analyst's resolved forecasts, not an inferred one; `undetermined` is not evidence either way.
 - Flag: `low` / `medium` / `high` overconfidence risk
 
 Score 0–1. Flag confidence/evidence mismatch. If KATA is absent, report `process_confidence: N/A` and flag the gap. If `calibration_gap` is absent, report `calibration_gap: N/A` and flag the missing measurement — the kata loop was not closed.
