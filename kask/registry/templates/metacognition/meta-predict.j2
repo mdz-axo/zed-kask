@@ -1,4 +1,4 @@
-{# goal: Predict which calibration will close the gap and by how much. Carry a confidence in [0,1]. The Brier score tracks whether the confidence is calibrated. #}
+{# goal: Predict a task-specific calibration and gap reduction with confidence in [0,1], retaining the measured baseline; only the operator's later goal outcome permits Brier scoring. #}
 [inference]
 contract:
   input:
@@ -15,17 +15,13 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Improvement Kata Step 3: Make a Prediction #}
-{# "If I do X, I expect Y to happen" — the hypothesis the experiment tests. #}
-
 [inference]
 temperature = 0.3
 work_effort = "medium"
 verbosity = "detailed"
-# "off" not "medium": see meta-establish-target.j2. Step 3 states a
-# hypothesis + confidence number — deterministic, no long reasoning
-# chain needed.
 thinking_budget = "off"
+
+{# A prediction is a falsifiable hypothesis; scoring requires operator outcome. #}
 
 You are performing Step 3 of the Toyota Improvement Kata: **Make a Prediction**.
 
@@ -61,7 +57,7 @@ This is a refinement cycle. Did the previous prediction hold? If not, what does 
 
 2. **Expected gap reduction**: Predeclare a threshold in (0, 1] — the proportion of the measured `gap_before` you expect to close. Use the same target artifacts and procedure when measuring the after-gap. The caller must not invoke this step with zero or unavailable `gap_before`; mark it reached/pending instead.
 
-3. **Confidence**: State a probability in [0, 1] that the post-experiment measured gap will be at most `gap_before * (1 - expected_gap_reduction)`. This event is TRUE or FALSE, not a continuous outcome. After measuring both gaps, score `(confidence - outcome)²` where outcome is 1 or 0. Without both measurements leave the forecast unresolved; never redefine the success threshold after observing the result.
+3. **Confidence**: State a probability in [0, 1] that the post-experiment measured gap will be at most `gap_before * (1 - expected_gap_reduction)`. This event is TRUE or FALSE, not a continuous outcome. After measuring both gaps, the invoking agent may judge the criterion with `kanban_goal_judge`; only the operator's later `kanban_goal_score` supplies the ground-truth outcome and Brier score. Without both measurements leave the criterion pending; never redefine the success threshold after observing the result.
 
 ## Instructions
 
@@ -69,13 +65,4 @@ This is a refinement cycle. Did the previous prediction hold? If not, what does 
 - Choose the calibration that addresses the single most consequential obstacle from the current condition.
 - Be honest about your confidence in that specific threshold event, not just in the choice of intervention. Copy the measured `gap_before` unchanged into the output so the experiment cannot reset the baseline.
 
-Return JSON only:
-```json
-{
-  "gap_before": {{ gap_before }},
-  "predicted_calibration": "apply Falstaffian shape 'subject_expansion' to the assessment, addressing the obstacle that the obstacle list is incomplete",
-  "expected_gap_reduction": 0.2,
-  "confidence": 0.6,
-  "rationale": "why this calibration and this confidence level"
-}
-```
+Return JSON with `gap_before: {{ gap_before }}` copied unchanged, a task-specific `predicted_calibration`, `expected_gap_reduction` in (0,1], `confidence` in [0,1], and a rationale grounded in the actual obstacle. Do not copy example interventions or numbers; this is a prediction, not a score.

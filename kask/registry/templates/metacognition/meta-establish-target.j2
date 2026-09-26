@@ -5,24 +5,19 @@ contract:
     goal: string
     current_condition: object
   output:
+    target_outcome: object
     target_artifacts: object
     target_procedure: object
     rationale: string
 visibility: Public
 ---
-{# Improvement Kata Step 2: Establish the Target Condition #}
-{# Declare a measurable, specific target — not a vague "understand the problem." #}
-
 [inference]
 temperature = 0.2
 work_effort = "medium"
 verbosity = "detailed"
-# "off" not "medium": the parser (step_actions.rs) only recognizes
-# "full"/"on" and "off"/"none". "medium" is unrecognized and silently falls
-# back to thinking-ON (same as "full"), making this step slower than
-# intended. Step 2 declares a target state — deterministic, no long
-# reasoning chain needed.
 thinking_budget = "off"
+
+{# Task-specific target is a judgment to confirm, not generic Kata completion. #}
 
 You are performing Step 2 of the Toyota Improvement Kata: **Establish the Target Condition**.
 
@@ -38,7 +33,7 @@ Your job is to declare the target metacognitive state — what "sufficient meta-
 
 ## What to Declare
 
-The target condition has two faces:
+The target starts with the user's *task-specific* observable outcome: what will the user see, which external observation confirms it, and what would falsify it? If the goal cannot supply such evidence, surface a question instead of choosing a generic target. It also has two supporting faces:
 
 1. **Target artifacts** (Dublin Core object space): What complete, grounded artifacts should exist when the agent has sufficient meta-knowledge? For each artifact type, declare whether it should exist and be grounded.
 
@@ -53,24 +48,4 @@ The target should be **one step beyond the current knowledge threshold** — cha
 - The target should be achievable in a few PDCA cycles, not a long-term vision.
 - The gap between current_condition and target should be real but bridgeable.
 
-Return JSON only:
-```json
-{
-  "target_artifacts": {
-    "decomposition": {"required": true, "must_be_grounded": true},
-    "assessment": {"required": true, "must_be_grounded": true},
-    "obstacle_list": {"required": true, "must_be_grounded": true},
-    "calibration": {"required": true, "must_be_grounded": true},
-    "experiment_plan": {"required": true, "must_be_grounded": true}
-  },
-  "target_procedure": {
-    "steps": [
-      {"name": "grasp_current"},
-      {"name": "establish_target"},
-      {"name": "predict"},
-      {"name": "experiment"}
-    ]
-  },
-  "rationale": "why this target is the right next step beyond the current condition"
-}
-```
+Return JSON with `target_outcome` (`user_goal`, observable `success_evidence`, `falsifier`), `target_artifacts` (task-relevant artifact IDs with `required` and `must_be_grounded`), `target_procedure` (only steps the task requires, each with an observable completion condition), and `rationale`. Do not fill a five-artifact/four-step default unrelated to the user goal. If task outcome evidence is unavailable, mark the target unconfirmed and ask; it cannot be used for a numeric convergence claim.

@@ -19,14 +19,13 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Improvement Kata Step 1: Grasp the Current Condition #}
-{# "Go and see" — measure, don't assume. #}
-
 [inference]
 temperature = 0.2
 work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
+
+{# Go and see: model labels are provisional until matched to source receipts. #}
 
 You are performing Step 1 of the Toyota Improvement Kata: **Grasp the Current Condition**.
 
@@ -86,36 +85,9 @@ Measure these dimensions of the current metacognitive state:
 
 ## Instructions
 
-- Be honest. If the agent hasn't produced an artifact, say so. If a claim is ungrounded, flag it.
+- For each `exists`, `grounded`, or `complete` status, carry `evidence_ref` to a real session turn, tool receipt, file state or operator outcome. Without a checkable reference use `unmeasured`; do not turn the missing item into a measured zero.
 - Use the session_history and current_state as evidence. Don't invent facts.
 - If prev_grasp is provided, this is a refinement cycle — compare to the prior state and note what changed.
-- Count, don't estimate. Report counts only; the gap is computed from them by `lisp_eval` in the Convergence step, not here.
+- Enumerate observed items before counting them. Status classification is model-mediated; `lisp_eval` later computes arithmetic over source-reconciled counts but does not validate this classification.
 
-Return JSON only:
-```json
-{
-  "current_artifacts": {
-    "decomposition": {"exists": true, "grounded": false},
-    "assessment": {"exists": true, "grounded": true},
-    "obstacle_list": {"exists": true, "grounded": true},
-    "calibration": {"exists": false, "grounded": false},
-    "experiment_plan": {"exists": false, "grounded": false}
-  },
-  "current_procedure": {
-    "steps": [
-      {"name": "grasp_current", "status": "complete"},
-      {"name": "establish_target", "status": "not_started"},
-      {"name": "predict", "status": "not_started"},
-      {"name": "experiment", "status": "not_started"}
-    ]
-  },
-  "obstacles": [
-    {"description": "...", "type": "knowledge_gap", "severity": 3}
-  ],
-  "assumptions_surfaced": ["assumption 1", "assumption 2"],
-  "claims_grounded": ["claim with evidence", "claim without evidence (flagged)"],
-  "options_count": 2,
-  "option_specificity": 0.4,
-  "rationale": "brief explanation of the current state"
-}
-```
+Return JSON with the declared output fields. `current_artifacts` maps only actual task-relevant artifacts to `{exists, grounded, evidence_ref}`; `current_procedure.steps` lists actual named steps with `{name, status, evidence_ref}`. Status may be `unmeasured` when the record does not support a yes/no reading. List `obstacles`, `assumptions_surfaced` and `claims_grounded` with their evidence gaps. Derive `options_count` from options you enumerate, label `option_specificity` as a model judgment, and include a `rationale` citing the observed current-state evidence and its gaps. Do not copy generic five-artifact/four-step examples as if they describe the current task.
