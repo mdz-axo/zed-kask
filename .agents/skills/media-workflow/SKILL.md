@@ -7,6 +7,19 @@ description: "Multi-tool media generation pipelines: product shots, stylized art
 
 Multi-tool media generation pipelines that chain `hkask-mcp-media` server tools in fixed sequences. Each pipeline is a known-good step topology — the agent supplies the subject, style, and parameters; the tool sequence is fixed. The agent coordinates execution by calling each tool in order, passing the previous step's output as the next step's input.
 
+## Initial and target condition
+
+- **Initial condition:** the chosen pipeline and its inputs — subject, style, brand inputs, or source gallery image.
+- **Target condition:** the pipeline's acceptance property in the Verification loop holds, and the operator has seen the final artifact.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Media tool calls | D | the tool's receipt; `video_info` for GIF duration and width |
+| Prompts, captions, logo brand mapping | P | the operator |
+| `describe_image` checks and logo scores (1–10) | P | model estimates; the operator reviews the artifact before it counts as done |
+
 ## When to Use
 
 - Generate a product shot with clean background removal and upscaling.
@@ -92,7 +105,7 @@ fully removed; reaction GIF — `video_info` confirms duration ≤ 5s at 480px
 width; collage — `describe_image` confirms all selected subjects are present;
 meme — the caption is visible in the rendered video; NFT — the style is
 applied and the caption generated; logo — `describe_image` confirms the name
-is spelled correctly and the icon mark carries no text. If the property fails, re-run the failing
+is spelled correctly and the icon mark carries no text. Only `video_info` is a deterministic check; every `describe_image` check is a vision model judging generated media, so show the artifact to the operator before reporting it done. If the property fails, re-run the failing
 step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
 a second failure ships the artifact with the imperfection named — never
 silently.
