@@ -28,11 +28,11 @@ Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/S
 | `training_validate_config` | Static/runtime-enforceable audit subset | `kask/mcp-servers/hkask-mcp-training/src/tools/validate.rs:10-131` |
 | `training_bridge_rollouts` | Verdict-labeled rollout bridge | `kask/mcp-servers/hkask-mcp-training/src/tools/rollout_bridge.rs:43-103` |
 
-`training_validate_config` is the runtime enforcement point: the skill reasons
-over config files and proposes regressions; the server enforces the static
-subset of gates at submit time and emits the `reg.lora.*` spans the skill's
-readiness check consumes
-(`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:23-48`). Host selection and harness behavior are implemented under `kask/mcp-servers/hkask-mcp-training/src/providers/`; the default harness is Axolotl and per-job harness selection is honored at submit time.
+`training_validate_config` enforces its static gate subset and returns
+`findings`, `gates_evaluated`, and `dataset_format` when a dataset path was
+supplied. It does not return a rich dataset profile. `reg.lora.*` events are
+runtime observations, not input to a retired skill convergence template
+(`kask/mcp-servers/hkask-mcp-training/src/tools/validate.rs:23-127`). Host selection and harness behavior are implemented under `kask/mcp-servers/hkask-mcp-training/src/providers/`; the default harness is Axolotl and per-job harness selection is honored at submit time.
 
 ### Decision-core verification scope
 
@@ -89,17 +89,17 @@ recommendation. The runtime enforces harness-method compatibility via G-H1
 
 ## Gate Catalog
 
-19 phase-aware contract gates enforced across the `select-method` and
-`audit-config` phases, plus the 8-gate recommendation refinement in
-`select-method` (G0, G-D0, G1-G6). Each gate is a single assertion with a
-citation.[^lora-contract-gates]
+The skill audits 19 phase-aware contract gates and uses eight advisory
+recommendation gates (G0, G-D0, G1–G6). `training_validate_config` enforces
+only its declared static subset; no recommendation-stage template runs a
+training job or proves unobserved gates passed.[^lora-contract-gates]
 
 ### Recommendation Gates (select-method phase)
 
 | Gate | ID | Purpose | Source |
 |------|----|---------|--------|
 | Adapter purpose | G0 | Establishes what kind of adapter is being produced (instruction, reasoning, vision, preference, reward_model). Determines baseline rank, target modules, and learning-forgetting posture. Runs first, constrains all subsequent gates. | Biderman et al. arXiv:2405.09673; Raschka 2025 |
-| Dataset analysis | G-D0 | Probes the actual dataset file to derive format, sample count, content length stats, token estimates, role distribution, multi-turn detection, vision data detection, and preference pair balance. Feeds into G0, G3, G6. Best-effort — falls back to declared inputs if unavailable. Runtime-evidence source: `preflight-dataset.j2`. | QLoRA §5; TRL dataset formats |
+| Dataset analysis | G-D0 | Recommendation uses declared format hint only. After operator selection, `training_validate_config` can check an actual dataset path and return `dataset_format` plus G-D0/G-D1 findings; `preflight-dataset.j2` presents that result. No token/role/vision profile is produced. | TRL dataset formats; runtime response in `tools/validate.rs` |
 | Inference constraint | G1 | Must-merge vs dynamic-switching vs either-ok. Constrains adapter form. | LoRA §4.2 |
 | Memory budget | G2 | Full precision vs quantized 4bit. Model_size_b × 2 as approximate floor only. | QLoRA §3 |
 | Task distance | G3 | Refines rank_range within G0 baseline. Light/moderate/heavy. | LoRA §4.3; Biderman et al. |
@@ -160,17 +160,21 @@ Only apply if QLoRA mode selected (G2).
 
 ## Convergence
 
-The `select-method` phase is the first turn of a PDCA loop closed by
-re-entering the cycle, which routes the readiness verdict, `blockers`, and
-`gate_results_summary` back as `prior_iteration`
-(`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). **The loop stops at a `Pass` readiness verdict (or `Deferred` in preflight), computed by `lisp_eval` from the gate states with the report's precedence; there is no weighted convergence metric** (`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). The operator may also revise inputs and re-invoke.
+`select-method` proposes; the operator selects concrete params; the skill then
+checks applicable current-phase gate coverage with `lisp_eval` before using
+`report.j2`'s state precedence for readiness. Empty, duplicated, or missing
+gate IDs are `Not evaluated`, never `Pass`. An authorized correction or new
+evidence may re-enter `select-method` at most three turns; an unchanged
+verdict is reported rather than optimized. Future runtime/post-training
+requirements remain visible separately. There is no weighted convergence
+metric; readiness follows the applicable-gate state evidence.
 
 > **Provenance note:** an earlier revision of this document carried a
 > weighted-dimension rubric (0.35/0.20/0.15/0.10) and Cauchy-criterion
 > parameters (`cauchy_epsilon: 0.03`, `cauchy_window: 3`). Those specifics
 > appear nowhere in the current skill, templates, or server code and have
-> been removed as unanchored. The verified contract is the threshold rule
-> above.
+> been removed as unanchored. The current contract is phase-aware gate-ID
+> coverage plus state precedence, not a synthetic numeric threshold.
 
 ## Footnotes
 

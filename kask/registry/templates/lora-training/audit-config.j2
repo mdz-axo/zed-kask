@@ -5,28 +5,33 @@ contract:
     config_paths: array
     selected_method: string
     host: string
-    dataset_profile: object
+    dataset_validation: object
     runtime_metrics: object
   output:
+    config_paths: array
+    parameters_extracted: array
+    selected_method: string
+    method_recommendations: array
     findings: array
     gate_results: object
-    parameters_extracted: array
+    host: string
+    source_citations: array
     refuse_escalation: array
     rejected_findings: integer
 visibility: Public
 ---
-{# Registry authoritative; evidence-backed only (P5.1, P8). #}
-
 [inference]
 temperature = 0.1
 work_effort = "high"
 verbosity = "terse"
 thinking_budget = "full"
 
+{# Evidence-backed only; selected method is never silently replaced. #}
+
 INPUT: config_paths = {{ config_paths | default([]) }}
 INPUT: selected_method = {{ selected_method }} (operator-selected; do not replace)
 INPUT: host = {{ host | default("REQUIRED") }} (P12 — mandatory)
-INPUT: dataset_profile = {{ dataset_profile | default({}) | tojson }} (from G-D0 dataset profiling; feeds G-D1 dataset size/quality assessment)
+INPUT: dataset_validation = {{ dataset_validation | tojson }} (actual `training_validate_config` response after concrete params: `dataset_format`, G-D0/G-D1 `findings`, and `gates_evaluated`; no inferred dataset statistics). Missing response means no dataset-format or size pass.
 INPUT: runtime_metrics = {{ runtime_metrics | default({}) | tojson }} (runtime metrics from training; feeds G-R1 runtime alert gate. Empty/absent in preflight.)
 
 AUTHORITATIVE AUDIT MODEL
@@ -290,9 +295,9 @@ completes. Emit each `refuse` finding as a `refuse_escalation` entry with:
 - `finding_id`, `gate_id`, `claim`, `requirement`, `evidence` (the
   contradictory evidence that triggered the refusal), `selected_method`,
   `host`, and `severity` (always critical).
-The manifest and downstream phases still process the finding normally —
-the escalation is an IN-ADDITION short-circuit, not a replacement for the
-normal flow. This mirrors bug-hunt's `probe_escalation` pattern.
+The invoking agent must surface the `refuse_escalation` entry to the operator
+immediately; this template only returns structured data and does not itself
+send a durable alert. The finding also remains in the ordinary audit result.
 
 
 CAPABILITY BOUNDARY (P4)
@@ -303,19 +308,17 @@ evidence assessments only.
 
 OUTPUT FORMAT
 JSON object with `config_paths`, `parameters_extracted`, `selected_method`,
-`method_recommendations`, `findings` (the normalized schema unchanged),
-`gate_results`, `readiness_state`, `host`, `source_citations`,
-`reg_span_reference`, `refuse_escalation` (algedonic short-circuit
-for refuse findings), and `rejected_findings` (count of findings
-rejected for missing citations).
+`method_recommendations`, `findings` (normalized and unchanged),
+`gate_results`, `host`, `source_citations`, `refuse_escalation` (operator-facing
+entries for refuse findings), and `rejected_findings` (count of findings
+rejected for missing citations). The caller computes readiness separately.
 
 5W1H GATE CHECK (P5): Who = operator / host; What = phase-aware
 training contract audit; Where = declared workspace paths; When = static,
 harness, runtime-evidence, and post-training-evidence phases; Why = safe,
 observable, sovereign training decisions; How = inspect declared artifacts,
-classify evidence, preserve selected method, and emit Regulation spans.
+classify evidence, preserve selected method, and surface refusal entries.
 
-REGISTRY AUTHORITATIVE (P5.1): This template is the canonical audit-config
-phase definition. PUBLIC VISIBILITY (P11): no hidden controls. HOST
-(P12): mandatory in every finding, gate result context, and Regulation action.
-CONVERGENCE INDEPENDENT: this phase does not compute the convergence metric.
+SKILL.md is the process authority. PUBLIC VISIBILITY (P11): no hidden controls.
+HOST (P12): mandatory in every finding and gate result context. The caller
+computes readiness; this audit phase cannot claim a training outcome.

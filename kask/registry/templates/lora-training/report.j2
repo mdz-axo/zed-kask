@@ -4,24 +4,35 @@ contract:
   input:
     findings: array
     gate_results: object
+    selected_method: string
+    computed_readiness: string
     host: string
   output:
+    findings: array
     findings_grouped: array
-    verdict: string
+    gate_results_summary: object
+    selected_method: string
+    method_recommendations: array
+    readiness: string
     contract_gaps: array
+    input_contract_errors: array
+    host: string
+    source_citations: array
 visibility: Public
 ---
-{# Registry authoritative; no finding reclassification (P5.1, P8). #}
-
 [inference]
 temperature = 0.1
 work_effort = "high"
 verbosity = "terse"
 thinking_budget = "full"
 
-INPUT: findings = {{ findings }} (normalized array from audit-config)
-INPUT: gate_results = {{ gate_results }}
-INPUT: host = {{ host }} (P12 — mandatory)
+{# Consume unchanged findings; computed readiness is supplied separately. #}
+
+INPUT: findings = {{ findings | tojson }} (normalized array from audit-config)
+INPUT: gate_results = {{ gate_results | tojson }}
+INPUT: selected_method = {{ selected_method | tojson }} (the operator's unchanged selection)
+INPUT: computed_readiness = {{ computed_readiness | tojson }} (from the caller's lisp_eval coverage + precedence gate)
+INPUT: host = {{ host | tojson }} (P12 — mandatory)
 
 AUTHORITATIVE INPUT CONTRACT
 
@@ -88,22 +99,12 @@ REPORT ACTIONS
 
 READINESS VERDICT
 
-Derive the report verdict from `gate_results` using the same state semantics
-as audit-config; do not inspect gate names to invent policy:
-- `Refuse`: at least one applicable gate is `refuse`.
-- `Fail`: no refuse and at least one applicable gate is `fail`.
-- `Conditional`: no fail/refuse and at least one gate is `warn`.
-- `Deferred`: no fail/refuse and an applicable required runtime or
-  post-training gate is `deferred` or `planned`.
-- `Not evaluated`: no fail/refuse/warn/deferred/planned, but at least one
-  potentially applicable gate is `not_evaluated`.
-- `Pass`: all applicable required gates in the reported readiness scope are
-  `pass` or `not_applicable`.
-
-Precedence is Refuse > Fail > Conditional > Deferred > Not evaluated > Pass.
-A recommendation for a different method MUST NOT change this verdict. A
-runtime or post-training pass requires supplied `runtime_measurement`; this
-report never executes the check.
+Copy `computed_readiness` unchanged into `readiness`; it was computed by the
+invoking agent's `lisp_eval` checks over complete applicable gate IDs and
+states. If that coverage check was skipped, the only admissible value is
+`Not evaluated`. A recommendation for another method cannot change it.
+Runtime/post-training passes still require supplied measurements; this
+report neither runs them nor supplies a missing result.
 
 CITATION POLICY (P8)
 - Preserve each finding's `citation` array unchanged.
@@ -146,16 +147,13 @@ JSON object with:
 - `input_contract_errors`
 - `host`
 - `source_citations`
-- `reg_span_reference`
+
 
 5W1H GATE CHECK (P5): Who = operator / host; What = lossless
 phase-aware audit report; Where = supplied audit artifacts; When = after
 configuration/harness audit and whenever runtime/post-training evidence is
 supplied; Why = transparent readiness without fabricated execution; How =
-preserve findings, summarize states, separate recommendations,
-and emit Regulation span.
+preserve findings, summarize states and separate recommendations from readiness.
 
-REGISTRY AUTHORITATIVE (P5.1): This template is the canonical report phase.
-PUBLIC VISIBILITY (P11): report outputs are public. HOST
-(P12): mandatory throughout. CONVERGENCE INDEPENDENT: this report does not
-compute the convergence metric.
+SKILL.md is the process authority. This report only presents audited fields;
+`lisp_eval` computes readiness before rendering it. HOST (P12) remains mandatory.

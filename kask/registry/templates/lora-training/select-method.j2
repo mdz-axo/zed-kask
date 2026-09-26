@@ -1,4 +1,4 @@
-{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. No actual training execution; host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → readiness check (lisp_eval over gate states) → revise inputs → re-invoke. #}
+{# goal: Recommend a composable PEFT configuration through fixed-order evidence gates (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 uses declared dataset-format evidence; actual format validation follows operator selection and concrete params. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. No actual training execution; host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → readiness check (lisp_eval over gate states) → revise inputs → re-invoke. #}
 [inference]
 contract:
   input:
@@ -25,13 +25,13 @@ contract:
     authority: object
 visibility: Public
 ---
-{# Design: deterministic refinement (not search); gates compose rather than overwrite #}
-
 [inference]
 temperature = 0.1
 work_effort = "high"
 verbosity = "terse"
 thinking_budget = "full"
+
+{# Fixed-order advisory gates compose; runtime and lisp_eval own mechanical checks. #}
 
 {# Reads declared training config inputs: LoraConfig, BitsAndBytesConfig, accelerate config, training script arguments #}
 {# Applies deterministic 8-gate refinement — NOT a search #}
@@ -111,10 +111,10 @@ GATE PRECEDENCE AND REFINEMENT:
    overwrite a non-default field without recording the prior value and reason.
 
 PDCA ITERATION LOOP (within this session):
-The select-method phase is the first turn of a PDCA loop. When the readiness
-verdict is not yet `Pass` (or, in preflight, `Deferred`), the caller passes the
-verdict, blockers, and gate_results_summary back to select-method as
-`prior_iteration`.
+The first recommendation is advisory, not a readiness result. After a concrete
+operator selection, the caller checks applicable gate-ID coverage and computes
+readiness from their states. Only a concrete authorized correction or new
+evidence warrants another select-method turn with `prior_iteration`.
 {% if prior_iteration and prior_iteration | length > 0 %}
 ## Prior Iteration Feedback (loop closure)
 This is iteration N+1. The previous iteration produced:
@@ -134,15 +134,14 @@ This is the first iteration — no prior feedback to consume.
 {% endif %}
 - Plan: select-method produces a recommendation from declared evidence.
 - Do: the operator accepts/overrides/rejects; audit-config evaluates the
-  accepted config against the 17 gates.
-- Check: the readiness verdict is computed from the gate states by
-  `lisp_eval` (SKILL.md step 8); contract gaps are recorded.
-- Act: if not ready, pass the verdict and blockers back to select-method
-  as prior_iteration. The operator may also revise inputs (adjust rank, switch
-  harness, add evidence) and re-invoke.
-The loop stops at a `Pass` verdict (or `Deferred` in preflight), or after 3
-turns with its blockers reported. Each iteration's recommendation is advisory — the operator's accepted
-configuration is authoritative.
+  applicable subset of the 19 declared gates for the selected config.
+- Check: `lisp_eval` first reconciles expected versus observed gate IDs,
+  then computes readiness from the resulting states (SKILL.md step 8).
+- Act: feed the verdict and blockers back only when there is new evidence or
+  an operator-authorized configuration change; otherwise report the gap.
+Stop at a complete current-phase `Pass` or after 3 refinement turns, preserving
+all future unmeasured requirements. The operator's selected configuration
+remains authoritative.
 
 G0. adapter_purpose? (runs first; constrains all subsequent gates)
     - If adapter_purpose is declared (not undetermined): preserve it. It
@@ -190,59 +189,17 @@ G0. adapter_purpose? (runs first; constrains all subsequent gates)
       adapter_purpose=instruction but trainer_preference=dpo), record as a
       conflict for operator resolution.
 
-G-D0. dataset_analysis? (runs alongside G0; probes the actual dataset file)
-    If `dataset_path` is declared (not undetermined), the skill SHOULD request
-    the runtime to profile the dataset via the `training_validate_config` tool
-    with `dataset_path` set. The runtime returns a `DatasetProfile` with:
-    - format: detected format (ChatML, ShareGPT, Alpaca, RawText, PreferenceDpo/Kto/Orpo)
-    - n_samples: number of examples
-    - avg_content_chars / max_content_chars: content length statistics
-    - avg_token_estimate / max_token_estimate: token count estimates (chars/4)
-    - avg_messages_per_example: conversation depth (SFT only)
-    - role_distribution: role frequency (SFT only)
-    - chosen_rejected_length_ratio: preference pair balance (preference only)
-    - has_system_messages: whether system prompts are present (SFT only)
-    - has_multi_turn: whether conversations have >2 messages (SFT only)
-    - has_vision_data: whether the dataset contains image keys
-
-    The profile feeds into the recommendation as follows:
-    - n_samples < 1000: warn that the dataset may be too small for stable
-      convergence. Recommend a lower rank (the model can't learn complex
-      patterns from few examples — overfitting risk).
-      [Citation: QLoRA paper §5 — small high-quality > large noisy]
-    - n_samples > 100000: warn that quality audit is needed (dedup,
-      contamination). Recommend subsampling to a high-quality subset.
-      [Citation: QLoRA paper §5]
-    - max_token_estimate > sequence_len: warn that some examples will be
-      truncated. Recommend increasing sequence_len or enabling sample packing.
-    - avg_messages_per_example > 4 (multi-turn): recommend sample packing when
-      the selected declarative harness supports it.
-    - has_system_messages: note that the system prompt will be part of training;
-      if the system prompt is a fixed persona, consider whether it should be
-      baked into the adapter or kept as a runtime prompt.
-    - chosen_rejected_length_ratio far from 1.0 (< 0.5 or > 2.0): warn that
-      preference data may be length-biased. The model may learn to prefer
-      longer/shorter responses rather than better ones.
-      [Citation: DPO arXiv:2305.18290 — length bias in preference optimization;
-       SimPO (sigmoid_norm loss_type) addresses length bias]
-    - has_vision_data: set adapter_purpose=vision if not already declared and
-      recommend harness=ludwig.
-    - format detected as preference (DPO/KTO/ORPO): override adapter_purpose
-      to `preference` if it was undetermined or `instruction`.
-    - format detected as raw_text: suggest adapter_purpose=instruction with
-      continued-pretraining-style learning (lower rank, lower LR).
-
-    If `dataset_path` is undetermined or the profile fails (file not found,
-    unparsable), the skill falls back to `dataset_format_hint` and declared
-    inputs. The profile is best-effort — missing fields do not block the
-    recommendation.
-
-    The profile also feeds into G3 (rank refinement) and G6 (harness selection):
-    - G3 uses n_samples and avg_token_estimate to refine rank_range within
-      the G0 baseline. Small datasets → lower rank (overfitting risk). Large
-      datasets with long sequences → higher rank (more capacity needed).
-    - G6 uses format, has_vision_data, and has_multi_turn to select a harness
-      that can efficiently process the dataset's characteristics.
+G-D0. dataset_analysis? (recommendation stage — declared evidence only)
+    At this stage no selected concrete `params` exist for
+    `training_validate_config`. Use only the operator's `dataset_format_hint`,
+    task purpose and declared method. If format or quality is unknown, state
+    which evidence is needed; do not infer sample counts, token lengths,
+    conversation roles, vision keys or preference balance from `dataset_path`.
+    G3 rank and G6 harness choice may be refined later when real evidence is
+    supplied, but a missing profile is not permission to override purpose,
+    rank, or operator preferences. After the operator selects concrete params,
+    the runtime can report `dataset_format` and G-D0/G-D1 findings; no token,
+    role, vision, or preference-balance measurements are returned.
 
 G1. inference_constraint?
     - must-merge → constrain adapter_form to a merge-compatible LoRA-family

@@ -1,6 +1,6 @@
 ---
 name: lora-training
-description: "LoRA/QLoRA training configuration and contract enforcement for hKask. Produces an advisory PEFT recommendation through a deterministic 8-gate refinement; the operator accepts, overrides, or rejects it, and the runtime enforces hard contracts."
+description: "LoRA/QLoRA training configuration and contract enforcement for hKask. Produces an advisory PEFT recommendation through fixed-order evidence gates; the operator selects the method and the runtime enforces hard contracts."
 ---
 
 # LoRA Training
@@ -9,6 +9,11 @@ Recommend a composable PEFT configuration from declared evidence, audit the
 operator-selected configuration without replacing it, report normalized
 findings losslessly, and compute phase-aware training-readiness convergence.
 This skill does not train, load, initialize, merge, or evaluate models.
+
+## Initial and target condition
+
+- **Initial condition:** declared operator requirements, host, base model/config inputs and dataset-format hint; after operator selection, the concrete training parameters, optional dataset path, and any observed runtime/post-training evidence. An absent dataset validation is not a zero-risk dataset.
+- **Target condition:** a sourced advisory recommendation that preserves operator choices, followed (only for a selected concrete configuration) by a phase-aware audit with every applicable gate accounted for. Readiness is `Pass` only on complete observed coverage with no blocking/conditional findings; missing static evidence never becomes `Pass`, and future runtime/post-training checks remain unmeasured until observed. A first complete pass ends the local loop.
 
 ## When to Use
 
@@ -51,27 +56,21 @@ This skill does not train, load, initialize, merge, or evaluate models.
 
 ## Instructions
 
+Process order: recommend with `select-method` from declared evidence → operator selects a concrete configuration → optionally validate a declared dataset with `training_validate_config` → audit selected configuration → report. The sections below are lookup steps, not evidence that a runtime tool ran.
+
 ### `lora-training/preflight-dataset`
 
-1. Detect the dataset format from the declared `dataset_path` and check it
-   against the expected format for the selected trainer/method. This is the
-   runtime-evidence source for G-D0.
-2. Emit a three-state verdict: `ready` (use directly), `needs_mapping`
-   (compatible but needs column-name preprocessing — mapping code provided),
-   or `incompatible` (cannot be used for this method, e.g., SFT data for DPO).
-3. When `needs_mapping`, emit copy-paste Python mapping code following the HF
-   `dataset_inspector.py` pattern. SFT format conversions (ChatML, ShareGPT,
-   Alpaca, RawText) are auto-normalized by the dataset pipeline — no manual
-   mapping needed, verdict is `ready`.
-4. This phase is optional — skipped when `dataset_path` is absent. It does not
-   execute training, load the dataset into memory, or modify files.
+1. After the operator selects concrete `params`, call `training_validate_config` with those params and the declared `dataset_path` (and `base_model` when known); unwrap the tool envelope and use its actual `dataset_format` and `findings`. A render of `preflight-dataset.j2` does not read the file or run this validation. A tool error leaves G-D0 unassessed.
+2. Report the runtime's four-state `dataset_format.verdict`: `ready`, `needs_mapping`, `incompatible`, or `undetermined` when detection/evidence fails. Do not convert `undetermined` to `ready`.
+3. When `needs_mapping`, report the runtime's `mapping_code` as an unexecuted external-harness suggestion; do not add a Python script or dependency to this Rust repository. `ready` requires an observed ready verdict from `training_validate_config`, not an assumption that normalization ran.
+4. This phase is skipped when `dataset_path` is absent, with a named evidence gap; pass `dataset_validation: {}` to audit-config and never imply an observed format. The skill does not execute training or modify dataset files.
 
 ### `lora-training/select-method`
 
 1. Read the declared training inputs and preserve explicit operator requirements.
    Consume `prior_iteration` (this session's previous PDCA turn),
    `prior_training_history` (Good Regulator), and `provider_capabilities` (deep capability reasoning) when supplied.
-2. Refine one composable recommendation record through eight gates: adapter
+2. Refine one composable *advisory* recommendation through eight fixed-order gates (P: evidence-based judgments, not a deterministic computation): adapter
    purpose (G0), dataset analysis (G-D0), inference constraint (G1), memory
    evidence (G2), task distance (G3), quality/cost (G4), knowledge
    preservation (G5), and harness capability (G6). Training approach
@@ -82,7 +81,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
    `scaling`, `initializer`, `preservation`, `rank_range`,
    `target_module_strategy`, `harness`, and `training_method`; otherwise emit
    `undetermined`, required evidence, alternatives, constraints, or conflicts.
-4. Treat `model_size_b × 2` only as an approximate bf16 base-weight floor.
+4. Compute `(* model_size_b 2)` via `lisp_eval` when `model_size_b` is supplied; treat the result only as an approximate bf16 base-weight floor, not a fit prediction.
    Memory pressure may favor QLoRA, but these two scalar inputs do not establish
    that a configuration fits or will OOM. When `prior_training_history.prior_oom_patterns`
    is supplied, refine G2 using operator-specific OOM evidence (Good Regulator)
@@ -97,14 +96,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
    subsequent gates. When `prior_training_history.prior_rank_choices` is
    supplied, refine G3 within the G0 baseline using operator-specific rank
    evidence (Good Regulator) — prior choices refine, they do not replace.
-   G-D0 (dataset analysis) runs alongside G0. If `dataset_path` is declared,
-   the skill requests the runtime to profile the actual dataset file via
-   `training_validate_config`. The profile includes: format detection, sample
-   count, content length statistics, token estimates, role distribution,
-   multi-turn detection, vision data detection, and preference pair balance.
-   The profile feeds into G3 (rank refinement), G6 (harness selection), and
-   the adapter_purpose inference. If the profile is unavailable, the skill
-   falls back to `dataset_format_hint` and declared inputs.
+   At recommendation time, G-D0 uses only declared `dataset_format_hint` and operator requirements. `training_validate_config` needs a concrete `params` object and runs after selection: with `dataset_path`, it returns `dataset_format` and G-D0/G-D1 findings, not sample-length, role, vision or preference-balance statistics. Do not refine G3 rank, G6 harness, or adapter purpose from a profile this tool does not return. When format is unknown, report the required evidence instead of inventing dataset characteristics.
 7. G6 (harness capability) selects a harness based on the training approach
    determined by G0-G5. The harness must be able to efficiently process the
    declared dataset and produce the adapter type implied by G0. When
@@ -124,21 +116,13 @@ This skill does not train, load, initialize, merge, or evaluate models.
    Axolotl remains the runtime default when harness is undetermined and
    adapter_purpose is instruction — no silent migration. For non-instruction
    purposes, axolotl is not a valid default.
-8. The select-method phase is the first turn of a PDCA loop closed by
-   re-entering the cycle at step 5, which routes the readiness verdict,
-   `blockers`, and `gate_results_summary` back as `prior_iteration`. The
-   operator may also revise inputs and re-invoke. **Check (D):** compute the
-   readiness verdict from the audit's gate states with `lisp_eval` — the
-   same precedence `report.j2` defines (Refuse > Fail > Conditional >
-   Deferred > Not evaluated > Pass):
-   - form: `(begin (define has (lambda (s l) (if (is_null l) nil (or (string= (car l) s) (has s (cdr l)))))) (cond ((has "refuse" states) "Refuse") ((has "fail" states) "Fail") ((has "warn" states) "Conditional") ((or (has "deferred" states) (has "planned" states)) "Deferred") ((has "not_evaluated" states) "Not evaluated") (t "Pass")))`
+8. The selected configuration starts a bounded PDCA: audit the applicable current-phase gates, check their coverage and states, then route the readiness verdict, `blockers`, and `gate_results_summary` into `prior_iteration` only when a concrete, operator-authorized refinement is possible. First call `lisp_eval` on gate IDs *before* computing readiness:
+   - form: `(begin (define all-present (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (all-present (cdr xs) ys))))) (and (> (length expected_gate_ids) 0) (= (length expected_gate_ids) (length observed_gate_ids)) (all-present expected_gate_ids observed_gate_ids) (all-present observed_gate_ids expected_gate_ids)))`
+   - env: `expected_gate_ids` from the gate catalog applicable to the current selected method/phase; `observed_gate_ids` from actual gate results (not just the training server's subset). A missing, duplicated, or empty gate list is `Not evaluated`; do not pass a partial list to the readiness rule as if it were complete. Coverage is structural, not proof that each finding is correct.
+   Then compute the readiness verdict from the complete current-phase states with `lisp_eval` using `report.j2`'s precedence (Refuse > Fail > Conditional > Deferred > Not evaluated > Pass):
+   - form: `(begin (define has (lambda (s l) (if (is_null l) nil (or (string= (car l) s) (has s (cdr l)))))) (cond ((is_null states) "Not evaluated") ((has "refuse" states) "Refuse") ((has "fail" states) "Fail") ((has "warn" states) "Conditional") ((or (has "deferred" states) (has "planned" states)) "Deferred") ((has "not_evaluated" states) "Not evaluated") (t "Pass")))`
    - env: `{ "states": [<state of every gate applicable in the current phase>] }`
-   The loop stops at `Pass`; in preflight, `Deferred` (runtime or
-   post-training requirements awaiting measurement) is the honest best
-   outcome and also stops it. Bound: max 3 refinement turns; any other
-   verdict after 3 turns is reported with its blockers instead of
-   iterating. There is no weighted convergence metric: the former
-   `convergence-check` template was retired in 10b700ae1e.
+   A complete current-phase `Pass` stops the local loop. Future runtime and post-training requirements remain separately `deferred` or `planned`, not evidence of a preflight pass or reason to rerun a recommendation without new inputs. No coverage or unchanged evidence means `Not evaluated`/blocked, not another turn. Bound: at most 3 operator-authorized refinement turns; report remaining blockers rather than repeating. Readiness is state-based, not a weighted convergence metric.
 9. Return separate `recommendation`, `readiness`, `justification`, and
    `authority` objects.
 
@@ -160,8 +144,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 6. Apply all 19 gates phase-appropriately: G-M1..G-M5, G-Q1..G-Q6,
    G-D1..G-D3, G-F1..G-F2, G-H1, G-R1 (runtime alert), and G-P1 (persistence
    preflight). Runtime and post-training passes require supplied measurements;
-   this template never executes those checks. Consume `dataset_profile` from
-   G-D0 for G-D1 dataset size/quality assessment. Consume `runtime_metrics`
+   this template never executes those checks. Pass `dataset_validation` as the actual unwrapped `training_validate_config` response (`dataset_format`, G-D0/G-D1 `findings`, `gates_evaluated`) when it ran; otherwise pass `{}` and mark those checks unassessed. A warning-free response does not establish an unreported sample count or dataset quality. Consume `runtime_metrics`
    for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing
    loss) when supplied. G-P1 verifies HuggingFace artifact persistence is
    configured before submit on ephemeral cloud hosts.
@@ -174,11 +157,11 @@ This skill does not train, load, initialize, merge, or evaluate models.
    check are rejected at the audit gate and counted in `rejected_findings` with
    reason `"missing_citation"`. Findings with `evidence_kind` of
    `not_available`, `operator_assertion`, or `runtime_measurement` are exempt.
-9. Emit algedonic escalation: for every `refuse` finding, emit a
-   `refuse_escalation` entry (VSM S1→S5 short-circuit) with `finding_id`,
-   `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
-   `host`, and `severity: critical`. The escalation is in-addition;
-   downstream phases still process the finding normally.
+9. Return a `refuse_escalation` entry for every `refuse` finding, carrying
+   `finding_id`, `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
+   `host`, and `severity: critical`. The invoking agent surfaces it immediately
+   to the operator; a template response alone does not create a durable alert.
+   Downstream phases still preserve the finding.
 10. Emit every result using the normalized Finding schema below and compute
     readiness separately.
 
@@ -208,8 +191,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 
 ### `lora-training/report`
 
-1. Validate `host` and consume normalized findings without adding,
-   removing, renaming, repairing, or reclassifying fields.
+1. Render `lora-training/report` with the unchanged operator `selected_method`, `host`, normalized `findings`, `gate_results`, and the `computed_readiness` returned by Step 8's coverage and precedence checks. Reject missing inputs rather than synthesizing a method or verdict. Consume normalized findings without adding, removing, renaming, repairing, or reclassifying fields.
 2. Present complete findings unchanged; grouped views may organize them by phase,
    state, or severity only.
 3. Report counts for all eight states and four phases. Keep selected method,
@@ -217,9 +199,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 4. Record `deferred`, `planned`, and `not_evaluated` requirements as contract
    gaps with the next evidence needed; exclude `not_applicable`. Do not mutate
    findings to create gaps.
-5. Derive readiness with precedence:
-   `Refuse > Fail > Conditional > Deferred > Not evaluated > Pass`.
-   A different method recommendation cannot change the verdict.
+5. Preserve `computed_readiness` unchanged. The caller's `lisp_eval` checks own gate-ID coverage and precedence (`Refuse > Fail > Conditional > Deferred > Not evaluated > Pass`); a different method recommendation cannot change the result. If coverage was not checked, report `Not evaluated`, never an inferred pass.
 6. Preserve claim-appropriate citations and report exact phase, state,
    severity, and evidence-kind counts.
 
@@ -227,9 +207,9 @@ Do not create alternate finding shapes. A recommendation never overwrites
 
 | Template | Purpose |
 |----------|---------|
-| `preflight-dataset.j2` | Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
+| `preflight-dataset.j2` | Deterministically present the observed `training_validate_config.dataset_format` four-state verdict and findings after operator-selected params; missing format is `undetermined`, never ready. Does not execute mapping code or training. |
 | `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (the previous in-session PDCA turn). |
-| `audit-config.j2` | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. Emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. Consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
+| `audit-config.j2` | Audit the selected configuration with the applicable subset of 19 declared gates, preserving citations and refuse escalations. Consumes actual `dataset_validation` findings when available and `runtime_metrics` for G-R1 when supplied; unmeasured gates remain unassessed. G-P1 checks declared persistence setup before submit. |
 | `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) and a context object with the required variables.
