@@ -129,7 +129,7 @@ Respond with a JSON object:
 }
 ```
 
-Scoring: 1.0 = full compliance, 0.0 = severe violation. Overall is the arithmetic mean.
+Scoring: 1.0 = full compliance, 0.0 = severe violation. Overall is the arithmetic mean of the four principle scores; the invoking step recomputes it with lisp_eval and that value is authoritative.
 `passed` is `true` only if there are zero critical violations and overall ≥ 0.7.
 
 ## Constraints

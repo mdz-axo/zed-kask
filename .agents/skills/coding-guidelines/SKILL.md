@@ -9,6 +9,10 @@ description: "Behavioral guardrails for LLM coding based on Karpathy's four prin
 
 Behavioral guardrails for LLM coding based on Karpathy's four principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution. An Encoded Preference skill: constrains HOW the agent codes, not WHAT it codes.
 
+## Reference model
+
+The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang/andrej-karpathy-skills), derived from Andrej Karpathy's public observations on LLM coding failure modes — the wording is forrestchang's, the diagnosis Karpathy's.
+
 ## When to Use
 
 - Before implementing a coding task, when you need to surface hidden assumptions, simplicity risks, and scope creep warnings
@@ -37,7 +41,8 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
    diff and re-run this audit step. Gate — call `lisp_eval` with:
    - form: `(and (eq critical_violations 0) (>= overall_score 0.7))`
    - env: `{ "critical_violations": <count from the violations report>,
-            "overall_score": <the arithmetic mean from step 3> }`
+            "overall_score": <the mean of the four principle scores, computed with lisp_eval `(/ (+ s1 s2 s3 s4) 4)` — not the model's stated total> }`
+   The four principle scores and the violation list are P (the audit's judgment, critiqued by the operator); the mean and the gate are D.
    Bound: max 2 audit cycles (initial + one correction pass); a second
    failing audit ships with the violations report and the score — the
    failure is surfaced, never silently passed.
