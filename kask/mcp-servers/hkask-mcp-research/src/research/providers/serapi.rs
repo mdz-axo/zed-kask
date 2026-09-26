@@ -37,14 +37,19 @@ impl SerapiProvider {
         })
     }
 
-    /// Engine-specific request parameters. Google Books is Google search with
-    /// `tbm=bks`; Google Scholar is its own SerpAPI engine.
+    /// Engine-specific request parameters. Google Scholar is its own SerpAPI
+    /// engine. SerpAPI rejects `tbm=bks` ("Unsupported `bks` tbm parameter",
+    /// observed live 2026-09-26), so Books is Google search restricted to
+    /// `books.google.com`.
     fn engine_params(&self, query: &SearchQuery) -> Vec<(&'static str, String)> {
         match self.engine {
             SerpEngine::Google => {
                 let mut params = vec![("engine", "google".to_string())];
-                if !query.include_domains.is_empty() {
-                    params.push(("as_sitesearch", query.include_domains.join(",")));
+                // `as_sitesearch` takes ONE domain: a comma-joined list returned
+                // zero results live (2026-09-26). Several domains go into the
+                // query as `site:` OR terms instead (see `query_text`).
+                if let [domain] = query.include_domains.as_slice() {
+                    params.push(("as_sitesearch", domain.clone()));
                 }
                 if let Some(ref freshness) = query.freshness {
                     let tbs = freshness_serpapi(freshness);
@@ -55,7 +60,27 @@ impl SerapiProvider {
                 params
             }
             SerpEngine::Scholar => vec![("engine", "google_scholar".to_string())],
-            SerpEngine::Books => vec![("engine", "google".to_string()), ("tbm", "bks".to_string())],
+            SerpEngine::Books => vec![
+                ("engine", "google".to_string()),
+                ("as_sitesearch", "books.google.com".to_string()),
+            ],
+        }
+    }
+
+    /// The `q` sent to SerpAPI. On the Google engine, two or more allowed
+    /// domains become `(site:a OR site:b)` so the allowlist is enforced by the
+    /// provider, not just filtered afterwards.
+    fn query_text(&self, query: &SearchQuery) -> String {
+        if self.engine == SerpEngine::Google && query.include_domains.len() > 1 {
+            let sites = query
+                .include_domains
+                .iter()
+                .map(|d| format!("site:{d}"))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            format!("{} ({sites})", query.query)
+        } else {
+            query.query.clone()
         }
     }
 
@@ -267,7 +292,7 @@ impl WebSearchProvider for SerapiProvider {
             SerpEngine::Google | SerpEngine::Books => query.num_results,
         };
         let mut params: Vec<(&str, String)> = vec![
-            ("q", query.query.clone()),
+            ("q", self.query_text(query)),
             ("api_key", self.api_key.clone()),
             ("num", num.to_string()),
             ("output", "json".to_string()),
@@ -416,7 +441,7 @@ mod tests {
     }
 
     /// expect: each engine sends SerpAPI's documented selector — google,
-    /// google_scholar, or google with tbm=bks — and only the web engine
+    /// google_scholar, or google restricted to books.google.com — and only the web engine
     /// forwards the domain allowlist.
     #[test]
     fn engines_send_documented_serpapi_selectors() -> Result<(), WebError> {
@@ -436,8 +461,30 @@ mod tests {
             provider(SerpEngine::Books)?.engine_params(&q),
             vec![
                 ("engine", "google".to_string()),
-                ("tbm", "bks".to_string())
+                ("as_sitesearch", "books.google.com".to_string())
             ]
+        );
+        Ok(())
+    }
+
+    /// expect: several allowed domains become `site:` OR terms in the query
+    /// (not a comma list in `as_sitesearch`, which SerpAPI answers with zero
+    /// results); one domain stays in `as_sitesearch`.
+    #[test]
+    fn multiple_domains_become_site_or_terms() -> Result<(), WebError> {
+        let google = provider(SerpEngine::Google)?;
+        let many = query(&["hbs.edu", "insead.edu"]);
+        assert_eq!(
+            google.query_text(&many),
+            "oilfield services pricing power (site:hbs.edu OR site:insead.edu)"
+        );
+        assert_eq!(
+            google.engine_params(&many),
+            vec![("engine", "google".to_string())]
+        );
+        assert_eq!(
+            google.query_text(&query(&["hbs.edu"])),
+            "oilfield services pricing power"
         );
         Ok(())
     }
