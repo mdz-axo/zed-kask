@@ -50,9 +50,24 @@ Plan:  seam-map + prior verification  ->  Gate A (lisp: prior exclusivity)
 Do:    audit-security -> audit-architecture -> audit-ui -> Gate B (lisp: citation + severity)
 Check: adjudicate (semantics + cybernetics + essentialist) -> mcda (+ sensitivity)
 Act:   remediate -> Gate C (lisp: test-pinning + divergence membership, hard-stop)
-Converge: lisp score (uncited/unadjudicated -> 0) -> loop to Do (bound: max 2 re-loops per track; a third failing score escalates the unadjudicated findings to the operator instead of looping)
+Converge: lisp open count (uncited/unadjudicated -> 0) -> loop to Do (bound: max 2 re-loops per track; a third failing count escalates the unadjudicated findings to the operator instead of looping)
 Final: report
 ```
+
+The Gate A, B, C and Converge forms are pinned in
+`kask/registry/templates/kask-seam-audit/gates.md` (read it with `read_file`);
+run them with `lisp_eval` over the template outputs. The Converge count is
+passed to `final-report` as `convergence_score`; the model never supplies it.
+
+- **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, and the audited commit.
+- **Target condition:** Converge count 0 with Gate C passing, or the named unadjudicated findings escalated after the second re-loop.
+
+| Phase | Type | Oracle / critique |
+|-------|------|-------------------|
+| Plan, Do (seam-map, audits) | P | Gates A and B |
+| Check (adjudicate, mcda) | P | Converge count; the operator on ranking |
+| Act (remediate) | P | Gate C and the tests it pins |
+| Gates, Converge | D | `lisp_eval` forms in `gates.md` |
 
 ## Composed skills
 
@@ -81,8 +96,8 @@ changes. Measurements are D when taken from the code (widths, counts); the
 remedy choice is P, critiqued by the adversarial probes.
 
 1. **Measure** (`kask-seam-audit/layout-sense`) — container width (dock ~300–400px, center ~600px+), each child's minimum width, the text column's residual width.
-2. **Count** (`kask-seam-audit/layout-orient`) — interactive elements against the ≤5 primary budget (Hick's Law); sibling card conventions; congestion score.
-3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (eq (length failed_gates) 0) (eq (length probe_failures) 0))`, env `{ "failed_gates": <failing gate names>, "probe_failures": <broken probes from step 5> }`.
+2. **Count** (`kask-seam-audit/layout-orient`) — interactive elements against the ≤5 primary budget (Hick's Law); sibling card conventions. The Rosenholtz congestion score is a model estimate reported for context; no gate reads it.
+3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <failing gate names>, "probe_failures": <broken probes from step 5> }`.
 4. **Remedy** (`kask-seam-audit/layout-act`) — for each failing gate, the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
 5. **Probe** (`kask-seam-audit/layout-review`) — a 40-character button label, a German string (~30% longer), a 320px container, 7 actions. Any broken probe rejects the layout and re-enters step 4. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
 

@@ -44,7 +44,7 @@ For each, emit:
 ```json
 { "prior": "<name>", "artifact": "<symbol/path>", "verdict": "live" | "phantom", "evidence": "<grep result or absence>" }
 ```
-`verdict` MUST be exactly `"live"` or `"phantom"` (the Gate A lisp evaluator
+`verdict` MUST be exactly `"live"` or `"phantom"` (Gate A's pinned `lisp_eval` form in `kask-seam-audit/gates.md`
 enforces these two classes exclusively — any other string is a defect).
 
 ### Slices
