@@ -176,7 +176,7 @@ builds):
 
 If no `delegate_results` telemetry is present (the default in the planning
 phase), OR no failure is present, set `agent_at_fault = null`. When
-non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-5),
+non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-3),
 failure_detail }`. Never fabricate a verdict from the plan's `emitted_calls`.
 
 ## Step 5 — Latency outliers (Cybernetic Swarm Plan C4, regulated)

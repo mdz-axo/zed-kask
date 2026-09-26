@@ -62,12 +62,13 @@ You are a swarm-state observer. Re-read post-Act state and receipts and report t
 
 ## Step 1 — Re-measure the swarm state post-Act
 
+{% if fetched_post_act_state and fetched_post_act_state | length > 0 %}
+### Pre-fetched Post-Act State
+
 The invoking agent supplied an actually fetched `fetched_post_act_state`. Do NOT call swarm_get_swarm or
 swarm_list_local_agents — the state is already here. Parse it and
 recompute the team properties against the post-Act roster.
 
-{% if fetched_post_act_state and fetched_post_act_state | length > 0 %}
-### Pre-fetched Post-Act State
 ```json
 {{ fetched_post_act_state | tojson }}
 ```
