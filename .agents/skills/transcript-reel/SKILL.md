@@ -12,6 +12,14 @@ as validated layers (correction, paragraph, speaker, highlight, EDL) —
 timings are never touched, so every reel is reproducible from its
 layers.
 
+## Reference model and labels
+
+MovieLabs Ontology for Media Creation (OMC) — capture → post → distribution with provenance (`onto_anchor` → domain supplement `omc:Provenance`). The immutable word-level transcript is the ground truth every layer derives from.
+
+- **Initial condition:** a stored transcript with word timings (Phase 1).
+- **Target condition:** the Convergence gate passes and every quote in the summary resolved with `educt_locate`.
+- **D/P:** transcription, correction, paragraph, speaker and highlight passes are P (model passes), critiqued by each pass's validated layer stats and rejection rate, and by the operator's review of the selection. Layer validation, EDL composition, rendering, `educt_locate` and the gate are D.
+
 ## When to Use
 
 - The operator wants "the key 2 minutes" from a long recording.
