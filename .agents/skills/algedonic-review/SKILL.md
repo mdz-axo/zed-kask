@@ -10,6 +10,21 @@ Human-in-the-loop review of the regulation system. The algedonic system is the c
 
 The review's second half is the **gemba walk** (Lean: 現場, going to the actual place where value is created). Here the actual place is skill execution: the operator and the Curator inspect what skills actually did and the operator evaluates them. **Skill evaluation happens only here.** Evaluation is logically separated from execution (operator ruling 2026-09-24; Goodhart's law — a measure the executor targets stops measuring): executing sessions record outcomes and file proposals under `zk-data/curator/proposals/{skill}/`, but only this review, with the operator, records verdicts (`record_skill_feedback` is registered only in Curator sessions) and accepts or rejects proposals. Review records go to `zk-data/curator/reviews/{date}/`.
 
+## Initial and target condition
+
+- **Initial condition:** the three SENSE responses (`curator_status` with `loop_reading` and cap fields, `curator_escalations`, `curator_algedonic_log`) and, for the gemba walk, the `reg_query` records, `skill_use_issue` memories and queued proposal files. A failed channel is recorded as unknown.
+- **Target condition:** every pending escalation either has an executed operator decision with its tool receipt and cited observation, or is reported still pending with a reason; every queued proposal either has an operator disposition recorded in `reviews/{date}/` or remains in `proposals/` as undecided; the post-action `curator_escalations` re-query is shown.
+- **PDCA exemption:** one review is one operator session with no in-session iteration. The loop runs across reviews: the regulation loop acts on the decisions, and the next review re-senses the result.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| SENSE; gemba Sense | D | curator tool responses, `reg_query`, file listing |
+| TRIAGE severity and recommended action; gemba Brief | P | operator decision at PRESENT / Record |
+| ACT decisions; verdict and disposition choice | H | the operator; never inferred |
+| Executing planned calls; VERIFY re-query | D | per-call tool receipts; `curator_escalations` re-query |
+
 ## When to Use
 
 - The `AlgedonicLogApproachingCap` signal fired (the in-memory alert log is ≥80% full).
