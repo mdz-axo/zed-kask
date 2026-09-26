@@ -364,8 +364,6 @@ ABW spend requires operator consent. CHECK rereads state and receipts;
 `lisp_eval` computes receipt coverage, distance and target-plus-stability from
 those observed inputs. A plan or a stable off-target distance is not convergence.
 
-| Step | Name                 | What it does                                                                                                                                     |
-| ---- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Phase | Observed handoff |
 |---|---|
 | SENSE → ORIENT | Read real roster, task board and any prior execution receipts; missing sensors remain unknown. |
@@ -382,8 +380,8 @@ receipts/task-board entries; the caller uses `lisp_eval` only for the pinned
 arithmetic and exact-signature checks. An unavailable history never becomes a
 deterministic fault count.
 
-| Component | Name                              | Where it lives                                                                                    |
-| --------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Component | Name | Where it lives |
+|---|---|---|
 | C0 | Task success | Only observed `deterministic_evaluator`/operator verdicts; absent oracle leaves the task unassessed. |
 | C1–C2 | Second-order / Go See | Human/Curator review of recorded traces and explicit task failures; no registered automatic monitor. |
 | C3 / C7 | Failed edits / influence | Caller compares recorded signatures and measured influence; missing history is unverified. |
@@ -557,7 +555,7 @@ plan's §14.
 - [Swarm system docs](../../diataxis/swarm_system/reference.md) — ABW semantics, API surface, tool tables
 - [Swarm system explanation](../../diataxis/swarm_system/explanation.md) — components C0–C8, the cascade, steering modes
 - [Swarm system how-to](../../diataxis/swarm_system/how-to.md) — the swarm-intelligence skill process
-- [Swarm diagrams](../../diagrams/swarm.md) — server topology, the 10-step PDCA cascade, and the advisory-vs-steering loop (consolidated)
+- [Swarm diagrams](../../diagrams/swarm.md) — server topology, the observed composition loop, and the advisory-vs-steering boundary (consolidated)
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
 
 ## Footnotes
