@@ -1,4 +1,4 @@
-{# goal: Emit the gated composition change. Mode-aware (v2 §15): in `abw` mode, the gate is the consent token from `swarm_request_consent`; in `local` mode there is NO funding gate and no consent token — the per-dispatch ceiling is the only local bound, and an unfunded or negative ledger does not block a delegation. For each proposed delegate, construct a DispatchIntent { swarm_id, task, estimated_credits, curator_involved (default false), data_shared }. #}
+{# goal: Prepare mode-aware swarm action intents: ABW spend needs scoped operator consent; local dispatch has no credit or consent parameter. Separate emitted plans from actual execution receipts and make the steering handoff explicit. #}
 [inference]
 contract:
   input:
@@ -16,22 +16,16 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Phase 4 — ACT (DO: gated swarm_delegate / swarm_delegate_local) #}
-{#
-  Emit the gated composition change. The gate is mode-dependent:
-  - abw: consent token from swarm_request_consent (the v1 gate).
-  - local: per-dispatch ceiling only — no consent token (§15.1.2 rejected) and
-    no funding gate (the ledger records spend, it does not authorize it).
-  No call is emitted without passing the gate.
-#}
-
 [inference]
 temperature = 0.2
 work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a swarm-dispatch executor. Emit the gated composition changes for the swarm.
+{# ABW intent requires operator consent; local intent has no credit ledger.
+   Rendering does not execute a tool call. #}
+
+You are a swarm action planner. Emit a mode-appropriate plan, not a claim that MCP calls ran. The invoking Curator/human executes only after the required consent/preflight and retains the returned receipt.
 
 ## Mode
 {{ mode }}
@@ -49,37 +43,16 @@ You are a swarm-dispatch executor. Emit the gated composition changes for the sw
 
 ## Step 1 — Construct a DispatchIntent for each proposed move
 
-For each proposed hire/fire/delegate, construct:
+For each proposed move, record the target, task and intended tool before any call. In ABW mode alone, the intent additionally carries estimated credits, curator involvement and data categories shared; those are consent inputs, not actual spend. Local intents carry **no** credit or consent fields. Keep the full typed move data in `dispatch_intents` rather than emitting a placeholder object.
 
-```json
-{
-  "swarm_id": "{{ swarm_id }}",
-  "task": "{{ task }}",
-  "estimated_credits": "<from the move's estimated_credits, summed if multiple moves share a dispatch>",
-  "curator_involved": false,
-  "data_shared": ["<derived from the agents' accepts[] and the task — what data categories reach the agent>"]
-}
-```
-
-`curator_involved` defaults to **false** (ABW plan §3.7: Private/opt-in is the
-default). Set to true only if the move explicitly invokes the Xaman Ek
-curator, which requires separate per-dispatch opt-in.
+{% if mode != "local" %}
+`curator_involved` defaults to **false** (ABW plan §3.7: Private/opt-in is the default). Set to true only with separate consent for Xaman Ek.
+{% endif %}
 
 ## Step 2 — Route through the gate
 
 {% if mode == "local" %}
-In local mode the only gate is the **per-dispatch ceiling** — no consent token
-(§15.1.2 rejected consent tokens on local tools) and **no funding gate**. Each
-delegate call to `swarm_delegate_local` takes `credits_authorized`, which is
-checked against the per-dispatch ceiling only; `PaymentRequired` is returned
-solely when `credits_authorized` exceeds that ceiling, never for insufficient
-funds. An unfunded or negative ledger does not block a delegation.
-
-Each dispatch intent must produce a gate decision:
-- `Proceed { credits_authorized }` — the operator authorized the spend.
-  The `credits_authorized` is passed directly to `swarm_delegate_local`.
-- `Abort { reason }` — the operator declined. Record the reason; emit no
-  spend for this move.
+Local dispatch has no funding gate, `credits_authorized`, or consent token. Before proposing execution, verify the agent exists and belongs to the requested swarm when scoped, and that the planned input matches the chosen live local tool. `swarm_delegate_local` takes `{agent_name, task}`; `swarm_execute_plan_local` takes the ordered `delegations` plus `swarm_id`. An invalid/missing input yields `Abort {reason}` as a plan, never an attempted dispatch. The 10-entry cap applies to the batch tool, not a fictitious local spend ceiling.
 {% else %}
 In abw mode, the gate is the consent token minted by `swarm_request_consent`
 (action + target-scoped, single-use). Each dispatch intent must produce a
@@ -99,45 +72,28 @@ point for the .rules "Advertised invariants need enforcement points" trap.
 
 {% if mode == "local" %}
 For each valid local move, emit the corresponding hkask-mcp-swarm local call:
-- `delegate` → `swarm_delegate_local` with `{ agent_name, task,
-  credits_authorized }`. The agent must exist in the local registry
-  (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
-  workspace is the session (§15.1.9 rejected workspace_id on local tools).
-  No consent token and no funding gate — local agents run on the operator's own
-  substrate, so an unfunded (or negative) ledger does NOT block a local
-  delegation. Do not treat a low local balance as a reason to skip a move.
-  The per-dispatch ceiling is the only local bound.
+- `delegate` → `swarm_delegate_local` with `{agent_name, task}` for a standalone local call. For a scoped swarm, include `swarm_id` only in the member-scoped or batch tool that accepts it. Do not attach ABW credit or consent parameters to a local request.
   In steering mode, batch all delegate calls into a single
   `swarm_execute_plan_local` call instead (see Step 5) — the tool runs
   each delegation, evaluates results, and returns the collected array.
-- `remove` → `swarm_remove_local` with `{ agent_name }` (the local
-  counterpart of firing — deletes the card; a synced card's ABW agent is
-  untouched).
+- `remove` from a named swarm roster → `swarm_remove_agent_local` with `{swarm_id, agent_name}`. Deleting the agent card with `swarm_remove_local` is a different destructive action and needs explicit operator authorization; never conflate it with roster removal.
 - `reconfigure_agent` → `swarm_reconfigure_local_agent` with
-  `{ agent_name, system_prompt, model?, mcp_tools?, skills? }` (Cybernetic
-  Swarm Plan C6). The new `system_prompt` is produced upstream (seed
-  `swarm_generate_prompt` — an ABW authoring aid — with the blamed agent's
-  current prompt + the failure log, or author it locally; the prompt text
+  `{agent_name, system_prompt, model, mcp_tools, skills}` (Cybernetic
+  Swarm Plan C6). Read the current card first and explicitly preserve model/tools/skills not being changed; omitted fields can take tool defaults. The new `system_prompt` is produced upstream (seed
+  `swarm_generate_prompt_local` from local memory or author it locally; do not send a local agent's prompt/failure log to ABW without operator consent. The prompt text
   arrives in the move's rationale/payload). The tool preserves `agent_id`,
   `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and
   `cloud_id`, and reloads the registry. Reconfigure is preferred over `remove`
   when the blamed agent's type covers a required transform (firing would
   re-open the variety deficit). No consent token — local mode.
-- `create` → `swarm_create_local_agent` with the full card fields
-  (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
-  `produces`, `model?`, `mcp_tools?`, `skills?`) when DECIDE proposes hiring an
-  agent not yet in the local registry.
+- `hire`/`create`: if a card is absent, call `swarm_create_local_agent` with its validated fields; then call `swarm_add_agent_local` with `{swarm_id, agent_name}`. If the card exists, only add it to the roster. A created card alone is not a member.
 - `author_agent` → `swarm_create_local_agent` with the move's `authored_card`
   fields (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
   `produces`, `model?`, `mcp_tools?`, `skills?`). Agent creation + authoring as
   a first-class move: the process authored the `system_prompt` for an
   uncovered transform; ACT creates the card directly into the local registry
-  (no `swarm_hire_local` tool — §15.1.1 rejected). The new agent is
-  immediately delegable; a separate `delegate` move runs it.
-- `fanout` → `swarm_fanout_local` with `{ delegations: [{ agent_name, task,
-  credits_authorized }, ...] }` when DECIDE proposes parallel multi-agent
-  dispatch (capped at MAX_FANOUT=10; runs sequentially to avoid ledger
-  TOCTOU).
+  without a separate hire tool, then adds it to the named swarm with `swarm_add_agent_local`. Only a later `delegate` move runs it.
+- `fanout` → `swarm_fanout_local` with `{delegations: [{agent_name, task}, ...], parallel, swarm_id}` when DECIDE proposes a local batch (capped at 10); `parallel` is false for dependent work. No local credit ledger exists.
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% else %}
@@ -170,8 +126,7 @@ For each Abort, emit no call. Record the abort reason in aborted_reasons.
 
 ## Step 4 — Record what was emitted
 
-emitted_calls lists the actual MCP calls made (move_type, agent, tool_name,
-credits_authorized). This is the ground truth the CHECK phase reconciles
+`emitted_calls` lists planned calls (move type, agent and exact tool inputs), not receipts or executed side effects. Record actual MCP responses separately after the invoking Curator/human acts; CHECK reconciles only observed receipts. ABW plans retain authorized credits and consent status; local plans do not.
 
 
 ## Step 5 — Steering directive (Cybernetic Swarm Plan C5/C6 execution boundary)
@@ -190,11 +145,7 @@ emitted_calls and feeds the results back. Emit a `steering_directive` object:
 }
 ```
 
-The Curator (local) calls `swarm_execute_plan_local` with `swarm_id` and only
-the delegate entries mapped into `delegations` (optional evaluator/task_id), collects the
-returned `LocalDelegateResult` array (with `task_success` verdicts already
-stamped by the tool), and re-invokes swarm-intelligence with `delegate_results`
-set to that array — closing the feedback loop in one tool call. For cloud
+The Curator/human (local) calls `swarm_execute_plan_local` **once** with `swarm_id` and only delegate entries mapped into `delegations` (optional evaluator/task_id). Only a complete returned `results` array reconciled against that request becomes `delegate_results`; a tool-level error leaves execution state unknown and forbids automatic replay. Then re-invoke swarm-intelligence with the actual array. For cloud
 swarms, delegate to Xaman Ek via `swarm_xaman` with the plan as the message;
 Xaman Ek has steering **built in** (cloud-side) and executes the plan.
 {% else %}

@@ -155,8 +155,7 @@ so they are not attribution inputs. Do not fabricate outcomes from intents.
 carries `provenance: "llm_judged"`, do NOT use it for attribution — an LLM
 judge violates the C0 determinism constraint. Set `task_success_warning` to a
 short note naming the agent and the provenance, and treat that entry's
-`task_success` as absent. Only `provenance: "deterministic"` (or absent
-`provenance` when the tool supplied a deterministic verdict) is trusted.
+`task_success` as absent. Trust the actual wire values `provenance: "deterministic_evaluator"` or `provenance: "operator"` with an actual operator receipt. An absent or unknown provenance is unverified, not a trusted deterministic result.
 
 When `delegate_results` IS present, attribute fault to exactly one agent by
 this deterministic priority rule (JudgeFlow with the LLM Judge replaced by a

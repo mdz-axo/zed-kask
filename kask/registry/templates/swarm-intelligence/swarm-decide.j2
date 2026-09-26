@@ -1,4 +1,4 @@
-{# goal: Propose composition adjustments mapped onto the swarm's hire/fire/delegate vocabulary (redundant duplicates are fired via `swarm_fire`, not just flagged), isomorphic to swarm-algorithm tuning: variety deficit → hire agents covering missing transforms (ACO pheromone deposition); coherence + low diversity → hire diverse agent (raise PSO c1, lower omega) and fire redundant duplicates (ACO evaporation, via `swarm_fire`); coherence + high diversity + low alignment → assign coordinator compound agent (raise PSO c2, Reynolds alignment); loop-break → emit reconciliation repair, not a composition change. Mode-agnostic (v2 §15): operates on the state shape, not the data source. #}
+{# goal: Propose evidence-grounded swarm roster/delegation changes for the observed deficit. Treat PSO/ACO/Reynolds as design analogies, not measured swarm algorithms; local membership removal preserves agent cards, ABW firing follows its consent and workspace contracts. #}
 [inference]
 contract:
   input:
@@ -16,27 +16,16 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Phase 3 — DECIDE (PLAN: PSO/ACO/Reynolds tuning → hire/fire/delegate) #}
-{#
-  Propose composition adjustments isomorphic to swarm-algorithm tuning,
-  mapped onto the swarm's hire/fire/delegate vocabulary. This phase is
-  mode-agnostic — it operates on the state shape from SENSE and the
-  orientation from ORIENT, not on the data source. The `mode` input is
-  passed through for context (the ACT phase uses it to select the correct
-  tool: `swarm_delegate` for abw, `swarm_delegate_in_thread_local` for a local swarm).
-
-  The no-delegation-chains invariant is mandatory: delegates lose
-  delegate_to_agent/execute_agent. Every proposed delegate move must be one
-  level deep.
-#}
-
 [inference]
 temperature = 0.4
 work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
 
-You are a swarm-composition strategist. Propose composition adjustments for the ABW swarm, isomorphic to swarm-algorithm tuning.
+{# DECIDE only proposes; ACT chooses the live ABW or local tool. Delegation
+   remains one level deep, and roster removal never implies card deletion. #}
+
+You are a swarm-composition strategist. Propose changes for the observed local or ABW swarm. PSO/ACO/Reynolds provide candidate-generation analogies; only subsequent measured state and task outcomes judge whether a move helped.
 
 ## Swarm State (from SENSE)
 ```json
@@ -106,13 +95,7 @@ and the accepts/produces it must cover. Prefer agents already in the
 catalogue whose dependencies are satisfiable by the current roster.
 
 {% if mode == "local" %}
-In local mode, "hire" means creating the agent card via
-`agents/local/curated/<id>/agent_card.json` programmatically (`swarm_create_local_agent`),
-or cloning it from ABW via `swarm_clone_to_local`. The DECIDE phase proposes which
-agents to add. There is no `swarm_hire_local` tool
-(§15.1.1 rejected — the team is emergent from the call pattern). Pruning is
-available: `swarm_remove_local` deletes a local card (the local counterpart
-of firing).
+In local mode, a named swarm has a roster. A `hire` move uses an existing registered card or creates/clones one if needed, then adds it with `swarm_add_agent_local(swarm_id, agent_name)`. A `remove` move removes roster membership with `swarm_remove_agent_local`; it does not delete the card. Permanent `swarm_remove_local` is a distinct operator-authorized deletion, not composition tuning.
 {% else %}
 Prefer agents already in the ABW catalogue whose dependencies are
 satisfiable by the current roster. When a near-match agent exists but
@@ -129,11 +112,7 @@ primitive, not just an implicit side-effect of "hire"). The move carries:
 `accepts`/`produces` (the uncovered transform's input/output types), and an
 optional `model`/`mcp_tools`/`skills`. Authoring the prompt:
 {% if mode == "local" %}
-- In local mode the process authors the `system_prompt` directly (there is no
-  ABW generation endpoint); the ACT phase creates the card via
-  `swarm_create_local_agent` with the authored fields. No `swarm_hire_local`
-  tool (§15.1.1 rejected) — the agent is created directly into the local
-  registry and is immediately delegable.
+- In local mode ACT creates the card with `swarm_create_local_agent` only when it does not already exist, then calls `swarm_add_agent_local` for the named swarm. Creation alone is not member-scoped delegation authority.
 {% else %}
 - In abw mode, seed the prompt via `swarm_generate_prompt` (ABW's authoring
   aid) when the move did not carry a drafted prompt, optionally enrich the
@@ -149,9 +128,8 @@ accepts, produces, model?, mcp_tools?, skills? } so ACT can create it.
 Hire a diverse agent (different agent_type or model from the current
 monoculture). List redundant duplicates (same agent_type + model as an
 existing hire) under `redundant_candidates` in the move's rationale. In
-**local mode**, a redundant duplicate can be pruned with
-`swarm_remove_local` (the local counterpart of firing — propose a `remove`
-move). In **abw mode**, propose a `remove`/fire move → `swarm_fire`
+**local mode**, a redundant member can be removed from this swarm's roster with
+`swarm_remove_agent_local` (propose a `remove` move). Its saved card remains available to other swarms. In **abw mode**, propose a `remove`/fire move → `swarm_fire`
 (verified live 2026-08-02 — removes the agent from the roster; the agent
 itself is not deleted).
 **Anchor: PSO** — raise c1 (cognitive scaling) and lower omega (inertia) to
@@ -265,7 +243,7 @@ estimated_credits? (ABW only), covers_transforms?, redundant_candidates?,
 authored_card?, rationale }), tuning_rationale
 (object mapping move → swarm-algorithm term), respects_no_delegation_chains
 (boolean), delegate_notes. `remove` moves are local-mode only via
-`swarm_remove_local`; in abw mode a `remove`/fire move is actionable via
+`swarm_remove_agent_local`; in abw mode a `remove`/fire move is actionable via
 `swarm_fire` (roster removal; the agent itself is not deleted —
 `swarm_delete_agent` is the permanent-delete tool). `reconfigure_agent` moves
 are local-mode only via `swarm_reconfigure_local_agent` (C6); in abw mode,

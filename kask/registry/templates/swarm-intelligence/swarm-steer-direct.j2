@@ -82,8 +82,7 @@ check, use `swarm_evaluate_local` instead.
 
 Emitted calls that are NOT delegations (`hire`, `remove`, `reconfigure_agent`,
 `create`) are composition changes, not executions — the executor applies them
-separately (via `swarm_create_local_agent` / `swarm_remove_local` /
-`swarm_reconfigure_local_agent`), but they do NOT produce `LocalDelegateResult`
+separately (create/clone a card only if needed, add or remove a named swarm member with `swarm_add_agent_local` / `swarm_remove_agent_local`, or reconfigure with `swarm_reconfigure_local_agent`), but they do NOT produce `LocalDelegateResult`
 telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_notes` as "composition changes to apply (not executed for telemetry)".
 

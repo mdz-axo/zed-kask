@@ -111,22 +111,16 @@ SENSE, against the post-Act roster.
 
 {% if mode == "local" %}
 ```
-loop_closure = (successful_delegations / total_delegations)
+loop_closure = (ordered_receipts / attempted_delegations)
 ```
 
 where:
 - `total_delegations` = count of delegate entries actually attempted (not
   composition moves or unexecuted intents).
-- `successful_delegations` = count of those with a returned
-  `LocalDelegateResult`; a tool error is a failed attempt, not a success.
-  If only a plan was emitted and no results were supplied, set
-  `loop_closure = null` (unmeasured), not zero or one. Set
-  `convergence_metric = null` and do not claim convergence until execution
-  results arrive. There is no local credit reconciliation.
+- `ordered_receipts` counts both successful `LocalDelegateResult` objects and explicit per-entry `{agent_name, ok:false, error}` records returned for attempted delegations. Reconcile them by name and order before computing `( / ordered_receipts attempted_delegations)` with `lisp_eval`; an error receipt closes feedback, **not** task success. Surface dispatch/tool failures separately via the algedonic signal below.
+- A tool-level error without a complete returned `results` array leaves execution possibly partial: `loop_closure = null` and no convergence decision. An emitted plan with no execution receipt is likewise unmeasured, never zero or one. There is no local credit reconciliation.
 
-Vacuous-truth default: if the executed plan had no delegate entries,
-`loop_closure = 1.0` (vacuously satisfied). An unexecuted non-empty plan is
-not vacuously closed.
+For a complete observed plan, compute `loop_closure` with `lisp_eval` form `(if (= attempted_delegations 0) 1 (/ ordered_receipts attempted_delegations))`. Zero actual delegations is vacuously closed; an unexecuted non-empty plan or uncertain tool error is not.
 {% else %}
 ```
 loop_closure = (reconciled_dispatches / total_dispatches)
