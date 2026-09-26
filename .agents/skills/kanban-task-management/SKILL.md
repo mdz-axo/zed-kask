@@ -72,6 +72,7 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 2. Act per finding: call `kanban_task_verify` only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal and moves that task to Done. Comment on a failed/unsupported submission without calling verify, and return it for rework. Comment to unblock stalled tasks.
 3. Re-list to confirm the transitions took.
 4. Reconcile the IDs in `unverified_review` and `stalled_in_progress` against the *newly re-listed board* before calling `lisp_eval` with `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))`. This gate checks sweep obstacles only; it does not prove the functional goal was achieved. On a mismatch or a surviving blocker, stop after this one sweep and escalate with the actual task IDs.
+5. Clean up (storage Cleanup rule). When every task on the board is Done and its deliverables are recorded outside the board, ask the operator to confirm closure, then call `kanban_board_delete(board_id)` and re-run `kanban_board_list` to confirm. A board with any open, Review or blocked task is kept and named in the report with its open task IDs; never delete it to make a sweep look clean.
 
 ## MCP Tools
 
@@ -79,6 +80,7 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 |------|-------|------|
 | `kanban_goal_create` | decompose | Persist the operator-confirmed functional target before board creation |
 | `kanban_board_create` | decompose | Post-step: create the board |
+| `kanban_board_delete` | operate | Cleanup: delete an all-Done board after operator closure |
 | `kanban_task_create` | decompose | Create each accepted task with exact goal-criterion `advances` citations |
 | `kanban_task_list` | decompose, operate | Post-step: verify / pre-step: fetch |
 | `kanban_board_list` | operate | Pre-step: fetch board state |

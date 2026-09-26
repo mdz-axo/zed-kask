@@ -110,6 +110,10 @@ step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
 a second failure ships the artifact with the imperfection named — never
 silently.
 
+## Cleanup (all pipelines)
+
+After the operator accepts the deliverables, delete the run's rejected outputs — unchosen logo candidates, failed-retry artifacts and other variants that are not ancestors of a kept deliverable — with `gallery_delete_image(image_id, delete_file: true)`. Keep every ancestor of a kept deliverable: its lineage and OMC creation graph reference them. File deletion needs a destructive-mode gallery; in read-only or copy-on-write mode, remove only the index entry and list the files left on disk in the report. Confirm with `gallery_list_assets` (storage Cleanup rule).
+
 ## Constraints
 
 - All pipelines use tools from the `hkask-mcp-media` server. The server must be running and configured with at least one media provider (DeepInfra or OpenRouter).
