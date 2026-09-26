@@ -39,7 +39,7 @@ Apply the prompt optimization paradigm specified in the improvement plan:
 - Treat prompts as genes in a population P_t = {p^(i)}.
 - Apply semantic operators: Selection, Crossover (LLM merges parent strengths), Mutation (LLM introduces variations).
 - Methods: EvoPrompt, Promptbreeder (self-referential mutation prompt evolution), GEPA (reflective prompt evolution with meta-level reflection).
-- **Delegation**: If population-based evolution with Pareto frontier management is needed, delegate to the `gpa-evolution` skill which implements this with full Pareto frontier, hypervolume tracking, and convergence detection.
+- **Delegation**: If population-based evolution with Pareto frontier management is needed, delegate to the `gpa-evolution` skill (not yet shipped; prompt artifacts only). It keeps a Pareto frontier and a bounded convergence check; hypervolume is not computed by any tool, so do not rely on a hypervolume figure from it.
 
 ### Textual Gradient Optimization (§6.1.4)
 - Formal directional feedback: p_{t+1} = p_t ⊕ g(p_t) where g(p_t) is a textual gradient.
