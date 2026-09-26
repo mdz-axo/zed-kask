@@ -9,6 +9,18 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 5-question Coaching Kata templates for teaching scientific thinking. Grounded in the learner's actual Improvement Kata storyboard data. Q1: Target Condition. Q2: Actual Condition. Q3: Obstacles. Q4: Next Step/Experiment. Q5: Feedback loop closure.
 
 
+## Reference model
+
+Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto_anchor` → derived `coaching_kata` (operator ruling 2026-09-24): five questions a coach asks a learner, with procedural guidance rather than solutions. **The coach is a separate role from the learner.** The coaching render asks and assesses; it never writes the learner's answer.
+
+## Roles, conditions and loop
+
+- **Learner:** named by `learner_bot` — the operator, or a local agent reached with `swarm_delegate_local`. The learner's own words come back as `learner_answer`. Reading the learner's Improvement Kata storyboard is context for the coach's questions, not a substitute for the learner's answer.
+- **Initial condition (T1):** the learner's current storyboard (`kata-improvement` step outputs: target, `metric_before`, obstacles, last experiment and its result).
+- **Target condition (T2):** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment `clear` / `data-driven` / `focused` / `testable` / `tight-loop`.
+- **Loop (T3):** each question runs ASK (render without `learner_answer`) then ASSESS (render with it). A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner. One pass of Q1–Q5 per learner experiment. The next session starts at Q1 with the check result the learner reported at Q5.
+- **D/P:** the questions are fixed text (D). The learner's answers are the learner's (human or agent). The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is the calibration signal.
+
 ## When to Use
 
 - When a learner needs to articulate a specific, measurable target condition and establish a clear goal.
@@ -28,7 +40,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 ### coaching-q1-target
 
 1. Ask the learner what their target condition is.
-2. Respond as the learner with specific data from the IK storyboard, including the specific measurable target, experiment bound, and success criteria.
+2. Get the learner's answer (the learner states the measurable target, experiment bound and success criteria; the coach does not).
 3. If the target is vague, ask the learner to make it more specific, measurable, and verifiable.
 
 ### coaching-q2-actual
