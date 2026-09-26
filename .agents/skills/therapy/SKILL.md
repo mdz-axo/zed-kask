@@ -27,6 +27,10 @@ scan for contradictions/stale/fragmented → resolve, purge, condense → clean 
 
 Forgetting (purging/condensing) is NOT learning. It is shedding low-value information so it doesn't obstruct learning. The goldfish principle applies here: once a lesson is reified into proactive guidance, the episodic memory that produced the lesson can be forgotten — but the forgetting is a hygiene side-effect, not the learning step. The learning step is the reification.
 
+## D/P labels
+
+The scan's counts, the approved-proposal count, the execution check and the post-treatment re-scan gate are D (`lisp_eval` over tool results). Finding classification, Festinger strategy choice and reification drafts are P; every P step is critiqued by the operator's per-proposal approval in Phase 4 — nothing unapproved is executed. Self-assessed memory quality is the Dunning case (`onto_anchor` → derived `metacognition`): the check comes from outside the session.
+
 ## When to Use
 
 - When the user wants to run a therapy session on the curator's memory database — **must be run from a Curator agent panel session**, not from the zed agent. The curator must remember the act of therapy (the forgetting, the reification, the lessons learned) so the cybernetic loop closes. Therapy run from the zed agent would modify curator memory without the curator's awareness — that defeats the cybernetic design.
