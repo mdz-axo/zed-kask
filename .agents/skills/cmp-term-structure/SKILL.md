@@ -6,9 +6,21 @@ description: "Build and use Constant-Maturity Prediction (CMP) term structures: 
 # CMP Term Structure
 
 Constant-Maturity Prediction (CMP) indices are the prediction-market
-analog of constant-maturity Treasury curves: fixed-tenor (1m/3m/6m)
-probabilities per (family, orientation), interpolated in log-odds space
-across the family's contract ladder. This skill runs the full pipeline:
+analog of constant-maturity Treasury curves: fixed-tenor probabilities
+per (family, orientation), interpolated in log-odds space across the
+family's contract ladder. Two tenor grids exist: `market_cmp_index`
+publishes 7d/30d/90d/180d/1y/2y (`cmp::INDEX_TENORS_DAYS`), while duration
+matching compares against 1m/3m/6m (`hkask_forecast::CMP_TENORS_YEARS`).
+
+**Reference model.** The U.S. Treasury constant-maturity yield curve
+(interpolation to fixed tenors) applied to prediction-market contracts,
+with log-odds interpolation. Every tool step is D (the servers build
+indices, trees, coherence and duration); the economic context is P and
+the operator's decision; dependency conditionals are P and caller-authored.
+
+- **Initial condition:** the series ladder (`market_ladder`) and the
+  operator-accepted context.
+- **Target condition:** the Convergence gate returns `reconciled`. This skill runs the full pipeline:
 ladder → context → indices → tree → coherence → duration matching.
 
 ## When to Use
@@ -86,9 +98,13 @@ ladder → context → indices → tree → coherence → duration matching.
 ### Convergence
 
 10. Gate — call `lisp_eval` with:
-    - form: `(and (eq (length withheld_unexplained) 0) (eq slope_reconciled 1))`
-    - env: `{ "withheld_unexplained": <withheld buckets with no rejection reason>,
-              "slope_reconciled": <1 if the curve slope sign matches the accepted context direction, else 0> }`
+    - form: `(cond ((> withheld_unexplained 0) "withheld_unexplained") ((is_null slope) "slope_undetermined") ((= slope 0) "flat") ((or (and up (> slope 0)) (and (not up) (< slope 0))) "reconciled") (t "slope_contradicts_context"))`
+    - env: `{ "withheld_unexplained": <count of withheld buckets with no rejection reason>,
+              "slope": <market_cmp_index slope_30d_1y_logodds_per_year, null when a tenor lacks coverage>,
+              "up": <the accepted context's direction_up> }`
+    The slope is compared numerically, not judged: the agent supplies
+    the tool's value, never a sign it inferred. `slope_undetermined`
+    (30d or 1y uncovered) is reported as unknown, not reconciled.
     Every tenor in the report must have a probability or an explicit
     withheld reason, and the slope sign must reconcile with the
     accepted context direction. If not, re-run Phase 2 with an adjusted
