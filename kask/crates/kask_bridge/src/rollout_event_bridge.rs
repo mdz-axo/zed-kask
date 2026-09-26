@@ -256,7 +256,7 @@ impl RolloutEventSource for BridgeRolloutEventSource {
             .map_err(|e| RolloutEventError::Query {
                 detail: e.to_string(),
             })?;
-        let valued = |event: &&hkask_event_store::EventRecord| {
+        let valued = |event: &hkask_event_store::EventRecord| {
             event.payload.get("overall_pass_rate").is_some()
         };
         let size_of = |event: &hkask_event_store::EventRecord| {
@@ -264,15 +264,11 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         };
         let before = events
             .iter()
-            .filter(|event| event.position <= before_position)
-            .filter(valued)
-            .next_back()
+            .rfind(|event| event.position <= before_position && valued(event))
             .and_then(size_of);
         let after = events
             .iter()
-            .filter(|event| event.position > before_position)
-            .filter(valued)
-            .next_back()
+            .rfind(|event| event.position > before_position && valued(event))
             .and_then(size_of);
         Ok(before.zip(after))
     }
