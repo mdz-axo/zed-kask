@@ -159,7 +159,7 @@ sets/sums must be tracked consistently across loop iterations.
 | Skill                   | Role                                                  | When Invoked                              |
 | ----------------------- | ----------------------------------------------------- | ----------------------------------------- |
 | `pragmatic-cybernetics` | 5-property loop assessment + Ashby variety + VSM      | ORIENT, when deficit is a loop-break      |
-| `kata-improvement`      | Stability-check convergence pattern (`kata.convergence_check`) | CONVERGE (`lisp_eval` call)               |
+| `kata-improvement`      | Stability-check convergence pattern (the pinned stability form in Convergence criterion) | CONVERGE (`lisp_eval` call)               |
 | `essentialist`          | Deletion-test proposed phases                         | Design-time (applied to the skill itself) |
 
 ## Steering modes (the execution boundary)

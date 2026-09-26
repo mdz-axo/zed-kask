@@ -169,7 +169,7 @@ The executing session never commits a durable change to a skill, prompt, memory,
 
 ## Improvement Measure
 
-PDCA loops in this skill run within one session (operator ruling 2026-09-24). Evaluate convergence after each full iteration: the measured Check result has stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
+PDCA loops in this skill run within one session (operator ruling 2026-09-24). The signal is the measured Check result's `pass_rate` (the same value the step-1 gate reads, from the deterministic harness). After each full iteration compute with `lisp_eval` over the recorded pass rates, oldest first: `(and (>= (length xs) 3) (< (abs (- (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs))) 0.02) (< (abs (- (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs))) 0.02))` — converged when the last three measured pass rates differ by less than 0.02. An iteration with no measured pass rate adds nothing to the list; it cannot move the loop toward convergence. Minimum 2 iterations.
 
 **Max iterations (per session)**: 10 (outer Kata), 5 (inner PDCA per Kata step). A target the session cannot reach within those bounds is reported with its remaining gap, not extended.
 
