@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Skill-corpus contract audit — the second mechanical layer of the
-# skill-logic-audit corpus pass (the prescreen is the first: goal shape).
+# skill-maintenance template-logic audit corpus pass (the prescreen is the first: goal shape).
 #
 # For every shipped .j2 template under kask/registry/templates/ that carries
 # an [inference] contract, checks contract↔body agreement:

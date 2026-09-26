@@ -14,7 +14,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 - **Creating a skill** → activate `create-skill`.
 - **Validating / editing / translating / pruning** → activate `skill-maintenance`.
-- **Auditing skill logic against stated goals** → activate `skill-logic-audit`.
+- **Auditing skill or template logic against stated goals** → activate `skill-maintenance` (its template-logic audit covers `.j2` goals and callsites).
 - **Detecting capability gaps** → activate `skill-discovery`.
 
 ### Skill Locations

@@ -150,7 +150,7 @@ Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1
 
 - Validating an existing skill — use `skill-maintenance` (this skill's Phase 4 delegates there anyway).
 - Matching tasks to installed skills — use `skill-discovery` (route).
-- Auditing template/manifest logic — use `skill-logic-audit` (SKILL.md bodies are not its targets).
+- Auditing template/manifest logic — use `skill-maintenance`'s template-logic audit (SKILL.md bodies go through its optimize loop).
 
 ## Instructions
 

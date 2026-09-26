@@ -40,7 +40,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 ## When NOT to Use
 
-- Auditing `.j2` template or `manifest.yaml` logic — use `skill-logic-audit` (its target class; SKILL.md bodies are not valid logic-audit targets).
+
 - Authoring a new skill, or translating one from another agent system — use `create-skill` (it delegates validation back here at Phase 4).
 - Mapping task patterns for coverage gaps — use `skill-discovery` (its detect-gap phase); matching tasks to installed skills is its route phase.
 
@@ -111,7 +111,7 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)
    - **T2**: Each `.j2` template carries a `{# goal: ... #}` annotation
-     describing its purpose — the exact format skill-logic-audit's
+     describing its purpose — the exact format the template-logic audit's
      logic-load-goal step parses; a comment header in any other form is a
      fail (an unparseable goal is unauditable). Mechanical enforcement
      point: `kask/scripts/audit/skill-corpus-prescreen.sh` (goal presence,
@@ -154,15 +154,31 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 This loop runs within one session and ends in a **proposal**, never an applied change or a verdict. Skill evaluation belongs to the operator in `algedonic-review`'s gemba walk (operator ruling 2026-09-24; Goodhart's law): the session that designed a candidate cannot also be the judge that accepts it.
 
 1. **Plan:** Read the canonical SKILL.md and referenced .j2 templates via `read_file`; obtain the operator's task/outcome and relevant historical constraints. Specify baseline behavior and a fixed, independently judged set of representative, negative, boundary and held-out tasks with expected results before revising anything. Select success, regression, safety and cost measures and a feasible run budget. `skill-maintenance-audit` and `skill-maintenance-validate` identify defects, but passing them does not establish task success. If the objective or oracle cannot be established, ask for it or return `unverified`; do not optimize to a proxy health score.
-2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, invoke `skill-logic-audit` on the template as a leaf; this skill owns SKILL.md changes and integration. Do not use a legacy manifest as the process specification.
+2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, run the template-logic audit below on the template as a leaf; the optimize loop owns SKILL.md changes and integration. Do not use a legacy manifest as the process specification.
 3. **Check (measure, do not judge):** Run baseline and candidate implementations against the **same** tasks and evaluator when a deterministic harness can run them; validate S1–S13/T1–T5 and render reachability for every finalist. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain logs under `~/Documents/zk-data/skills/skill-maintenance/{date}-{run}/`. A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable harnesses are `unverified`, never wins. The local swarm runtime executes a card's declared skills through `host/skill`, so `swarm_eval_agent_local` can run a skill-declaring agent on the fixed task set.
 4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
 5. **Act (file or drop):** A candidate that satisfies hard constraints and has measured evidence is written as a proposal — full diff, predeclared tasks, measured before/after (or `unverified`), open falsifiers — via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Otherwise drop it and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement; the operator decides the proposal in the gemba walk, and only an accepted proposal is applied.
+
+### skill-maintenance template-logic audit (formerly `skill-logic-audit`)
+
+Audits one `.j2` template's logic against its `{# goal: ... #}` annotation and the SKILL.md phase that invokes it, and files a comparison-backed proposal (folded back in 2026-09-25; it was split out 2026-08-14). A template is a step-leaf: its goal must serve the invoking phase, its inputs must match what that phase passes, and its outputs must feed the phase that consumes them. SKILL.md bodies are not targets here — they go through `skill-maintenance-optimize`. A legacy `manifest.yaml` is inert: audit only its stated textual goal, when explicitly asked.
+
+**D/P.** Goal loading, case/candidate reconciliation and hard-gate counts are D (`read_file`, `lisp_eval`, recorded harness outputs). Critique and candidate design are P: `logic-critique-template` is critiqued by the separate `logic-critique-critique` render, and candidates by the fixed-case comparison. The operator judges in the algedonic review (Goodhart's law, `onto_anchor` → derived `goodharts_law`).
+
+1. **Plan — load the goal.** `read_file` the target; parse its `{# goal: ... #}` exactly (missing → unauditable; never invent one). Read the invoking phase and the inputs it passes and outputs it consumes; record any mismatch. Fix the acceptance cases before revising: one representative success, one failure, and for a live template one downstream handoff, with expected outputs, hard contracts, costs and one evaluation method for every candidate. No fixtures or trustworthy evaluator → mark the comparison `unverified`.
+2. **Do — critique and generate.** Render `skill-maintenance/logic-critique-template` (goal, target, invoking phase, acceptance cases); cite concrete defects against goal and phase; reject style-only concerns. `kask/scripts/audit/skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` give shape leads, not proof. Render `skill-maintenance/logic-critique-critique` to drop unsupported concerns. Generate at most four distinct candidates — unchanged baseline, localized repair, subtraction, a replacement structure — and say why a class is inapplicable rather than forcing it.
+3. **Check — compare.** Render `skill-maintenance/logic-compare-candidates` with the fixed cases, candidates and actual observations; run the same cases on every candidate through the available harness, and check rendering, contract and handoff shape separately. Judge semantic correctness against the predeclared expected behavior or independent human judgment, never the candidate's own critique. Call `lisp_eval` on the recorded case/candidate records for completeness, counts, hard gates and arithmetic; missing observations or a failed hard gate block an improvement claim. Invoke `lean-prover` only for an exact, finite decision rule (e.g. selection never permits an unapproved edit); Lean does not prove a prompt good.
+4. **Act — file or keep.** Name a candidate only if it clears every hard contract, improves the fixed outcome over the baseline, and has no unacceptable regression; otherwise keep the baseline and report the gaps. Re-enter generation at most once for a newly found falsifier on the same held-out cases. For a qualifying candidate, render `skill-maintenance/logic-compose-proposal` (the simplest passing candidate, with its full unified diff), recheck its goal, contract and rendering, and write the proposal (target, goal, diff, evidence, open falsifiers) via `terminal` to `~/Documents/zk-data/curator/proposals/{skill}/{date}-{run}.json`. Do not edit the target; the operator accepts, rejects or counters it in `algedonic-review` (`user_counter_proposal` carries a counter), and an accepted diff is applied only if it still matches the current file.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
+| `logic-load-goal.j2` | Template-logic audit: parse the annotated goal from a .j2 (or a requested legacy manifest) and return it verbatim; report a missing goal. |
+| `logic-critique-template.j2` | Template-logic audit: adversarial, grounded critique of a template against its goal, invoking phase and fixed cases. |
+| `logic-critique-critique.j2` | Template-logic audit: keep only concerns that link a concrete defect to the goal. |
+| `logic-compare-candidates.j2` | Template-logic audit: compare baseline and distinct candidates on fixed cases from observed evidence; names a candidate to propose, never applies one. |
+| `logic-compose-proposal.j2` | Template-logic audit: compose the comparison-backed proposal and unified diff, or keep the baseline. |
 | `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S13 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
 | `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. |
@@ -172,6 +188,10 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `skill-maintenance-audit.j2`: `skill_name`,`workspace_context`
 - `skill-maintenance-optimize.j2`: `skill_name`,`objective`,`baseline`,`tasks`,`candidates`,`observations`
+- `logic-load-goal.j2`: `target_path`,`target_content`
+- `logic-critique-template.j2`: `goal`,`target_path`,`target_content`,`template_type`,`invoking_phase`,`acceptance_cases`
+- `logic-compare-candidates.j2`: `goal`,`invoking_phase`,`acceptance_cases`,`candidates`,`observations`
+- `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`winning_content`,`user_counter_proposal`
 
 
 ## Constraints

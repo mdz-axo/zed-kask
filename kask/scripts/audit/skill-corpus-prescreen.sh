@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Skill-corpus prescreen — the mechanical layer of the skill-logic-audit
+# Skill-corpus prescreen — the mechanical layer of skill-maintenance's template-logic audit
 # corpus pass, and the embryo of the body-side validator.
 #
 # For every shipped .j2 template under kask/registry/templates/:
 #   1. Goal presence — the `{# goal: ... #}` annotation that
-#      skill-logic-audit's logic-load-goal step parses.
+#      the template-logic audit's logic-load-goal step parses.
 #   2. Goal length sanity — a placeholder goal is not a goal.
 #   3. Goal-content overlap — the fraction of the goal's content words
 #      present in the template body (comments stripped). Low overlap
@@ -93,7 +93,7 @@ for file in "$REG"/*/*.j2; do
         continue
     fi
     # Goal-wrap detection: the canonical parse (extract_goal above and
-    # skill-logic-audit's logic-load-goal) reads ONE {# goal: ... #}
+    # the template-logic audit's logic-load-goal) reads ONE {# goal: ... #}
     # block. A goal wrapped across consecutive blocks parses as only
     # its first line, which ends mid-phrase.
     case "$goal" in
