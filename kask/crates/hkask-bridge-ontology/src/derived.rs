@@ -305,6 +305,31 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["forecast rationale", "composite score", "brier score"],
         authority: "operator ruling 2026-09-25; Karvetski, Huang, Kucinskas et al., Measuring Judgment Quality in Natural-Language Explanations: Evidence from Forecasting Tournaments, Forecasting Research Institute (2026)",
     },
+    DerivedConcept {
+        term: "metacognition",
+        aliases: &[
+            "metacognitive",
+            "knowing what you know",
+            "dunning kruger effect",
+        ],
+        identity: "judging the reach of one's own knowledge; the skill needed to perform is the skill needed to judge the performance, so self-assessment must be checked against external feedback",
+        definition: "David Dunning's account of self-knowledge and expertise (Kruger & Dunning 1999; Dunning 2011, 2019): people with poor expertise carry a double curse, lacking both the competence and the knowledge needed to recognize its absence, and cannot see where the geography of their ignorance begins; the same deficit hides superior competence in others (the Cassandra quandary). The corrective is feedback from outside the self-judgment.",
+        constituents: &["self-assessment", "expertise", "external feedback"],
+        authority: "operator ruling 2026-09-25; Kruger & Dunning, Unskilled and Unaware of It, Journal of Personality and Social Psychology 77(6) (1999); Dunning, The Dunning-Kruger Effect: On Being Ignorant of One's Own Ignorance, Advances in Experimental Social Psychology 44 (2011)",
+    },
+    DerivedConcept {
+        term: "scenario_planning",
+        aliases: &["scenario plan", "scenario analysis method"],
+        identity: "focal question -> driving forces -> two critical uncertainties as axes -> divergent narratives -> implications and early-warning indicators, with the project itself assessed for learning and performance",
+        definition: "Peter Schwartz's method for thinking about the long view (1991): frame a decision-relevant focal question, map driving forces, choose two independent critical uncertainties, write divergent plausible futures, and derive strategies with leading indicators; Thomas Chermack's performance-based framework (2011) adds the assessment of whether the scenario project changed learning and decisions.",
+        constituents: &[
+            "focal question",
+            "driving forces",
+            "critical uncertainty",
+            "early-warning indicator",
+        ],
+        authority: "operator ruling 2026-09-25; Schwartz, The Art of the Long View, Doubleday (1991); Chermack, Scenario Planning in Organizations, Berrett-Koehler (2011)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -454,6 +479,9 @@ mod tests {
             ("superforecasting", "Tetlock & Gardner"),
             ("EQM", "Karvetski"),
             ("Explanation Quality Markers", "Karvetski"),
+            ("metacognition", "Dunning"),
+            ("scenario planning", "Schwartz"),
+            ("scenario planning", "Chermack"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

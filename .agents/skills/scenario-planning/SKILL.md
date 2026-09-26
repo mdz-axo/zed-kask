@@ -16,7 +16,7 @@ this skill is the operating procedure for that pipeline.
 - Schwartz, *The Art of the Long View* (1991) — focal question, driving forces, 2x2 narratives, indicators.
 - Tetlock & Gardner, *Superforecasting* (2015) — `onto_anchor` → derived `superforecasting`; Brier (1950) → derived `brier_score`.
 - Chermack, *Scenario Planning in Organizations* (2011) — project assessment.
-- "Scenario planning" itself anchors only at the 5W1H core (coarse): no operator ruling yet.
+- `onto_anchor` → derived `scenario_planning` (Schwartz 1991; Chermack 2011; operator ruling 2026-09-25).
 
 ## Initial and target condition
 
