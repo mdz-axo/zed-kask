@@ -30,8 +30,11 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 
 1. Count every public item in the module mechanically: public functions (`pub` / `pub(crate)`), public types (struct, enum, type alias), public traits, public constants, and public sub-modules. Do not count impl blocks, tests, or re-exports.
 2. Estimate the behavior encapsulated: count non-comment, non-blank implementation lines (including private helpers and impl blocks), list invariants enforced, and list complexity managed on behalf of callers.
-3. Compute the depth score: `Behavior Lines / (Public Functions + Public Types + Public Traits + Public Constants)`.
-4. Classify the module: Deep (100+), Adequate (50–99), Shallow (20–49), or Very Shallow (0–19).
+3. Compute the depth score and class with `lisp_eval` (D) — the same denominator as `deep-module-assess.j2` (every public item counted in step 1, sub-modules included):
+   - form: `(if (= items 0) (list nil "Empty") (let ((s (/ lines items))) (list s (cond ((>= s 100) "Deep") ((>= s 50) "Adequate") ((>= s 20) "Shallow") (t "Very Shallow")))))`
+   - env: `{ "lines": <behavior lines>, "items": <total_interface_items> }`
+   Count behavior lines mechanically when the source is available; an estimated count makes the score an inference, and the report must say which.
+4. Classify the module from that result: Deep (100+), Adequate (50–99), Shallow (20–49), Very Shallow (0–19), or Empty (no public items).
 5. Identify red flags: more public functions than private (pass-through suspicion), more public types than functions (data bag), all public functions delegating to a single dependency (pass-through), zero invariants enforced (no encapsulation), or single consumer (inline candidate).
 6. Produce recommendations even if the depth score is acceptable — flag all red flags.
 
@@ -50,7 +53,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 4. Hide information: keep algorithms, data structures, caching, internal state, business rules, validation logic, and the identity of dependencies private.
 5. Design one unified error enum per module: map dependency errors to module-level variants (never leak dependency error types), add context to each variant.
 6. Design one config struct: passed at construction time, validated on construction (fail early), with defaults for optional values.
-7. Project the depth score: `Estimated Behavior Lines / (Public Functions + Public Types)`. Target ≥100 (Deep), minimum ≥50 (Adequate).
+7. Project the depth score with the same step-1.3 form over the designed interface's total public items (functions + types + traits + constants + sub-modules), so projected and assessed depth are comparable. Target ≥100 (Deep), minimum ≥50 (Adequate).
 
 ### 4. Check Convergence
 
@@ -90,7 +93,7 @@ Template context variables (from each template's [inference] contract):
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
+- Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first: `(and (>= (length xs) 3) (= (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs)) (= (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs)))` — converged when the last three counts are equal. Minimum 2 iterations; maximum 5, after which the remaining instability is reported, not iterated.
 - Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
 - Handle missing variables gracefully (leave as-is or use default if specified).
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

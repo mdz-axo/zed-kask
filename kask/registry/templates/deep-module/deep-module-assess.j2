@@ -90,7 +90,7 @@ Do NOT count:
 
 Estimate the behavior encapsulated by the module:
 
-- **Implementation complexity**: Roughly how many lines of non-comment, non-blank code implement the module's behavior? Include private helper functions, impl blocks, internal state management.
+- **Implementation complexity**: How many non-comment, non-blank lines implement the module's behavior? Include private helper functions, impl blocks, internal state management. Count them mechanically when the source is available (e.g. `grep -cvE '^\s*(//|$)'` over the module's files, minus tests) and record `behavior_lines_method: "counted"`; otherwise record `"estimated"` — an estimated numerator makes the depth score an inference.
 - **Invariants enforced**: What invariants does the module maintain? (e.g., "always returns valid UTF-8", "ensures atomic state transitions")
 - **Complexity managed**: What complexity does the module hide from callers? (e.g., connection pooling, retry logic, format conversion)
 
@@ -99,7 +99,8 @@ Estimate the behavior encapsulated by the module:
 If `total_interface_items == 0`, set `depth_score: null` and `classification: "Empty"` — division by zero is undefined. Do not compute a numeric score.
 
 ```
-Depth Score = Behavior Lines / (Public Functions + Public Types + Public Traits + Public Constants)
+Depth Score = Behavior Lines / total_interface_items
+(total_interface_items = public functions + types + traits + constants + public sub-modules — every item counted in Step 1)
 ```
 
 | Score | Classification (Ousterhout's empirical observation) |
@@ -153,6 +154,7 @@ Respond with a JSON object:
   },
   "behavior_estimate": {
     "implementation_lines": 480,
+    "behavior_lines_method": "counted | estimated",
     "private_functions": 8,
     "invariants_enforced": [
       "Session IDs are always valid UUIDs",
@@ -168,7 +170,7 @@ Respond with a JSON object:
   "depth_score": {
     "score": 60,
     "classification": "Adequate",
-    "formula": "480 / (5 + 2 + 0 + 1) = 60.0",
+    "formula": "480 / total_interface_items (5 + 2 + 0 + 1 + 0) = 60.0",
     "threshold_met": true,
     "distance_to_deep": 40,
     "provenance_note": "Thresholds from Ousterhout 2018, Ch. 4 — empirical, not normative"
