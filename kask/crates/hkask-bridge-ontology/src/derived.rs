@@ -421,6 +421,27 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["strategic checkpoint", "horizon model", "verbatim evidence"],
         authority: "operator ruling 2026-09-25 (the MAIA method is the reference model); MAIA v3 listening template, kask/registry/templates/listening/apply-template.j2",
     },
+    DerivedConcept {
+        term: "fagan_inspection",
+        aliases: &["code inspection", "code review", "formal inspection"],
+        identity: "planning -> overview -> preparation -> inspection meeting (defect detection) -> rework -> follow-up, with defects collected, not fixed, during inspection",
+        definition: "The formal software inspection of Fagan, Design and code inspections to reduce errors in program development, IBM Systems Journal 15(3) (1976): a structured, role-based examination that separates defect detection from correction and verifies rework in follow-up; complexity reduction per Ousterhout, A Philosophy of Software Design (2018).",
+        constituents: &["defect detection", "rework", "follow-up"],
+        authority: "operator ruling 2026-09-25; Fagan, Design and code inspections to reduce errors in program development, IBM Systems Journal 15(3) (1976); Ousterhout, A Philosophy of Software Design (2018)",
+    },
+    DerivedConcept {
+        term: "reflective_prompt_evolution",
+        aliases: &[
+            "gepa",
+            "genetic pareto",
+            "pareto frontier",
+            "non-dominated sort",
+        ],
+        identity: "evolve text artifacts by reflecting on execution trajectories, mutating and recombining candidates, and keeping the Pareto frontier of non-dominated variants",
+        definition: "GEPA (Agrawal et al., GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning, arXiv:2507.19457, 2025): natural-language reflection on trajectories proposes prompt mutations, and selection keeps a Pareto frontier; non-dominated sorting and crowding distance follow NSGA-II (Deb, Pratap, Agarwal & Meyarivan, IEEE Transactions on Evolutionary Computation 6(2), 2002).",
+        constituents: &["trajectory", "reflection", "mutation", "pareto frontier"],
+        authority: "operator ruling 2026-09-25; Agrawal et al., GEPA, arXiv:2507.19457 (2025); Deb, Pratap, Agarwal & Meyarivan, A fast and elitist multiobjective genetic algorithm: NSGA-II, IEEE TEC 6(2) (2002)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -584,6 +605,10 @@ mod tests {
             ("Wardley map", "Wardley"),
             ("hidden champions", "Simon"),
             ("MAIA listening", "MAIA"),
+            ("Fagan inspection", "Fagan"),
+            ("code review", "Ousterhout"),
+            ("GEPA", "Agrawal"),
+            ("Pareto frontier", "Deb"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

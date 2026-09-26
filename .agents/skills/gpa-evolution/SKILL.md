@@ -10,6 +10,10 @@ description: "GEPA (Genetic-Pareto) evolutionary optimization over text artifact
 
 GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill samples execution trajectories, reflects in natural language to diagnose failures and surface high-level rules, proposes and tests mutations, and recombines complementary lessons from the Pareto frontier of (quality, cost) until the frontier stabilizes. v1 implements the prompt artifact path.
 
+## Reference models
+
+Agrawal et al., GEPA (arXiv:2507.19457, 2025) and Deb et al., NSGA-II (2002) — `onto_anchor` → derived `reflective_prompt_evolution` (operator ruling 2026-09-25). Reflection and mutation are P, critiqued by the recorded eval-set scores; dominance, frontier membership and the convergence form are D.
+
 ## When to Use
 
 - When you need to evolve a text artifact (LLM prompt) through evolutionary optimization rather than gradient-based tuning

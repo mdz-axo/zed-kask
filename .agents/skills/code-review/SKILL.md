@@ -8,6 +8,10 @@ description: "Convergent code review of a change against its stated spec. Multi-
 
 Convergent code review of a change against its stated spec. Grounded in Fagan formal inspection (Planning → defect detection → defect collection → follow-up), modern code review (Bacchelli & Bird 2013; Sadowski & Stolee 2015), the PERFECT framework (Bastrich), and Ousterhout's "A Philosophy of Software Design". Decomposed into phased templates: Scope (real diff + Fagan sizing + critical-path identification + change model via Good Regulator + prior-review feedback) → Perspectives (multi-axis DETECTION across PERFECT-ordered axes intersected with the addyosmani five-axis, with optional delegation to bug-hunt / refactor-architecture / deep-module / essentialist) → Adjudicate (defect COLLECTION with pragmatic-semantics IS/OUGHT + epistemic mode + provenance + constraint-force severity + falsifier + grill-me self-challenge + file:line no-fiction citation) → Report (verdict + named structural remedies + coverage honesty + lessons_learned / next_review_focus loop closure) → Implement (optional, caller-gated Act phase via fix_mode). Reasoning patterns from pragmatic-semantics, pragmatic-cybernetics, falsifiability, hypothesis-framer, grill-me, and essentialist are embedded as inline prompt instructions in the adjudicate and perspectives phases. Comprehensive-by-default; variety via delegation, not toggleable modes (essentialist deletion test). Capability-gated.
 
+## Reference models
+
+Fagan (1976) formal inspection and Ousterhout (2018) — `onto_anchor` → derived `fagan_inspection` (operator ruling 2026-09-25). Findings are P (detection and adjudication judgments), critiqued by the grill-me self-challenge and each finding's falsifier; severity order, the Blocker-set stop rule and counts are D.
+
 ## When to Use
 
 - Before merging any PR or change — review-first, no exceptions.
