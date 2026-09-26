@@ -10,7 +10,10 @@ description: >-
 
 # GPUI Benchmarks
 
-**Open S13 gap:** this handbook is reference guidance without a local measured initial/target condition or bounded Check→Act step. The former handbook exemption was superseded on 2026-09-25; a benchmark's observed before/after behavior must supply the Check, not a cosmetic PDCA heading.
+## Initial and target condition
+
+- **Initial condition:** the user-visible slowdown, frame drop or hang as observed (or explicitly unmeasured), the production path and competing UI work, baseline commit, fixed workload, platform, feature graph, and measurement configuration. If there is no measured baseline, do not describe it as a regression.
+- **Target condition:** for *benchmark design*, a production-shaped fixture that reproduces the symptom on the baseline while asserting completion and work counts. For *fix evaluation*, a predeclared user-visible responsiveness threshold or direction, with the same benchmark/config on baseline and candidate, no correctness loss, and observed results including timing uncertainty. A threshold invented after reading the candidate result is not a target.
 
 ## When to Use
 
@@ -37,6 +40,13 @@ Before editing, establish or derive:
 7. Which commits are the baseline and candidate, and can the exact same benchmark code run on both?
 
 Ask only for inputs that cannot be derived from the repository, issue, trace, or existing benchmark.
+
+## Local PDCA — benchmark evidence, not a formatting loop
+
+1. **Plan:** state which target above applies, the expected observation and falsifier, the baseline and candidate identities (when applicable), workload, competing-frame signal, correctness invariant, and a predeclared target. The target may be a directional improvement with uncertainty rather than an arbitrary fixed millisecond cutoff.
+2. **Do:** use the production-shaped setup below; run bounded smoke before measured runs, then follow the identical before-and-after method. Keep receipts and traces under `~/Documents/zk-data/skills/gpui-bench/{date}-{run}/`. Never run measured variants concurrently.
+3. **Check:** compare actual baseline/candidate readings with the predeclared target, including frame responsiveness, total completion, correctness/work counts, sample variation and fixture fidelity. A compiler pass, empty trace, timeout, unsupported platform or missing baseline is `unverified`, not a performance pass. A faster median with worse frames or lost work fails the target.
+4. **Act (bounded):** if the *measurement fixture* is invalid or noisy, correct one specified fixture/measurement defect and repeat the same smoke and comparison once, with the original target unchanged. If a valid measurement shows a real regression or no supported improvement, report that result and hand the next experiment to the implementation owner; do not tune the benchmark to make it pass. Stop after the first valid passing Check or this one correction, and report any remaining gap. The operator's outcome judgment remains separate from this run.
 
 ## Constraints
 
