@@ -11,6 +11,13 @@ portfolio now owns. The portfolio server reads prices ONLY from its
 seeded cache — this skill is the operational loop for seeding that cache
 from live quotes and interpreting the results honestly.
 
+## Reference models and labels
+
+Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIPS standards); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985) when a benchmark portfolio exists. Every step is D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The only P elements are the review window and the benchmark choice (the operator's) and the narrative note.
+
+- **Initial condition:** the ledger (`ledger_read`) and the seeded prices for every symbol held at `from` and `to`.
+- **Target condition:** `portfolio_returns` and `portfolio_contribution` both succeed for the window, and the note is recorded.
+
 ## When to Use
 
 - The operator asks "how did my portfolio do?" over a date range.
@@ -55,27 +62,32 @@ from live quotes and interpreting the results honestly.
 
 6. Call `portfolio_materialize_returns` for the window, then
    `portfolio_daily_returns` to read the daily series.
-7. Call `portfolio_attribution` (companies server) with the window.
-   Read `missing_prices` — rows with a missing end price carry null
-   returns and are listed there; report them as unknowns, not losses.
-8. Call `portfolio_characteristics` (companies server) at the `to`
-   date for the weighted-average fundamentals of what is owned.
+7. Call `portfolio_contribution` (portfolio server) with the window for
+   per-security contributions. It refuses to run when a price is missing
+   at `from` or `to` and names the (symbol, date) pairs — seed those and
+   retry; a missing price is never a zero. Its rows include a
+   "Cash / unassigned" residual, so contributions reconcile to total
+   profit by construction.
+8. Only if the operator names a benchmark portfolio in the same ledger
+   store: call `portfolio_attribution` (portfolio server) with
+   `benchmark` and the window for Brinson-Fachler allocation, selection
+   and interaction effects. Without a benchmark, skip it and say so.
+9. Call `portfolio_characteristics` (portfolio server) at the `to`
+   date for the composition and weighted metrics of what is owned.
 
 ### Phase 4 — Verify and record
 
-9. Convergence gate — call `lisp_eval` with:
-   - form: `(and (> start_value 0) (eq (length missing_start) 0) (eq (length missing_end) 0))`
-   - env: `{ "start_value": <returns.start_value>, "missing_start": <attribution.missing_prices.start>, "missing_end": <attribution.missing_prices.end> }`
-   If false, return to Phase 2 and seed what is missing. Do not report
-   numbers that fail this gate. Bound: if a seeding pass leaves the
-   missing set unchanged (a quote failed), stop and ask the operator —
-   do not loop.
-10. Cross-check: the sum of `contribution_bps` across rows should be
-    within 10 bps of `total_return × 10000` when no prices are missing
-    (rounding and cash-flow timing); a larger residual is reported as an
-    attribution discrepancy, not passed silently. Report the top
-    contributors by absolute `contribution_bps`.
-11. Call `note_add` (companies server) with portfolio, date = `to`,
+10. Convergence gate — call `lisp_eval` with:
+   - form: `(and (> start_value 0) returns_ok contribution_ok)`
+   - env: `{ "start_value": <returns.start_value>, "returns_ok": <true if portfolio_returns succeeded>, "contribution_ok": <true if portfolio_contribution succeeded> }`
+   If false, return to Phase 2 and seed the (symbol, date) pairs the
+   failing tool named. Do not report numbers that fail this gate. Bound:
+   if a seeding pass leaves the same missing pairs (a quote failed),
+   stop and ask the operator — do not loop.
+11. Report the top contributors by absolute `contribution_bps`, and the
+    size of the "Cash / unassigned" row: a large residual means a
+    dividend or ledger effect not assigned to a symbol, worth naming.
+12. Call `note_add` (companies server) with portfolio, date = `to`,
     a title like "Portfolio review {from}..={to}", and a body carrying
     total_return, modified_dietz, top-3 contributors, and any
     missing-price caveats. Tags: ["portfolio-review"].
@@ -86,8 +98,9 @@ from live quotes and interpreting the results honestly.
   error rather than fabricate; this skill seeds and retries.
 - Never invent a price. If a quote fails, surface it and ask the
   operator.
-- Dividends are recorded as ledger transactions; attribution counts
-  only Buy/Sell positions — say so when reporting.
+- Dividends are recorded as ledger transactions; `portfolio_contribution`
+  assigns a symbol-tagged dividend to its security and anything
+  unassigned to "Cash / unassigned" — say which when reporting.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
   with skill_name "portfolio-review", the tool name, and the error;
   continue with the best available information.
