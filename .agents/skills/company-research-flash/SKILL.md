@@ -1,6 +1,6 @@
 ---
 name: company-research-flash
-description: "Equity research flash pipeline (EFRA-AI conversion): SCOUT → source collection → INTEL + listening + semantic classification → FORENSIC → CRITICAL FACTOR → VALUATION → provisional COMMUNICATION → KATA + LENS → mandatory independent grounding verification → PERSIST + CONDENSE. Preserves DROP/HALT/BLOCK gates; publication requires completed factual verification and the ENTER/confidence gates. Bounded correction loop."
+description: "Equity research flash pipeline (EFRA-AI conversion): SCOUT → source collection → INTEL + LISTEN + semantic classification → FORENSIC → CRITICAL FACTOR → VALUATION → provisional COMMUNICATION → KATA + LENS → mandatory independent grounding verification → PERSIST + CONDENSE. Preserves DROP/HALT/BLOCK gates; publication requires completed factual verification and the ENTER/confidence gates. Bounded correction loop."
 ---
 
 # Company Research — Flash Pipeline
@@ -28,8 +28,8 @@ LISTEN (`listening` over the company's own retained narrative) → semantic clas
 FORENSIC pre-screen → CRITICAL FACTOR → FORENSIC full → VALUATION → provisional
 COMMUNICATION → KATA/calibration → LENS (and bounded revisions) →
 verify-before-publish → PERSIST/CONDENSE. Render each named synthesis template
-with the actual preceding outputs. Keep listening's verdict in `intel_bundle`
-and its original transcript in `source_outputs`; neither is interchangeable.
+with the actual preceding outputs. Keep `listening_view` in `intel_bundle`
+and its original documents in `source_outputs`; neither is interchangeable.
 DROP/HALT/BLOCK remain terminal and cannot be reopened by a passing fact_score.
 
 ### collect-evidence

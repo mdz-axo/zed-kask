@@ -10,6 +10,7 @@ contract:
     flash_pipeline_output: object|null
     thesis_gaps: array|null
     source_outputs: array
+    listening_view: object|null
   output:
     company_board: object
     claim_sources: array
@@ -76,6 +77,14 @@ Company Board section to resolve the gap.
 {{ thesis_gaps | tojson }}
 ```
 {% endif %}
+
+## Listening View (from LISTEN: verified long-term-horizon evidence)
+
+```json
+{{ listening_view | default(none) | tojson }}
+```
+
+Use its verified quotes and checkpoint map for Self-View, Management Skill, stated strategy and dated milestones instead of re-reading raw narrative. Its verdicts are relative to the company's own stated strategy. Nothing from `ignored_short_term` may support a claim; audited statements and material disclosures come from the source outputs below, not from this view.
 
 ## Retained Source Outputs
 

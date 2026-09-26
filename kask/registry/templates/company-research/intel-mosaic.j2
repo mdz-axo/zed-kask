@@ -7,6 +7,7 @@ contract:
     research_search_result: object|null
     web_search_result: object|null
     source_outputs: array
+    listening_view: object|null
   output:
     mosaic_clear: boolean
     business_model: object
@@ -42,6 +43,14 @@ You are the INTEL agent — the information hub for an institutional equity rese
 ```json
 {{ web_search_result | tojson }}
 ```
+
+## Listening View (from LISTEN: verified long-term-horizon evidence)
+
+```json
+{{ listening_view | default(none) | tojson }}
+```
+
+Base hypotheses and catalysts on its verified quotes and checkpoint map instead of re-reading raw narrative. Nothing from `ignored_short_term` may support a hypothesis; material disclosures come from the source outputs, not from this view.
 
 ## Retained Source Outputs
 

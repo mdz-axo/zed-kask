@@ -3,6 +3,7 @@ contract:
   input:
     ticker: string
     company_board: object
+    listening_view: object|null
     gorilla_scores: object
   output:
     capability_assessments: object
@@ -37,6 +38,14 @@ You are evaluating whether the GORILLA scores are defensible against the company
 {{ company_board | tojson }}
 ```
 
+## Listening View (from LISTEN)
+
+```json
+{{ listening_view | default(none) | tojson }}
+```
+
+Use `management_consistency` and the checkpoint map for the prior-guidance-delivered comparison. Nothing from `ignored_short_term` counts as execution evidence.
+
 ## GORILLA Scores (from gorilla-4dim)
 
 ```json
@@ -70,7 +79,7 @@ For each dimension scored above 50, cite evidence of paying customers using the 
 
 If the company has no Level 1 evidence of paying customers but claims a large partner ecosystem (Level 2-3), apply a maturity block on Obvious Problem and Combinatorial Solution. A company that cannot get people to pay for its product has not demonstrated the capability to monetize the opportunity, regardless of opportunity size.
 
-Cross-reference multi-quarter trajectory from the listening skill output: are customer counts growing? Are partners converting to paying customers? Is revenue per customer growing? Persistent partner counts without revenue conversion is a signal that the company sees the opportunity but cannot execute on the most basic business function.
+Cross-reference multi-quarter trajectory from `listening_view` (LISTEN step): are customer counts growing? Are partners converting to paying customers? Is revenue per customer growing? Persistent partner counts without revenue conversion is a signal that the company sees the opportunity but cannot execute on the most basic business function.
 
 ### Floor Check
 Is the elicited score below the floor? If yes → **FLOOR VIOLATION** (the company is deprived of this capability; the GORILLA verdict should reflect this). Record:

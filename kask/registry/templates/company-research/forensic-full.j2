@@ -3,7 +3,7 @@ contract:
   input:
     ticker: string
     intel_bundle: object
-    listening_verdict: object|null
+    listening_view: object|null
     transcript_result: object|null
   output:
     severity: string
@@ -34,10 +34,10 @@ You are the FORENSIC full-audit agent for an institutional equity research desk.
 {{ intel_bundle | tojson }}
 ```
 
-## Listening Verdict (from listening/apply-template — MAIA v3 earnings-call analysis)
+## Listening View (from LISTEN: listening/apply-template-rag over the company's own narrative)
 
 ```json
-{{ listening_verdict | tojson }}
+{{ listening_view | tojson }}
 ```
 
 ## Earnings Transcript (from company_transcript MCP tool)
@@ -71,7 +71,7 @@ Score 0–1 (1 = strong governance, 0 = weak). Justify.
 
 ### 3. Management Profile
 
-Use the listening verdict and transcript for management quotes (no fabrication — every quote must be a verbatim substring of the transcript).
+Use the listening view and transcript for management quotes (no fabrication — every quote must be a verbatim substring of the transcript).
 
 - **Owner-operator** — does management own meaningful equity (> 1% of shares)?
 - **Capital allocation track record** — M&A history, buybacks, dividends. Did they create or destroy value?
@@ -113,7 +113,7 @@ Per the no-silent-failure rule: if `transcript_result` is empty, null, or errore
       "area": "accruals | governance | management",
       "severity": "SEV-N",
       "finding": "specific observable fact",
-      "source": "transcript | financials | listening verdict"
+      "source": "transcript | financials | listening view"
     }
   ],
   "data_gaps": [

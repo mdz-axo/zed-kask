@@ -3,6 +3,7 @@ contract:
   input:
     ticker: string
     company_board: object
+    listening_view: object|null
     scenario_build_result: object|null
     economic_trajectory: object|null
     simon_inquiry: object|null
@@ -49,6 +50,14 @@ Your imagination MUST be challenged by the Falstaffian rotations. A rapidly evol
 ```json
 {{ company_board | tojson }}
 ```
+
+## Listening View (from LISTEN)
+
+```json
+{{ listening_view | default(none) | tojson }}
+```
+
+Start dated predictions from its checkpoint map and strategic goals. Nothing from `ignored_short_term` may seed a prediction; a checkpoint with no verified evidence stays out.
 
 ## Scenario Build Output (from scenario_build MCP tool)
 

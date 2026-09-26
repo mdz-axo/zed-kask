@@ -240,8 +240,10 @@ own inputs. `begin_research_run` mints a run id
 sources with `recorded_by='server'` (first observation wins — a re-serve
 never clobbers the audit copy; a run-scoped call bypasses the
 response-cache read so the ledger records what THIS request returned).
-Ledger write failures surface in the tool output as a `run_ledger` note,
-never swallowed. `get_research_run` returns the manifest with per-source
+The tool output carries a `run_ledger` note: `{recorded, already_recorded}`
+on success (`already_recorded` counts URLs the run already held, so a
+repeat observation is not mistaken for a lost write), and
+`{recorded: 0, error}` on a write failure — never swallowed. `get_research_run` returns the manifest with per-source
 confidence recomputed server-side from the ledger's own excerpt copies
 and a `validation` block.
 
