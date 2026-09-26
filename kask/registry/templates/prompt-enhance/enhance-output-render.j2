@@ -42,25 +42,8 @@ visibility: Public
 ---
 {# ACT phase: Deterministic format and deliver the enhanced prompt. #}
 {# goal: Deliver the enhanced prompt per output_format with a change log. #}
-{#
-  Group: G (Prompt Enhancement — deterministic output)
-  Replaces the former `select` step (enhance-output.j2) with a `render`
-  step. The former step called the LLM to format the change log from
-  structured data — but the data was already structured (audit_findings,
-  grill_ratings, mutations_applied are all JSON arrays/objects). An LLM
-  call for deterministic formatting was the single largest source of
-  process failures: the model sometimes returned empty output (reasoning
-  budget exhausted, provider hiccup), and `parse_json_response("")`
-  produced "EOF while parsing a value at line 1 column 0" — killing the
-  whole skill after 4 successful LLM calls. Converting to `render`
-  eliminates the failure mode: no LLM, no empty-output risk, no JSON
-  parse. The change log is templated from the structured data.
-
-  Reference: de la Torre (2025, arXiv:2506.10021) — symbolic-neural
-  scaffolding. Deterministic steps verify structural invariants the LLM
-  cannot reliably self-evaluate. The output format is a structural
-  invariant; an LLM call to produce it is speculative generality.
-#}
+{# Deterministic formatting consumes structured findings and ratings directly;
+   an extra inference call cannot improve their presentation contract. #}
 
 {# ── Build the change log sections deterministically ── #}
 

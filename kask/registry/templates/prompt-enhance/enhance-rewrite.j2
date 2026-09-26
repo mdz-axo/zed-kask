@@ -19,7 +19,13 @@ contract:
       description: Classification-stage obligations and candidate checks (empty when none apply)
     task:
       type: string
-      description: The user's task description (injected per .rules skill-cascade-context rule)
+      description: The original user's task description; never replaced by critic feedback
+    prior_enhanced_prompt:
+      type: string
+      description: Previous rewrite for one bounded correction; empty on first pass
+    critic_feedback:
+      type: array
+      description: Specific failed checks from the critic; empty on first pass
   output:
     enhanced_prompt:
       type: string
@@ -61,6 +67,13 @@ Scan the prompt for these issue classes. Findings are internal; they drive your 
 
 ## Step 2 — Typed Rewrite
 
+{% if critic_feedback %}
+This is the single allowed correction. Preserve the original task and the
+load-bearing parts of `prior_enhanced_prompt`; address only the specific failed
+checks in `critic_feedback`. Do not treat a critic's suggestion as new user
+requirements. Return any unresolved checks explicitly.
+{% endif %}
+
 Apply type-specific moves. The `prompt_type` selects the focus:
 
 | Type | Focus | Key risk |
@@ -97,7 +110,9 @@ The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to
   "effort_tier": {{ effort_tier | tojson }},
   "risks": {{ risks | tojson }},
   "checkability_map": {{ checkability_map | tojson }},
-  "task": {{ task | tojson }}
+  "task": {{ task | tojson }},
+  "prior_enhanced_prompt": {{ prior_enhanced_prompt | tojson }},
+  "critic_feedback": {{ critic_feedback | tojson }}
 }
 ```
 
