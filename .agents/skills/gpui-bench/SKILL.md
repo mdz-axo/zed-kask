@@ -10,7 +10,7 @@ description: >-
 
 # GPUI Benchmarks
 
-Doc-style handbook by design (DR-S13a exempt class: doc-style handbooks) — reference guidance with no process loop.
+**Open S13 gap:** this handbook is reference guidance without a local measured initial/target condition or bounded Check→Act step. The former handbook exemption was superseded on 2026-09-25; a benchmark's observed before/after behavior must supply the Check, not a cosmetic PDCA heading.
 
 ## When to Use
 

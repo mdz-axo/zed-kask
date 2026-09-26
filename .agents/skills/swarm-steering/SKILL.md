@@ -128,7 +128,7 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
 
 ## Registry
 
-Single-pass actuator by design (DR-S13a exempt class: documented single-pass) — the PDCA loop is owned by `swarm-intelligence`; this skill executes one emitted plan.
+**Open S13 gap:** `swarm-intelligence` owns the composition loop, but this actuator still needs its own initial/target condition and bounded check of the emitted directive and returned result handoff. The former single-pass exemption was superseded on 2026-09-25; do not rerun a successful delegation merely to manufacture a second cycle.
 
 This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 

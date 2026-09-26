@@ -80,15 +80,14 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      `unbound symbol: X` error where X is not one of your stub variables
      is a broken form (missing builtin or special form). Type or runtime
      errors over stub values are fine — the form's symbols resolved.
-   - **S13**: The SKILL.md body contains at least one PDCA
-     (Plan→Do→Check→Act) self-improvement loop as the skill's core
-     process. The loop lives in the SKILL.md body — templates are
-     leaves (steps) of the loop, never its carrier. The loop must
-     carry a clear improvement dimension: the Check step's measurable
-     signal, a threshold or convergence criterion, and a bound (max
-     iterations or a stability condition). A body with phases but no
-     Check→Act feedback path, or a Check with no named signal, fails
-     this check.
+   - **S13**: Every SKILL.md body states an observable initial condition
+     and target condition and contains a bounded PDCA (Plan→Do→Check→Act)
+     loop as its core process. The loop lives in the SKILL.md body —
+     templates are leaves, never its carrier. Check measures the gap to
+     that target and names a threshold or convergence criterion; Act
+     closes on a passing first check or re-enters a named phase on a gap,
+     within a bound. A body with phases but no observed Check→Act return,
+     or with no initial/target condition, fails this check.
      Loop vocabulary recognition (auditor guidance): the loop may be
      carried in any of these forms — (a) explicit PDCA phases; (b) a
      convergence gate (lisp_eval or otherwise) plus a named re-entry
@@ -103,12 +102,11 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      explicit terminal action: escalate/halt/report). A loop whose
      Check→Act lives only in a template's purpose text fails — the
      loop lives in the body (composition law).
-     Exempt classes (operator ratification 2026-09-09, DR-S13a): role
-     guides (product-manager), documented single-pass skills
-     (skill-bundler, sankey-flow, prompt-enhance, swarm-steering), and
-     doc-style handbooks (gpui-bench) are
-     exempt. An exempt body must carry a one-line marker naming the
-     exemption so future audits do not re-litigate the design.
+     The former DR-S13a exemptions were superseded by the operator's
+     2026-09-25 all-skills direction. A role guide or one-shot actuator
+     can close after a single passing Check; it is not exempt from
+     stating the initial/target condition and what a failed Check does.
+     Do not add a useless second run merely to display PDCA vocabulary.
    - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)

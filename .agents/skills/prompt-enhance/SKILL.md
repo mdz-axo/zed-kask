@@ -7,7 +7,7 @@ description: "General-purpose prompt enhancement for the zed-kask platform. Type
 
 General-purpose prompt enhancement skill for the zed-kask platform. Classifies prompts against a 7-type taxonomy, applies a typed rewrite with an inline audit (placeholders, semantic fragility, structural accretion), verifies via a decoupled grill-me critic, and delivers the result. Specialized leaf of the self-improvement family tree (Σ-pathway, p-component, intrinsic evaluative feedback).
 
-Single-pass by design (DR-S13a exempt class: documented single-pass) — the verify verdict is surfaced in the output change log, not re-entered.
+**Open S13 gap:** the current verify verdict is surfaced in the change log but has no bounded Check→Act route against an initial and target condition. The former single-pass exemption was superseded on 2026-09-25; do not claim this skill meets the all-skills PDCA target until that route is designed and tested.
 
 ## When to Use
 

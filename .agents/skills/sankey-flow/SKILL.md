@@ -43,7 +43,7 @@ The skill builds on these established resources. Cite them in the output descrip
 - **PKO** (Carriero et al. 2025): `https://w3id.org/pko` — the ontology for procedural knowledge, used for flow structure.
 - **Mermaid Sankey docs**: `https://mermaid.js.org/syntax/sankey.html` — the rendering target.
 
-Single-pass by design (DR-S13a exempt class: documented single-pass) — the adapt step self-corrects against the matched example's structure; no multi-iteration loop.
+**Open S13 gap:** match → adapt → render is currently single-pass; the adapt check is not a bounded, observable Check→Act route from an initial to a target condition. The former single-pass exemption was superseded on 2026-09-25. Preserve the one-pass success path while designing a correction only for measured failures.
 
 ## When to Use
 
