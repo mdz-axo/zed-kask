@@ -317,6 +317,34 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-25; Liu et al., Frontiers of Computer Science 20(3) 2003601 (2026)",
     },
     DerivedConcept {
+        term: "diataxis",
+        aliases: &["diataxis", "diátaxis", "diataxis framework"],
+        identity: "documentation organized into four kinds by user need: tutorials, how-to guides, reference and explanation",
+        definition: "Daniele Procida's systematic framework for technical documentation (diataxis.fr): each document serves one of four needs (learning, a task, information, understanding), and its kind determines its voice. In zed-kask it organizes the kask/docs sets and the voice of diataxis-diagram output.",
+        constituents: &["tutorial", "how-to guide", "reference", "explanation"],
+        authority: "operator ruling 2026-09-26; Procida, Diataxis (diataxis.fr)",
+    },
+    DerivedConcept {
+        term: "sankey_diagram",
+        aliases: &["sankey diagram", "sankey"],
+        identity: "a flow diagram in which the width of each arrow is proportional to the quantity it carries",
+        definition: "As established by Schmidt, 'The Sankey Diagram in Energy and Material Flow Management', Journal of Industrial Ecology 12(1):82-94 and 12(2):173-185 (2008): in the original engineering sense a simple Sankey conserves energy or mass at every node. In zed-kask, sankey-flow sets conservation per domain (mandatory, asserted, none).",
+        constituents: &["flow", "quantity", "node"],
+        authority: "operator ruling 2026-09-26; Schmidt, Journal of Industrial Ecology 12(1) (2008)",
+    },
+    DerivedConcept {
+        term: "minimalism_documentation",
+        aliases: &[
+            "minimalism in documentation",
+            "minimalist documentation",
+            "minimalism documentation",
+        ],
+        identity: "documentation designed around the reader's real tasks, cutting material that does not support action",
+        definition: "John M. Carroll's minimalist instruction (The Nurnberg Funnel, MIT Press, 1990): task-oriented, brief material that lets users act and recover from errors. In zed-kask it anchors doc-update's fewer-than-70-documents condensation cap.",
+        constituents: &["task", "documentation"],
+        authority: "operator ruling 2026-09-26; Carroll, The Nurnberg Funnel (1990)",
+    },
+    DerivedConcept {
         term: "expectations_gap",
         aliases: &[],
         identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
@@ -673,6 +701,9 @@ mod tests {
             ("definition of done", "Scrum Guide"),
             ("requirements engineering", "29148"),
             ("prompt engineering", "Liu et al."),
+            ("Diataxis", "Procida"),
+            ("Sankey diagram", "Schmidt"),
+            ("minimalism in documentation", "Carroll"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(
@@ -681,7 +712,7 @@ mod tests {
                 concept.authority
             );
             assert!(
-                concept.authority.contains("2026-09-25"),
+                concept.authority.starts_with("operator ruling 2026-"),
                 "{term} cites the ruling"
             );
         }
