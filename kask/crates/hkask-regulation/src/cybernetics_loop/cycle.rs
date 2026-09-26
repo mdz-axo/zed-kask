@@ -13,7 +13,8 @@ use crate::loops::{
     RegulatoryActionParams, Signal, SignalMetric,
 };
 use crate::regulation_policy::{
-    self, RegulationPolicy, RegulationReason, classify_decision, extract_deficit_threshold,
+    self, RegulationPolicy, RegulationReason, block_severity, classify_decision,
+    extract_deficit_threshold,
 };
 use hkask_types::WebID;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
@@ -930,11 +931,16 @@ impl super::CyberneticsLoop {
                     }),
                 )
                 .await;
+                // Graded like `RuntimeAlert::new`: Critical only when the
+                // worsening exceeds twice the block threshold, so every
+                // block no longer arrives as Critical and severity still
+                // orders operator attention.
+                let severity = block_severity(worsening, block_worsening_ratio);
                 let alert = RuntimeAlert {
                     domain: format!("action_blocked:{}", metric.as_str()),
                     deficit: 1,
                     threshold: 1,
-                    severity: AlertSeverity::Critical,
+                    severity,
                     escalated: true,
                     timestamp: chrono::Utc::now(),
                     message: format!(

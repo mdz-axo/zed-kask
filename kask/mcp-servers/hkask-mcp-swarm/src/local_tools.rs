@@ -179,6 +179,25 @@ async fn attach_narrative_memory(
     );
 }
 
+/// Fingerprint of a harness task set: the ordered tasks, evaluators, specs
+/// and repeat count. Two runs are comparable only when this matches — the
+/// regression monitor reads it from `harness_summary.task_set_digest` so a
+/// changed test is never reported as the agent getting worse (observed
+/// 2026-09-26: local_extractor "regressed" 1.0 → 0.33 across runs whose
+/// task sets differed).
+fn harness_task_set_digest(tasks: &[EvalAgentTask], repeats: u32) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = serde_json::json!({
+        "repeats": repeats,
+        "tasks": tasks
+            .iter()
+            .map(|t| [&t.task, &t.evaluator.evaluator, &t.evaluator.spec])
+            .collect::<Vec<_>>(),
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Build the per-task report for one `swarm_eval_agent_local` task. Pure —
 /// takes the counted outcomes, returns the JSON entry. Extracted so the
 /// pass-rate and standard-error math is unit-testable without inference.
@@ -3516,6 +3535,7 @@ impl SwarmServer {
                         "overall_pass_rate": overall_pass_rate,
                         "total_rollouts": total_rollouts,
                         "total_passes": total_passes,
+                        "task_set_digest": harness_task_set_digest(&req.tasks, repeats),
                         "rollout_kind": hkask_event_store::RolloutKind::HarnessRun.as_str(),
                     });
                     if let Err(error) = store.append(&req.agent_name, "harness_summary", &summary) {
@@ -3675,6 +3695,21 @@ mod tests {
             serde_json::json!({"thinking_allowed": "false"}),
         )));
         assert!(wrong_type.is_err());
+    }
+
+    #[test]
+    fn harness_task_set_digest_identifies_comparable_runs() {
+        let a = vec![task("extract date", "regex", r"\d{4}")];
+        let same = vec![task("extract date", "regex", r"\d{4}")];
+        let changed_spec = vec![task("extract date", "regex", r"\d{2}")];
+        let digest = harness_task_set_digest(&a, 3);
+        assert_eq!(digest, harness_task_set_digest(&same, 3));
+        assert_ne!(digest, harness_task_set_digest(&changed_spec, 3));
+        assert_ne!(
+            digest,
+            harness_task_set_digest(&a, 2),
+            "repeats change the test"
+        );
     }
 
     #[test]

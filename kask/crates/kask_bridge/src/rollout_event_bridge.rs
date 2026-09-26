@@ -16,8 +16,9 @@
 //! `HarnessRegressionMonitor` is the producer side of the phase 6 seam. The
 //! harness writes a `harness_summary` event (kind `"harness_summary"`,
 //! `rollout_id` = agent name) after each run. The monitor scans new summaries,
-//! compares each to the previous run for the same agent, and offers a rollout
-//! impact check when the pass rate drops materially. It acknowledges summaries
+//! compares runs of the same task set (`task_set_digest`) for the same agent,
+//! and offers a rollout impact check when two consecutive runs fall materially
+//! below the baseline run before them. It acknowledges summaries
 //! only through the contiguous prefix whose required checks were accepted.
 
 use hkask_event_store::{EventFilter, EventStore};
@@ -321,39 +322,58 @@ fn scan_harness_summaries(
                 ..EventFilter::default()
             })
             .map_err(|e| format!("harness_summary previous-query failed: {e}"))?;
-        let previous = all_for_agent
-            .iter()
-            .filter(|e| e.kind == "harness_summary")
-            .rfind(|e| e.position < event.position);
-        let Some(previous) = previous else {
-            // First run for this agent — no baseline to regress from.
+        // Only runs of the same task set are comparable: a changed test is
+        // not the agent getting worse. Summaries without a digest predate
+        // the fingerprint and are never compared.
+        let digest_of = |e: &hkask_event_store::EventRecord| {
+            e.payload
+                .get("task_set_digest")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        };
+        let Some(current_digest) = digest_of(event) else {
             scanned.push(ScannedHarnessSummary {
                 event_position: event.position,
                 regression: None,
             });
             continue;
         };
-        let previous_pass_rate = match previous
-            .payload
-            .get("overall_pass_rate")
-            .and_then(|v| v.as_f64())
-        {
-            Some(rate) => rate,
-            None => {
-                tracing::warn!(
-                    target: "hkask.bridge.harness",
-                    agent = %agent_name,
-                    position = previous.position,
-                    "previous harness_summary event missing overall_pass_rate — acknowledging current summary without impact check"
-                );
-                scanned.push(ScannedHarnessSummary {
-                    event_position: event.position,
-                    regression: None,
-                });
-                continue;
-            }
+        let mut comparable = all_for_agent.iter().rev().filter(|e| {
+            e.kind == "harness_summary"
+                && e.position < event.position
+                && digest_of(e).as_deref() == Some(current_digest.as_str())
+        });
+        // A drop alerts only once a second consecutive run confirms it:
+        // `confirming` is the run before this one, `baseline` the run before
+        // that. One noisy run is not a regression.
+        let (Some(confirming), Some(baseline)) = (comparable.next(), comparable.next()) else {
+            scanned.push(ScannedHarnessSummary {
+                event_position: event.position,
+                regression: None,
+            });
+            continue;
         };
-        let drop = previous_pass_rate - current_pass_rate;
+        let rate_of = |e: &hkask_event_store::EventRecord| {
+            e.payload.get("overall_pass_rate").and_then(|v| v.as_f64())
+        };
+        let (Some(baseline_pass_rate), Some(confirming_pass_rate)) =
+            (rate_of(baseline), rate_of(confirming))
+        else {
+            tracing::warn!(
+                target: "hkask.bridge.harness",
+                agent = %agent_name,
+                position = event.position,
+                "earlier harness_summary event missing overall_pass_rate — acknowledging current summary without impact check"
+            );
+            scanned.push(ScannedHarnessSummary {
+                event_position: event.position,
+                regression: None,
+            });
+            continue;
+        };
+        let previous_pass_rate = baseline_pass_rate;
+        let drop =
+            (baseline_pass_rate - current_pass_rate).min(baseline_pass_rate - confirming_pass_rate);
         // The monitor's cursor is process-local, so a restart rescans history.
         // A regulation_impact verdict after this summary means the regression
         // was already assessed; offering it again duplicates the escalation.
@@ -382,7 +402,7 @@ fn scan_harness_summaries(
             );
             Some(HarnessRegression {
                 agent_name: agent_name.clone(),
-                before_position: previous.position,
+                before_position: baseline.position,
             })
         } else {
             None
@@ -407,19 +427,28 @@ mod tests {
         EventStore::from_driver(SqliteDriver::in_memory_driver()).expect("store")
     }
 
-    fn harness_summary(agent: &str, pass_rate: f64) -> serde_json::Value {
+    fn harness_summary(agent: &str, pass_rate: f64, task_set: &str) -> serde_json::Value {
         serde_json::json!({
             "agent_name": agent,
             "harness_run_id": format!("harness-{agent}-test"),
             "overall_pass_rate": pass_rate,
             "total_rollouts": 10,
             "total_passes": (pass_rate * 10.0) as i64,
+            "task_set_digest": task_set,
         })
     }
 
     fn write_summary(store: &EventStore, agent: &str, pass_rate: f64) -> i64 {
+        write_summary_for(store, agent, pass_rate, "set-a")
+    }
+
+    fn write_summary_for(store: &EventStore, agent: &str, pass_rate: f64, task_set: &str) -> i64 {
         store
-            .append(agent, "harness_summary", &harness_summary(agent, pass_rate))
+            .append(
+                agent,
+                "harness_summary",
+                &harness_summary(agent, pass_rate, task_set),
+            )
             .unwrap()
     }
 
@@ -543,16 +572,66 @@ mod tests {
     }
 
     #[test]
-    fn scan_harness_summaries_detects_material_drop() {
+    fn scan_harness_summaries_detects_confirmed_drop() {
         let store = memory_store();
-        let first = write_summary(&store, "alpha", 0.80);
-        let _second = write_summary(&store, "alpha", 0.60);
-        // 0.80 - 0.60 = 0.20 > 0.10 threshold
+        let baseline = write_summary(&store, "alpha", 0.80);
+        write_summary(&store, "alpha", 0.60);
+        let confirmed = write_summary(&store, "alpha", 0.55);
+        // Two consecutive runs at least 0.20 below the 0.80 baseline.
         let (cursor, regressions) = scan_results(&store, None);
         assert_eq!(regressions.len(), 1);
         assert_eq!(regressions[0].agent_name, "alpha");
-        assert_eq!(regressions[0].before_position, first);
-        assert_eq!(cursor, Some(_second));
+        assert_eq!(regressions[0].before_position, baseline);
+        assert_eq!(cursor, Some(confirmed));
+    }
+
+    /// One low run is noise until the next run confirms it (operator ruling
+    /// 2026-09-26: flag a regression only once repeated runs confirm it).
+    #[test]
+    fn scan_harness_summaries_waits_for_confirming_run() {
+        let store = memory_store();
+        write_summary(&store, "alpha", 0.80);
+        write_summary(&store, "alpha", 0.30);
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert!(regressions.is_empty(), "a single low run is not confirmed");
+
+        // A recovery on the next run means the dip was not a regression.
+        let store = memory_store();
+        write_summary(&store, "alpha", 0.80);
+        write_summary(&store, "alpha", 0.30);
+        write_summary(&store, "alpha", 0.80);
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert!(regressions.is_empty(), "recovered dip is not a regression");
+    }
+
+    /// A changed test set is not the agent getting worse (observed
+    /// 2026-09-26: local_extractor's "regression" crossed task-set changes).
+    #[test]
+    fn scan_harness_summaries_compares_only_the_same_task_set() {
+        let store = memory_store();
+        write_summary_for(&store, "alpha", 1.0, "set-a");
+        write_summary_for(&store, "alpha", 1.0, "set-a");
+        write_summary_for(&store, "alpha", 0.3, "set-b");
+        write_summary_for(&store, "alpha", 0.3, "set-b");
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert!(
+            regressions.is_empty(),
+            "runs of different task sets compared"
+        );
+
+        // Summaries from before the fingerprint existed are never compared.
+        let store = memory_store();
+        for rate in [1.0, 0.3, 0.3] {
+            store
+                .append(
+                    "alpha",
+                    "harness_summary",
+                    &serde_json::json!({"overall_pass_rate": rate}),
+                )
+                .unwrap();
+        }
+        let (_cursor, regressions) = scan_results(&store, None);
+        assert!(regressions.is_empty(), "undigested summaries compared");
     }
 
     #[test]
@@ -560,7 +639,7 @@ mod tests {
         let store = memory_store();
         write_summary(&store, "alpha", 0.50);
         write_summary(&store, "alpha", 0.80);
-        // 0.50 - 0.80 = -0.30 < 0.10 — an improvement, not a regression
+        write_summary(&store, "alpha", 0.80);
         let (_cursor, regressions) = scan_results(&store, None);
         assert!(regressions.is_empty(), "improvement is not a regression");
     }
@@ -569,6 +648,7 @@ mod tests {
     fn scan_harness_summaries_skips_marginal_drop() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.70);
+        write_summary(&store, "alpha", 0.65);
         write_summary(&store, "alpha", 0.65);
         // 0.70 - 0.65 = 0.05 < 0.10 — within noise
         let (_cursor, regressions) = scan_results(&store, None);
@@ -591,16 +671,16 @@ mod tests {
     #[test]
     fn scan_harness_summaries_is_incremental() {
         let store = memory_store();
-        let first = write_summary(&store, "alpha", 0.80);
-        // First check: processes first event, no regression (no previous)
+        write_summary(&store, "alpha", 0.80);
+        let first_low = write_summary(&store, "alpha", 0.50);
         let (cursor, regressions) = scan_results(&store, None);
-        assert!(regressions.is_empty());
-        assert_eq!(cursor, Some(first));
-        // Second run: regression
-        let second = write_summary(&store, "alpha", 0.50);
+        assert!(regressions.is_empty(), "not yet confirmed");
+        assert_eq!(cursor, Some(first_low));
+        // The confirming run arrives on a later poll.
+        let confirmed = write_summary(&store, "alpha", 0.50);
         let (cursor, regressions) = scan_results(&store, cursor);
         assert_eq!(regressions.len(), 1);
-        assert_eq!(cursor, Some(second));
+        assert_eq!(cursor, Some(confirmed));
     }
 
     /// A restart resets the process-local cursor and rescans history. A
@@ -609,32 +689,21 @@ mod tests {
     /// escalated at 18:08 and again after the 22:31 restart.
     #[test]
     fn scan_harness_summaries_skips_regression_already_assessed() {
-        let store = memory_store();
-        write_summary(&store, "alpha", 1.0);
-        write_summary(&store, "alpha", 0.3);
-        store
-            .append(
-                "alpha",
-                "verdict",
-                &serde_json::json!({"pass": false, "source": "regulation_impact"}),
-            )
-            .unwrap();
-        let (_cursor, regressions) = scan_results(&store, None);
-        assert!(regressions.is_empty(), "assessed regression re-offered");
-
-        // A deterministic verdict is not a regulation assessment.
-        let store = memory_store();
-        write_summary(&store, "alpha", 1.0);
-        write_summary(&store, "alpha", 0.3);
-        store
-            .append(
-                "alpha",
-                "verdict",
-                &serde_json::json!({"pass": false, "source": "deterministic"}),
-            )
-            .unwrap();
-        let (_cursor, regressions) = scan_results(&store, None);
-        assert_eq!(regressions.len(), 1);
+        for (source, expected) in [("regulation_impact", 0), ("deterministic", 1)] {
+            let store = memory_store();
+            write_summary(&store, "alpha", 1.0);
+            write_summary(&store, "alpha", 0.3);
+            write_summary(&store, "alpha", 0.3);
+            store
+                .append(
+                    "alpha",
+                    "verdict",
+                    &serde_json::json!({"pass": false, "source": source}),
+                )
+                .unwrap();
+            let (_cursor, regressions) = scan_results(&store, None);
+            assert_eq!(regressions.len(), expected, "verdict source {source}");
+        }
     }
 
     #[test]
@@ -642,7 +711,9 @@ mod tests {
         let store = memory_store();
         write_summary(&store, "alpha", 0.80);
         write_summary(&store, "beta", 0.90);
-        write_summary(&store, "alpha", 0.50); // alpha regresses
+        write_summary(&store, "alpha", 0.50);
+        write_summary(&store, "beta", 0.85);
+        write_summary(&store, "alpha", 0.50); // alpha confirmed regression
         write_summary(&store, "beta", 0.85); // beta marginal — no regression
         let (_cursor, regressions) = scan_results(&store, None);
         assert_eq!(regressions.len(), 1);
@@ -653,7 +724,9 @@ mod tests {
     async fn blocked_submission_retains_cursor_at_contiguous_accepted_prefix() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.80);
-        let baseline_cursor = write_summary(&store, "beta", 0.90);
+        write_summary(&store, "beta", 0.90);
+        write_summary(&store, "alpha", 0.50);
+        let baseline_cursor = write_summary(&store, "beta", 0.60);
         let alpha_regression = write_summary(&store, "alpha", 0.50);
         let beta_regression = write_summary(&store, "beta", 0.60);
         let regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));

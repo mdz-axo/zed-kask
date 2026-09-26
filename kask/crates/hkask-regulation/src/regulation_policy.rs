@@ -413,6 +413,14 @@ fn rounded_count(value: f64) -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn block_severity_reserves_critical_for_large_worsening() {
+        use crate::algedonic::AlertSeverity;
+        assert_eq!(block_severity(0.30, 0.20), AlertSeverity::Warning);
+        assert_eq!(block_severity(0.40, 0.20), AlertSeverity::Warning);
+        assert_eq!(block_severity(0.625, 0.20), AlertSeverity::Critical);
+    }
+
     /// Pins the fractional-set-point fix in `extract_deficit_threshold`.
     ///
     /// The previous `*value as u64` casts truncated every fractional
@@ -542,5 +550,18 @@ pub(crate) fn classify_decision(
         ActionDecision::Accept
     } else {
         ActionDecision::Stage
+    }
+}
+
+/// Severity of a blocked action, graded against the block threshold the way
+/// `RuntimeAlert::new` grades a deficit against its threshold: a block is at
+/// least a Warning, and Critical once the worsening exceeds twice the block
+/// threshold. Before this, every block was Critical and severity could not
+/// order the operator's attention.
+pub(crate) fn block_severity(worsening: f64, block_ratio: f64) -> crate::algedonic::AlertSeverity {
+    if worsening > 2.0 * block_ratio {
+        crate::algedonic::AlertSeverity::Critical
+    } else {
+        crate::algedonic::AlertSeverity::Warning
     }
 }
