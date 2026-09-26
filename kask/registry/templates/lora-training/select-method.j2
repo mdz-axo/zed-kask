@@ -39,7 +39,7 @@ thinking_budget = "full"
 {# Relationships: complements tdd (training-loop code) — zero overlap; security review is out of scope #}
 
 INPUT: training_config_path = {{ training_config_path | default("REQUIRED") }}
-INPUT: dataset_path = {{ dataset_path | default("undetermined") }} (path to the actual dataset file for profiling — optional)
+INPUT: dataset_path = {{ dataset_path | default("undetermined") }} (optional declared path; validated only after concrete params are selected)
 INPUT: model_size_b = {{ model_size_b | default("REQUIRED") }} (base model parameter count, in billions)
 INPUT: memory_budget_gb = {{ memory_budget_gb | default("REQUIRED") }} (available VRAM, in GB)
 INPUT: inference_constraint = {{ inference_constraint | default("either-ok") }} (must-merge | dynamic-switching | either-ok)
@@ -196,7 +196,7 @@ G-D0. dataset_analysis? (recommendation stage — declared evidence only)
     which evidence is needed; do not infer sample counts, token lengths,
     conversation roles, vision keys or preference balance from `dataset_path`.
     G3 rank and G6 harness choice may be refined later when real evidence is
-    supplied, but a missing profile is not permission to override purpose,
+    supplied; unobserved dataset characteristics are not permission to override purpose,
     rank, or operator preferences. After the operator selects concrete params,
     the runtime can report `dataset_format` and G-D0/G-D1 findings; no token,
     role, vision, or preference-balance measurements are returned.
