@@ -61,6 +61,11 @@ elevates to `tool_verified`; a checker's falsification is a reproducible
 comparison over retained bytes and belongs in `rejected` with the evidence
 cited.
 
+## Initial and target condition
+
+- **Initial condition:** the exact target text, server-observed source outputs and tool log, plus any caller-provided leak/congruence rules. A source that was not called is not an empty source result.
+- **Target condition:** every declarative factual claim is either mechanically checked or explicitly downgraded with its reason; narrative source flags reflect *surviving* verified claims, not provisional assignments. Report a numeric `fact_score` only when factual claims exist; `nil` means unassessed, never a perfect score. The verifier classifies immutable input—it does not rewrite the report to pass.
+
 ## When to Use
 
 - When you need to verify that claims in a report, analysis, or pipeline
@@ -182,13 +187,17 @@ cited.
    be mechanically verified.
 
 4. Each claim entry carries a `why` field (minimum 40 characters)
-   explaining its provenance status. Short justifications are rejected.
+   explaining its provenance status. Short justifications are rejected. Each
+   `sourced_blocks` entry carries the claim IDs provisionally associated with
+   that block; its `is_sourced` flag is not final until Step 3 completes.
 
 5. Validate the assignments before any claim is provisionally trusted —
    two `lisp_eval` calls over the Step 2 output. A count > 0 on either
    call re-enters Step 2: fix the flagged assignments before Step 3.
    These two calls are the enforcement line for the closed-vocabulary and
-   why-min-40 constraints.
+   why-min-40 constraints. Re-enter assignment at most once on a malformed
+   result; a second failed validation is `blocked`, not a usable provenance
+   report.
    - Closed vocabulary — count assignments whose `provenance` value is
      outside the closed set (a missing `provenance` counts as bad —
      fail-closed):
@@ -304,7 +313,7 @@ returns.
    `inputs` (from Step 2) name their origin — a source output key or
    an earlier claim's id:
    - Call `lisp_eval` once with the library's origins driver:
-     - env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...], "allowed": <the origin strings of all source outputs, plus "claim:<id>" for earlier platform_derived claims> }`
+     - env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...] in extraction order, "source_allowed": <only the origin strings of observed source outputs> }`. The driver itself adds `claim:<id>` only *after* processing that claim; do not give it one global list of claim IDs.
    - A claim whose bad-origin count > 0 has an input anchored in
      neither a source nor an earlier claim — a forward reference or an
      unanchored loop. Reclassify as `model_inference` with a `why`
@@ -346,11 +355,19 @@ returns.
 
 1. Identify all narrative (prose) fields in `target_text` — sections
    that are not structured data but prose written by the same model in
-   the same turn.
+   the same turn. After Step 3 demotions and cascading rejects, discard
+   the provisional `is_sourced` flags from Step 2. Let `verified_ids` contain
+   only claims whose final tier is `tool_verified` or `platform_derived`.
+   Compute each block's final flag from its `claim_ids` with `lisp_eval`:
+   `(define any-verified (lambda (ids verified) (if (is_null ids) nil (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)`.
+   Require block IDs to refer to actual extracted claims; missing/unmapped
+   blocks make the scan unverified, not clean. The block-to-claim association
+   remains a model-mediated classification; the Boolean is computed from
+   mechanically surviving claims rather than trusted from Step 2.
 
 2. Call `render_template` to render the narrative scan template:
    - template_ref: `grounding-verify/scan-narrative`
-   - context: `{ "narrative_fields": {{ narrative_fields }}, "sourced_blocks": {{ sourced_blocks }}, "leak_rules": {{ leak_rules }} }`
+   - context: `{ "narrative_fields": {{ narrative_fields }}, "sourced_blocks": {{ post_step_3_sourced_blocks }}, "leak_rules": {{ leak_rules }} }` — pass final `{block_name,is_sourced}` values, never the provisional Step 2 flags.
 
 3. Following the template's output schema, scan each narrative field
    against the leak rules table. Each rule pairs a source block with a
@@ -509,18 +526,14 @@ returns.
 
 ## Convergence
 
-The skill is single-pass (sense → verify → report), not iterative. The
-convergence signal is the fact_score itself:
-- `fact_score >= 0.80`: verification passes, report proceeds.
-- `fact_score < 0.60` or `fact_score = nil`: verification fails, the
-  calling pipeline re-enters with fact-check gaps injected.
+The local PDCA operates on the *same immutable text and observed sources*:
 
-A finding with severity high or critical surfaces immediately,
-regardless of the fact_score — an error that changes the primary
-conclusion is not held back to keep the score presentable.
+1. **Plan:** record the initial condition and target above, including the applicable source and narrative checks.
+2. **Do:** execute Steps 1–7. The verifier does not rewrite the user's claims to obtain a higher score.
+3. **Check:** reject malformed provenance classifications and missing claim-to-block mappings rather than treating them as empty-success. For factual claims, `fact_score >= 0.80` is the numeric pass threshold only when no high/critical finding remains. `0.60 <= fact_score < 0.80` is conditional; `< 0.60` fails. `nil` means no factual claims were assessable, so report `unassessed`, not a numerical failure or pass. Surface a high/critical finding immediately regardless of the aggregate.
+4. **Act (bounded):** one correction of malformed *verification input* may re-enter Step 2, followed by its downstream checks; a second malformed result stops as blocked. A sourced claim falsified by Step 3 stays rejected in this run. Provide specific fact-check gaps to the calling pipeline; only the caller may revise the report or gather new source evidence in a new run. Do not loop locally to improve a model-produced score.
 
-The calling pipeline (not this skill) handles the convergence loop —
-this skill is the verifier, not the generator.
+This is a bounded verifier loop, not skill-effectiveness evaluation; the operator judges the quality of this verifier in the algedonic-review gemba.
 
 ## Registry Templates
 

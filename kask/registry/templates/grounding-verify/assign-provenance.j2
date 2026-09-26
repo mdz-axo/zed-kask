@@ -21,7 +21,7 @@
 {#     library_form: string | null,  # platform_derived only — the canonical library form selected ("ev", "ev_ebitda", "pe", "ps", "growth_pct", "discount_pct", "median"), null when authored #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
-{#   sourced_blocks: array of { block_name: string, is_sourced: boolean } #}
+{#   sourced_blocks: array of { block_name: string, claim_ids: array of claim_id, is_sourced: boolean (provisional only) } #}
 {#   cross_check_exemptions: array of { claim_id: string, reason: string } #}
 
 You are a provenance analyst. Your job is to assign a provenance tier to each factual claim, determining where the claim's value comes from and how much reliance a reader can place on it.
@@ -74,16 +74,16 @@ Cited-quote substring checks — env: `{ "records": [{ "claim_id", "quote", "sou
 (define check-quote (lambda (c) (string-contains (assoc "quote" c) (assoc "source_text" c)))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-quote (car lst)) (check-all (cdr lst))))))) (check-all records)
 ```
 
-Origins checks — env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...], "allowed": [...] }`:
+Origins checks — env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...] in extraction order, "source_allowed": [verified source:<tool>:<field> origins only] }`. The driver adds earlier claim IDs as it walks; a global list of all claim IDs would admit cycles:
 
 ```
-(define bad-count (lambda (inputs) (cond ((is_null inputs) 0) ((member (assoc "origin" (car inputs)) allowed) (bad-count (cdr inputs))) (t (+ 1 (bad-count (cdr inputs))))))) (define check-claim (lambda (c) (list (assoc "claim_id" c) (bad-count (assoc "inputs" c))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-claim (car lst)) (check-all (cdr lst))))))) (check-all claims)
+(define bad-count (lambda (inputs permitted) (cond ((is_null inputs) 0) ((member (assoc "origin" (car inputs)) permitted) (bad-count (cdr inputs) permitted)) (t (+ 1 (bad-count (cdr inputs) permitted)))))) (define check-all (lambda (rest permitted) (if (is_null rest) '() (let ((c (car rest))) (cons (list (assoc "claim_id" c) (bad-count (assoc "inputs" c) permitted)) (check-all (cdr rest) (cons (concat "claim:" (assoc "claim_id" c)) permitted))))))) (check-all claims source_allowed)
 ```
 
 Consistency comparisons — env: `{ "rules": [{ "quantity", "primary", "cross", "tolerance" }, ...] }`, one record per rule × cross-check pair:
 
 ```
-(define check-rule (lambda (r) (let ((diff (abs (- (assoc "primary" r) (assoc "cross" r))))) (list (assoc "quantity" r) (if (> diff (* (assoc "primary" r) (assoc "tolerance" r))) 'conflict 'consistent))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-rule (car lst)) (check-all (cdr lst))))))) (check-all rules)
+(define check-rule (lambda (r) (let ((diff (abs (- (assoc "primary" r) (assoc "cross" r))))) (list (assoc "quantity" r) (if (> diff (* (abs (assoc "primary" r)) (assoc "tolerance" r))) 'conflict 'consistent))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-rule (car lst)) (check-all (cdr lst))))))) (check-all rules)
 ```
 
 Library-form verification — env: `{ "records": [{ "claim_id", "library_form", "cross_check" }, ...] }`, one record per claim with a non-null `library_form`. The driver embeds the library texts as literals — keep it in sync with the list above:
@@ -124,7 +124,7 @@ A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `
 
 3. Each claim entry MUST carry a `why` field with at least 40 characters explaining its provenance status. "n/a" and "tool" do not pass. The next person to read this registry cannot tell a considered `unavailable` from a lazy one without the explanation.
 
-4. Also emit `sourced_blocks` — a list of which source blocks have at least one `tool_verified` or `platform_derived` claim. This is used by the narrative leak scanner to determine which blocks are sourced.
+4. Emit `sourced_blocks` with each block's `block_name` and the `claim_ids` provisionally assigned to it. The `is_sourced` value is provisional: Step 3 may reject those citations. The invoking agent must recompute it from surviving strength-2 IDs before the narrative scanner. Never pass this preliminary Boolean directly downstream.
 
 5. If a claim cannot be cross-checked but should be (the source exists but the check is infeasible), emit it in `cross_check_exemptions` with a reason. This is the honest half of the completeness claim — a sourced claim that is neither cross-checked nor exempt is a claim nobody can falsify.
 
@@ -171,8 +171,8 @@ Produce a JSON object:
     }
   ],
   "sourced_blocks": [
-    { "block_name": "financial_profile", "is_sourced": true },
-    { "block_name": "management_skill", "is_sourced": false }
+    { "block_name": "financial_profile", "claim_ids": ["claim_001", "claim_003"], "is_sourced": true },
+    { "block_name": "management_skill", "claim_ids": [], "is_sourced": false }
   ],
   "cross_check_exemptions": []
 }
