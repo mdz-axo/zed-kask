@@ -1,4 +1,4 @@
-{# goal: Generate interrogation questions at the appropriate difficulty level, evaluate answers, and decide whether to escalate, hold, or re-probe. #}
+{# goal: Generate interrogation questions at the supplied difficulty level and grade each answer Solid, Partial or Gap; the escalate/hold/reprobe decision is computed from those grades by lisp_eval in the SKILL.md Feedback gate. #}
 [inference]
 contract:
   input:
@@ -12,7 +12,6 @@ contract:
     questions: array
     evaluations: array
     current_level: integer
-    round_verdict: string
     assessment: object
 visibility: Public
 ---
@@ -58,11 +57,7 @@ to assess baseline knowledge. Be direct and precise.
 - **Q:** {{ answer.question }} | **Rating:** {{ answer.rating }} | **Note:** {{ answer.note }}
 {% endfor %}
 
-Based on the assessment so far:
-- If answers are consistently **solid** (≥80%), escalate to the next difficulty level.
-- If answers are **partial** (≥40% and <80%), stay at current level and probe deeper.
-- If answers show **gaps** (<40%), re-probe the same area with different angles.
-- Use the per-question attempt history in previous_answers. After **3 failed attempts** on a question, briefly explain the correct answer and move on; never repeat it. Only answered questions count toward the ratio. At round 5 or after completing level 5, stop generating questions and hand actual answers to `grill-me-assess`.
+Grade each previous answer Solid, Partial or Gap. The level you are given ({{ current_level }}) was already chosen from the grades by the Feedback gate — do not change it. For a question the gate retired (3 failed attempts), briefly explain the correct answer and do not ask it again. When the gate returned `hold`, probe deeper in the same area; when it returned `reprobe`, approach the same area from a different angle.
 
 Generate 2-3 questions at level {{ current_level }}.
 {% endif %}
@@ -87,8 +82,7 @@ Respond with a JSON object:
   "evaluations": [
     {"answer": "...", "rating": "solid|partial|gap", "note": "..."}
   ],
-  "current_level": 1,
-  "round_verdict": "escalate|hold|reprobe|complete"
+  "current_level": 1
 }
 ```
 
@@ -96,7 +90,6 @@ Respond with a JSON object:
 
 - Stay within the declared topic domain: **{{ topic }}**
 - If the user asks for a hint, give a minimal one — don't solve it for them.
-- Adapt difficulty dynamically based on assessment.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
