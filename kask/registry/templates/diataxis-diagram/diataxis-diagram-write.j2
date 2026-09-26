@@ -1,4 +1,4 @@
-{# goal: Finalize the diagram into a markdown file. Wraps the Mermaid source in a code block, adds a plain-English description paragraph keyed to the target Diataxis quadrant's voice, includes cross-links to related documentation, and outputs to docs/diagrams/{type}-{target}.md. #}
+{# goal: Prepare Mermaid markdown for a caller-supplied destination, with quadrant-appropriate description and only verified related links; rendering does not write the file. #}
 [inference]
 contract:
   input:
@@ -9,6 +9,7 @@ contract:
     entity_count: integer
     relationship_count: integer
     related_docs: array
+    output_path: string
   output:
     file_path: string
     file_content: string
@@ -22,13 +23,14 @@ work_effort = "low"
 verbosity = "focused"
 thinking_budget = "off"
 
-You are a documentation writer. Take the generated Mermaid diagram and wrap it in a well-structured markdown file with a Diataxis-appropriate description.
+You prepare Mermaid markdown with a Diátaxis-appropriate description. This template does not create or modify a file; the invoking agent performs the actual write and verifies it.
 
 ## Context
 
 - Diagram type: **{{ diagram_type }}**
 - Diataxis quadrant: **{{ diataxis_quadrant }}**
 - Target: {{ target }}
+- Caller-supplied destination: {{ output_path }}
 - Entities: {{ entity_count }}
 - Relationships: {{ relationship_count }}
 
@@ -45,38 +47,24 @@ You are a documentation writer. Take the generated Mermaid diagram and wrap it i
 - {{ doc }}
 {% endfor %}
 {% else %}
-No related documents identified — include at least one link to relevant specification or architecture documentation.
+No related document path was verified. Leave the related-links section absent and report that gap; do not invent a link.
 {% endif %}
 
 ## Quadrant Voice Rules (from https://diataxis.fr/)
 
 The description paragraph must match the target quadrant's voice:
 
-| Quadrant | Voice | Description Paragraph Should... | Example Opening |
-|---|---|---|---|
-| **reference** | Austere, neutral, factual | Describe what the diagram shows, nothing more | "The hKask database schema. 30 tables across storage, wallet, identity, and observability domains." |
-| **explanation** | Discursive, contextual, may admit opinion | Explain structure, reveal why relationships exist, name trade-offs | "hKask's schema evolved through three iterations. The wallet tables were extracted..." |
-| **how-to** | Direct, actionable, goal-focused | Tell the reader what path this diagram maps | "Follow this flow to add a new Regulation span. The decision tree guides you through..." |
-| **tutorial** | "We," concrete, encouraging | Frame the diagram as part of a learning journey | "We'll build this step by step. The state machine shows what happens when..." |
+| Quadrant | Voice | Description Paragraph Should... |
+|---|---|---|
+| **reference** | Austere, neutral, factual | Describe only sourced entities and relationships, using observed counts when known |
+| **explanation** | Discursive, contextual | Explain why sourced relationships matter; mark interpretations as such |
+| **how-to** | Direct, actionable | Name the actual task path shown, without inventing steps |
+| **tutorial** | Concrete, encouraging | Situate the actual diagram in the learner's stated exercise |
 
-## File Naming
+## Destination
 
-```
-docs/diagrams/{diagram_type}-{target_slug}.md
-```
-
-The target slug: take the target description, lowercase it, replace spaces and special chars with hyphens, keep it short (≤ 40 chars).
+Use exactly the supplied `output_path`: {{ output_path }}. If the path is invalid, the invoking agent must stop before rendering; this template never chooses a substitute path. For a normal skill invocation the caller chooses a producer-owned path under `~/Documents/zk-data/skills/diataxis-diagram/`; only a `doc-update`-authorized operation writes into `kask/docs/diagrams/`.
 
 ## Output Format
 
-Return a JSON object:
-
-```json
-{
-  "file_path": "docs/diagrams/erd-schema.md",
-  "file_content": "# Title\n\nDescription paragraph.\n\n```mermaid\n...\n```\n\n## Related\n- [doc](../path.md)",
-  "description_paragraph": "The hKask database schema. 30 tables across storage, wallet, identity, and observability domains."
-}
-```
-
-The `file_content` must be valid markdown. The description paragraph must be the first text after the title. Related documents must use relative links from the `docs/diagrams/` directory.
+Return JSON with `file_path` equal to the supplied `output_path`, `file_content` containing a title, factual quadrant-appropriate description, and a fenced Mermaid block, and `description_paragraph` copied from that content. Add a Related section only for verified `related_docs`, with links relative to the actual output directory. This response is a write proposal, not evidence that the file exists.

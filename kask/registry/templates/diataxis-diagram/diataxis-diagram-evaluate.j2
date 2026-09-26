@@ -1,4 +1,4 @@
-{# goal: Score a generated diagram against Diataxis quality criteria. Six weighted dimensions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Produces a scored evaluation with specific refinement directives when quality gaps are found. #}
+{# goal: Critique a sourced Mermaid diagram using a local six-dimension refinement rubric, with Diátaxis quadrant voice as one judged dimension; produce evidence-tied directives, not a published Diátaxis formula or an automatic pass. #}
 [inference]
 contract:
   input:
@@ -8,6 +8,7 @@ contract:
     entities: array
     relationships: array
     extraction_notes: string
+    related_docs: array
   output:
     scores: object
     weighted_total: float
@@ -15,7 +16,8 @@ contract:
     evaluation_notes: string
 visibility: Public
 ---
-{# Anchored in https://diataxis.fr/quality/ — functional vs deep quality #}
+{# Diátaxis (https://diataxis.fr/quality/) distinguishes measurable functional
+   quality from judged deep quality; the numeric weights below are local. #}
 
 [inference]
 temperature = 0.1
@@ -23,7 +25,7 @@ work_effort = "medium"
 verbosity = "focused"
 thinking_budget = "full"
 
-You are a Diataxis quality evaluator. Score a generated Mermaid diagram against six weighted criteria. Be honest — inflated scores produce worse diagrams, not better ones. A perfect score means the diagram is indistinguishable from a human-crafted one.
+You are critiquing a Mermaid diagram for refinement. Diátaxis informs the reader-facing quadrant and voice; the six numeric weights below are a project-local heuristic, not its quality formula. Your scores are judgments, not measured proof that nodes or relationships match source.
 
 ## Context
 
@@ -40,6 +42,8 @@ You are a Diataxis quality evaluator. Score a generated Mermaid diagram against 
 
 ## Extracted Data
 
+Related documents actually checked: {{ related_docs | tojson }}
+
 **Entities:**
 {{ entities | tojson(indent=2) }}
 
@@ -54,7 +58,7 @@ You are a Diataxis quality evaluator. Score a generated Mermaid diagram against 
 
 ## Evaluation Criteria
 
-Score each criterion from 0 (perfect) to 1 (severely deficient). Multiply by weight to get weighted contribution. Total = sum of weighted contributions (0 = perfect diagram).
+Score each criterion from 0 (no identified local gap) to 1 (severe gap). Multiply by the *local* weight for prioritization. A low total is not proof of complete source coverage, Mermaid parsing or human-readable deep quality.
 
 ### C1: Entity Completeness (weight: 0.30)
 
@@ -118,12 +122,12 @@ Would the diagram fit naturally in its target quadrant? Reference-grade diagrams
 
 ### C6: Cross-Linking (weight: 0.05)
 
-Will the diagram file link to at least one related document? (This is a binary check — does the plan include a link, not does the current source include one.)
+If a related document was actually supplied and checked, does the proposed output link to it? When `related_docs` is empty, mark this criterion not applicable rather than inventing a path.
 
-- 0.00: At least one related document identified
-- 0.05: No related documents identified
+- 0.00: a real related document is available and linked, or the criterion is `not_applicable` because none was supplied
+- 1.00: an identified, verified related document was omitted from a documentation deliverable
 
-**Score:** ___ (0.00 or 0.05)
+**Score:** ___ (0 or 1; note `not_applicable` separately, never invent a link)
 
 ---
 
@@ -135,7 +139,7 @@ Weighted Total = (C1 × 0.30) + (C2 × 0.25) + (C3 × 0.15) + (C4 × 0.15) + (C5
 
 ## Refinement Directives
 
-If the weighted total exceeds the 0.15 convergence threshold, produce specific, actionable directives for the generate step to fix. Each directive must:
+Use the weighted total only to prioritize revisions; the invoking agent recomputes arithmetic with `lisp_eval`. It never establishes completeness, parse validity or user acceptance. Produce specific directives for actual gaps. Each directive must:
 1. Name the criterion it addresses (C1–C6)
 2. State exactly what's wrong
 3. Describe the expected fix
