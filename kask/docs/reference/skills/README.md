@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **66 skills** are authored here: **53 ship** to every zed-kask user and **13 are developer-only** (`shipped: false`). **291 Jinja2 templates across 59
+> plus a markdown body of process instructions. **62 skills** are authored here: **52 ship** to every zed-kask user and **10 are developer-only** (`shipped: false`). **287 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **66** | 53 shipped + 13 developer-only; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **59** (**291** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **62** | 52 shipped + 10 developer-only; filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**287** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -91,8 +91,7 @@ developer-only skill cannot be `core: true`. Pinned by
 | Skill | Purpose |
 |-------|---------|
 | `transcript-reel` | Recording → highlight reel over the educt layer system: transcribe, correct, highlight, EDL, render, export |
-| `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives) chaining media server tools in known-good sequences |
-| `logo-builder` | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement) |
+| `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives, and the Logo pipeline — Martin MVB → Bokhua gates → operator-chosen refinement) chaining media server tools in known-good sequences |
 | `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
 | `sankey-flow` | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta` |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
@@ -121,8 +120,8 @@ developer-only skill cannot be `core: true`. Pinned by
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
-| `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE) plus the swarm panel's agent/swarm authoring aid |
-| `swarm-steering` | Focused local-swarm steering: codifies the execute-and-feed-back loop |
+| `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
+| `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE), its receipt-checked local steering loop, and the swarm panel's agent/swarm authoring aid |
 | `adapter-lifecycle` | Verifier-gated fine-tuning loop: rollout harness, verdict-bridged datasets, gated submit, A/B evaluation, feedback retrain |
 | `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit |
 
@@ -162,15 +161,12 @@ Used to develop zed-kask itself; loaded only as project skills of this repositor
 | Skill | Purpose |
 |-------|---------|
 | `create-skill` | Author or translate a skill: ontology research, PDCA derivation, scaffold under the artifact contract, prescreen, validate |
-| `skill-maintenance` | Validate and audit existing skills; compare designs and file proposals for the algedonic review |
-| `skill-logic-audit` | Goal- and callsite-grounded audit of `.j2` templates; files a comparison-backed proposal for the algedonic review |
+| `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites; compare designs and file proposals for the algedonic review |
 | `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
 | `skill-bundler` | Compose multiple skills into a cohesive bundle |
-| `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ) |
-| `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
+| `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ), including the GEPA prompt-evolution sub-loop |
 | `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
-| `ui-layout-discipline` | Measured layout discipline for GPUI card/panel renderers |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority) |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
