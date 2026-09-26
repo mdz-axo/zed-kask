@@ -345,6 +345,46 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-26; Carroll, The Nurnberg Funnel (1990)",
     },
     DerivedConcept {
+        term: "strangler_fig_pattern",
+        aliases: &[
+            "strangler fig pattern",
+            "strangler fig",
+            "strangler fig application",
+        ],
+        identity: "replace a legacy system incrementally by routing behavior through a new layer until the old one can be removed",
+        definition: "Martin Fowler's StranglerFigApplication (martinfowler.com, 2004): new code grows around the old, taking over one capability at a time while both run. In zed-kask it is refactor-architecture's one-domain-per-commit service extraction.",
+        constituents: &["legacy system", "incremental migration"],
+        authority: "operator ruling 2026-09-26; Fowler, StranglerFigApplication, martinfowler.com (2004)",
+    },
+    DerivedConcept {
+        term: "deep_module",
+        aliases: &["deep module", "deep modules"],
+        identity: "a module whose interface is small relative to the functionality it hides",
+        definition: "John Ousterhout, A Philosophy of Software Design (2018): the benefit of a module is its functionality, its cost is its interface; deep modules maximize the ratio. In zed-kask it is the target of deep-module and refactor-architecture's deletion test.",
+        constituents: &["interface", "implementation"],
+        authority: "operator ruling 2026-09-26; Ousterhout, A Philosophy of Software Design (2018)",
+    },
+    DerivedConcept {
+        term: "owasp_llm_top_10",
+        aliases: &[
+            "owasp llm top 10",
+            "owasp llm top-10",
+            "owasp top 10 for llm applications",
+        ],
+        identity: "the OWASP list of the ten most critical security risks in large language model applications",
+        definition: "OWASP Top 10 for LLM Applications, 2025 edition (OWASP GenAI Security Project). In zed-kask it frames kask-seam-audit's security track.",
+        constituents: &["security risk", "llm application"],
+        authority: "operator ruling 2026-09-26; OWASP Top 10 for LLM Applications (2025)",
+    },
+    DerivedConcept {
+        term: "hicks_law",
+        aliases: &["hick's law", "hicks law", "hick-hyman law"],
+        identity: "decision time grows with the logarithm of the number of equally likely choices",
+        definition: "Hick, 'On the rate of gain of information', Quarterly Journal of Experimental Psychology 4(1):11-26 (1952). In zed-kask it grounds kask-seam-audit's five-primary-action budget per card or panel.",
+        constituents: &["decision time", "choice"],
+        authority: "operator ruling 2026-09-26; Hick, Quarterly Journal of Experimental Psychology 4(1) (1952)",
+    },
+    DerivedConcept {
         term: "expectations_gap",
         aliases: &[],
         identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
@@ -704,6 +744,10 @@ mod tests {
             ("Diataxis", "Procida"),
             ("Sankey diagram", "Schmidt"),
             ("minimalism in documentation", "Carroll"),
+            ("strangler fig pattern", "Fowler"),
+            ("deep module", "Ousterhout"),
+            ("OWASP LLM Top 10", "OWASP"),
+            ("Hick's law", "Hick"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(
