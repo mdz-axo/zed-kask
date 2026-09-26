@@ -249,7 +249,7 @@ graph TD
     subgraph "Delegate Skills"
         FALS["falsifiability\n(Popper/Platt/Pearl)"]
         GHUNT["gradient-hunter\n(8-shape taxonomy)"]
-        GPA["gpa-evolution\n(Pareto frontier)"]
+        GPA["self-improvement GEPA\n(Pareto frontier)"]
         PCYB["pragmatic-cybernetics\n(variety engineering)"]
         META["metacognition\n(perspective rotation)"]
     end
@@ -272,7 +272,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SKILL-CFR
 verified_date: 2026-09-16
-verified_against: .agents/skills/gradient-seeded-recombination/SKILL.md; .agents/skills/constraint-forces-recast/SKILL.md; .agents/skills/falsifiability/SKILL.md; .agents/skills/gradient-hunter/SKILL.md; .agents/skills/gpa-evolution/SKILL.md; .agents/skills/pragmatic-cybernetics/SKILL.md; .agents/skills/metacognition/SKILL.md
+verified_against: .agents/skills/gradient-seeded-recombination/SKILL.md; .agents/skills/constraint-forces-recast/SKILL.md; .agents/skills/falsifiability/SKILL.md; .agents/skills/gradient-hunter/SKILL.md; .agents/skills/pragmatic-cybernetics/SKILL.md; .agents/skills/metacognition/SKILL.md
 status: VERIFIED
 -->
 

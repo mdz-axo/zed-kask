@@ -56,7 +56,7 @@ hKask ships **12 MCP servers** launched by zed's `context_server` as child proce
 ### Agent-Autonomous (PDCA / defense / improvement cycles)
 - `metacognition` — Decompose → Assess → Calibrate → GEPA improve.
 - `essentialist` — 3-gate elimination (Exist → Surface → Contract).
-- `gpa-evolution` — Genetic-Pareto mutation of text artifacts.
+- `self-improvement` — pathway selection plus its GEPA (Genetic-Pareto) prompt-evolution sub-loop.
 - `bug-hunt` / `diagnose` — Exploration and debugging.
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
@@ -120,7 +120,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | Fine-tuning run (submit, track, evaluate) | `adapter-lifecycle` | `lora-training` (config audit) |
-| Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
+| Self-improvement / prompt evolution | `metacognition` | `self-improvement` GEPA sub-loop (post-convergence) |
 | Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
 | Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |

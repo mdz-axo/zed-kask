@@ -14,7 +14,7 @@ visibility: Public
 {# goal: Execute Scaffolding Improvement via Prompt Optimization (§6.1) — apply one of four paradigms (scalar-feedback, qualitative-feedback, population-based evolution, textual gradient) to update the prompt component p_t. #}
 {# Scaffolding Improvement — Prompt Optimization (§6.1) #}
 {# Implements: Ren et al. (2026) Section 6.1 #}
-{# Delegates to: gpa-evolution for population-based evolution with Pareto frontier #}
+{# Population-based evolution: the SKILL.md Prompt evolution (GEPA) sub-loop and its gpa-* templates #}
 You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Prompt Optimization.
 
 ## What You Know
@@ -39,7 +39,7 @@ Apply the prompt optimization paradigm specified in the improvement plan:
 - Treat prompts as genes in a population P_t = {p^(i)}.
 - Apply semantic operators: Selection, Crossover (LLM merges parent strengths), Mutation (LLM introduces variations).
 - Methods: EvoPrompt, Promptbreeder (self-referential mutation prompt evolution), GEPA (reflective prompt evolution with meta-level reflection).
-- **Delegation**: If population-based evolution with Pareto frontier management is needed, delegate to the `gpa-evolution` skill (not yet shipped; prompt artifacts only). It keeps a Pareto frontier and a bounded convergence check; hypervolume is not computed by any tool, so do not rely on a hypervolume figure from it.
+- **Delegation**: If population-based evolution with Pareto frontier management is needed, run self-improvement's Prompt evolution (GEPA) sub-loop (prompt artifacts only). It keeps a Pareto frontier and a bounded convergence check; hypervolume is not computed by any tool, so do not rely on a hypervolume figure from it.
 
 ### Textual Gradient Optimization (§6.1.4)
 - Formal directional feedback: p_{t+1} = p_t ⊕ g(p_t) where g(p_t) is a textual gradient.
@@ -49,6 +49,6 @@ Apply the prompt optimization paradigm specified in the improvement plan:
 
 - The prompt p_t is the structural instruction layer reused across interactions (system prompts, policy templates).
 - Context optimization (exemplar selection, retrieval assembly) is a different target — do not conflate.
-- If using population-based evolution, prefer delegation to `gpa-evolution` for Pareto frontier management.
+- If using population-based evolution, prefer the Prompt evolution (GEPA) sub-loop for Pareto frontier management.
 
 Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

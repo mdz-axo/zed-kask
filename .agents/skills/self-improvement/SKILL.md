@@ -137,7 +137,7 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
      - `si-exec-fm-feedback.j2` (§5.2): Sample candidate outputs, apply intrinsic evaluator, convert to update signal, optimize via RL/DPO/critique-conditioned fine-tuning.
      - `si-exec-fm-experience.j2` (§5.3): Collect interaction trajectories from grounded or simulated environments, update via PPO/DPO.
    - **Scaffolding Improvement**:
-     - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/evolution/textual-gradient). Delegates to `gpa-evolution` for population-based evolution with Pareto frontier.
+     - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/evolution/textual-gradient). For population-based evolution with a Pareto frontier, run the "Prompt evolution (GEPA)" sub-loop below.
      - `si-exec-scaffold-memory.j2` (§6.2): Apply signal-driven CRUD operations (Create/Read/Update/Delete).
      - `si-exec-scaffold-tool.j2` (§6.3): Apply dynamic tool routing, iterative refinement, or autonomous creation.
      - `si-exec-scaffold-full.j2` (§6.4): Treat entire scaffold as mutable program, generate patches, gate through verifier. Delegates to `diagnose` for reproduce→hypothesize→fix loops.
@@ -166,6 +166,18 @@ The executing session never commits a durable change to a skill, prompt, memory,
 4. `gate_result` false → **discard**: keep the configuration unchanged, record the failure mode (noisy signal, misaligned operator, missing harness) in the Kata obstacle parking lot, and re-plan.
 5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
 6. Respond with `decision` (exactly "propose" or "discard"), `proposal_path` (if proposed), `failure_mode` (if discarded), and `next_step` (exactly "re-enter", "exit", or "refine").
+
+### Prompt evolution (GEPA) — a scaffolding sub-loop (formerly `gpa-evolution`)
+
+For a prompt artifact with a runnable eval set, when natural-language reflection on real trajectories should drive the change (Agrawal et al., GEPA, arXiv:2507.19457; NSGA-II non-dominated sorting, Deb et al. 2002 — `onto_anchor` → derived `reflective_prompt_evolution`). Prompts only (v1). Reflection and mutation are P, critiqued by recorded eval-set scores; dominance, frontier membership and the convergence form are D.
+
+1. **Sample** (`self-improvement/gpa-sample-trajectories`) — run the target (iteration 1) or the frontier members (2+) through a real executor and capture trajectories; scores come from the eval set's own evaluator on recorded outputs. No executor or evaluator → stop and report `unverified`.
+2. **Reflect** (`self-improvement/gpa-reflect`) — diagnose why each outcome was poor or good and extract transferable rules.
+3. **Propose** (`self-improvement/gpa-propose-mutations`) — 3–7 variants: mutation (one lesson, one hypothesis "if I change X, Y improves because Z") and crossover (complementary frontier members); tag parent, operator, hypothesis and rule; carry full content.
+4. **Test** (`self-improvement/gpa-test-variants`) — run every variant through the same executor and evaluator; aggregate per-objective scores and cost from the recorded runs only. Logs go under `~/Documents/zk-data/skills/self-improvement/gepa/{date}-{run}/`.
+5. **Update frontier** (`self-improvement/gpa-frontier-update`) — merge, keep non-dominated members (A dominates B when at least as good on every objective and strictly better on one), prune by crowding distance past `frontier_size`, record who dominated whom.
+6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(if (< iteration 2) 1.0 (max 0 (min 1 (* 0.05 new_members))))` over the measured new non-dominated count; converged at ≤ 0.10. Minimum 2, maximum 5 iterations per session.
+7. **Act** — never adopt. Write the frontier (content, measured scores, cost, lineage, eval-set identity) to `~/Documents/zk-data/curator/proposals/{target}/{date}-{run}.json`; the operator chooses in `algedonic-review`.
 
 ## Improvement Measure
 
@@ -197,6 +209,11 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | `si-exec-scaffold-full.j2` | Scaffolding Improvement pathway — update the full scaffold (prompt, memory, tool configuration) based on the improvement evaluation. |
 | `si-exec-scaffold-memory.j2` | Scaffolding Improvement pathway — update the agent's memory configuration based on the improvement evaluation. |
 | `si-exec-scaffold-prompt.j2` | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
+| `gpa-sample-trajectories.j2` | GEPA sub-loop step 1: assemble trajectories and evaluator scores from recorded runs; never simulated. |
+| `gpa-reflect.j2` | GEPA sub-loop step 2: natural-language diagnosis and transferable rules. |
+| `gpa-propose-mutations.j2` | GEPA sub-loop step 3: mutation and crossover variants, one hypothesis each. |
+| `gpa-test-variants.j2` | GEPA sub-loop step 4: per-objective scores and cost from recorded runs; unrecorded runs are reported, not estimated. |
+| `gpa-frontier-update.j2` | GEPA sub-loop step 5: non-dominated frontier with crowding-distance pruning. |
 | `si-exec-scaffold-tool.j2` | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `self-improvement/si-select-pathway`) and a context object with the required variables.
@@ -230,4 +247,4 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.
 - Variety engineering: PDCA iteration 2+ must check for repeated pathway/signal combinations and justify or diversify.
-- Delegation: `si-exec-scaffold-prompt.j2` delegates to `gpa-evolution` for population-based evolution. `si-exec-scaffold-full.j2` delegates to `diagnose` for debugging loops.
+- Delegation: `si-exec-scaffold-prompt.j2` routes population-based evolution to the Prompt evolution (GEPA) sub-loop and its `gpa-*` templates. `si-exec-scaffold-full.j2` delegates to `diagnose` for debugging loops.
