@@ -9,6 +9,10 @@ description: "General-purpose recursive eliminative interrogation. Enforces 'alw
 
 General-purpose recursive eliminative interrogation. Enforces "always take away, never add" through a 3-gate challenge loop (Exist → Surface → Contract) that every artifact must survive before being committed. Delegates G1 to deep-module deletion test, G2 to deep-module surface assessment, and G3 to coding-guidelines abstraction audit.
 
+## Reference model and labels
+
+Ousterhout, *A Philosophy of Software Design* (2018) — deep modules and the deletion test (`onto_anchor` → derived `fagan_inspection` carries the Ousterhout citation). Gate verdicts (delete / merge / keep) are P, critiqued by the human in advisory mode and by the constraint-force rule in autonomous mode; the gate order, retry bound, zero-delta check and score are D.
+
 ## When to Use
 
 - An artifact (module, function, trait, type, or interface) needs to be interrogated for unnecessary complexity, pass-through wrappers, or over-engineered abstractions.
@@ -47,7 +51,7 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 
 11. Abort on zero-delta completion: when all three gates pass AND the artifact is unchanged from the previous round (same surviving items, same structure, same interfaces), the artifact is essential. Produce a completion report with the full elimination report (deletions per gate, constraint-force breakdown, essentialism score, human decisions if advisory) and the surviving artifact.
 
-12. Compute the essentialism score on completion: `Score = (items_removed / total_items_initial) * 100`, where total_items_initial = public functions + public types + public traits + wrappers + adapters + config structs. Interpret: 0% = already minimal; 1–25% = minor reduction; 26–50% = significant reduction; 51–75% = major reduction; 76–100% = artifact eliminated entirely.
+12. Compute the essentialism score on completion with `lisp_eval` (D): form `(if (= total 0) 0 (* 100 (/ removed total)))`, env `{ "removed": <items removed>, "total": <total_items_initial> }` — i.e. `Score = (items_removed / total_items_initial) * 100`, where total_items_initial = public functions + public types + public traits + wrappers + adapters + config structs. Interpret: 0% = already minimal; 1–25% = minor reduction; 26–50% = significant reduction; 51–75% = major reduction; 76–100% = artifact eliminated entirely.
 
 13. Run up to `max_rounds` (default 3) full G1→G2→G3 rounds. Between rounds, narrow scope. If zero deltas are detected between rounds, abort — the artifact is essential.
 
