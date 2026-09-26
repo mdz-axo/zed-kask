@@ -118,14 +118,30 @@ skill's artifacts.
    loop — the loop lives in the SKILL.md body; templates are leaves (steps)
    of the loop, rendered at the points the loop directs. Every loop carries a
    clear improvement dimension: the Check step's measurable signal, a
-   threshold or convergence criterion, and a bound (max iterations or a
-   stability condition).
+   threshold or convergence criterion, and a maximum iteration count (a
+   stability condition may stop the loop earlier, but never replaces the
+   maximum). The Check signal must be produced by a tool, a test or the
+   operator — never by the model scoring its own output.
 2. **Template contracts**: the ontology's entity types become the template's
    output fields. PKO's Procedure, Step, StepExecution become JSON fields.
 3. **Tool selection**: the ontology's process determines which tools the
    SKILL.md instructs the agent to call at each phase.
 4. **Convergence criteria**: the ontology's quality criteria become the
    `lisp_eval` convergence check the SKILL.md instructs the agent to run.
+
+## Initial and target condition
+
+- **Initial condition:** a description or a source skill, plus the ontological anchors found in Phase 1.
+- **Target condition:** a SKILL.md and its templates that pass `skill-maintenance` validation with no blocking finding.
+
+## Step types
+
+| Phase | Type | Oracle / critique |
+|-------|------|-------------------|
+| 1 Research, 2 Describe, 3 Scaffold | P | `skill-maintenance` validation; the operator |
+| Anchoring terms | D | `onto_anchor` |
+| 4 Validate | D | `skill-maintenance` checks and prescreen scripts |
+| 5 Converge | D | the validation result; at most 2 re-entries |
 
 ## PDCA Loop
 
@@ -267,14 +283,15 @@ The SKILL.md describes when to loop in natural language, backed by
 ```
 ### Convergence
 
-After each analysis iteration, call `lisp_eval` to compute the convergence
-signal:
-  form: "(+ (assoc \"confirmed\" step_N_result) (assoc \"potential\" step_N_result))"
-  env: { "step_N_result": <latest analysis output> }
+After each iteration, count what an external oracle still reports open —
+failing tests, compiler errors, unresolved tool findings — and check it in
+`lisp_eval`:
+  form: "(if (= open 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate)))"
+  env: { "open": <count from the tool output>, "iteration": <1-based> }
 
-If the signal is 0 (no open findings), the analysis is complete — proceed
-to the report. If the signal decreased by less than 20% from the prior
-iteration, stop and report what you have (diminishing returns).
+`done` proceeds to the report; `iterate` re-enters the named step with the
+open items; `stop-and-report` delivers what exists with the open items
+listed. The count comes from the tool, never from the model's own score.
 ```
 
 #### Composition pattern
@@ -324,6 +341,13 @@ Call the `skill` tool:
 
 Check that validation passed. If validation failed, identify the specific
 failures and re-enter at Phase 1 with the failure report as prior context.
+At most 2 re-entries; if validation still fails, stop and report the
+remaining failures to the operator.
+
+Every scaffolded SKILL.md states: an initial condition (inputs and how the
+current state is measured), an observable target condition, its bounded
+PDCA loop (or a justified single-pass exemption), and a step-type table
+labelling each step D (naming its oracle) or P (naming its critic).
 
 ## Registry Templates
 

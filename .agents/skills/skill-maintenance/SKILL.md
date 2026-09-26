@@ -97,8 +97,8 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      per-turn gate with a revision bound, elimination-to-survivor with
      a materiality guard). In every form the auditor requires the four
      anatomy parts: a named Check signal, a threshold or convergence
-     criterion, a bound (max iterations or a stability/abort
-     condition), and an Act re-entry (the phase that re-enters, or an
+     criterion, a bound (a maximum iteration count; a stability/abort
+     condition may stop earlier but does not replace it), and an Act re-entry (the phase that re-enters, or an
      explicit terminal action: escalate/halt/report). A loop whose
      Check→Act lives only in a template's purpose text fails — the
      loop lives in the body (composition law).
