@@ -207,7 +207,7 @@ Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). Deleted p
 [`.agents/skills/lora-training/`](../../.agents/skills/lora-training/SKILL.md)
 skill's `audit-config` phase. The skill reasons over config files and proposes
 regressions; this server enforces the static subset of gates at submit time
-and emits the `reg.lora.*` spans the skill's `convergence-check` phase consumes.
+and emits the `reg.lora.*` spans the skill's readiness check consumes (the gate states behind its report verdict).
 
 ## Quick Start
 

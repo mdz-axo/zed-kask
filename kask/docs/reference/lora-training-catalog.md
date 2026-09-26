@@ -31,7 +31,7 @@ Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/S
 `training_validate_config` is the runtime enforcement point: the skill reasons
 over config files and proposes regressions; the server enforces the static
 subset of gates at submit time and emits the `reg.lora.*` spans the skill's
-convergence-check phase consumes
+readiness check consumes
 (`kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:23-48`). Host selection and harness behavior are implemented under `kask/mcp-servers/hkask-mcp-training/src/providers/`; the default harness is Axolotl and per-job harness selection is honored at submit time.
 
 ### Decision-core verification scope
@@ -161,9 +161,9 @@ Only apply if QLoRA mode selected (G2).
 ## Convergence
 
 The `select-method` phase is the first turn of a PDCA loop closed by
-re-entering the cycle, which routes `convergence_metric`, `blockers`, and
+re-entering the cycle, which routes the readiness verdict, `blockers`, and
 `gate_results_summary` back as `prior_iteration`
-(`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). **The loop converges when the convergence metric is ≤ 0.10 and no hard blockers remain** (`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). The operator may also revise inputs and re-invoke.
+(`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). **The loop stops at a `Pass` readiness verdict (or `Deferred` in preflight), computed by `lisp_eval` from the gate states with the report's precedence; there is no weighted convergence metric** (`kask/registry/templates/lora-training/select-method.j2`; `.agents/skills/lora-training/SKILL.md:135-172`). The operator may also revise inputs and re-invoke.
 
 > **Provenance note:** an earlier revision of this document carried a
 > weighted-dimension rubric (0.35/0.20/0.15/0.10) and Cauchy-criterion

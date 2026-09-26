@@ -1,4 +1,4 @@
-{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. No actual training execution; host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → convergence-check → revise inputs → re-invoke. #}
+{# goal: Recommend a composable PEFT configuration via deterministic 8-gate refinement (adapter purpose, dataset analysis, inference constraint, memory evidence, task distance, quality/cost trade-off, knowledge preservation, harness capability) within user workspace boundaries (P4 capability boundary). Training approach selection (G0-G5) precedes harness selection (G6) — the harness is selected based on its capability to efficiently process the declared dataset and produce the adapter type implied by G0. G-D0 probes the actual dataset file to derive characteristics that customize the recommendation. Preserve operator authority: the skill recommends; the operator accepts, overrides, or rejects; the runtime enforces established hard contracts. Distinguish recommendation from readiness. Emit only values derivable from declared inputs and mark the rest undetermined. No actual training execution; host mandatory (P12). AutoPEFT (arXiv:2301.12132) is the rejected alternative — multi-objective BO over hundreds of training runs is infeasible per training job. PDCA iteration loop: select-method → audit-config → readiness check (lisp_eval over gate states) → revise inputs → re-invoke. #}
 [inference]
 contract:
   input:
@@ -111,20 +111,21 @@ GATE PRECEDENCE AND REFINEMENT:
    overwrite a non-default field without recording the prior value and reason.
 
 PDCA ITERATION LOOP (within this session):
-The select-method phase is the first turn of a PDCA loop. When the
-convergence check has not converged, the caller passes convergence_metric,
-blockers, and gate_results_summary back to select-method as `prior_iteration`.
+The select-method phase is the first turn of a PDCA loop. When the readiness
+verdict is not yet `Pass` (or, in preflight, `Deferred`), the caller passes the
+verdict, blockers, and gate_results_summary back to select-method as
+`prior_iteration`.
 {% if prior_iteration and prior_iteration | length > 0 %}
 ## Prior Iteration Feedback (loop closure)
 This is iteration N+1. The previous iteration produced:
 ```json
 {{ prior_iteration | tojson }}
 ```
-- **convergence_metric**: if > 0.10, the prior config had unresolved risk.
-  Use the blockers to identify which gates failed and refine the recommendation
+- **readiness verdict**: anything other than `Pass` means the prior config had
+  unresolved gates. Use the blockers to identify which gates failed and refine the recommendation
   to address them (e.g., if G-M3 scaling failed, adjust the scaling recommendation;
   if G-Q1 failed, reconsider base_mode).
-- **blockers**: concrete findings/gates that prevented convergence. Address each
+- **blockers**: concrete findings/gates that kept readiness from `Pass`. Address each
   blocker in the appropriate gate below.
 - **gate_results_summary**: per-gate state summary. Gates in fail/refuse/deferred/
   not_evaluated state need attention in this iteration.
@@ -134,12 +135,13 @@ This is the first iteration — no prior feedback to consume.
 - Plan: select-method produces a recommendation from declared evidence.
 - Do: the operator accepts/overrides/rejects; audit-config evaluates the
   accepted config against the 17 gates.
-- Check: convergence-check computes readiness; contract gaps are recorded.
-- Act: if not converged, pass the convergence result back to select-method
+- Check: the readiness verdict is computed from the gate states by
+  `lisp_eval` (SKILL.md step 8); contract gaps are recorded.
+- Act: if not ready, pass the verdict and blockers back to select-method
   as prior_iteration. The operator may also revise inputs (adjust rank, switch
   harness, add evidence) and re-invoke.
-The loop converges when the convergence metric ≤ 0.10 and no hard blockers
-remain. Each iteration's recommendation is advisory — the operator's accepted
+The loop stops at a `Pass` verdict (or `Deferred` in preflight), or after 3
+turns with its blockers reported. Each iteration's recommendation is advisory — the operator's accepted
 configuration is authoritative.
 
 G0. adapter_purpose? (runs first; constrains all subsequent gates)

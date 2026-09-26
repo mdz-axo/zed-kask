@@ -125,13 +125,20 @@ This skill does not train, load, initialize, merge, or evaluate models.
    adapter_purpose is instruction — no silent migration. For non-instruction
    purposes, axolotl is not a valid default.
 8. The select-method phase is the first turn of a PDCA loop closed by
-   re-entering the cycle at step 5, which routes
-   `convergence_metric`, `blockers`, and `gate_results_summary` back as
-   `prior_iteration`. The operator may also revise inputs and re-invoke. The
-   loop converges when the convergence metric is ≤ 0.10 and no hard blockers
-   remain. Bound: max 3 refinement turns; a metric still > 0.10 after 3 turns
-   emits `undetermined` with blockers (the honest exit step 3 defines)
-   instead of iterating.
+   re-entering the cycle at step 5, which routes the readiness verdict,
+   `blockers`, and `gate_results_summary` back as `prior_iteration`. The
+   operator may also revise inputs and re-invoke. **Check (D):** compute the
+   readiness verdict from the audit's gate states with `lisp_eval` — the
+   same precedence `report.j2` defines (Refuse > Fail > Conditional >
+   Deferred > Not evaluated > Pass):
+   - form: `(begin (define has (lambda (s l) (if (is_null l) nil (or (string= (car l) s) (has s (cdr l)))))) (cond ((has "refuse" states) "Refuse") ((has "fail" states) "Fail") ((has "warn" states) "Conditional") ((or (has "deferred" states) (has "planned" states)) "Deferred") ((has "not_evaluated" states) "Not evaluated") (t "Pass")))`
+   - env: `{ "states": [<state of every gate applicable in the current phase>] }`
+   The loop stops at `Pass`; in preflight, `Deferred` (runtime or
+   post-training requirements awaiting measurement) is the honest best
+   outcome and also stops it. Bound: max 3 refinement turns; any other
+   verdict after 3 turns is reported with its blockers instead of
+   iterating. There is no weighted convergence metric: the former
+   `convergence-check` template was retired in 10b700ae1e.
 9. Return separate `recommendation`, `readiness`, `justification`, and
    `authority` objects.
 
@@ -241,9 +248,9 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Algedonic escalation: `refuse` findings emit `refuse_escalation`
   in-addition to normal flow so safety-boundary violations reach the operator
   before the full pipeline completes.
-- Convergence honesty: `not_evaluated` maps to risk 0.5 (coverage
-  gap), distinct from `deferred`/`planned` at 1.0 (known unmet requirement).
-  Critical/high contribution is graded (0→0.6→0.8→1.0), not binary.
+- Convergence honesty: `not_evaluated` (a coverage gap) is distinct from
+  `deferred`/`planned` (a known unmet requirement); the readiness precedence
+  keeps them apart and neither ever reads as `Pass`.
 - Runtime and post-training gates are requirements or assessments of supplied
   measurements; the skill does not execute them.
 - Regression proposals are human-reviewed, `status: pending`, and
