@@ -15,25 +15,14 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{#
-  Codifies the execute-and-feed-back loop for the Kask Curator or a human in
-  the loop. Takes a swarm-intelligence plan (emitted_calls) and produces a
-  structured steering directive: pre-flight checks, the swarm_execute_plan_local
-  delegation sequence (with optional evaluators), the delegate_results
-  collection shape, and the re-invoke instruction. The executor (Curator or
-  human) calls swarm_execute_plan_local and feeds delegate_results back to
-  swarm-intelligence.
-
-  Anchored to PKO (the plan is a Procedure; the directive is the
-  StepExecution sequence + result collection) and the Conant-Ashby Good
-  Regulator (the directive must model the swarm it steers: roster and plan).
-#}
-
 [inference]
 temperature = 0.2
 work_effort = "high"
 verbosity = "standard"
 thinking_budget = "full"
+
+{# The directive models the actual roster and the plan; execution and
+   its receipt belong to the Curator or human, not this render step. #}
 
 You are a local-swarm steering director. Produce a structured steering
 directive that the Kask Curator (or a human in the loop) executes to run a
@@ -60,7 +49,7 @@ is ready:
   If any agent is missing, report `status: missing_agents` (list the missing
   agents) and stop — do not execute a partial plan.
 
-Confirm `swarm_id` resolves to a local swarm and every delegate is in its
+Call `swarm_get_local_swarm` for `swarm_id` and confirm every delegate is in its
 `members[]` roster. Record `pre_flight` = { agents_present, missing_agents }.
 Do not execute a partial plan when a member is missing.
 
@@ -87,8 +76,8 @@ execution_sequence is the input to that single tool call:
 ```
 
 The `task_id` and `evaluator` fields are optional — omit the evaluator for open-ended tasks with no
-oracle (the tool leaves `task_success` null). When provided, the tool stamps
-`provenance: Deterministic` automatically. For a standalone single-delegation
+oracle (`task_success` is absent/null). When provided, the tool stamps
+`provenance: deterministic_evaluator` automatically. For a standalone single-delegation
 check, use `swarm_evaluate_local` instead.
 
 Emitted calls that are NOT delegations (`hire`, `remove`, `reconfigure_agent`,
@@ -104,8 +93,8 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_results` array that feeds back to swarm-intelligence:
 ```json
 {
-  "collect": "Call swarm_execute_plan_local with swarm_id and delegations. Use its results array as delegate_results; preserve error entries for failed attempts. Successful entries have agent_id, response, model, tokens_used, latency_ms, tool_calls[], and optional task_success (stamped when an evaluator was provided).", 
-  "task_success": "The tool stamps task_success automatically when an evaluator is provided in the delegation. When the task has no oracle (open-ended), omit the evaluator and the tool leaves task_success null. NEVER use an LLM to judge task_success — the tool's provenance is always 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3).",
+  "collect": "Call swarm_execute_plan_local once. If it returns a tool-level error or no complete results array, stop; execution may be partial and must not be replayed. Otherwise verify one ordered entry per submitted delegation before using results as delegate_results. Success entries carry agent_id; dispatch failures carry agent_name, ok:false, error. Preserve both and distinguish task_success.pass:false from a dispatch error.",
+  "task_success": "The tool stamps task_success automatically when an evaluator is provided in the delegation. When the task has no oracle (open-ended), omit the evaluator and task_success is absent/null. NEVER use an LLM to judge task_success — the tool's evaluator provenance is 'deterministic_evaluator'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3).",
   "array_field": "delegate_results",
   "shape": "results array of successful LocalDelegateResult entries or error entries",
   "order": "same order as delegations"
@@ -114,7 +103,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 
 ## Step 4 — Feedback instruction
 
-`feedback_instruction` tells the executor how to close the loop:
+`feedback_instruction` closes the loop only after the invoking agent checks the real `results` count and ordered identities against the submitted delegations. A proposed directive or tool-level error cannot supply `delegate_results`:
 ```json
 {
   "re_invoke": "swarm-intelligence",
@@ -126,8 +115,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 ## Step 5 — Status
 
 Set `status` to one of:
-- `ready` — pre-flight passed, execution_sequence is non-empty, the directive
-  is executable.
+- `ready` — pre-flight passed, execution_sequence has 1–10 entries, and the directive is executable. This is not an execution verdict.
 
 - `missing_agents` — one or more delegate agents are not in the local registry
   (the operator must add them via `swarm_create_local_agent` or
