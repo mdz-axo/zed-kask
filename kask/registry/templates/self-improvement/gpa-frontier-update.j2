@@ -8,6 +8,7 @@ contract:
   output:
     frontier: array
     dominated: array
+    new_members: array
     frontier_notes: string
 visibility: Public
 ---
@@ -45,6 +46,7 @@ For maximize: false objectives, "better" = lower score.
 2. **Non-dominated sort:** Find all variants that are not dominated by any other variant in the pool. These form the new frontier.
 3. **Prune if needed:** If the frontier exceeds frontier_size, prune by crowding distance — remove variants that are in the most crowded region of the objective space (least diverse). This maintains frontier diversity.
 4. **Record dominated:** Track which variants were dominated and by whom, for audit purposes.
+5. **Record arrivals:** `new_members` lists the ids in the new frontier that were not in `current_frontier`. The invoking agent recomputes this set from the two id lists and passes its length to the Check gate; it does not trust your count.
 
 ## Context
 ```json
@@ -77,6 +79,7 @@ Return JSON only:
       "dominated_by": "variant_1"
     }
   ],
+  "new_members": ["frontier ids absent from current_frontier"],
   "frontier_notes": "summary of frontier update"
 }
 ```

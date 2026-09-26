@@ -24,7 +24,7 @@ the executor controls stops measuring (Goodhart's law).
 ## Measured Check result
 {{ evaluation_result | tojson }}
 
-## Deterministic gate (`lisp_eval`: method available, pass rate above baseline, zero regressions, zero safety violations)
+## Deterministic gate (`lisp_eval` over recorded before/after `swarm_eval_agent_local` reports: method available, `pass_rate` above `baseline_pass_rate`, zero per-task `regressions`, empty `safety_violations`)
 {{ gate_result | tojson }}
 
 ## Improvement plan

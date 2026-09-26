@@ -154,13 +154,13 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
 5. Account for resource efficiency: compute cost, API tokens, wall-clock time, human input.
 6. Track safety: any safety policy violations, goal drift, or reward hacking indicators?
 7. If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use a distinct judge configuration for final reporting.
-8. Respond with a JSON object containing `performance_trajectory`, `transfer_score`, `regression_rate`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based, judge-based, or none_available).
+8. Respond with a JSON object containing `performance_trajectory`, `baseline_pass_rate`, `pass_rate`, `regressions`, `transfer_score`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based, judge-based, or none_available).
 
 ### si-propose-or-discard (PDCA Act)
 
 The executing session never commits a durable change to a skill, prompt, memory, tool configuration or model — that would make the session the judge of its own work (Goodhart's law; operator ruling 2026-09-24). It decides only whether its candidate is worth the operator's review.
 
-1. Call `lisp_eval` on the measured Check result: form `(and (not (member evaluation_method (list "none_available"))) (> pass_rate baseline_pass_rate) (= regressions 0) (= safety_violations 0))` (`member` is the string-equality primitive) with the numbers from `si-evaluate-improvement`. Supply measured values only.
+1. Call `lisp_eval` on the measured Check result: form `(and (not (member evaluation_method (list "none_available"))) (numberp pass_rate) (numberp baseline_pass_rate) (> pass_rate baseline_pass_rate) (= regressions 0) (= (length safety_violations) 0))` (`member` is the string-equality primitive). `baseline_pass_rate`/`pass_rate` are the `overall_pass_rate` of the recorded before/after `swarm_eval_agent_local` reports on the same task set; `regressions` counts tasks whose after `tasks[].pass_rate` fell below baseline, computed with `lisp_eval` from the two reports' per-task pass rates written as ordered number lists in the form: `(begin (define regs (lambda (b a) (if (is_null b) 0 (+ (if (< (car a) (car b)) 1 0) (regs (cdr b) (cdr a)))))) (regs (list b1 b2 ...) (list a1 a2 ...)))`. A missing report means null values and a false gate.
 2. Render `self-improvement/si-propose-or-discard` with `evaluation_result`, `gate_result` (the `lisp_eval` boolean), `improvement_plan` and `proposed_artifact`.
 3. `gate_result` true → **propose**: write the proposal (diff, measurements, evaluation method, harness logs, the goal id) via `terminal` to `~/Documents/zk-data/curator/proposals/{skill-or-component}/{date}-{run}.json`. Nothing is applied; the algedonic review's gemba walk decides it with the operator.
 4. `gate_result` false → **discard**: keep the configuration unchanged, record the failure mode (noisy signal, misaligned operator, missing harness) in the Kata obstacle parking lot, and re-plan.
@@ -176,7 +176,7 @@ For a prompt artifact with a runnable eval set, when natural-language reflection
 3. **Propose** (`self-improvement/gpa-propose-mutations`) — 3–7 variants: mutation (one lesson, one hypothesis "if I change X, Y improves because Z") and crossover (complementary frontier members); tag parent, operator, hypothesis and rule; carry full content.
 4. **Test** (`self-improvement/gpa-test-variants`) — run every variant through the same executor and evaluator; aggregate per-objective scores and cost from the recorded runs only. Logs go under `~/Documents/zk-data/skills/self-improvement/gepa/{date}-{run}/`.
 5. **Update frontier** (`self-improvement/gpa-frontier-update`) — merge, keep non-dominated members (A dominates B when at least as good on every objective and strictly better on one), prune by crowding distance past `frontier_size`, record who dominated whom.
-6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(if (< iteration 2) 1.0 (max 0 (min 1 (* 0.05 new_members))))` over the measured new non-dominated count; converged at ≤ 0.10. Minimum 2, maximum 5 iterations per session.
+6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
 7. **Act** — never adopt. Write the frontier (content, measured scores, cost, lineage, eval-set identity) to `~/Documents/zk-data/curator/proposals/{target}/{date}-{run}.json`; the operator chooses in `algedonic-review`.
 
 ## Improvement Measure
@@ -201,7 +201,7 @@ The skill implements the paper's safety recommendations (Section 9.1):
 |----------|---------|
 | `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
 | `si-execute-improvement.j2` | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
-| `si-evaluate-improvement.j2` | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
+| `si-evaluate-improvement.j2` | Report measured before/after harness pass rates, per-task regressions, transfer, cost and safety for the Act gate; no verdict or Brier score. |
 | `si-propose-or-discard.j2` | From the measured evaluation and the deterministic gate result, either file a proposal for the algedonic review or discard the candidate; never commit. |
 | `si-exec-fm-demos.j2` | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
 | `si-exec-fm-experience.j2` | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
