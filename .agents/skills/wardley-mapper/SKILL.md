@@ -8,6 +8,14 @@ description: "Generic Wardley mapping methodology. Given components and their re
 Generic Wardley mapping methodology. Given a set of components and their relationships, inventories them, classifies each on the evolution axis (Genesis → Custom → Product → Commodity), maps them on the value chain (visibility vs evolution), identifies strategic movement (what to commoditize, invest in, divest, or build), and produces a Wardley map with recommendations. Applicable to any system — software platforms, business capabilities, technology stacks.
 
 
+## Reference model and labels
+
+Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (operator ruling 2026-09-25): anchor on a user need, lay out the value chain, position each component by evolution.
+
+- **Initial condition:** the target system description and any supplied component inventory or previous map.
+- **Target condition:** the Convergence gate passes and the map plus recommendations reach the chat through `present-map`.
+- **D/P:** inventory, evolution classification, coordinates, movement and recommendations are P — judgment, critiqued by the operator and by the requirement that every recommendation trace to a named component and movement. The Convergence gate and `present-map` (pure rendering) are D. An evolution class is a judgment against Wardley's characteristics, not a measurement; say so when data is sparse.
+
 ## When to Use
 
 - When you need to inventory and enumerate all components of a target system (software, business, or technology) to prevent strategic blind spots.
