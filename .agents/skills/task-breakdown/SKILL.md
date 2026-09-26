@@ -6,7 +6,12 @@ description: "Decompose work into small, verifiable, vertically-sliced tasks wit
 
 # Task Breakdown
 
-Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize plan.md + todo.md in the skill run directory with PKO process-axis anchors. empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-management (single-pass board populate) and tdd (consumes the plan one vertical slice at a time).
+Decompose work into verifiable vertical slices with acceptance criteria and checkpoints. Follow the Improvement Kata's current-condition → target-condition → experiment discipline; the seven weighted planning criteria below are a local rubric, not a claim about the published Kata. Gather read-only context and dependencies, produce a plan, check it against the target, and re-slice on measured gaps before finalizing `plan.md` and `todo.md` under `~/Documents/zk-data/skills/task-breakdown/`. Distinct from kanban-task-management (board population) and tdd (execution of slices).
+
+## Initial and target condition
+
+- **Initial condition:** the user's spec/intent and target outcome, observed project structure and constraints, dependency graph, and any explicit unknowns. An empty or unconfirmed target does not become a plan.
+- **Target condition:** every slice advances the target outcome, has a testable acceptance criterion and verification seam, respects dependencies, and the independently checked seven-criterion gate passes without compensation masking. A failed or unmeasured gate is not a finished plan.
 
 ## When to Use
 
@@ -53,12 +58,12 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 
 ### task-breakdown-evaluate
 
-1. Score the task breakdown against six weighted criteria: task sizing (0.25), vertical-slice integrity (0.20), acceptance-criteria specificity (0.20), dependency ordering (0.15), checkpoint presence (0.10), red-flag absence (0.10).
+1. Score the task breakdown against the seven criteria in `task-breakdown-evaluate.j2`: target-condition coverage (0.20), task sizing (0.20), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). These local weights sum to 1; the published Improvement Kata does not prescribe them.
 2. Score each criterion from 0 (perfect) to 1 (severely deficient); be honest — inflated scores produce worse plans.
 3. Task-count awareness: in the sizing criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse); no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
 4. Use the `context_summary` (Good Regulator) to check project-specific conventions — testing patterns, file-path consistency with module structure, and crate dependency ordering — not just generic criteria.
 5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files.
-6. Compute the weighted_total as the sum of (score × weight) across all six criteria, in [0,1].
+6. After the template returns all seven raw scores, require each to be numeric in [0,1] and call `lisp_eval` to compute `weighted_total` from those scores, never from the model's stated total: `(+ (* 0.20 target_condition_coverage) (* 0.20 task_sizing) (* 0.15 vertical_slice_integrity) (* 0.15 ac_specificity) (* 0.10 dependency_ordering) (* 0.10 checkpoint_presence) (* 0.10 red_flag_absence))`. Missing or invalid dimensions stop evaluation; compare the template's reported total and surface a mismatch rather than trusting it.
 7. For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive that names the criterion, states what is wrong, and describes the expected fix; do not emit directives for criteria scored at 0.00.
 8. Produce a JSON object with `scores`, `weighted_total`, `refinement_directives`, and `red_flags`.
 
@@ -66,11 +71,11 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 
 1. Evaluate the plan independently — do NOT trust the producer's self-assessment; `evaluation_result` is provided for bias detection only.
 2. Use the `context_summary` (Good Regulator) to check project-specific conventions independently of the producer's evaluation.
-3. Re-derive every score from the plan itself using the same six weighted criteria.
+3. Re-derive every score from the plan itself using the same seven weighted criteria. Recompute `gate_weighted_total` via `lisp_eval` with the step-6 form above, binding the *gate's* independently assigned scores; do not reuse the producer's numbers.
 4. Score each criterion 0 (perfect) to 1 (severely deficient), honestly.
 5. Flag any dimension where your score diverges from the producer's by more than 0.2 as a `bias_delta` finding.
 6. Detect compensation masking: if any single criterion exceeds 0.30, set `gate_pass` to false regardless of the weighted total.
-7. Set `gate_pass` to true ONLY if `gate_weighted_total` ≤ 0.15 AND no individual criterion exceeds 0.30.
+7. Recompute `gate_pass` with `lisp_eval` from the gate's raw scores and computed total: `(and (<= gate_weighted_total 0.15) (<= (max target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence) 0.30))`. If any score is missing or invalid, stop instead of treating it as zero; a model-supplied `gate_pass` that disagrees with the deterministic result is a finding, not authority.
 8. Produce a JSON object with `gate_scores`, `gate_weighted_total`, `gate_pass`, and `gate_findings`.
 
 ### task-breakdown-write-plan

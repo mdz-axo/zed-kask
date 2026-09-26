@@ -85,8 +85,7 @@ collectively achieve this target? Does every task trace to this target?
 | checkpoint_presence | 0.10 | Checkpoints between every major phase | No checkpoints |
 | red_flag_absence | 0.10 | No red flags | One or more red flags present |
 
-`gate_weighted_total` = sum(score x weight), in [0,1].
-`gate_pass` = true ONLY if `gate_weighted_total` <= 0.15 AND no individual criterion exceeds 0.30 (guards against compensation masking — a low total driven by one catastrophic dimension).
+Report all seven independently judged raw scores. `gate_weighted_total` and `gate_pass` are proposed values; the invoking agent recomputes both with `lisp_eval`. A gate passes only if the computed total is <= 0.15 AND no individual score exceeds 0.30 (compensation-masking guard). Missing scores never count as zero.
 
 ## Red Flags (any present => red_flag_absence > 0)
 - A task says "implement the feature" without acceptance criteria.
