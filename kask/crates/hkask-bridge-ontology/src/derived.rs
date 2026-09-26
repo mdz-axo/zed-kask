@@ -330,6 +330,52 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-09-25; Schwartz, The Art of the Long View, Doubleday (1991); Chermack, Scenario Planning in Organizations, Berrett-Koehler (2011)",
     },
+    DerivedConcept {
+        term: "falsifiability",
+        aliases: &[
+            "falsifiable",
+            "strong inference",
+            "multiple working hypotheses",
+            "eliminative inference",
+        ],
+        identity: "a claim is admissible only if some observation could contradict it; rival hypotheses are eliminated by discriminating tests, and survivors are corroborated, never confirmed",
+        definition: "Popper's demarcation criterion (The Logic of Scientific Discovery, 1959) joined to Chamberlin's method of multiple working hypotheses (1890) and Platt's strong inference (1964): hold several falsifiable hypotheses at once, design tests whose outcomes rule some out, and eliminate on contradiction. Pearl's do-operator (Causality, 2009) supplies the minimal counterfactual for causal hypotheses.",
+        constituents: &[
+            "falsifier",
+            "discriminating test",
+            "counterfactual",
+            "corroboration",
+        ],
+        authority: "operator ruling 2026-09-25; Popper, The Logic of Scientific Discovery (1959); Platt, Strong Inference, Science 146 (1964); Chamberlin, The Method of Multiple Working Hypotheses, Science 15 (1890); Pearl, Causality (2009)",
+    },
+    DerivedConcept {
+        term: "finer_criteria",
+        aliases: &["finer"],
+        identity: "a research question is judged Feasible, Interesting, Novel, Ethical and Relevant before study design",
+        definition: "The five-criterion screen for a good research question from Hulley, Cummings et al., Designing Clinical Research (1988; 4th ed. 2013). Each criterion is a judgment, not a measurement.",
+        constituents: &["feasible", "interesting", "novel", "ethical", "relevant"],
+        authority: "operator ruling 2026-09-25; Hulley, Cummings, Browner, Grady & Newman, Designing Clinical Research (1988; 4th ed. 2013)",
+    },
+    DerivedConcept {
+        term: "pico",
+        aliases: &["pico framework", "picot"],
+        identity: "a clinical question structured as Population, Intervention, Comparison, Outcome",
+        definition: "The well-built clinical question of Richardson, Wilson, Nishikawa & Hayward (1995): name the population, the intervention or exposure, the comparison, and the outcome, so the question is answerable and testable.",
+        constituents: &["population", "intervention", "comparison", "outcome"],
+        authority: "operator ruling 2026-09-25; Richardson, Wilson, Nishikawa & Hayward, The well-built clinical question, ACP Journal Club 123(3) (1995)",
+    },
+    DerivedConcept {
+        term: "multi_criteria_decision_analysis",
+        aliases: &[
+            "mcda",
+            "multiple criteria decision analysis",
+            "swing weighting",
+        ],
+        identity: "alternatives scored on weighted criteria, aggregated by a value model, with sensitivity analysis on the weights",
+        definition: "Decision analysis over several criteria (Belton & Stewart, Multiple Criteria Decision Analysis, 2002): structure criteria, elicit weights (swing weighting per Keeney & Raiffa, Decisions with Multiple Objectives, 1976), score alternatives, aggregate with a weighted-sum value model, and test how the ranking depends on the weights.",
+        constituents: &["criterion", "weight", "value model", "sensitivity analysis"],
+        authority: "operator ruling 2026-09-25; Belton & Stewart, Multiple Criteria Decision Analysis: An Integrated Approach (2002); Keeney & Raiffa, Decisions with Multiple Objectives (1976)",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -482,6 +528,12 @@ mod tests {
             ("metacognition", "Dunning"),
             ("scenario planning", "Schwartz"),
             ("scenario planning", "Chermack"),
+            ("falsifiability", "Popper"),
+            ("strong inference", "Platt"),
+            ("FINER criteria", "Hulley"),
+            ("PICO", "Richardson"),
+            ("multi-criteria decision analysis", "Belton & Stewart"),
+            ("MCDA", "Keeney & Raiffa"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

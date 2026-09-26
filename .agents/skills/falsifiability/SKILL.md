@@ -9,7 +9,7 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 
 ## Reference models
 
-Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *Science* 146 (1964); Chamberlin, "The Method of Multiple Working Hypotheses", *Science* 15 (1890); Pearl, *Causality* (2009) and Halpern & Pearl (2005) for the do-operator. `onto_anchor` reaches only the 5W1H core for "falsifiability" and "strong inference" (coarse; no operator ruling yet).
+Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *Science* 146 (1964); Chamberlin, "The Method of Multiple Working Hypotheses", *Science* 15 (1890); Pearl, *Causality* (2009) and Halpern & Pearl (2005) for the do-operator. `onto_anchor` → derived `falsifiability` (operator ruling 2026-09-25).
 
 **D/P labelling.** Steps 1–4 are P: admission, hypotheses, counterfactuals and tests are judgment, critiqued by the user's review (steps 2 and 4 present for it) and by the observations themselves. Step 5's per-hypothesis eliminate/corroborate call is P (does this observation contradict this prediction?), recorded in the auditable `falsification_log`. Step 5's verdict and step 6's materiality guard are D (`lisp_eval`, forms below) over the counts step 5 recorded.
 

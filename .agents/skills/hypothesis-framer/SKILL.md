@@ -9,7 +9,7 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 
 ## Reference models
 
-FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 2013). PICO — Richardson, Wilson, Nishikawa & Hayward, "The well-built clinical question", *ACP Journal Club* 123 (1995). Testability delegates to `falsifiability` (Popper). `onto_anchor` reaches only the 5W1H core for "FINER criteria" and "PICO" (coarse; no operator ruling yet).
+FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 2013). PICO — Richardson, Wilson, Nishikawa & Hayward, "The well-built clinical question", *ACP Journal Club* 123 (1995). Testability delegates to `falsifiability` (Popper). `onto_anchor` → derived `finer_criteria` and `pico` (operator ruling 2026-09-25).
 
 ## Conditions and labels
 
