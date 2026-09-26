@@ -112,9 +112,13 @@ report), not just the tone.
 4. Reassemble the recomposed units, preserving the document's structure
    (headings, code blocks, tables stay verbatim — a style voice never
    rewrites code or identifiers).
-5. Verify with `lisp_eval` that every heading, code fence, and table
-   from the source survived: a simple count comparison of structural
-   markers between source and recomposition.
+5. Verify that every heading, code fence, and table from the source
+   survived. Count with `terminal` on both files — `grep -c '^#'`,
+   ``grep -c '^```'``, `grep -c '^|'` — then call `lisp_eval` with the six
+   counts: `(and (= h_src h_rec) (= f_src f_rec) (= t_src t_rec))`. The
+   counts come from grep, not from the model. `^#` also counts `#` lines
+   inside code fences; parity still holds because both files carry the
+   same fences.
 
 ### Degraded modes — surface, never fake
 
@@ -129,6 +133,16 @@ report), not just the tone.
   their paths would find no `jinja2_template`. They are for evaluation
   and analysis against their centroids. Do not improvise a "style
   config" for them.
+
+## Initial condition and step types
+
+- **Initial condition:** the named style, its catalog `config_path`, and (Mode 3) the source document.
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Mode 2 compose, Mode 3 rewrite | P | the tool-reported centroid distance against the config's `centroid_distance_max`; the operator on a miss |
+| Mode 3 structure parity | D | `grep -c` counts and the `lisp_eval` equality |
+| Mode 1 conversational turn | P | unvalidated unless a validation pass is run; the operator |
 
 ## Convergence
 
