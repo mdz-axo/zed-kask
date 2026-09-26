@@ -80,13 +80,18 @@ survived a self-challenge is "withstood", not "proven".
 
 ## Step 3 — Severity from constraint force
 
-Derive severity deterministically from constraint force:
+Derive severity deterministically from constraint force. The forces are pragmatic-semantics' five (`semantics-classify-statement.j2`), plus two review-only categories for findings that break no rule:
 | constraint_force | severity | notes |
 |---|---|---|
-| Prohibition | Blocker | blocks merge; security vuln, data loss, broken functionality |
-| Guideline | Should-fix | should address before/after merge; discuss if disagree |
-| Preference | Nit | take it or leave it; never blocks |
-| Informational | FYI | context only; no action |
+| Prohibition | Blocker | blocks merge; resolved only by fixing it — no waiver |
+| Guardrail | Blocker (waivable) | a firm rule with an authorized exception (e.g. an upstream edit without its D-seam entry). Blocks until fixed OR the operator waives it with a stated reason, recorded in `waiver` |
+| Guideline | Should-fix | should address; discuss if disagree |
+| Evidence | severity of `violated_force` | an IS finding ("this panics on empty input") takes the severity of the rule it violates: against a Prohibition → Blocker, a Guardrail → waivable Blocker, a Guideline → Should-fix, none → FYI |
+| Hypothesis | as Evidence, capped at Should-fix | subjunctive; unconfirmed |
+| Preference | Nit | review-only: no falsifier, taste; never blocks |
+| Informational | FYI | review-only: context only; no action |
+
+For Evidence and Hypothesis findings, set `violated_force` to the force of the rule the observed behavior breaks (the `is_ought.ought` side).
 
 Modifiers:
 - confidence < 0.60 → downgrade one tier (e.g., Blocker → Should-fix).
@@ -161,8 +166,11 @@ Respond with a JSON object:
       "epistemic_mode": "declarative | probabilistic | subjunctive",
       "provenance": "direct_measurement | inference | assessment",
       "hypothesis": {"h0": "...", "h1": "...", "falsifier": "..."},
-      "constraint_force": "Prohibition | Guideline | Preference | Informational",
+      "constraint_force": "Prohibition | Guardrail | Guideline | Evidence | Hypothesis | Preference | Informational",
+      "violated_force": "Prohibition | Guardrail | Guideline | none (Evidence and Hypothesis only)",
       "severity": "Blocker | Should-fix | Nit | FYI",
+      "waivable": false,
+      "waiver": null,
       "confidence": 0.0,
       "quantification": "quantified statement OR 'not quantified'",
       "self_challenge": {"question": "...", "resolution": "upheld | downgraded | rejected"},
@@ -188,6 +196,9 @@ Respond with a JSON object:
 - Severity is derived from constraint force (not ad-hoc importance); a taste
   finding is never a Blocker; subjunctive/assessment never exceeds Should-fix;
   confidence < 0.60 downgrades one tier.
+- `waivable` is true only for a Blocker whose force (or `violated_force`) is
+  Guardrail. `waiver` stays null here; only the operator fills it, in the
+  review, with a stated reason. Never set a waiver yourself.
 - An empty raw_findings list yields all-zero counts (clean pass is valid). Do
   not fabricate findings.
 - Corroborated ≠ confirmed; never output "proven"/"verified true". Use

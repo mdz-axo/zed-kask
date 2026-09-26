@@ -62,9 +62,11 @@ is the separate, user-gated implement phase.
 
 | condition | verdict |
 |---|---|
-| zero Blockers AND the change improves overall code health (even if imperfect) | **Approve** — don't block because it isn't how you'd write it |
-| one or more Blockers, OR a structural regression that makes the system worse | **Request changes** |
+| zero open Blockers AND the change improves overall code health (even if imperfect) | **Approve** — don't block because it isn't how you'd write it |
+| one or more open Blockers, OR a structural regression that makes the system worse | **Request changes** |
 | observations only, nothing blocking | **Comment** |
+
+An open Blocker is one that is neither fixed nor waived. Only a Guardrail Blocker (`waivable: true`) can be waived, and only by the operator with a recorded `waiver.reason`; a Prohibition Blocker stays open until fixed. List every waivable Blocker with the rule it breaks so the operator can choose to fix or waive it.
 
 The approval standard: approve when it definitely improves overall code health,
 even if it isn't perfect. Never block because it isn't exactly how you would
@@ -119,7 +121,7 @@ Emit:
   findings (e.g., "N+1 pattern recurred in two handlers; next pass should
   check all list endpoints"). Not generic platitudes.
 - **next_review_focus**: what the next pass should concentrate on; EMPTY string
-  if the review converged clean (zero Blockers, stable blocker_delta).
+  if the review converged clean (zero open Blockers).
 
 ## Output
 
@@ -131,7 +133,8 @@ Respond with a JSON object:
     "verdict": "Approve | Request changes | Comment",
     "summary": "one-line: N findings (B blockers, S should-fix, N nit, F fyi), verdict",
     "findings_by_severity": {
-      "blockers": [{"id": "CR-001", "file": "...", "line": "...", "title": "...", "evidence": "...", "remedy": "named structural remedy", "falsifier": "..."}],
+      "blockers": [{"id": "CR-001", "file": "...", "line": "...", "title": "...", "evidence": "...", "remedy": "named structural remedy", "falsifier": "...", "waivable": false}],
+      "waived": [{"id": "CR-...", "rule": "the Guardrail it breaks", "waiver": {"reason": "...", "by": "operator", "date": "..."}}],
       "should_fix": [],
       "nit": [],
       "fyi": []
@@ -156,8 +159,9 @@ Respond with a JSON object:
   a bare "LGTM".
 - lessons_learned must be concrete and derived from this review's findings, not
   generic platitudes.
-- next_review_focus is empty when the review converged clean (zero Blockers,
-  stable blocker_delta).
+- next_review_focus is empty when the review converged clean (zero open
+  Blockers).
+- Never record a waiver the operator did not give; a Prohibition is never waivable.
 - If size_class == "too_large", the top recommendation is to split before
   merging, with a concrete split plan.
 - Review-first: do not implement changes here. Implementation is the separate,
