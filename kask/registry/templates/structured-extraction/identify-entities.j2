@@ -51,7 +51,7 @@ Scan the source text for any information that maps to the fields defined in the 
 2. **Classify the entity type** (person, organization, date, quantity, location, etc.)
 3. **Map to schema field** — which field in the target schema does this entity populate?
 4. **Assign confidence** — how confident are you in this extraction? (0.0-1.0)
-5. **Record location** — where in the source text was this found? (character offsets)
+5. **Record location** — approximate character offsets where it was found. The exact `entity_text` is what gets checked (a substring match against the source); the offset is a locating hint, not a verified value.
 
 Also identify any text segments that contain structured information but don't clearly map to a specific schema field. These go into `unmapped_text`.
 
@@ -86,7 +86,7 @@ Respond with a JSON object:
 - Only extract entities that actually appear in the source text — no hallucination.
 - If a schema field has no corresponding entity, omit it rather than inventing one.
 - Confidence scores must reflect genuine extraction certainty.
-- Character offsets must be accurate to the source text.
+- `entity_text` must be copied verbatim from the source — it is checked by substring match, and a non-matching entity is dropped. Offsets are approximate.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

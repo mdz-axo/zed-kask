@@ -41,7 +41,7 @@ For each pair of entities that have a meaningful relationship in the source text
 1. **Subject (arg1)** — The entity performing or originating the relationship
 2. **Predicate (relation)** — The relationship type as a short verb phrase (1-3 words) extracted from the source text. This is a free-text OpenIE predicate, NOT a typed IRI from a controlled vocabulary. (For closed-type RE with a fixed inventory, use ACE2005's 6 major types / 35 subtypes, TACRED's 41 types, or DocRED's 96 Wikidata relations — this skill does not enforce any of those; it is open.)
 3. **Object (arg2)** — The entity receiving or being the target of the relationship
-4. **Trigger span** — The character offsets in the source text of the word(s) that signal the relation (ACE2005-style relation trigger). Required for every relation.
+4. **Trigger** — the word(s) that signal the relation, copied verbatim from the source (ACE2005-style relation trigger), with approximate character offsets. Required for every relation; the trigger text is checked by substring match, the offsets are a locating hint.
 
 ### Coreference
 
@@ -52,7 +52,7 @@ Before extracting relations, resolve coreference: if a pronoun ("she", "it", "th
 - Only extract relations that are **explicitly stated or clearly implied** in the source text.
 - Each predicate should be a **short verb phrase** (1-3 words), not a full sentence.
 - The subject and object must reference entities from the provided entity list (after coreference resolution).
-- Every relation must carry a `trigger_span` with character offsets into the source text.
+- Every relation must carry a `trigger_span` whose trigger text appears verbatim in the source; its offsets are approximate.
 - Assign a **confidence score** (0.0-1.0) for each relation based on textual clarity.
 - Mark any entity that has **no detected relations** as an isolated entity (graph-theory term: isolated vertex; reported in `orphan_entities`).
 
