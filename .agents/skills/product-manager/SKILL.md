@@ -17,7 +17,7 @@ Production is cheap; judgment is the edge. AI agents execute — they
 write the code, run the gates, sweep the dead surface — which strips
 away the performative parts of product management (backlog grooming,
 status chasing, requirements transcription) and leaves the demanding
-core (per Marty Cagan's framing and the 2026 role literature): **deciding
+core (per Marty Cagan's framing): **deciding
 what is worth producing, and judging whether it was**. In this system
 that means the operator's deliverables are judgment artifacts —
 requirements worth authoring, decisions worth making, ground truth worth
@@ -33,7 +33,7 @@ requirement debt), or guesses the verdict (the goal loop never closes).
   prioritization, and post-launch judgment; delivery coordination
   belongs to the program manager. Requirements flow PM → TPM;
   decisions flow back.
-- **The AI-age shift** (Cagan; 2026 role literature): from information
+- **The AI-age shift** (Cagan): from information
   gathering to judgment and decision-making — the PM's edge is deciding
   what is worth producing, not producing fast.
 - **Requirements engineering + hypothesis framing**: a requirement is a
@@ -53,6 +53,14 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 
 - **Initial condition:** the operator's request as received, including its stated outcome, spec pointer or explicit absence, observable criteria, and binding constraints. Missing information remains missing; an agent's interpretation is a question, not a ratified requirement.
 - **Target condition:** the operator confirms the functional outcome and 2–4 criteria that can fail, identifies the spec or says none exists, and receives one clearly scoped question round for anything still missing. No code begins from an unconfirmed interpretation.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| 1 Render intake brief | D | `render_template` |
+| 2–4 Ask, recover spec, record goal text | P | operator confirmation; spec recovery checked against `git log` |
+| 5 Check → Act gap test | P | the operator's answer; bounded at two question rounds |
 
 ## When to Use
 
