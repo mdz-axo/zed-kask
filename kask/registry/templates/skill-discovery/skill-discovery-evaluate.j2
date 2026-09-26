@@ -75,7 +75,7 @@ Each check scores 0–2:
 | 1 | Partially passes (minor issue) |
 | 0 | Fails |
 
-Maximum possible score: 32 (16 checks × 2). Minimum installable score: 16 (pending operator review; it was set for 11 checks). Report the scores; the agent computes `overall_score` and the recommendation in `lisp_eval`.
+Maximum possible score: 32 (16 checks × 2). Minimum installable score: 24 (operator ruling 2026-09-26). Report the scores; the agent computes `overall_score` and the recommendation in `lisp_eval`.
 
 ## Output Requirements
 
@@ -119,7 +119,7 @@ Respond with a JSON object:
 - Every check must be scored — no check may be omitted.
 - Scores must be consistent: 0 for fail, 1 for partial, 2 for pass. No other values.
 - If any safety check scores 0, the overall recommendation must be `reject`.
-- If overall_score < 16 but no safety failures, recommendation must be `revise`.
+- If overall_score < 24 but no safety failures, recommendation must be `revise`.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
