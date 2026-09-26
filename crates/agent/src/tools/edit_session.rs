@@ -295,11 +295,24 @@ pub(crate) async fn run_session(
             error,
             session: Some(session),
         } => {
+            // zed-kask: D78 — a failed edit call is all-or-nothing. Edits
+            // stream into the buffer as they resolve, so a failure at edit N
+            // used to leave edits 1..N-1 applied and saved while the tool
+            // reported an error. Restore the pre-call text before saving.
+            let (_, partial_diff) = session.compute_new_text_and_diff(cx).await;
+            if !partial_diff.is_empty() {
+                session.restore_original_text(cx);
+            }
             session
                 .context
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+            let error = if partial_diff.is_empty() {
+                error
+            } else {
+                format!("{error}\nNo edits were applied; the file is unchanged.")
+            };
             if diff.is_empty() {
                 event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                     acp::ToolCallContent::Content(acp::Content::new(error.clone())),
@@ -840,6 +853,20 @@ impl EditSession {
             write.process_event(event, buffer, context, cx);
         }
         Ok(())
+    }
+
+    /// Replace the buffer with the text it held when the session opened.
+    fn restore_original_text(&self, cx: &mut AsyncApp) {
+        let original = self.old_text.clone();
+        agent_edit_buffer(
+            &self.buffer,
+            [(
+                0..self.buffer.read_with(cx, |b, _| b.len()),
+                original.as_str(),
+            )],
+            &self.context.action_log,
+            cx,
+        );
     }
 
     async fn compute_new_text_and_diff(&self, cx: &mut AsyncApp) -> (String, String) {

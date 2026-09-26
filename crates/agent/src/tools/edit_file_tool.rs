@@ -507,6 +507,49 @@ mod tests {
         );
     }
 
+    /// zed-kask: D78 — a multi-edit call that fails at a later edit leaves
+    /// the file exactly as it was. Before, earlier edits stayed applied and
+    /// saved behind the error (22 recorded curator incidents).
+    #[gpui::test]
+    async fn test_streaming_edit_failure_leaves_file_unchanged(cx: &mut TestAppContext) {
+        let original = "line 1\ndup\ndup\n";
+        let (edit_tool, _project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": original})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![
+                            Edit {
+                                old_text: "line 1".into(),
+                                new_text: "changed line 1".into(),
+                            },
+                            Edit {
+                                old_text: "dup".into(),
+                                new_text: "x".into(),
+                            },
+                        ],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error { error, diff, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(error.contains("matched multiple locations"), "{error}");
+        assert!(error.contains("No edits were applied"), "{error}");
+        assert!(diff.is_empty(), "reported diff must be empty: {diff}");
+        let on_disk = fs
+            .load(std::path::Path::new(path!("/root/file.txt")))
+            .await
+            .unwrap();
+        assert_eq!(on_disk, original);
+    }
+
     #[gpui::test]
     async fn test_streaming_edit_adjacent_edits(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
@@ -1243,12 +1286,14 @@ mod tests {
             error.contains("Could not find matching text for edit at index 1"),
             "Expected error about edit 1 failing, got: {error}"
         );
-        // Ensure that first edit was applied successfully and that we saved the buffer
+        // zed-kask: D78 — upstream kept edit 1 applied and saved after edit 2
+        // failed. The fork restores the pre-call text: a failed call changes
+        // nothing, and the error says so.
         assert_eq!(input_path, Some(PathBuf::from("root/file.txt")));
-        assert_eq!(
-            diff,
-            "@@ -1,3 +1,3 @@\n-line 1\n+MODIFIED\n line 2\n line 3\n"
-        );
+        assert!(error.contains("No edits were applied"), "{error}");
+        assert_eq!(diff, "");
+        let buffer_text = buffer.read_with(cx, |buffer, _cx| buffer.text());
+        assert_eq!(buffer_text, "line 1\nline 2\nline 3\n");
     }
 
     #[gpui::test]
