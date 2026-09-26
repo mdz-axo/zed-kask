@@ -8,13 +8,27 @@ description: "Generate Mermaid diagrams from code using Diataxis methodology. Su
 
 Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a convergent PDCA loop: classify the target and diagram type, extract entities from source, generate Mermaid syntax, evaluate against Diataxis quality criteria, and iterate until convergence. Supports five core diagram types (ERD, flowchart, state, sequence, class) and fourteen extended types (architecture, block, radar, treemap, sankey, kanban, gantt, pie, gitgraph, mindmap, timeline, quadrant, xychart, journey). All diagrams render natively in Zed.
 
+## Initial and target condition
+
+- **Initial condition:** the target, the source files read, and the extracted entity and relationship lists (step 2).
+- **Target condition:** every extracted entity appears in the diagram (`lisp_eval` check, step 5); the parse check passes, or the output says `parse unverified`; the written file carries a `DIAGRAM_ALIGNMENT` block; the requester accepts the quadrant voice.
+
+## Step types
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| 1 Classify, 2 Extract, 3 Generate | P | step 5 checks; the requester |
+| 4 Evaluate | P | an estimate that chooses refinement directives; not a gate |
+| 5 Check | D | `lisp_eval` completeness; `mmdc` exit code when installed |
+| 6 Write, 7 Present | D | `render_template` |
+
 ## When to Use
 
 - You need to generate a Mermaid diagram from source code, SQL schemas, or documentation
 - You need to visualize database schemas (ERD), control flow (flowchart), state machines (state), service interactions (sequence), type hierarchies (class), system topology (architecture), module boundaries (block), capability profiles (radar), hierarchical quantities (treemap), weighted flows (sankey), task boards (kanban), timelines (gantt, timeline), distributions (pie), commit history (gitgraph), concept maps (mindmap), strategic matrices (quadrant), performance data (xychart), or user journeys (journey)
 - Documentation should follow Diataxis methodology with quadrant-appropriate voice (reference, explanation, how-to, tutorial)
 - Diagrams must render natively in Zed's markdown preview
-- You want iterative quality convergence — diagrams are scored and refined until they meet a quality threshold (≤ 0.15 weighted total across six criteria)
+- You want iterative refinement — diagrams are checked for completeness and parse errors and refined for up to 3 iterations
 
 ## When NOT to Use
 
@@ -31,11 +45,11 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 
 3. **Generate Mermaid syntax.** Convert extracted entities and relationships into valid Mermaid source. Apply type-specific conventions: Crow's Foot cardinality (`||--||`, `||--o{`, `}o--o{`) for ERDs; node shapes (`[rectangle]`, `{rhombus}`, `([rounded])`) for flowcharts; `[*]` start/end markers and transition labels for state diagrams; `participant`, `->>`, `-->>`, and block constructs (`alt`, `loop`, `opt`, `par`) for sequences; `<<interface>>` and `<<enumeration>>` markers with `<|--`, `o--`, `..>` relationships for class diagrams; `service`/`junction`/`group` notation with port-based edges for architecture; `columns` and nested `block` syntax for block diagrams; `axis`/`curve` notation for radar; indentation-based hierarchy with `"label": value` for treemap; `sankey-beta` CSV edges with front-matter config for sankey; `kanban` column/task notation with `@{}` metadata for kanban; `gantt` sections with date/duration syntax for gantt; `pie` slices for pie; `gitGraph` branch/commit/merge for gitgraph; `mindmap` root and indentation for mindmap; `timeline` sections and events for timeline; `quadrantChart` axes and points for quadrant; `xychart-beta` axes and series for xychart; `journey` sections and scored tasks for journey. Respect Zed rendering constraints — no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR`. Use the `-beta` suffix where required (`architecture-beta`, `radar-beta`, `treemap-beta`, `sankey-beta`, `xychart-beta`; `block-beta` and `block` are both accepted). Output only Mermaid source without markdown fences. Apply refinement directives from previous evaluation if present.
 
-4. **Evaluate against Diataxis criteria.** Score the generated diagram on six weighted dimensions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Score each criterion from 0 (perfect) to 1 (severely deficient). Be honest — inflated scores produce worse diagrams, not better ones. Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix. Do not emit directives for criteria scored at 0.00.
+4. **Evaluate against Diataxis criteria.** Score the generated diagram on six weighted dimensions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Score each criterion from 0 (perfect) to 1 (severely deficient). Compute the weighted total in `lisp_eval` (`(+ (* c1 0.30) (* c2 0.25) (* c3 0.15) (* c4 0.15) (* c5 0.10) (* c6 0.05))`), never by hand. The total is the model's estimate of its own diagram, used only to choose what to refine; it is not a stop condition. Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix. Do not emit directives for criteria scored at 0.00.
 
-5. **Check convergence.** Compute the normalized convergence metric from the evaluation's weighted total. Threshold is 0.15 — a metric of ≤ 0.15 means CONVERGED. Range 0.16–0.25 is NEAR (one more iteration should resolve). Range 0.26–0.50 is DRIFTING (refinement directives should target specific weaknesses). Above 0.50 is DIVERGED (consider re-classifying diagram type). Maximum 3 iterations.
+5. **Check (external, not self-scored).** (a) Completeness: call `lisp_eval` with `entities` (the extracted entity IDs) and `source` (the Mermaid text) and the form `(begin (define missing (lambda (es) (if (= (length es) 0) (list) (if (string-contains (car es) source) (missing (cdr es)) (cons (car es) (missing (cdr es))))))) (missing entities))`; an empty list passes. (`string-contains` takes the needle first.) (b) Parse: if `which mmdc` succeeds, write the source to a scratch file and require `mmdc -i <file> -o /tmp/diagram.svg` to exit 0; otherwise record `parse unverified` and rely on the user's rendered preview. (c) Invented nodes: list diagram nodes absent from the extraction; this list is model-produced, so report it rather than gate on it. If (a) or (b) fails, return to step 3 with the missing entities or the parser error as directives. Maximum 3 iterations; after the third, write the diagram with the failed checks listed in its description.
 
-6. **Write the final diagram.** Wrap the Mermaid source in a markdown file with a title and a plain-English description paragraph keyed to the target Diataxis quadrant's voice: austere and factual for reference, discursive and contextual for explanation, direct and actionable for how-to, encouraging and concrete for tutorial. Include cross-links to at least one related document using relative links from the `docs/diagrams/` directory. Output to `docs/diagrams/{diagram_type}-{target_slug}.md` where the target slug is lowercased with hyphens, ≤ 40 characters.
+6. **Write the final diagram.** Wrap the Mermaid source in a markdown file with a title and a plain-English description paragraph keyed to the target Diataxis quadrant's voice: austere and factual for reference, discursive and contextual for explanation, direct and actionable for how-to, encouraging and concrete for tutorial. Include cross-links to at least one related document using relative links. Output to a caller-supplied path; for this repo's docs, append to the matching consolidated file in `kask/docs/diagrams/` (for example `architecture.md`) rather than creating a per-diagram file. Every diagram carries a `DIAGRAM_ALIGNMENT` block (unique id, `verified_date`, `verified_against` source files, `status`), which `kask/docs/DIAGRAMS_INDEX.md` indexes.
 
 7. **Surface the diagram.** The write step produces `{file_path, file_content, description_paragraph}` as JSON. A final `render` step (`present-diagram.j2`, Rendering template — deterministic, no LLM call) flattens the `file_content` field into a raw string, which becomes the process's final output. This ensures the fenced ```mermaid block reaches the chat stream — without it, the diagram stays buried inside a JSON object field that the model must discover and extract.
 
@@ -60,8 +74,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Entity IDs must be alphanumeric with underscores — no spaces, dashes, or special characters
 - Output Mermaid source must parse without errors in Mermaid.js
 - Generate step outputs only Mermaid source — no markdown fences (write step handles wrapping)
-- Maximum 3 iterations before forced convergence exit
-- Convergence threshold: 0.15 weighted total across six Diataxis criteria
+- Maximum 3 iterations; after the third, deliver with the failed checks listed
+- The six-criterion weighted total is a labelled estimate, computed in `lisp_eval`; it chooses refinements and never gates
 - All diagrams must include at least one cross-link to related documentation
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - **Visual artifact surfacing** — the `present-diagram.j2` render step (rendering template) must be the process's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{file_path, file_content}` object.
