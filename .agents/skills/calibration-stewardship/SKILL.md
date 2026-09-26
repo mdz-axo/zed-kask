@@ -11,6 +11,12 @@ only as good as the observations feeding it — and the honest observation
 is the price the scanner FIRST saw, never the post-resolution price.
 This skill is the maintenance procedure for that loop.
 
+## Reference models
+
+Brier (1950) — `onto_anchor` → derived `brier_score`; calibration in Tetlock & Gardner's sense (2015) — derived `forecast_calibration`: stated confidences match observed frequencies across many resolved cases.
+
+**D/P labelling.** Every tool call and the Convergence gate are D (the server computes snapshots, Brier and tiers; `lisp_eval` evaluates the gate). The cadence recommendation is P and is the operator's decision. The one judgment input that is not tool-produced — an operator's own pre-resolution observation in Phase 3 — is recorded as the operator's, never inferred.
+
 ## When to Use
 
 - Periodic stewardship of the calibration store (the operator asks for
@@ -85,11 +91,17 @@ this skill manages.
 
 ### Phase 4 — Verify the act arm
 
-7. Call `market_lookup` for a market in a bucket you expect to be
-   demoted (Brier > 0.25). Verify the record's reliability tier
-   reflects the demotion. If a bucket's Brier is poor but its records
-   still read high-reliability, report the discrepancy — the demotion
-   gate may not be firing.
+7. The server's demotion rule (`reliability_tier`,
+   `hkask-mcp-prediction-markets/src/types.rs`) fires only when the
+   bucket is not stale, has ≥ 5 resolved markets, and Brier > 0.25; it
+   lowers High to Medium and leaves Medium and Low unchanged. Pick a
+   bucket that meets all three from Phase 2, and call `market_lookup`
+   for a market in it whose volume and spread would otherwise rate
+   High (volume ≥ 50,000, spread ≤ 0.04). That record should read
+   Medium; if it reads High, report the discrepancy — the demotion gate
+   is not firing. A Medium or Low record in a poor bucket is not
+   evidence either way. If no bucket meets the three conditions, the
+   act arm is untested this run — say so, do not report it verified.
 
 ### Convergence
 
