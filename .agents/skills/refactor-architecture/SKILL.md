@@ -17,6 +17,11 @@ End-to-end architecture refactoring skill. Merges the discovery phase (formerly 
 
 Includes the migration-strategy phase (folded from the standalone `strangler-fig` skill). Composes `tdd`, `coding-guidelines`, `pragmatic-semantics`, `deep-module`, `essentialist`, and `pragmatic-cybernetics` as methodological guidance.
 
+## Initial and target condition
+
+- **Initial condition:** the selected friction's concrete reaching paths, current interfaces/callers, observed behavior and the user's stated reason to change it. Exploration without a selected candidate remains advisory, not migration authority.
+- **Target condition:** the same user-visible behavior reaches every affected surface through the agreed deeper interface; the selected friction is measurably reduced (locality, leverage or testability), dependency direction holds and duplicate business logic is gone. Tests and builds are necessary checks, not proof the original friction disappeared.
+
 ## When to Use
 
 - When architectural friction is suspected in a codebase — shallow modules, tight coupling, missing locality, wide import surfaces, or code that is hard to test through its current interface.
@@ -67,7 +72,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 ### ra-route
 
-1. Route the deepened design to the correct follow-up based on the decision signal.
+1. Route only an explicit `proceed_to_refactor`, `need_more_data`, or `defer_or_reject` signal. An absent/unknown decision is `invalid` and asks the user; it is not a silent rejection.
 2. If proceeding to refactor: continue to the audit phase (ra-audit) to classify duplication and plan the strangler-fig migration.
 3. If more data is needed: recommend the `diagnose` skill, and specify what measurements are needed, how to instrument, and what thresholds would confirm or refute the hypothesis.
 4. If deferring or rejecting: produce a decision summary with reasoning, and if a load-bearing reason was given, recommend recording it as an ADR with a suggested title and body.
@@ -83,12 +88,12 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 ### ra-strangle
 
-1. Write one failing test per service operation at the confirmed seam, verifying a user-grounded expectation with an independent oracle. Use `ServiceContext` where the service requires it.
+1. Discover the real service and surface packages/paths before rendering `ra-strangle`, passing the selected `target_condition` alongside the observed paths. Write one failing test per service operation at the confirmed seam with an independent oracle; use only the service's existing dependency/context API.
 2. Implement the minimal code to pass the test, calling domain crates directly and returning domain types.
-3. Wire the CLI adapter to call the service operation and format terminal output, deleting duplicate business logic from the CLI command file.
-4. Wire the API adapter to call the same service operation and serialize to JSON, deleting duplicate business logic from the API route file.
-5. Delete all remaining duplicated business logic from both surfaces so they contain only I/O framing.
-6. Verify the full workspace by running `cargo check`, `cargo test`, and `cargo clippy` across all crates.
+3. Wire the CLI adapter to call the service operation and format terminal output, keeping the previous logic reachable until the shared behavior is verified.
+4. Wire the API adapter to call the same service operation and serialize to JSON; verify both surfaces delegate without changing their behavior.
+5. Only after both adapters pass their behavioral checks, delete duplicated business logic from both surfaces so they contain only I/O framing.
+6. Verify affected packages and the workspace with `cargo check`, `cargo test`, and `./script/clippy`; use real package names discovered from the tree, not presumed CLI/API/service crates.
 7. Enforce one-domain-per-commit discipline, surgical change scope, and inviolable dependency direction throughout the migration.
 
 ### ra-verify
@@ -98,12 +103,8 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 3. Check P6/P7/P8 compliance by ensuring no stubs, no deprecation attributes, and that all tests verify stated behavioral properties.
 4. Run clippy and the test suite across the service, CLI, API, and workspace crates.
 5. Verify surface adapter thinness by ensuring CLI and API adapters contain only service calls, formatting, and error mapping.
-6. Produce a structured pass/fail report with evidence, including command outputs and file paths, for any failures.
-7. Close the loop: on any failing check, fix the failure and re-verify
-   (re-enter this phase). Bound: max 2 verify cycles per domain; a third
-   failure halts the domain with the failing evidence and surfaces it to
-   the operator. A passing report re-enters the cycle at ra-explore for
-   the next domain (one domain per commit).
+6. Produce a structured `pass|fail|partial` report with observed command outputs and file:line evidence. Missing evidence is `unmeasured`, not a pass.
+7. Compare the result to the initial and target conditions, not only a checklist. Before a migration, pass both as top-level context to `ra-verify`; require observed evidence that the selected friction decreased while all affected surfaces still satisfy the user's behavioral expectation. A passing build with persistent friction is `continue`, not `done`. On a failing check, fix the identified cause and re-verify at most twice for this domain; a third failure stops with its evidence. When the target passes, stop this domain. Explore another only on a new user-selected target, never automatically.
 
 ## Registry Templates
 
@@ -123,8 +124,10 @@ Template context variables (from each template's [inference] contract):
 - `ra-audit.j2`: `focus_area`,`code_context` `known_adrs`,`constraint_forces`
 - `ra-candidates.j2`: `friction_points`,`shallow_modules` `focus_area`,`known_adrs`
 - `ra-deepen.j2`: `selected_candidate`,`focus_area` `known_adrs`,`glossary_terms`
-- `ra-explore.j2`: `focus_area`,`code_context` `known_adrs`
-
+- `ra-explore.j2`: `focus_area`,`code_context`,`known_adrs`
+- `ra-route.j2`: `decision`,`deepened_design`
+- `ra-strangle.j2`: `domain`,`target_condition`,`service_module_name`,`current_cli_path`,`current_api_path`,`known_adrs`,`constraint_forces`
+- `ra-verify.j2`: `domain`,`migration_phase`,`initial_condition`,`target_condition`,`code_context`,`known_adrs`
 
 ## Constraints
 

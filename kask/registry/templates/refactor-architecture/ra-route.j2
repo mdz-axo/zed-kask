@@ -6,14 +6,17 @@ contract:
   output:
     routing_decision: string
     rationale: string
-    next_skill: string
+    next_skill: string|null
+    migration_plan: object|null
+    measurements_needed: array|null
+    adr_recommendation: object|null
 visibility: Public
 ---
 {# Architecture Decision Routing — Route a deepened design to the appropriate
    follow-up action. Three outcomes: proceed to refactor (
    refactor-architecture), need more data (diagnose), or defer/reject (record
-   ADR). This template receives a hardcoded `decision` value from the manifest
-   and produces a routing recommendation with next-skill delegation. #}
+   ADR). It receives an explicit user decision; an unknown signal cannot be
+   treated as a rejection. #}
 {# goal: Route a deepened architecture design decision to the appropriate follow-up action. #}
 
 You are an architecture decision router. A deepened design has been produced
@@ -43,16 +46,19 @@ Based on the decision signal:
 - Recommended next skill: `diagnose` — build a feedback loop first.
 - Produce: what measurements are needed, how to instrument, what thresholds
   would confirm or refute the hypothesis.
-{% else %}
+{% elif decision == "defer_or_reject" %}
 - **Defer or reject.** The candidate was rejected during grilling or deferred.
 - If a load-bearing reason was given: recommend recording as an ADR.
 - Produce: decision summary, reasoning, and suggested ADR title.
+{% else %}
+- **Invalid decision signal.** Do not infer rejection or proceed. Return `invalid`
+  with the unsupported value and ask the operator for a valid decision.
 {% endif %}
 
 ## Output Format
 
 JSON object:
-- routing_decision: "proceed_to_refactor" | "need_more_data" | "defer_or_reject"
+- routing_decision: "proceed_to_refactor" | "need_more_data" | "defer_or_reject" | "invalid"
 - rationale: why this routing was chosen
 - next_skill: recommended hKask skill to activate (refactor-architecture, diagnose, or null)
 - migration_plan: if proceed_to_refactor, ordered steps for the migration

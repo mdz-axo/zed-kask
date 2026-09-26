@@ -4,6 +4,8 @@ contract:
   input:
     domain: string
     migration_phase: string
+    initial_condition: object
+    target_condition: object
     code_context: object
     known_adrs: array
   output:
@@ -33,6 +35,13 @@ You are a service layer verification agent. After a domain migration or full ext
 
 {{ migration_phase }}
 
+## User-Grounded Initial and Target Conditions
+
+Initial: {{ initial_condition | tojson }}
+Target: {{ target_condition | tojson }}
+
+A passing build is insufficient if the original friction remains.
+
 {% if code_context %}
 ## Code Context
 
@@ -51,35 +60,26 @@ You are a service layer verification agent. After a domain migration or full ext
 
 ## Verification Checklist
 
-Run each check and report pass/fail with evidence:
+Evaluate each check against observed commands and code evidence supplied in `code_context`. This render does not execute tools; missing command output is `unmeasured`, never pass:
 
 ### 1. Dependency Direction
 
-Verify the dependency graph:
-- `hkask-cli` → `hkask-services` → domain crates (no direct CLI→domain for business logic)
-- `hkask-api` → `hkask-services` → domain crates (no direct API→domain for business logic)
-- Domain crates do NOT depend on `hkask-services`
-- No circular dependencies
-
-Evidence: `cargo tree -p hkask-services` output or import analysis.
+Verify the actual selected surfaces depend on the shared service and the service depends on domain logic, never the reverse. Discover the package names from the current Cargo manifests, and cite `cargo tree -p <actual-service-package>` or inspected imports. A missing surface, circular dependency or an unobserved graph is not a pass.
 
 ### 2. Depth Test
 
-For each module in `hkask-services`, apply the deletion test:
-- **Delete the module.** Does complexity vanish (pass-through) or reappear across N callers (earns its keep)?
-- **Count public functions.** More than 7 = shallow interface. Refactor or merge.
-- **Count public types vs functions.** More types than functions = data without behavior. Consider merging.
+For each touched module in the actual selected service crate, apply the deletion test: would removing it lose behavior and force complexity into callers, or merely remove a pass-through? Count public surface items as a review signal; more than seven is a prompt to inspect depth, **not** a mechanical shallow verdict. State behavior hidden and caller benefit before judging depth.
 
 ### 3. P6/P7/P8 Compliance
 
-- **P6 (Delete stubs):** `grep -r "todo!\|unimplemented!\|#\[deprecated\]" crates/hkask-services/` — must be empty
-- **P7 (Prefer deletion over deprecation):** No `#[deprecated]` attributes in the new crate
-- **P8 (Test with invariants):** Every `#[test]` in `hkask-services` verifies a stated behavioral property of a public seam. Tests without invariants are structural and must be rewritten or removed.
+- **P6 (Delete stubs):** inspect the touched crate for `todo!()` and `unimplemented!()`; cite the searched paths and any hits.
+- **P7 (Prefer deletion over deprecation):** inspect for new `#[deprecated]` attributes rather than leaving a compatibility path.
+- **P8 (Test with invariants):** tests at the selected service seam verify the user's stated behavioral property, not merely current implementation structure.
 
 ### 4. Clippy
 
 ```bash
-cargo clippy -p hkask-services -- -D warnings
+./script/clippy -p <actual-service-package>
 ```
 
 Must pass with zero warnings.
@@ -87,79 +87,23 @@ Must pass with zero warnings.
 ### 5. Test Suite
 
 ```bash
-cargo test -p hkask-services
-cargo test -p hkask-cli
-cargo test -p hkask-api
-cargo test --workspace
+cargo test -p <actual-service-package>
+cargo test -p <actual-cli-package>
+cargo test -p <actual-api-package>
+cargo check --workspace
 ```
 
-All must pass.
+Run scoped tests only for packages that exist and were changed, after resolving their names from the tree. Report any skipped, blocked, or failing check explicitly; run a broader suite when feasible.
 
 ### 6. Surface Adapter Thinness
 
-CLI adapters should contain only:
-- Service call (one line)
-- Terminal output formatting (println, ANSI colors)
-- Error formatting for terminal
-
-API adapters should contain only:
-- Service call (one line)
-- HTTP status code mapping from `ServiceError`
-- JSON serialization via Axum's `Json<T>`
-
-If an adapter contains business logic (state construction, domain operations, DB access), flag it as a violation.
+Inspect each actual surface adapter: it should call the selected service and translate its result into that surface's output/error format. Do not require a one-line call, a `ServiceError` type, or Axum when the project uses another interface. Duplicated domain decisions or direct storage access in the adapter are evidence of an incomplete migration; cite the reaching line.
 
 ## Output Requirements
 
-Respond with a JSON object:
+Respond with a JSON object carrying **exactly** the contract's top-level fields: `verification_report`, `depth_test_results`, `dependency_check`, `p6_p7_p8_compliance`, `clippy_result`, `test_result`, and `checklist`.
 
-```json
-{
-  "verification_report": {
-    "domain": "curator",
-    "phase": "domain_migration",
-    "overall_status": "pass|fail|partial",
-    "timestamp": "2026-06-07T00:00:00Z"
-  },
-  "depth_test_results": [
-    {
-      "module": "CuratorService",
-      "public_functions": 4,
-      "public_types": 2,
-      "deletion_test": "earns-keep",
-      "verdict": "deep|shallow"
-    }
-  ],
-  "dependency_check": {
-    "cli_to_services": true,
-    "api_to_services": true,
-    "services_to_domain_only": true,
-    "no_circular_deps": true,
-    "violations": []
-  },
-  "p6_p7_p8_compliance": {
-    "p6_no_stubs": true,
-    "p7_no_deprecated": true,
-    "p8_tests_have_invariants": true,
-    "violations": []
-  },
-  "clippy_result": "pass|fail with details",
-  "test_result": "pass|fail with details",
-  "checklist": [
-    {"item": "RED: Service operation test fails on a user-grounded expectation with an independent oracle", "status": "done|not_done"},
-    {"item": "GREEN: Minimal implementation passes test", "status": "done|not_done"},
-    {"item": "CLI wired: calls service, formats terminal output", "status": "done|not_done"},
-    {"item": "API wired: calls service, serializes JSON", "status": "done|not_done"},
-    {"item": "Both surfaces verified", "status": "done|not_done"},
-    {"item": "Duplicated logic deleted from both surfaces", "status": "done|not_done"},
-    {"item": "Workspace verified: cargo check && cargo test", "status": "done|not_done"},
-    {"item": "Deletion test passed: service module is deep", "status": "done|not_done"},
-    {"item": "Dependency direction verified: no circular deps", "status": "done|not_done"},
-    {"item": "No todo!/unimplemented!/#[deprecated]", "status": "done|not_done"},
-    {"item": "clippy clean", "status": "done|not_done"}
-  ]
-}
-```
+`verification_report` contains `domain`, `phase`, `overall_status` (`pass|fail|partial`), `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions. A build-only pass leaves the target unmeasured and overall status partial. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and P6/P7/P8 objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
 
 ## Constraints
 

@@ -94,47 +94,7 @@ Classify each design decision using the five-force hierarchy:
 
 ## Output Requirements
 
-Respond with a JSON object:
-
-```json
-{
-  "rdf_triples": [
-    {
-      "subject": "curator_escalations",
-      "predicate": "duplicates-in",
-      "object": ["cli/commands/curator.rs", "api/routes/curator.rs"],
-      "returns": "Vec<EscalationEntry> × Json<ListEscalationsResponse>",
-      "divergence": "identical|divergent|surface-only|pass-through",
-      "current_locus": "both surfaces",
-      "desired_locus": "hkask-services::curator"
-    }
-  ],
-  "classification_table": [
-    {
-      "operation": "curator_escalations",
-      "classification": "Identical",
-      "action": "Extract to CuratorService, thin adapters"
-    }
-  ],
-  "mermaid_diagram": "erDiagram ... (entity-relationship diagram of duplication landscape)",
-  "deletion_test_results": [
-    {
-      "proposed_module": "CuratorService",
-      "deleting_surface_code": "Complexity reappears in 2 callers",
-      "deleting_service_module": "Complexity vanishes — pass-through",
-      "verdict": "earns-keep|pass-through|uncertain"
-    }
-  ],
-  "constraint_force_map": [
-    {
-      "decision": "capability-match gates in domain crates",
-      "force": "Prohibition",
-      "rationale": "P1 User Sovereignty — inviolable boundary"
-    }
-  ],
-  "top_recommendation": "Which domain to migrate first and why"
-}
-```
+Respond with exactly the declared fields: `rdf_triples` (observed operation, relationship, real reaching file paths and return type), `classification_table` (operation, Identical/Divergent/Surface-only/Pass-through and supported action), `mermaid_diagram` (only observed surfaces and dependencies), `deletion_test_results` (what behavior is lost on deletion and what complexity reappears in callers), `constraint_force_map` (decision, force and actual authority), and `top_recommendation` (one evidenced migration candidate or `undetermined`). Never populate an absent path, type, crate, or service from a worked example. A proposed module that loses no behavior on deletion is a pass-through, not `earns-keep`.
 
 ## Constraints
 
