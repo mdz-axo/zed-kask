@@ -66,7 +66,9 @@ Start this route at intake for a substantive uncertain inquiry by selecting a qu
 
 ## Improvement Measure
 
-**Field**: the result of step 6's `convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
+**Gate (D)**: the Phase 6 set-based check — `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` over the measured gradient maps, with shapes named from the closed vocabulary in `gradient-shapes.yaml` so they compare as sets. **Bound**: the first map plus at most 2 prior refinements (3 maps in all). This governs the field-mapping route only; the expectation-led route above has its own bound (at most two probes per question).
+
+**Reported estimate (P, not a gate)**: the composite below is a labelled judgment for the report. No tool computes it; `field_coverage_estimate` can be read from `gradient-map`'s per-element coverage. It never decides convergence. **Threshold**: 0.25.
 
 | Score | Meaning |
 |-------|---------|
