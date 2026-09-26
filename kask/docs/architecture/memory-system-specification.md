@@ -78,7 +78,7 @@ narrative generation loop.
      lines stripped
    - Chunk: word-bounded passages (30–400 words) via
      `hkask_memory::chunk_text` — one h_mem per chunk under
-     `curator:thread:{thread_id}`, attribute `chunk:{index}`
+     `curator:thread:{thread_id}`, attribute `chunk:{turn_ms}:{index}` (turn-scoped)
    - Tag: structural 5W1H dimensions (who/when/where/how) deterministically;
      content dimensions (what/why), subjects, domain concepts, and
      expertise via one batched classifier-model call per turn
@@ -365,7 +365,7 @@ When a thread turn completes, the turn loop calls
 
 | Store | Entity | Attribute | Visibility | Content |
 | ----- | ------ | --------- | ---------- | ------- |
-| Curator store (every turn, one row per chunk) | `curator:thread:{id}` | `chunk:{index}` | Shared | Cleaned chunk text (plain string, role prefixes inline), structural + content ontology blob |
+| Curator store (every turn, one row per chunk) | `curator:thread:{id}` | `chunk:{turn_ms}:{index}` | Shared | Cleaned chunk text (plain string, role prefixes inline), structural + content ontology blob |
 | Curator store (embedding, every chunk) | `curator:thread:{id}` | — | — | Vector of the chunk text + `passage_text` = the chunk text |
 | Curator store (individual goal events, one row per event) | `curator:goal:{goal_id}` | tool name | Shared | The goal tool result JSON |
 | Curator store (embedding, every persisted goal event) | `curator:goal:{goal_id}` | — | — | Vector of deterministic `goal event {tool}: {JSON}` passage text, stored before the h_mem becomes visible |

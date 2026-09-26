@@ -1753,7 +1753,7 @@ impl CuratorServer {
     /// (entity, attribute, normalized_value), keeps highest-confidence,
     /// deletes the rest. Non-string values skipped.
     #[tool(
-        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values skipped."
+        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:/chat:thread:) skipped."
     )]
     pub async fn curator_memory_dedup(
         &self,
@@ -1781,6 +1781,7 @@ impl CuratorServer {
                 "deleted_count": outcome.deleted_count,
                 "failed_count": outcome.failed_count,
                 "skipped_non_string": outcome.skipped_non_string,
+                "skipped_turn_storage": outcome.skipped_turn_storage,
             }))
         })
         .await

@@ -1661,7 +1661,7 @@ pub(crate) mod tests {
             .query_deduped_untouched("curator:thread:test-thread")
             .expect("query should succeed");
         assert_eq!(chunks.len(), 1, "one chunk for a short turn");
-        assert_eq!(chunks[0].attribute, "chunk:0");
+        assert!(chunks[0].attribute.starts_with("chunk:") && chunks[0].attribute.ends_with(":0"));
         let text = chunks[0].value.as_str().expect("chunk value is plain text");
         assert!(text.contains("user: What is Rust?"));
         assert!(text.contains("assistant: Rust is a systems programming language."));
@@ -2437,6 +2437,33 @@ pub(crate) mod tests {
         assert_floor(&shared_goal, "shared goal copy");
     }
 
+    /// Two turns of one thread with identical text are two memories, not
+    /// duplicates: the chunk key is turn-scoped, so neither recall nor
+    /// value-dedup can collapse them.
+    #[tokio::test]
+    async fn repeated_turns_keep_distinct_chunk_keys() {
+        let port = in_memory_port();
+        let record = || TurnRecord {
+            thread_id: "repeat-thread".to_string(),
+            user_input: "continue".to_string(),
+            agent_response: "Continuing.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            goal_events: Vec::new(),
+        };
+        port.ingest_turn(record()).await.expect("first turn");
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        port.ingest_turn(record()).await.expect("second turn");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let chunks = curator_store
+            .query_deduped_untouched("curator:thread:repeat-thread")
+            .expect("query should succeed");
+        assert_eq!(chunks.len(), 2, "both turns are recalled: {chunks:?}");
+        assert_ne!(chunks[0].attribute, chunks[1].attribute);
+    }
+
     #[tokio::test]
     async fn ingest_turn_chunks_are_process_anchored() {
         let port = in_memory_port();
@@ -2460,7 +2487,7 @@ pub(crate) mod tests {
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
         assert_eq!(h_mems.len(), 1, "one chunk h_mem should be stored");
-        assert_eq!(h_mems[0].attribute, "chunk:0");
+        assert!(h_mems[0].attribute.starts_with("chunk:") && h_mems[0].attribute.ends_with(":0"));
         let ontology = h_mems[0]
             .ontology
             .as_ref()
@@ -2500,7 +2527,7 @@ pub(crate) mod tests {
             1,
             "shared chunks must be stored for zed agent turns"
         );
-        assert_eq!(h_mems[0].attribute, "chunk:0");
+        assert!(h_mems[0].attribute.starts_with("chunk:") && h_mems[0].attribute.ends_with(":0"));
 
         // The curator-perspective h_mem (chat:thread:...) must NOT exist —
         // that's the curator's own memory of its own turn, not a zed agent
@@ -3587,7 +3614,7 @@ pub(crate) mod tests {
             .query_deduped_untouched("curator:thread:curator-thread-1")
             .expect("chunk query should succeed");
         assert_eq!(chunks.len(), 1, "one shared chunk h_mem");
-        assert_eq!(chunks[0].attribute, "chunk:0");
+        assert!(chunks[0].attribute.starts_with("chunk:") && chunks[0].attribute.ends_with(":0"));
 
         let perspective = curator_store
             .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)

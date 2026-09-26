@@ -13,8 +13,8 @@
 //! corpus pipeline (chunk → embed → tag) with an added cleaning step, and a
 //! single shared copy per turn (the former curator-perspective duplicate copy
 //! was removed by the same ruling). Each chunk is one bounded h_mem under the
-//! thread entity `curator:thread:{thread_id}` with attribute `chunk:{index}`,
-//! its own embedding (stored with `passage_text` so KNN results pinpoint the
+//! thread entity `curator:thread:{thread_id}` with attribute `chunk:{turn_ms}:{index}` (turn-scoped:
+//! the chunk index alone repeats every turn), its own embedding (stored with `passage_text` so KNN results pinpoint the
 //! matched chunk), and a content-derived ontology blob. Raw transcript dumps —
 //! the 500KB single-value rows the 2026-09-04 therapy scan found — are gone.
 
@@ -557,7 +557,9 @@ pub(crate) async fn write_turn(
 
         let chunk_h_mem = HMem::new(
             &entity,
-            &format!("chunk:{index}"),
+            // The turn is part of the key: `chunk:{index}` alone repeats in
+            // every turn of a thread, so distinct turns looked like duplicates.
+            &format!("chunk:{turn_ms}:{index}"),
             serde_json::Value::String(chunk_text.clone()),
             ctx.curator_webid,
         )

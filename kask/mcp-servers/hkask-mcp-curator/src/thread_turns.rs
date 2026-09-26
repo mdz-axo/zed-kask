@@ -10,7 +10,7 @@
 //!   **every turn**, curator and non-curator alike. Since the
 //!   2026-09-04 single-copy ruling, a turn's content is stored as
 //!   cleaned, tagged chunk h_mems under this entity (attribute
-//!   `chunk:{index}`); legacy rows under the same entity carry the old
+//!   `chunk:{turn_ms}:{index}`; older rows `chunk:{index}`); legacy rows under the same entity carry the old
 //!   whole-turn `turn` attribute. Discovery is attribute-agnostic —
 //!   both shapes are extraction candidates.
 //!

@@ -119,6 +119,9 @@ pub struct DedupOutcome {
     pub failed_count: usize,
     /// Non-string h_mems skipped (structural dedup is the EAV path's job).
     pub skipped_non_string: usize,
+    /// Turn-storage h_mems skipped: repeated turn text is a repeated turn,
+    /// not a duplicate fact.
+    pub skipped_turn_storage: usize,
 }
 
 /// Normalize a string value for near-duplicate comparison: lowercase,
@@ -150,6 +153,9 @@ fn normalize_value(value: &str) -> String {
 ///
 /// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
 pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
+
+/// Entity prefixes holding conversation-turn storage, not knowledge facts.
+const TURN_STORAGE_PREFIXES: [&str; 2] = ["curator:thread:", "chat:thread:"];
 
 /// Unified memory store — one store for all h_mems.
 ///
@@ -1090,6 +1096,8 @@ impl MemoryStore {
     /// deleted. Returns the count of deleted duplicates.
     /// Scans all stored h_mems (no perspective filter)
     /// — the curator's memory is a single store and dedup is global.
+    /// Turn-storage entities (`curator:thread:` / `chat:thread:`) are
+    /// excluded and counted in `skipped_turn_storage`.
     pub fn dedup_by_normalized_value(
         &self,
         limit: usize,
@@ -1100,8 +1108,16 @@ impl MemoryStore {
         let mut groups: std::collections::HashMap<(String, String, String), Vec<&HMem>> =
             std::collections::HashMap::new();
         let mut skipped_non_string = 0usize;
+        let mut skipped_turn_storage = 0usize;
 
         for h_mem in &h_mems {
+            if TURN_STORAGE_PREFIXES
+                .iter()
+                .any(|prefix| h_mem.entity.starts_with(prefix))
+            {
+                skipped_turn_storage += 1;
+                continue;
+            }
             let Some(value_str) = h_mem.value.as_str() else {
                 skipped_non_string += 1;
                 continue;
@@ -1152,6 +1168,7 @@ impl MemoryStore {
             deleted = deleted_count,
             failed = failed_count,
             skipped_non_string,
+            skipped_turn_storage,
             "Normalized-value dedup complete"
         );
 
@@ -1161,6 +1178,7 @@ impl MemoryStore {
             deleted_count,
             failed_count,
             skipped_non_string,
+            skipped_turn_storage,
         })
     }
 
@@ -1552,6 +1570,25 @@ mod tests {
             2,
             "one AAPL variant + MSFT survive; two AAPL variants deleted"
         );
+    }
+
+    /// Repeated turn text is a repeated turn: value-dedup must not delete it
+    /// (Phase B 2026-09-26 removed two such rows as "duplicates").
+    #[test]
+    fn dedup_skips_turn_storage() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "curator:thread:t1", "chunk:0", "continue", webid);
+        store_h_mem(&store, "curator:thread:t1", "chunk:0", "continue", webid);
+
+        let outcome = store.dedup_by_normalized_value(1000).expect("dedup");
+        assert_eq!(outcome.deleted_count, 0);
+        assert_eq!(outcome.skipped_turn_storage, 2);
+        let remaining = store
+            .h_mem_store
+            .query_by_entity("curator:thread:t1")
+            .expect("query");
+        assert_eq!(remaining.len(), 2, "both turns survive");
     }
 
     #[test]
