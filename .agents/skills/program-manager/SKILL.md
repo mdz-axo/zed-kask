@@ -71,6 +71,22 @@ each one structurally impossible to repeat:
    implementation is the code agreeing with itself. (Operator-reported
    failure class, 2026-09-08.)
 
+## Initial and target condition
+
+- **Initial condition:** the Phase 0 outputs — recalled curator memory, the recovered spec (or the operator's statement that none exists), and `git status` / `git log` tree state.
+- **Target condition:** the six Convergence items hold; item 6 is decided by the Phase 5 `lisp_eval` ledger form returning `green`.
+
+## Step types
+
+| Phase | Type | Oracle / critique |
+|-------|------|-------------------|
+| 0 Orient | D | `curator_memory_recall`, `git log`/`git status` |
+| 1 Charter, 2 Design | P | the operator, on every experience-changing choice |
+| 3 Execute | D | compiler, tool receipts; Phase 3 timebox |
+| 4 Verify | D | the run validation command and its output; `./script/clippy`; `lisp_eval` for counts |
+| 5 Close: ledger score | D | `lisp_eval` ledger form |
+| 5 Close: goal judgment | P | `kanban_goal_score` Brier against the operator's ground truth |
+
 ## When to Use
 
 - Any task that adds, changes, or deletes code, config, scripts, or
@@ -236,7 +252,9 @@ each one structurally impossible to repeat:
    form: `(let ((count-token (lambda (items token) (if (= 0 (length items)) 0 (+ (if (member token (car items)) 1 0) (count-token (cdr items) token)))))) (let ((abandoned (count-token findings "reported-abandoned")) (unowned (count-token findings "owner:none"))) (if (and (= abandoned 0) (= unowned 0)) (quote green) (quote red))))`
    env: `{ "findings": <the open-items ledger as flat lists> }`
    `red` → return to Phase 1 and give every red item a closure path
-   before reporting. (`member` is the string-equality primitive —
+   before reporting. Each return counts toward the Phase 3 timebox: a
+   ledger still `red` with no new state after its second return stops,
+   and the red items go to the operator as `operator-decision` items. (`member` is the string-equality primitive —
    `assoc`/`eq` compare identity and silently miss env-provided
    strings; this form is validated live in both directions.)
 6. When the operator confirms the outcome, resolve the goal
