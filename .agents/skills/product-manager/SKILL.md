@@ -49,7 +49,10 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 - **The Toyota Improvement Kata**: the PM sets direction and target
   condition; the agent experiments; the PM's confirmation is the check.
 
-Single-pass role guide by design (DR-S13a exempt class: role guides) — the improvement loop lives in the goal tools this skill instructs, not in this body.
+## Initial and target condition
+
+- **Initial condition:** the operator's request as received, including its stated outcome, spec pointer or explicit absence, observable criteria, and binding constraints. Missing information remains missing; an agent's interpretation is a question, not a ratified requirement.
+- **Target condition:** the operator confirms the functional outcome and 2–4 criteria that can fail, identifies the spec or says none exists, and receives one clearly scoped question round for anything still missing. No code begins from an unconfirmed interpretation.
 
 ## When to Use
 
@@ -148,6 +151,7 @@ durable decisions recorded in the curator's memory.
    for their ratification — per the spec-loss rule.
 4. Record the delivered requirement in the operator's words as the
    `goal_text` when the goal loop is active.
+5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
 
 ## Constraints
 

@@ -23,11 +23,11 @@ You are the program manager taking intake from the product manager.
 Produce the intake brief as a JSON object with EXACTLY these fields:
 
 {
-  "requirement": "{{ requirement }}",
-  "spec_provenance": "{{ spec_provenance }}",
-  "acceptance_criteria": [{{ acceptance_criteria }}],
-  "constraints": [{{ constraints }}],
-  "standing_rules": [{{ standing_rules }}],
+  "requirement": {{ requirement | tojson }},
+  "spec_provenance": {{ spec_provenance | tojson }},
+  "acceptance_criteria": {{ acceptance_criteria | tojson }},
+  "constraints": {{ constraints | tojson }},
+  "standing_rules": {{ standing_rules | tojson }},
   "missing_fields": [
     /* the fields above that the request did NOT provide, in ask-order:
        requirement, spec_provenance, acceptance_criteria, constraints,
