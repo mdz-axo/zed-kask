@@ -1,4 +1,4 @@
-{# goal: Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. #}
+{# goal: Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces raw weights and raw scores; normalization, composites and ranking are computed by lisp_eval. #}
 [inference]
 contract:
   input:
@@ -8,8 +8,7 @@ contract:
     weighting_method: string
   output:
     weights: array
-    normalized_scores: array
-    composite_scores: array
+    raw_scores: array
 visibility: Public
 ---
 
@@ -42,7 +41,7 @@ You are a decision analysis specialist. Your task is to assign weights to criter
 Assign swing weights: imagine all criteria at their worst level. The criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight. Normalize so weights sum to 1.0.
 {% else %}
 ### Direct Weighting
-Assign weights directly reflecting the relative importance of each criterion. Normalize so weights sum to 1.0. Justify each weight assignment.
+Assign weights directly reflecting the relative importance of each criterion. Justify each weight assignment. (Normalization to 1.0 is computed downstream.)
 {% endif %}
 
 ## Scoring Method
@@ -51,14 +50,11 @@ For each alternative on each criterion:
 1. Assign a raw score on a **0–10 scale** where:
    - For **benefit** criteria: 0 = worst, 10 = best
    - For **cost** criteria: 0 = most costly, 10 = least costly (already inverted)
-2. Normalize scores to 0–1 range: `normalized = raw / 10`
+2. Normalized score is `raw / 10` (computed downstream).
 
-## Composite Score Calculation
+## Composite Score Calculation (not done here)
 
-Use the **weighted sum model**:
-```
-composite_score(A) = Σ (weight_i × normalized_score(A, i))
-```
+Report raw weights and raw scores only. Normalization, the weighted-sum composite `Σ (weight_i × normalized_score(A, i))` and the ranking are computed by `lisp_eval` in the SKILL.md weight-and-score step. Any composite or rank you emit is ignored.
 
 ## Output
 
@@ -67,26 +63,18 @@ Respond with a JSON object containing:
 ```json
 {
   "weights": [
-    {"criterion": "...", "weight": 0.0, "rank": 1}
+    {"criterion": "...", "weight": 0.0, "justification": "..."}
   ],
-  "normalized_scores": [
-    {"alternative": "...", "criterion": "...", "raw_score": 0, "normalized_score": 0.0}
-  ],
-  "composite_scores": [
-    {"alternative": "...", "composite_score": 0.0, "rank": 1}
+  "raw_scores": [
+    {"alternative": "...", "criterion": "...", "raw_score": 0, "rationale": "..."}
   ]
 }
 ```
 
-- Weights must sum to exactly 1.0
-- Composite scores must be in [0, 1]
-- Rank alternatives by composite_score descending (rank 1 = best)
-
 ## Constraints
 
-- Weights must sum to exactly 1.0 — verify before output
-- All raw scores must be in [0, 10], all normalized scores in [0, 1]
-- If two alternatives have identical composite scores, assign the same rank and skip the next rank
+- Weights must be non-negative and not all zero
+- All raw scores must be in [0, 10]
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
 - Preserve the original prompt structure and formatting
 - Handle missing variables gracefully (leave as-is or use default if specified)

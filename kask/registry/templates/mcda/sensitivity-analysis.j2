@@ -6,11 +6,11 @@ contract:
     ranking: array
     weights: array
     normalized_scores: array
-  output:
-    perturbation_results: array
-    rank_reversals: array
-    decision_robustness: string
+    min_flip: number|string
     critical_weights: array
+  output:
+    decision_robustness: string
+    critical_weight_implications: array
     recommendation: string
 visibility: Public
 ---
@@ -43,14 +43,9 @@ You are a decision analysis specialist. Your task is to perform sensitivity anal
 
 ## Sensitivity Analysis Method
 
-### Step 1: One-at-a-Time (OAT) Perturbation
+### Step 1: One-at-a-Time (OAT) Perturbation (computed, not estimated)
 
-For each criterion weight, perturb it by **±10%** of its current value:
-- Increase weight by 10%: `w_new = w × 1.10`
-- Decrease weight by 10%: `w_new = w × 0.90`
-- Renormalize all weights so they sum to 1.0 after perturbation
-- Recompute composite scores with perturbed weights
-- Check if the top-ranked alternative changes (rank reversal)
+The perturbation grid, renormalization, recomputed composites and `min_flip` (the smallest one-weight relative change that flips the top choice) are computed by `lisp_eval` in the SKILL.md sensitivity-analysis step and supplied to you as `min_flip` and `critical_weights`. Do not recompute them. Your task is interpretation: what the critical weights mean for the decision, and whether correlated criteria make OAT understate sensitivity.
 
 ### Step 2: Identify Critical Weights
 
@@ -61,10 +56,10 @@ A weight is **critical** if perturbing it causes the top choice to flip. Record:
 
 ### Step 3: Classify Robustness
 
-Based on rank reversal behavior:
-- **Robust**: No rank reversal at ±10% perturbation — the top choice is stable under reasonable weight uncertainty
-- **Moderate**: Rank reversal occurs but only when weight changes exceed ±5% — the decision is stable enough to act on, but note the critical weights
-- **Fragile**: Rank reversal occurs with weight changes less than ±5% — the decision is highly sensitive to weight assignment; recommend further investigation before committing
+Copy the classification the SKILL.md step derived from `min_flip`:
+- **Robust**: no flip at any change ≤ 10%
+- **Moderate**: smallest flip is above 5% and ≤ 10% — stable enough to act on; note the critical weights
+- **Fragile**: a flip at a change ≤ 5% — highly sensitive to weight assignment; recommend further investigation before committing
 
 ## Output
 
@@ -72,46 +67,17 @@ Respond with a JSON object containing:
 
 ```json
 {
-  "perturbation_results": [
-    {
-      "criterion": "...",
-      "direction": "+10%|-10%",
-      "perturbed_weight": 0.0,
-      "new_ranking": [
-        {"rank": 1, "alternative": "...", "composite_score": 0.0}
-      ],
-      "top_choice_changed": true
-    }
-  ],
-  "rank_reversals": [
-    {
-      "criterion": "...",
-      "direction": "+10%|-10%",
-      "original_top": "...",
-      "new_top": "..."
-    }
-  ],
   "decision_robustness": "robust|moderate|fragile",
-  "critical_weights": [
-    {
-      "criterion": "...",
-      "current_weight": 0.0,
-      "reversal_threshold_pct": 0.0,
-      "direction": "+|-",
-      "implication": "..."
-    }
+  "critical_weight_implications": [
+    {"criterion": "...", "implication": "..."}
   ],
   "recommendation": "..."
 }
 ```
 
-If no rank reversals are detected at ±10%, set `rank_reversals` to `[]` and `critical_weights` to `[]`.
-
 ## Constraints
 
-- Perturbation is ±10% of the weight's current value, not ±10 percentage points
-- Always renormalize weights after perturbation so they sum to 1.0
-- The robustness classification must be consistent with the perturbation results
+- The robustness classification must equal the one derived from the supplied `min_flip`
 - The recommendation should address whether to proceed, gather more data, or restructure criteria
 
 **Note on correlated criteria:** if the criteria independence check from Stage 1 identified dependent criterion pairs (correlation >0.7), the standard OAT perturbation underestimates true sensitivity for correlated criteria. In that case, warn the user and suggest a combined perturbation test where both correlated weights are shifted simultaneously in the same direction to capture their joint effect on the ranking.

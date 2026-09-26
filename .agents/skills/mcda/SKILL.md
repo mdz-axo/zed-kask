@@ -9,6 +9,35 @@ description: "Multi-Criteria Decision Analysis. Identifies decision criteria, we
 Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scores alternatives, ranks options with compensation masking detection, and performs sensitivity analysis to assess decision robustness.
 
 
+## Reference models
+
+Belton & Stewart, *Multiple Criteria Decision Analysis: An Integrated Approach* (2002) — weighted-sum value model and sensitivity analysis; Keeney & Raiffa, *Decisions with Multiple Objectives* (1976) — swing weighting. `onto_anchor` reaches only the 5W1H core for "multi-criteria decision analysis" (coarse; no operator ruling yet).
+
+**D/P labelling.** Criteria, classification, weights and raw scores are P (judgment; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, perturbation and robustness class are D (`lisp_eval`, helpers below). The compensation-masking check is D once scores and weights exist.
+
+## Initial and target condition
+
+- **Initial condition:** the decision question, the enumerated alternatives, and any operator-fixed weights or veto criteria.
+- **Target condition:** a ranking whose robustness class is `robust` or `moderate`, with every compensation warning reported — or, after the bound, a fragile ranking reported with its critical weights for the operator to decide.
+
+## Deterministic helpers (`lisp_eval`)
+
+Prepend these to each form. They compute over the weights and scores supplied; they do not vouch for those judgments.
+
+```lisp
+(define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l))))))
+(define scale (lambda (l k) (if (is_null l) (quote ()) (cons (* (car l) k) (scale (cdr l) k)))))
+(define norm (lambda (w) (scale w (/ 1 (sum w)))))
+(define dot (lambda (a b) (if (is_null a) 0 (+ (* (car a) (car b)) (dot (cdr a) (cdr b))))))
+(define bump (lambda (w i k) (if (is_null w) (quote ()) (cons (if (= i 0) (* (car w) k) (car w)) (bump (cdr w) (- i 1) k)))))
+(define argmax (lambda (w alts) (let ((best (lambda (as i bi bv) (if (is_null as) bi (let ((v (dot (norm w) (car as)))) (if (> v bv) (best (cdr as) (+ i 1) i v) (best (cdr as) (+ i 1) bi bv))))))) (best alts 0 -1 -1))))
+(define top (argmax W ALTS))
+(define flips (lambda (d) (let ((chk (lambda (i) (if (= i (length W)) 0 (if (or (!= (argmax (bump W i (+ 1 d)) ALTS) top) (!= (argmax (bump W i (- 1 d)) ALTS) top)) 1 (chk (+ i 1))))))) (chk 0))))
+(define scan (lambda (ds) (if (is_null ds) "none" (if (= (flips (car ds)) 1) (car ds) (scan (cdr ds))))))
+```
+
+env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of normalized scores (`raw / 10`) in criterion order. Composites: `(dot (norm W) <alt>)`. `min_flip`: `(scan (quote (0.01 0.02 0.03 0.05 0.1)))` — the smallest relative one-weight change that flips the top choice, or `"none"` within 10%. `argmax` keeps the first alternative on ties; report ties explicitly.
+
 ## When to Use
 
 - When a decision question involves multiple alternatives and you need to enumerate, classify (benefit or cost), and validate the independence of decision criteria before weighting.
@@ -40,16 +69,16 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 1. Assign weights to criteria using the specified weighting method (direct or swing).
 2. For swing weighting: imagine all criteria at their worst level; the criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight.
 3. For direct weighting: assign weights directly reflecting the relative importance of each criterion and justify each assignment.
-4. Normalize weights so they sum to exactly 1.0 and verify before output.
+4. (D) Weights are normalized by `(norm W)` in `lisp_eval`; the render's own normalization is not used.
 5. For each alternative on each criterion, assign a raw score on a 0–10 scale (benefit: 0 = worst, 10 = best; cost: 0 = most costly, 10 = least costly, already inverted).
-6. Normalize scores to 0–1 range: `normalized = raw / 10`.
-7. Compute composite scores using the weighted sum model: `composite_score(A) = Σ (weight_i × normalized_score(A, i))`.
-8. Rank alternatives by composite score descending (rank 1 = best).
+6. (D) Normalize scores to 0–1: `normalized = raw / 10`.
+7. (D) Compute composites with `lisp_eval` `(dot (norm W) <alt>)` for each alternative — the weighted sum model.
+8. (D) Rank alternatives by composite descending (rank 1 = best).
 9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
 
 ### rank-alternatives
 
-1. Rank alternatives by composite score, consistent with the `composite_scores` input — do not re-rank arbitrarily.
+1. Render `mcda/rank-alternatives` with the `lisp_eval` composites as `composite_scores` and `raw / 10` values as `normalized_scores`; rank consistent with that input — do not re-rank arbitrarily.
 2. Identify the top choice by composite score.
 3. For the top-ranked alternative, identify any criterion where the normalized score is below the danger threshold (default 0.3 out of 1.0).
 4. Check whether that criterion is critical (weight >0.1 or marked as essential by the decision question).
@@ -59,21 +88,19 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 ### sensitivity-analysis
 
-1. For each criterion weight, perturb it by ±10% of its current value (increase: `w_new = w × 1.10`; decrease: `w_new = w × 0.90`).
-2. Renormalize all weights so they sum to 1.0 after perturbation.
-3. Recompute composite scores with the perturbed weights.
-4. Check if the top-ranked alternative changes (rank reversal) for each perturbation.
-5. Identify critical weights — those where perturbation causes the top choice to flip — and record which weight, perturbation direction, and the new top choice.
-6. Classify robustness as **robust** (no rank reversal at ±10%), **moderate** (reversal only when weight changes exceed ±5%), or **fragile** (reversal with weight changes less than ±5%).
-7. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
-8. Provide a recommendation addressing whether to proceed, gather more data, or restructure criteria.
+1. (D) Compute `min_flip` with `lisp_eval` (helpers above): each weight is perturbed one at a time by ±1%, 2%, 3%, 5% and 10% of its value, renormalized, and the composites recomputed; `min_flip` is the smallest change that changes the top choice.
+2. (D) Identify critical weights: for each weight, the same grid gives the smallest change that flips the top choice, its direction, and the new top choice.
+3. (D) Classify robustness from `min_flip`: **robust** = `"none"` (no flip within 10%); **moderate** = smallest flip above 5% and at most 10%; **fragile** = a flip at 5% or less.
+4. (P) Render `mcda/sensitivity-analysis` with `min_flip` and `critical_weights` to interpret what the critical weights mean for the decision.
+5. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
+6. Provide a recommendation addressing whether to proceed, gather more data, or restructure criteria.
 
 ### Convergence
 
 9. Gate — call `lisp_eval` with:
-   - form: `(eq rank_reversals 0)`
-   - env: `{ "rank_reversals": <count of ±10% perturbations that flipped the top choice> }`
-   Robust or moderate outcomes (no reversal at ±10%) close the loop. A
+   - form: `(or (string= min_flip "none") (> min_flip 0.05))`
+   - env: `{ "min_flip": <the lisp_eval min_flip result> }`
+   Robust or moderate outcomes (no flip at 5% or less) close the loop. A
    fragile outcome re-enters weight-and-score once with the critical-weight
    findings — add the veto criterion rank-alternatives step 7 names, or
    restructure the criteria sensitivity-analysis step 8 names. Bound: max 2
@@ -87,7 +114,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 | `identify-criteria.j2` | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. |
 | `rank-alternatives.j2` | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance. |
 | `sensitivity-analysis.j2` | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. |
-| `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. Context: `decision_question` (string), `criteria` (array of `{name, type}`), `alternatives` (array of `{name, scores}`), `weighting_method` (`direct` or `swing`). |
+| `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces raw weights and raw scores; composites and ranking are computed by `lisp_eval`. Context: `decision_question` (string), `criteria` (array of `{name, type}`), `alternatives` (array of `{name, scores}`), `weighting_method` (`direct` or `swing`). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `mcda/identify-criteria`) and a context object with the required variables.
 
