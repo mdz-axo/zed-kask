@@ -1,14 +1,12 @@
 ---
 shipped: false
 name: skill-bundler
-description: "Run peer-level skills concurrently and merge their outputs into a single unified report. The bundler does not compose or iterate — it dispatches each skill in parallel, collects results, and synthesizes them with per-skill summaries, cross-skill insights, conflicts, and prioritized recommendations."
+description: "Merge peer-level skill outputs into a grounded unified report, with a bounded correction if the merged report fails its target condition."
 ---
 
 # Skill Bundler
 
-Run peer-level skills concurrently and merge their outputs into a single unified report. The parallel fan-out dispatches each skill via the `skill` tool; this skill handles only the merge step. There is no iterative composition, PKO graph synthesis, or convergence loop — the bundler dispatches each skill in parallel, collects results (allSettled: partial results OK if a skill errors), and synthesizes them.
-
-Single-pass merge by design (DR-S13a exempt class: documented single-pass) — no iteration knob exists; the body runs the merge exactly once.
+Given peer-level skills' outputs on the same task, merge them into one report. The invoking agent obtains the outputs; `skill` retrieves instructions but does not execute a skill. This skill handles only the merge, not dispatch or composition. A satisfied merge closes after one pass; a measured gap allows one correction of the merge, never a rerun of the peer skills.
 
 ## When to Use
 
@@ -20,17 +18,17 @@ Single-pass merge by design (DR-S13a exempt class: documented single-pass) — n
 
 - Composing or ordering skills — the bundler merges; it does not compose (its own constraint). Sequential skills with dependencies must run in order directly.
 - A single skill's output — there is nothing to merge.
-- Iterative convergence loops — single-pass merge by design (`max_iterations: 1`).
+- Open-ended convergence or re-execution of peer skills — the bundler corrects its merge at most once.
 
 ## Instructions
 
-### bundler-merge
+### bundler-merge — bounded PDCA
 
-1. **Per-skill summary**: For each skill, write 2-3 sentences capturing its key findings, verdict, or recommendations. Label each with the skill name. Every skill gets a summary, even if it errored.
-2. **Cross-skill insights**: Identify points where skills complement, contradict, or build on each other. Only include insights that require looking at 2+ skills together — don't repeat what a single skill already said.
-3. **Conflicts**: If two skills reached contradictory conclusions, surface them explicitly. State each skill's position and the nature of the disagreement.
-4. **Recommendations**: Produce a prioritized list of actionable recommendations derived from the combined output. Each recommendation should cite which skill(s) informed it.
-5. **Merged report**: Write a single cohesive report that weaves the per-skill summaries, cross-skill insights, and recommendations into a readable document. The report should read as one analysis, not a stapled-together list of skill outputs.
+1. **Plan (initial → target).** Record the initial condition: requested task, ordered `skill_names`, the corresponding `skill_outputs`, and explicit error states. Target condition: exactly one attributable summary for every named skill (including errors), no unsupported findings, and cross-skill insights and recommendations referencing only successful inputs. An absent output is not an errored output. Before rendering, call `lisp_eval` with `(= (length skill_names) (length skill_outputs))` and those arrays as env bindings. If false, stop and request the missing output or correct the input pairing; never synthesize a missing result.
+2. **Do.** Render `skill-bundler/bundler-merge` using the paired inputs. For each skill, write 2-3 sentences capturing its key findings, verdict, or recommendations. Label each with the skill name. Every skill gets a summary, even if it errored.
+3. **Do.** Identify points where successful outputs complement, contradict, or build on each other. Only include insights that require looking at 2+ successful skills together. Surface contradictory conclusions explicitly. Prioritize actionable recommendations and cite which successful skill(s) informed them. Write one cohesive report rather than stapling outputs together.
+4. **Check.** Compare the produced report with the original pairs. Call `lisp_eval` on the ordered skill names and extracted report summary names: `(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (same-names skill_names summary_names) (= (length unsupported_names) 0)))`. Inspect every substantive finding against its source output and mark unsupported findings as gaps; names and counts cannot prove semantic grounding. Check that error entries remain identified and do not contribute findings.
+5. **Act.** If every check passes, return the report after this one pass. If a merge-only gap remains, revise the report once using the named gap and recheck against the *same* inputs. If it still fails, stop with the report marked incomplete and the remaining gaps; never invent input data or re-run peer skills to make the merge look complete.
 
 ## Registry Templates
 
@@ -43,7 +41,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 ## Constraints
 
 - `bundler-merge.j2`: Public.
-- Single-pass merge — no PDCA loop. `convergence_mode: ""` with `max_iterations: 1` runs the merge exactly once.
+- The local PDCA corrects the merged report at most once; it does not rerun peer skills or optimize the skill itself. Outcome evaluation and any skill change belong to the operator's algedonic-review gemba walk.
 - Do not invent findings that no skill produced.
 - Do not omit a skill from the summaries — every skill gets a summary, even if it errored.
 - The merged report must reference each skill by name at least once.
