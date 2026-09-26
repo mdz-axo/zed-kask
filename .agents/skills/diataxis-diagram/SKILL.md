@@ -21,6 +21,7 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 - Freeform whiteboarding — the output must be valid Mermaid that renders in Zed's preview.
 - Sankey flows from natural-language quantities — use `sankey-flow` (it owns the domain conservation rules and never fabricates weights).
 - Diagrams with no source to derive from — this skill generates from code, schemas, or docs; a diagram with no source is an illustration request.
+- Verifying or re-aligning the existing `kask/docs` diagram set — `doc-update` owns that (its Phase 4 calls this skill when a doc needs a new diagram).
 
 ## Instructions
 

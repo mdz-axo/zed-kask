@@ -131,6 +131,12 @@ to make every documented claim verifiable against the current tree.
    `verified_date`, `verified_against` citing code files, `status`).
 3. If a diagram's subject was deleted, drop it and note the deletion in the
    registry (`kask/docs/DIAGRAMS_INDEX.md`).
+4. When a recomposed doc needs a diagram that does not yet exist, or an
+   existing one must be regenerated because its structure changed, run the
+   `diataxis-diagram` skill on the code it describes (it classifies the
+   type, extracts from source, and scores against the doc's Diataxis
+   quadrant) — do not hand-draw it here. For quantity flows use
+   `sankey-flow`. Then apply steps 1–2 to its output before it ships.
 
 ### Phase 5 — Reconcile
 
