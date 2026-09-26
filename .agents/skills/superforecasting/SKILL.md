@@ -14,8 +14,8 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 
 ## Initial and target condition
 
-- **Initial condition (T1):** the admitted question, its resolution criteria and deadline, the stage-2 base rate with reference class, any `market_context` / `expert_prior`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket.
-- **Target condition (T2):** a probability with a defensible range, a record carrying the stage-0 resolution criteria and deadline unchanged, and `forecast-quality-gate` `gate_pass = true`. Accuracy is judged only by Brier over resolved forecasts, never by one outcome.
+- **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.
+- **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `forecast-quality-gate` `gate_pass = true` is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
 
 ## When to Use
 
@@ -54,14 +54,14 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 6. List all assumptions, noting whether they are reasonable and what happens if they are false.
 7. Identify established facts (knowns) and uncertain factors requiring estimation (unknowns).
 
-### stage_2_outside_view (P — calibration: reference-class base rate; `market_match` as D anchor when a market exists)
+### stage_2_outside_view (historical rates P identification / D arithmetic; market and expert priors P comparability)
 
-1. Establish base rates by identifying relevant reference classes and determining how often similar events occur.
-2. Identify reference classes for the main question and sub-questions.
-3. Determine the historical frequency, sample size, and data quality for each reference class.
-4. Establish a starting probability anchor based on the base rates before considering case-specific details.
+1. Identify candidate reference classes for the main question and sub-questions. Record historical frequencies in `base_rates` only when comparable observed cases, outcome counts, sample size and a checkable source are available; otherwise leave that array empty. Market prices and expert medians belong in the separate `candidate_priors` array, never in historical `base_rates`.
+2. For each reported historical rate, call `lisp_eval` with `(if (and (numberp outcomes) (numberp sample_size) (> sample_size 0) (<= 0 outcomes) (<= outcomes sample_size)) (/ outcomes sample_size) (quote invalid))`, binding `outcomes` to `outcome_count`. Reject `invalid`, rates that disagree with the computed value, or rates without a source. This deterministic check verifies arithmetic, not the comparability or truth of the source.
+3. When a measured rate or a reliably matched market/expert prior fits the outcome, horizon, and conditioning, choose one source for `starting_probability` and record `anchor_source.kind`, source and rationale; do not average unlike sources. If none qualifies, require `starting_probability: null` and `anchor_source: null`. Stop before stage 3 and report the evidence gap; do not create a 0.5 or other synthetic prior.
+4. Before invoking stage 3, check that `anchor_source` is present and its `kind` is `historical`, `market`, or `expert`, and call `lisp_eval` with `(and (numberp p) (<= 0 p) (<= p 1))` on the selected `starting_probability`. If false, stop; stage 3 requires a number and must never render `null * 100`.
 
-> **MCP tool step (step 4, call `market_match` directly — no template):** before this step, call `market_match` (hkask-mcp-prediction-markets) to fetch prediction-market candidates for the forecasting question. The market-implied probabilities feed this step's `market_context` input as a deterministic anchor. An empty result is a valid signal that no relevant market exists, not an error.
+> **MCP tool step (call `market_match` directly — no template):** fetch candidates for the question. A returned market price is an observed market prior, not a historical rate; inspect match confidence, reliability, spread and deadline before using it. An empty result means no matched market, not a 0.5 estimate.
 
 ### stage_3_probability_estimate (delegated split — node estimates P, combination D via `scenario_quantify`)
 
@@ -69,7 +69,7 @@ The former single inside-view step is split into three steps. Generation and cou
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the resolvable event question admitted at stage 0, `domain` = "forecasting", `context` = the sub-questions, outside-view output, resolution criteria, and deadline. Apply falsifying observations to specific causal hypotheses; do not demand that one outcome falsify a probabilistic forecast or add a second Popper gate. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the verified, source-labeled anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
 
 > **MCP tool step (after stage 3, call `scenario_quantify` directly — no template):** map the `sub_question_tree` nodes into ScenarioEvent objects (id, name, question, deadline, time_horizon, scenario_type, subject, probability, depends_on with parent_event_ids + conditionals, sub_questions, update_count) and call `scenario_quantify`. The outcome node's `marginal_probability` is `tree_combined_probability`, stage 4's prior. The server's sequence advisory expects `scenario_build` first — the advisory warn is expected noise when superforecasting brings its own tree.
 
@@ -138,11 +138,12 @@ The superforecasting process accepts an optional `expert_prior` array input
 alongside `market_context`. Before invoking the process, the invoking agent
 should:
 
-1. Call `rss_search` on the `fri-leap` and `fri-leap-reports` streams with
-   keywords from the forecasting question (e.g. "AGI timelines", "GDP growth",
-   "AI risks").
-2. If matches are found, parse the LEAP forecast distribution from the
-   matched entries into the `expert_prior` array. Each element carries:
+1. Call `rss_list_subscriptions` to find the actual LEAP feed stream IDs. Use
+   `rss_get_entries` with each matching `stream_id`, then check entry titles
+   and content against the forecasting question. `rss_search` is global and
+   cannot search within named streams; do not infer a feed from a global match.
+2. If source-identified entries match, parse the LEAP forecast distribution
+   from those entries into the `expert_prior` array. Each element carries:
    `question`, `median_probability`, `superforecaster_median` (if available),
    `public_median` (if available), `interquartile_range` (if available),
    `time_horizon`, `scenario` ('rapid AI progress' / 'slow AI progress' /
@@ -152,8 +153,8 @@ should:
 
 The process does not fetch LEAP itself — the invoking agent does, because the
 process is a single skill invocation and should not reach out to MCP servers
-mid-process (per the existing `market_context` pattern). If `rss_search`
-returns no matches for the forecasting question, `expert_prior` is empty and
+mid-process (per the existing `market_context` pattern). If no matching
+subscription or source-identified entry exists, `expert_prior` is empty and
 the process runs without it. Do not fabricate LEAP data.
 
 ## EQM Feedback Integration
@@ -190,7 +191,7 @@ probability (alignment invariant) — before re-invoking superforecasting.
 |----------|---------|
 | `stage_0_triage.j2` | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. |
 | `stage_1_fermi_decompose.j2` | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions. |
-| `stage_2_outside_view.j2` | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. |
+| `stage_2_outside_view.j2` | Separate sourced historical rates from market/expert priors; return a labeled starting probability or null and stop before numeric estimation. |
 | `stage_3_probability_estimate.j2` | Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. |
 | `stage_4_evidence_update.j2` | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
 | `stage_5_synthesis.j2` | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
@@ -212,9 +213,9 @@ Template context variables (from each template's [inference] contract):
 
 - `stage_0_triage.j2`: Public.
 - `stage_1_fermi_decompose.j2`: Public.
-- `stage_2_outside_view.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before process invocation, parallel to `market_context`.)
+- `stage_2_outside_view.j2`: Public. (The invoking agent finds LEAP subscriptions via `rss_list_subscriptions` and reads source-scoped entries via `rss_get_entries` before invocation.)
 - `stage_3_probability_estimate.j2`: Public. (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
-- `stage_4_evidence_update.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before process invocation, parallel to `market_context`.)
+- `stage_4_evidence_update.j2`: Public. (Only genuinely new evidence after the selected stage-2 anchor warrants an update; current quotes and repeated expert medians do not.)
 - `stage_5_synthesis.j2`: Public.
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.

@@ -47,12 +47,12 @@ Hypothesis Probability: {{ hypothesis_analysis.primary_probability }}
 
 {% if market_context %}
 ## Prediction-Market Price Moves as Evidence
-For each market record below, treat a *move* in the market-implied
-probability as evidence with a volume/spread-scaled likelihood ratio
-(arXiv:2601.18815's inverse-problem framing): a large move on high volume
-with tight spread is strong evidence; the same move on thin volume or wide
-spread is weak. A market at `low` reliability_tier or `stale` calibration is
-context, not evidence — do not update on it.
+A single current market price is context, not a measured price move or a
+likelihood ratio. Update only if dated before/after observations establish a
+new move *after* the stage-2 anchor and an evidence-grounded likelihood ratio
+is available; otherwise make no market-derived update. A `low` reliability
+tier or `stale` calibration also remains context. Never count the same quote
+once as a starting prior and again as new evidence.
 {% for m in market_context %}
 {% set market = m.market | default(m) %}
 - [{{ market.source }}] {{ market.question }} — p={{ market.probability }} (tier: {{ market.reliability_tier }}, spread: {{ market.spread }}, volume: {{ market.volume }}, deadline: {{ market.deadline }}, match_confidence: {{ m.match_confidence | default("unknown") }})
@@ -64,12 +64,11 @@ context, not evidence — do not update on it.
 The following expert-judgment rationale excerpts were extracted from LEAP
 reports. Only the rationale text is rendered here — the probability fields
 (`median_probability`, `superforecaster_median`, `public_median`) are
-deliberately omitted from this section because they were already consumed
-as outside-view anchors in stage 2. Treating the median as evidence here
-would double-count it. Treat each rendered rationale as a qualitative
-evidence item with `source: "LEAP-rationale"`, `strength: "moderate"`
-(expert judgment is evidence, not ground truth), and `direction` derived
-from whether the rationale supports or contradicts the current posterior.
+deliberately omitted from this section because stage 2 may already have
+selected one as a starting prior. Do not count that probability again as new
+evidence. A rationale may inform a qualitative judgment, but assign no
+likelihood ratio or default strength without independent evidence; do not
+recount the information already used in the selected anchor.
 {% for ep in expert_prior %}
 {% if ep.rationale_excerpt %}
 - [LEAP-rationale/{{ ep.wave | default("unknown") }}] {{ ep.question }} — scenario: {{ ep.scenario | default("unconditional") }}, horizon: {{ ep.time_horizon | default("n/a") }} — rationale: {{ ep.rationale_excerpt }}

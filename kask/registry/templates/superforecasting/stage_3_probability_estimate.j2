@@ -38,9 +38,14 @@ given. You estimate and combine.
 
 {{ forecasting_question }}
 
-## Starting Probability (Outside View Anchor)
+## Starting Probability (Sourced Anchor)
 
 {{ starting_probability }} ({{ (starting_probability * 100)|round(1) }}%)
+Source: {{ outside_view_output.anchor_source | tojson }}
+
+This stage runs only after the invoking agent verifies a numeric probability
+and its source. A market price or expert median is a labeled prior, not a
+historical base rate.
 
 ## Outside View Summary
 
@@ -97,11 +102,11 @@ For each hypothesis:
 3. **Assign individual probability.** Based on the necessary conditions and evidence:
    - Estimate the probability of each hypothesis being true.
    - Enforce internal consistency across hypotheses (mutually exclusive? additive? overlapping?).
-   - Honor the outside-view anchor — case-specific adjustment, not free-floating guesses.
+   - Honor the labeled starting anchor — case-specific adjustment, not free-floating guesses.
 
 4. **Estimate the tree probabilities.** For each node in the sub-question tree:
    - **Roots**: estimate `marginal_probability` P(node). Ground each in the
-     outside-view base rate and the hypothesis evidence.
+     sourced starting anchor (historical rate, market prior, or expert prior) and the hypothesis evidence.
    - **Dependents**: estimate the `conditionals` array — P(node | parent truth
      assignment). The array is indexed by the bitmap of parent truth (bit j =
      parent j's truth), so its length is 2^parents. For an AND-gate (all

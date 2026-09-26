@@ -13,16 +13,14 @@ This pipeline implements Philip Tetlock's Fermi-ization methodology from the Goo
 | ----- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
 | 0     | `stage_0_triage.j2`                                                                                | Classify question difficulty (Goldilocks zone)                                                                                                                      | 2,048      |
 | 1     | `stage_1_fermi_decompose.j2`                                                                       | Decompose into tractable sub-questions                                                                                                                              | 4,096      |
-| 2     | `stage_2_outside_view.j2`                                                                          | Establish base rates from reference classes                                                                                                                         | 4,096      |
+| 2     | `stage_2_outside_view.j2`                                                                          | Separate sourced historical frequencies from labeled market/expert priors; stop if no numeric anchor is supported | 4,096      |
 | 3     | `falsifiability-hypothesize` → `falsifiability-counterfactual` → `stage_3_probability_estimate.j2` | Generate causal hypotheses + counterfactual necessary-conditions (delegated to falsifiability), then estimate probabilities and adjust from the outside-view anchor | 4,096      |
 | 4     | `stage_4_evidence_update.j2`                                                                       | Bayesian belief revision                                                                                                                                            | 4,096      |
 | 5     | `stage_5_synthesis.j2`                                                                             | Dragonfly eye aggregation of perspectives                                                                                                                           | 4,096      |
 | 6     | `stage_6_calibration.j2`                                                                           | Assign precise, calibrated probability                                                                                                                              | 4,096      |
 | 7     | `stage_7_record.j2`                                                                                | Record forecast for tracking/audit                                                                                                                                  | 2,048      |
 | 8     | `forecast-quality-gate.j2`                                                                         | Independent quality gate (calibration, confidence, evidence, record)                                                                                                | 3,072      |
-| 9     | `superforecasting-convergence-check.j2`                                                            | Convergence metric + materiality guard                                                                                                                              | 2,048      |
-
-**Total Energy Budget:** 25,000 tokens
+The bounded Check→Act loop is in `.agents/skills/superforecasting/SKILL.md`; there is no convergence-check template.
 
 ## Theoretical Foundation
 
@@ -53,7 +51,7 @@ mechanically verified by `scripts/check-forecast-conformance.sh` in CI.
 | ----------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0 Triage                                  | —                                                          | Natural-language only. A deterministic heuristic (`triage_question`) lives in `hkask-mcp-scenarios` for tooling, but skill stage 0 is LLM judgment.                                                                                                                              |
 | 1 Fermi decomposition                     | `calibrate_from_fermi`                                     | Confidence-weighted average of `FermiQuestion` estimates.                                                                                                                                                                                                                        |
-| 2 Outside view                            | `outside_view_adjustment`                                  | Shrinkage estimator blending base rate with inside estimate.                                                                                                                                                                                                                     |
+| 2 Outside view                            | —                                                          | Candidate historical rates require sourced outcome counts and sample size; the invoking agent verifies their arithmetic via `lisp_eval`. Market/expert priors remain distinct.                                                                                                                                                                                                                     |
 | 3 Inside view (probability estimate)      | `marginalize`                                              | Probability estimation is LLM reasoning against the anchor; the invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios), which marginalizes the tree per node via `marginalize`. |
 | 4 Evidence update                         | `bayesian_update`                                          | `posterior = prior × likelihood / evidence_base_rate`, clamped to [0.01, 0.99].                                                                                                                                                                                                  |
 | 5 Synthesis (MCDA)                        | —                                                          | Natural-language only. Dragonfly-eye MCDA aggregation is LLM reasoning.                                                                                                                                                                                                          |
@@ -86,18 +84,12 @@ must stay consistent with the formulas the primitives implement.
 
 ## Usage
 
-### Invoking the Pipeline
+### Invoking the Skill
 
-```yaml
-# Example pipeline invocation
-manifest_id: superforecasting
-input:
-  forecasting_question: "Will [specific outcome] occur by [date]?"
-  domain: "geopolitics" # optional
-  time_horizon: "6 months" # optional
-  resolution_criteria: "How the outcome will be judged"
-  expiration_date: "2026-12-31"
-```
+Read `.agents/skills/superforecasting/SKILL.md` and carry a question with
+resolution criteria and a deadline through its stages. No manifest executes
+this pipeline; template rendering prepares prompts but does not perform
+inference or call `lisp_eval`.
 
 ### Stage Outputs
 
@@ -120,12 +112,16 @@ Each stage produces structured JSON output that feeds into subsequent stages:
   "unknowns": [...]
 }
 
-// Stage 2: Outside View
+// Stage 2: Outside View (a sourced market prior; no historical observations)
 {
-  "reference_classes": [...],
-  "base_rates": [...],
-  "starting_probability": 0.35
+  "reference_classes": [],
+  "base_rates": [],
+  "candidate_priors": [{"kind": "market", "probability": 0.35, "source": "<observed market URL>", "usable": true}],
+  "starting_probability": 0.35,
+  "anchor_source": {"kind": "market", "source": "<observed market URL>", "rationale": "<matched outcome and deadline>"}
 }
+// Without a supported historical rate or matched prior, use null for both
+// starting_probability and anchor_source; do not enter stage 3.
 
 // Stage 6: Final Calibration
 {

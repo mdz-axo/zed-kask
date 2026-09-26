@@ -52,14 +52,14 @@ Evaluate the forecast across four independent dimensions. Score each on a 0–1 
 
 ### 1. Calibration Realism (0–1)
 
-Is the final probability defensible given the evidence trail and reference-class base rates?
+Is the final probability defensible given the evidence trail and the labeled historical, market, or expert starting anchor?
 
 | Criterion | Weight |
 |-----------|--------|
 | The final probability is within the defensible range (if provided) | 0.30 |
 | The final probability does not exhibit false precision (e.g., 67.3% when uncertainty is high) | 0.25 |
 | The final probability is not anchored to 50% without justification (hedging) | 0.20 |
-| The final probability reflects appropriate distance from the base-rate anchor | 0.25 |
+| The final probability reflects an explained adjustment from its labeled starting anchor | 0.25 |
 
 ### 2. Confidence Justification (0–1)
 
@@ -67,7 +67,7 @@ Is the stated confidence level (low/medium/high) matched to evidence quality and
 
 | Criterion | Weight |
 |-----------|--------|
-| High confidence is backed by strong evidence, multiple agreeing models, and stable base rates | 0.35 |
+| High confidence is backed by strong evidence, multiple agreeing models, and a reliable, comparable starting anchor | 0.35 |
 | Low confidence is used when evidence is weak, models disagree, or the situation is novel | 0.30 |
 | The confidence level is not inflated (e.g., "high" with only one causal model) | 0.20 |
 | The confidence level reflects the time horizon (longer horizons → lower confidence) | 0.15 |
@@ -115,7 +115,7 @@ Respond with a JSON object:
     {
       "check": "calibration_realism",
       "status": "pass",
-      "note": "Final probability 42% is within defensible range [35%, 50%] and reflects appropriate distance from base-rate anchor of 35%"
+      "note": "Final probability 42% is within defensible range [35%, 50%] and explains its adjustment from the sourced starting anchor of 35%"
     },
     {
       "check": "confidence_justification",
