@@ -376,6 +376,51 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["criterion", "weight", "value model", "sensitivity analysis"],
         authority: "operator ruling 2026-09-25; Belton & Stewart, Multiple Criteria Decision Analysis: An Integrated Approach (2002); Keeney & Raiffa, Decisions with Multiple Objectives (1976)",
     },
+    DerivedConcept {
+        term: "scientific_debugging",
+        aliases: &["root cause analysis", "systematic debugging", "debugging"],
+        identity: "make the failure reproducible, hypothesize causes, predict and run one-variable experiments, and conclude only from observed results",
+        definition: "Debugging as the scientific method (Zeller, Why Programs Fail, 2009): observe the failure, form hypotheses, derive predictions, test by experiment, and refine until the cause is diagnosed; with Agans's rules (Debugging: The 9 Indispensable Rules, 2002) — make it fail, quit thinking and look, change one thing at a time.",
+        constituents: &[
+            "reproduction",
+            "hypothesis",
+            "experiment",
+            "regression test",
+        ],
+        authority: "operator ruling 2026-09-25; Zeller, Why Programs Fail: A Guide to Systematic Debugging (2009); Agans, Debugging: The 9 Indispensable Rules (2002)",
+    },
+    DerivedConcept {
+        term: "gorilla_game",
+        aliases: &["gorilla", "gorilla assessment"],
+        identity: "in a technology market, the company owning the de facto standard captures outsized, durable returns",
+        definition: "The technology-investing model of Moore, Johnson & Kippola, The Gorilla Game (1998): in hypergrowth markets a proprietary, standard-setting architecture with high switching costs makes one company the gorilla, with chimps and monkeys taking the rest.",
+        constituents: &["de facto standard", "switching cost", "hypergrowth"],
+        authority: "operator ruling 2026-09-25; Moore, Johnson & Kippola, The Gorilla Game (1998)",
+    },
+    DerivedConcept {
+        term: "wardley_map",
+        aliases: &["wardley mapping", "wardley maps"],
+        identity: "a value chain of components placed on an evolution axis from genesis through custom and product to commodity",
+        definition: "Simon Wardley's situational-awareness map (Wardley Maps, 2016): anchor on a user need, lay out the dependent value chain, and position each component by evolution (genesis, custom-built, product, commodity) to see movement and choose strategy.",
+        constituents: &["user need", "value chain", "evolution axis"],
+        authority: "operator ruling 2026-09-25; Wardley, Wardley Maps (2016)",
+    },
+    DerivedConcept {
+        term: "hidden_champion",
+        aliases: &["hidden champions"],
+        identity: "a little-known firm that leads its narrow global market niche through focus, depth and closeness to customers",
+        definition: "Hermann Simon's category (Hidden Champions of the 21st Century, 2009): a company that is number one to three in its world market, below broad public visibility, holding a narrowly defined niche through customer closeness, deep value chains and globalization of the niche.",
+        constituents: &["market niche", "global market share", "customer closeness"],
+        authority: "operator ruling 2026-09-25; Simon, Hidden Champions of the 21st Century (2009)",
+    },
+    DerivedConcept {
+        term: "maia_listening",
+        aliases: &["maia listening", "maia v3 listening", "maia method"],
+        identity: "an earnings call read through a stance block and seven sections, keeping only claims linked to a strategic path, each cited verbatim from the transcript",
+        definition: "The MAIA method's earnings-call listening template (v3): seven sections (margin trajectory, working capital power, moat evidence, capital allocation, expectations gap, guidance versus expectations, management consistency), a horizon model centered on the 12-36 month seam between tactical checkpoints and strategic goals, and a retrieve-cite-verify discipline so every evidence quote is a substring of the source.",
+        constituents: &["strategic checkpoint", "horizon model", "verbatim evidence"],
+        authority: "operator ruling 2026-09-25 (the MAIA method is the reference model); MAIA v3 listening template, kask/registry/templates/listening/apply-template.j2",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -534,6 +579,11 @@ mod tests {
             ("PICO", "Richardson"),
             ("multi-criteria decision analysis", "Belton & Stewart"),
             ("MCDA", "Keeney & Raiffa"),
+            ("root cause analysis", "Zeller"),
+            ("gorilla game", "Moore"),
+            ("Wardley map", "Wardley"),
+            ("hidden champions", "Simon"),
+            ("MAIA listening", "MAIA"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

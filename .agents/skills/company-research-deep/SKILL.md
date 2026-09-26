@@ -9,7 +9,7 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ## Reference models
 
-The pipeline is converted from EFRA-AI (Replicant-Partners), a project source. The frameworks it applies carry their own authors: Moore, Johnson & Kippola, *The Gorilla Game* (1998) for GORILLA; Wardley, *Wardley Maps* (2016) for the value-chain map (`wardley-mapper`); Simon, *Hidden Champions of the 21st Century* (2009) for SIMON; Rappaport & Mauboussin, *Expectations Investing* (2001) for the expectations gap (`onto_anchor` → derived `expectations_gap`). Other framework terms here reach only the 5W1H core (coarse; no operator ruling yet).
+The pipeline is converted from EFRA-AI (Replicant-Partners), a project source. The frameworks it applies carry their own authors: Moore, Johnson & Kippola, *The Gorilla Game* (1998) for GORILLA; Wardley, *Wardley Maps* (2016) for the value-chain map (`wardley-mapper`); Simon, *Hidden Champions of the 21st Century* (2009) for SIMON; Rappaport & Mauboussin, *Expectations Investing* (2001) for the expectations gap (`onto_anchor` → derived `expectations_gap`). Derived anchors (operator ruling 2026-09-25): `gorilla_game`, `wardley_map`, `hidden_champion`.
 
 **D/P.** MCP valuation tools, `lisp_eval` scoring (GORILLA fixed weights, gates) and the grounding-verify gates are D. Every framework judgment — board rotation, Wardley evolution, GORILLA dimension scores, Simon inquiry, IMAGINE scenarios, thesis pillars — is P, critiqued by the decoupled `verify-early-anchor` / `verify-late-gate` sub-agents, the separate `thesis-judge` render and the essentialist gates.
 

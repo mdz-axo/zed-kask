@@ -58,8 +58,9 @@ bounded one-re-retrieval per failed citation above. The verdicts are P
 (model judgment over verified quotes; critique: the operator, and
 downstream `grounding-verify` when the verdicts enter a research note).
 
-**Reference model.** The MAIA v3 listening template is this project's
-method, not a published one; the certainty tiers follow
+**Reference model.** The MAIA method — its v3 earnings-call listening
+template (`onto_anchor` → derived `maia_listening`, operator ruling
+2026-09-25). The certainty tiers follow
 `hkask_forecast::certainty_tier`. The retrieve-cite-verify discipline is
 the `grounding-verify` substring-match rule applied to transcripts.
 
