@@ -1,7 +1,7 @@
 ---
 shipped: false
 name: kask-seam-audit
-description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (every live D-seam in DIVERGENCE.md). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
+description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (every live D-seam in DIVERGENCE.md). Three tracks: security (self-contained), refactor-architecture (dead-surface removal), measured GPUI layout (its own layout loop, which also runs standalone before adding card or panel elements). Every finding cites file:line."
 ---
 
 # Kask Seam Audit
@@ -59,7 +59,7 @@ Final: report
 | Skill | Role | When |
 |-------|------|------|
 | `refactor-architecture` | executor | architecture track (Do) |
-| `ui-layout-discipline` | executor | UI track (Do) |
+
 | `pragmatic-semantics` | lens | adjudicate (Check) |
 | `pragmatic-cybernetics` | lens | adjudicate (Check) |
 | `essentialist` | lens | adjudicate (Check) + remediation gate (Act) |
@@ -67,7 +67,26 @@ Final: report
 
 The security track is self-contained in `audit-security.j2` (10 priority
 surfaces, OWASP LLM Top-10 / MITRE ATLAS / NIST SSDF framing); it does not
-delegate to a separate skill.
+delegate to a separate skill. The UI track uses this skill's own layout loop
+(below), which also runs standalone before adding elements to any GPUI
+card or panel.
+
+## Measured-layout loop (UI track; formerly `ui-layout-discipline`)
+
+Layout failures share one root cause: adding elements without measuring. Use
+it before adding elements to a card/panel renderer, when a card has more than
+two actions or a text column beside actions, when changing a shared card
+container, or when a layout looks cramped — not for logic-only or test-only
+changes. Measurements are D when taken from the code (widths, counts); the
+remedy choice is P, critiqued by the adversarial probes.
+
+1. **Measure** (`kask-seam-audit/layout-sense`) — container width (dock ~300–400px, center ~600px+), each child's minimum width, the text column's residual width.
+2. **Count** (`kask-seam-audit/layout-orient`) — interactive elements against the ≤5 primary budget (Hick's Law); sibling card conventions; congestion score.
+3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (eq (length failed_gates) 0) (eq (length probe_failures) 0))`, env `{ "failed_gates": <failing gate names>, "probe_failures": <broken probes from step 5> }`.
+4. **Remedy** (`kask-seam-audit/layout-act`) — for each failing gate, the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
+5. **Probe** (`kask-seam-audit/layout-review`) — a 40-character button label, a German string (~30% longer), a 320px container, 7 actions. Any broken probe rejects the layout and re-enters step 4. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
+
+Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fixed-width elements; `.truncate()` on labels; `PopoverMenu::new(id).trigger_with_tooltip(IconButton::new(id, IconName::Ellipsis), Tooltip::text(...))` for overflow; `ContextMenu::build(...)` for menu items; `gap_1()`/`gap_2()` on the 4px/8px grid.
 
 ## Registry Templates
 
@@ -77,6 +96,11 @@ delegate to a separate skill.
 | `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
+| `layout-sense.j2` | Layout loop step 1: measure container and child minimum widths; flag overflow and the text column's residual width (Fitts's Law, flexbox overflow). |
+| `layout-orient.j2` | Layout loop step 2: count interactive elements against the ≤5 budget and compare sibling conventions (Hick's Law, Nielsen consistency). |
+| `layout-decide.j2` | Layout loop step 3: the five yes/no layout gates and a pass/fail decision. |
+| `layout-act.j2` | Layout loop step 4: the canonical GPUI remedy per failing gate. |
+| `layout-review.j2` | Layout loop step 5: adversarial probes that reject a layout that breaks a gate. |
 | `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings. |
 | `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria and run a ±20% sensitivity analysis. Each score traces to a finding. |
 | `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |

@@ -541,7 +541,7 @@ over the document's real sheet list, and Save dispatch through the governed
 ToolInvoker with all four `InvokeError` states rendered distinctly plus
 conflict detection (failed_precondition digest mismatch). `Interrupted`
 surfaces the §7 reconciliation instruction verbatim and never auto-replays.
-Layout per ui-layout-discipline: 3 primary actions (≤5), fixed elements
+Layout per the kask-seam-audit layout loop: 3 primary actions (≤5), fixed elements
 `flex_shrink_0`, flexible text `min_w_0` + `truncate()`. Registration:
 viz-core `VizWidget` impl + factory (pin updated 5→6), the upstream-side D18
 fence gate in `crates/markdown/src/markdown.rs` widened with `spreadsheet`

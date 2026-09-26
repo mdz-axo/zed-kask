@@ -1677,7 +1677,7 @@ impl Render for SwarmPanel {
                     // bounded (`MAX_FETCH_RETRIES` in `fetch.rs`), so once they are exhausted the
                     // operator needs a way back without closing and reopening the
                     // panel. Two elements in this row (label + button), measured
-                    // against the `ui-layout-discipline` congestion rule.
+                    // against the kask-seam-audit layout loop's action budget.
                     .when_some(self.fetch.visible_error().cloned(), |this, err| {
                         this.child(
                             h_flex()
