@@ -15,10 +15,11 @@ Multi-tool media generation pipelines that chain `hkask-mcp-media` server tools 
 - Create a collage from gallery images with background removal.
 - Create a meme video from a gallery template image.
 - Derive an NFT from a gallery image with style transfer, upscaling, and metadata caption.
+- Design a logo from brand inputs through formal gates, operator-chosen refinement, and a deliverables package (the Logo pipeline).
 
 ## When NOT to Use
 
-- Logo design — use `logo-builder` (its own formal gates and deliverable package).
+- Brand strategy with no logo to generate — the Logo pipeline maps identity to design parameters and produces a logo; strategy alone is a different deliverable.
 - Single-tool media operations — call the media tool directly; these workflows are fixed multi-tool pipelines.
 - Audio/transcript work — use `transcript-reel` (capture, correction, speaker passes, EDL rendering).
 
@@ -74,6 +75,15 @@ Derives an NFT from a gallery image: style transfer, upscale, and metadata capti
 3. Call `upscale_image` on the styled result to target resolution (scale=4 for 4K).
 4. Call `describe_image` on the final image to generate a caption for NFT metadata.
 
+### Logo Pipeline
+
+Principled logo design (Martin, *Minimum Viable Brand*; Bokhua, *Principles of Logo Design* — five formal gates; Peters, *Logos That Last*). Brand mapping and critique are P; the operator chooses the logo, never the critique.
+
+1. **Discovery.** Render `media/logo-discovery-map` with name, industry, audience, values and personality; send it to inference and parse `style`, `logo_type`, `dominant_shape`, `typography_class`, `palette_hex`, `density`, `rationale`. Choose single-shot (simple brand), iterative-refine (complex brand) or moodboard-first (visual-first brand, e.g. luxury, fashion).
+2. **Formal generation.** Render `media/logo-formal-prompt` with those parameters (map `palette_hex`, joined into a readable list, to its `palette` input) and call `generate_image`; then `image_remove_background` and, for print, `upscale_image` as needed.
+3. **Refinement (iterative-refine).** Generate 3 candidates, critique each with `describe_image` on readability, scalability, distinctiveness, professionalism and text accuracy (1–10 each, plus the strongest weakness). Show the operator every candidate with its scores and ask which to refine; if the operator is unavailable, report the ranked candidates and stop. Regenerate the chosen one addressing its critique, show it beside the previous version, and repeat only while the operator asks — at most 3 rounds.
+4. **Deliverables.** `image_remove_background` for a transparent PNG; `generate_image` for a monochrome variant (pure black on white, same design), a 1:1 icon-only mark that works at 64×64, and a photorealistic real-world context mockup of "{name}". Return all four.
+
 ## Verification loop (all pipelines)
 
 After each pipeline's final artifact, verify its acceptance property before
@@ -81,7 +91,8 @@ reporting done: product shot — `describe_image` confirms the background is
 fully removed; reaction GIF — `video_info` confirms duration ≤ 5s at 480px
 width; collage — `describe_image` confirms all selected subjects are present;
 meme — the caption is visible in the rendered video; NFT — the style is
-applied and the caption generated. If the property fails, re-run the failing
+applied and the caption generated; logo — `describe_image` confirms the name
+is spelled correctly and the icon mark carries no text. If the property fails, re-run the failing
 step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
 a second failure ships the artifact with the imperfection named — never
 silently.
@@ -91,4 +102,5 @@ silently.
 - All pipelines use tools from the `hkask-mcp-media` server. The server must be running and configured with at least one media provider (DeepInfra or OpenRouter).
 - Image generation and video generation are cloud calls — they incur cost and have latency. Local tools (collage, video_clip, video_to_gif, video_add_caption) are free and fast.
 - The agent coordinates execution by calling each tool in sequence. There is no FlowDef executor — the step topology is encoded in this SKILL.md body and the model follows it.
+- `media/logo-discovery-map` and `media/logo-formal-prompt` are the Logo pipeline's templates (Public); render them with `render_template`.
 - This SKILL.md body is the authoritative methodology.
