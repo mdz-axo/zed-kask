@@ -35,10 +35,10 @@ Context: {{ context | default({}) | tojson }}
    - Diversity-aware pooling to maintain exploration.
    - The paper warns: "If the model generates defective, biased, or erroneous samples, it will internalize these errors during fine-tuning, creating a negative feedback loop" (§5.1).
 
-3. **Fine-tune via gradient descent**:
-   θ_{t+1} = argmin_θ ℒ(θ; 𝒟_t) + λΩ(θ, θ_0)
-   - Initialize at current checkpoint θ_t.
-   - Use the loss function and regularizer specified in the improvement plan.
+3. **Specify the fine-tune (executed by the SKILL.md Fine-tuning run)**:
+   θ_{t+1} = argmin_θ ℒ(θ; 𝒟_t) + λΩ(θ, θ_0), initialized at the current checkpoint θ_t.
+   - Do not train here. This step prepares the dataset and objective; the update runs only through the Fine-tuning run section (lora-training accepted config, `training_validate_config`, operator-confirmed `training_submit`, matched held-out evaluation, proposal filing).
+   - Supported training methods: sft, dpo, kto, orpo, grpo (non-sft methods require the ludwig harness).
 
 4. **Safeguard against model collapse**:
    - Retain base data: 𝒟_t = 𝒟^base_t ∪ 𝒟~^gen_t (accumulate generated data on top of base).

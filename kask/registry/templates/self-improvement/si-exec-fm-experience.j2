@@ -35,9 +35,10 @@ Context: {{ context | default({}) | tojson }}
    - Learned world model W(s_{k+1}, r_k | s_k, a_k) predicts next state and reward.
    - Use simulated rollouts for planning, trajectory synthesis, failure analysis (WebEvolver, WebDreamer, WMPO).
 
-2. **Update parameters**:
-   - PPO for policy gradient with environment rewards.
+2. **Specify the parameter update (executed by the SKILL.md Fine-tuning run)**:
+   - GRPO for reward-driven objectives (the training server has no PPO; name the gap if PPO is required).
    - DPO for preference-based objectives (contrast successful vs. failed trajectories).
+   - Do not train here. The update runs only through the Fine-tuning run section (lora-training accepted config, `training_validate_config`, operator-confirmed `training_submit`, matched held-out evaluation, proposal filing); non-sft methods require the ludwig harness.
    - θ_{t+1} = IMPROVE_θ(θ_{1:t}; τ_t)
 
 3. **Guard against reward hacking**:

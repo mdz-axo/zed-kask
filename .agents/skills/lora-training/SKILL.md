@@ -51,7 +51,7 @@ This skill does not train, load, initialize, merge, or evaluate models.
 ## When NOT to Use
 
 - Prompt optimization — use `prompt-enhance`; this skill governs weight-space training configs.
-- Executing the training run — the training server and `adapter-lifecycle` own execution; this skill recommends and audits configs.
+- Executing the training run — the training server and `self-improvement` (its Fine-tuning run section) own execution; this skill recommends and audits configs.
 - Security findings — out of scope by its own template note; this skill owns training-config recommendation and contract evidence.
 
 ## Instructions

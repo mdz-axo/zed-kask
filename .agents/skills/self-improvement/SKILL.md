@@ -1,7 +1,6 @@
 ---
-shipped: false
 name: self-improvement
-description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience."
+description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs the verifier-gated LoRA fine-tuning loop (rollout baseline, verdict-bridged dataset, gated submit, held-out adapter evaluation, feedback retrain) and GEPA prompt evolution; files proposals, never commits."
 ---
 
 # Self-Improvement
@@ -41,13 +40,14 @@ Three signal forms drive both pathways:
 - When you need to wrap an outer Improvement Kata loop around multiple improvement cycles to drive long-term capability gains
 - When you need to evaluate self-improvement claims rigorously (trajectory tracking, transfer testing, regression checks, cost accounting)
 - When you need to govern self-modification safely (verifier-gated updates, layered permission systems, critic decoupling)
+- When an agent's measured pass rate is poor and the operator wants a fine-tuned adapter, verdict-labeled rollouts should become training data, or a trained adapter needs held-out evaluation or a feedback retrain (the Fine-tuning run section)
 
 ## When NOT to Use
 
 - One-off corrections — if the fix is known, apply it directly; a PDCA cycle around a known fix is ceremony.
 - Skill authoring and maintenance — use `create-skill` / `skill-maintenance` (the scaffolding-improvement pathway delegates there anyway).
 - Memory curation — use `therapy`; reorganizing memory is not self-modification of configuration.
-- The measured fine-tuning loop — use `adapter-lifecycle` (rollout measurement → dataset bridging → training → evaluation); this skill selects the pathway, it does not run the training loop.
+- Choosing the PEFT configuration — use `lora-training`; the Fine-tuning run section below executes only an operator-accepted config.
 
 ## Architecture: Nested PDCA + Outer Kata
 
@@ -141,6 +141,7 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
      - `si-exec-scaffold-memory.j2` (§6.2): Apply signal-driven CRUD operations (Create/Read/Update/Delete).
      - `si-exec-scaffold-tool.j2` (§6.3): Apply dynamic tool routing, iterative refinement, or autonomous creation.
      - `si-exec-scaffold-full.j2` (§6.4): Treat entire scaffold as mutable program, generate patches, gate through verifier. Delegates to `diagnose` for reproduce→hypothesize→fix loops.
+   - All three FM sub-pathways execute through the "Fine-tuning run" section below.
 3. Multi-signal support: if the improvement plan specifies multiple signal types, execute them in sequence (demos → feedback → experience).
 4. Capture the full execution trace: what was generated, what was filtered, what was updated, what was the cost.
 5. Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact` (the candidate update before gating).
@@ -184,6 +185,181 @@ Reflect and Propose are P steps executed by an agent: send the rendered template
 5. **Update frontier** (`self-improvement/gpa-frontier-update`) — pass Test's `tested_variants` array; merge, keep non-dominated members (A dominates B when at least as good on every objective and strictly better on one). Compute dominance with `lisp_eval`; a cost objective (`total_tokens`, `mean_latency_ms`) counts as better only when it is more than 10% lower, otherwise the two are tied on it — paired same-set runs on 2026-09-26 differed by 6–7% in tokens (789/848, 1676/1569), so a smaller gap is noise. Cost comparisons are valid only between runs on the same selection set. Form over `(pass_rate total_tokens)` pairs: `(begin (define better-cost (lambda (a b) (< a (* 0.9 b)))) (define dom (lambda (a b) (and (>= (car a) (car b)) (not (better-cost (nth 1 b) (nth 1 a))) (or (> (car a) (car b)) (better-cost (nth 1 a) (nth 1 b)))))) (dom a b))`; prune by crowding distance past `frontier_size`, record who dominated whom.
 6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
 7. **Act** — never adopt. Write the frontier (content, measured scores, cost, lineage, eval-set identity) to `~/Documents/zk-data/curator/proposals/{target}/{date}-{run}.json`; the operator chooses in `algedonic-review`.
+
+### Fine-tuning run — the θ pathway executor (formerly `adapter-lifecycle`)
+
+When `si-select-pathway` selects Foundation Model Improvement (θ), the `si-exec-fm-*` templates plan the signal and this procedure executes it: measure, build a dataset from verdict-labeled rollouts, train under the `lora-training` math-contract gates, evaluate against the baseline, file a proposal. Use it only after a scaffold fix (prompt, skill body, tool schema) has been ruled out, a deterministic evaluator exists, and the operator has accepted a PEFT configuration from `lora-training`.
+
+#### Phase 1 — Measure (the rollout harness)
+
+Model policy: “local swarm” means execution on the hKask substrate, not a local
+or smaller LLM. Inherit the platform/curator defaults from Settings → Kask →
+Models through the host inference bridge. Do not substitute an unapproved
+local/cheaper model to avoid provider cost; if approved routing is unavailable,
+surface that blocker. Only an explicit operator choice may override the model.
+
+1. Define the task set: 3-10 representative tasks, each with a
+   deterministic response evaluator (contains / not_contains / regex)
+   and an explicit experiment scope (tasks/repeats and any approved run
+   deadline). Agree with the operator *before training* on the held-out
+   acceptance criterion and evaluation method for comparing the baseline
+   and candidate on identical inputs; record what outcome counts as
+   acceptance rather than inventing a pass-rate threshold afterward.
+   Token usage is observed evidence, not a quota. The local harness has
+   no credits_authorized or token-budget parameter.
+2. Call `swarm_eval_agent_local` (swarm server) with the agent name,
+   the task set, and repeats (2-3 for a first measurement). Read the
+   per-task pass rates and standard error. This is the BASELINE —
+   record it (it is also recorded as model_request + verdict events in
+   the event store). Register the acceptance claim in the same step:
+   `kanban_goal_create` with the baseline and target pass rates as
+   observable criteria and your intake prediction, linking this task
+   to the goal via `advances`.
+
+#### Phase 2 — Build the dataset
+
+3. Call `training_bridge_rollouts` (training server) with an `output_path`
+   under this run's folder, `~/Documents/zk-data/skills/self-improvement/adapter/{date}-{run}/`,
+   and `agent_name`, selecting mode `sft` for passed-rollout ChatML JSONL
+   or `preference` for DPO JSONL (`prompt`, `chosen`, `rejected`) when
+   passed and failed rollouts from the same harness task have retained
+   bodies. `both` emits separate files; choose the dataset compatible
+   with the operator-accepted trainer (do not pass `dpo` as a bridge mode).
+   Read `sft_path`/`sft_examples` or `preference_path`/`preference_examples`;
+   stop if the selected output is empty. Check `skipped_no_bodies` —
+   stripped captures cannot be bridged; note the count.
+4. Call `training_ingest_dataset` with the selected emitted dataset path
+   to normalize and cache it. Read the format detection and sample count.
+
+#### Phase 3 — Validate and submit (the gates)
+
+5. Call `training_validate_config` with the base model, the dataset
+   path, and the operator-accepted PEFT params (from the lora-training
+   skill's G6 gate). Read EVERY finding — refuse/warn severities must
+   be resolved or explicitly accepted by the operator before
+   submission. The G-D0 profile (format, sample count, token
+   estimates) must match the dataset you built.
+6. Call `training_submit` with the dataset path, base model, validated
+   params, and confirmed: true (only after the operator confirms the
+   spend). Record the job id.
+
+#### Phase 4 — Track and evaluate
+
+7. Poll `training_status` with the job id until completion. It reports
+   pod status, GPU, recent logs, and — on completion — registers the
+   adapter from the HuggingFace manifest. `ab_comparison` is available
+   only for a retrain with a previous adapter for the same skill and
+   both losses present; it compares previous vs new training loss, NOT
+   base-model vs candidate loss. First-time adapters have no such loss
+   comparison: do not synthesize one or block their held-out verdict on it.
+   On retrains, record any `loss_improved` as separate evidence; the
+   `auto_promoted` field is not evidence of the held-out evaluation gate.
+8. Prepare held-out tasks and expected answers that neither model trained
+   on. For a pass-rate comparison, run `training_evaluate` twice on the
+   SAME `test_dataset_path`, `method`, `max_examples`, and (if semantic)
+   `judge_model`: once with `model` set to the deployed baseline model,
+   once with `model` set to the deployed candidate adapter's model name.
+   Pass the corresponding `adapter_id` to label each report; this field
+   does NOT route inference — `model` does. Use exact_match / contains /
+   semantic / benchmark only with the matching ChatML or benchmark dataset;
+   semantic is LLM-judged and requires an explicit judge_model. Record
+   both `accuracy` values and per-example errors; use the Phase 1 harness
+   pass rate as diagnostic context, not as the denominator for this
+   different evaluator. Verify both model routes actually serve the intended
+   weights (returned model strings are reported, not attested). If the
+   candidate is not deployed or identity cannot be verified, do not treat
+   an evaluation of the base route as candidate evidence: no promotion.
+
+#### Phase 5 — Verdict and retrain
+
+9. Convergence gate — for a FIRST adapter, require verified candidate
+   deployment and both matched Phase 4 evaluations. Call `lisp_eval` with
+   the operator-approved acceptance predicate over the *measured* baseline
+   and candidate results; include deployment in the predicate. For example,
+   ONLY if the operator agreed that the candidate must strictly beat the
+   baseline on accuracy:
+   - form: `(and (= deployed 1) (> pass_rate baseline_pass_rate))`
+   - env: `{ "deployed": <1 only if the candidate route serves the adapter>,
+            "pass_rate": <candidate Phase 4 accuracy>,
+            "baseline_pass_rate": <baseline Phase 4 accuracy> }`
+   If the approved criterion differs, encode that exact criterion instead;
+   do not use the example as a default policy.
+   **Noise floor (always, in addition to the operator's criterion).** A
+   difference inside sampling noise is not evidence of improvement,
+   whatever margin the operator chose. From each `training_evaluate`
+   report's `correct` and example count, compute with `lisp_eval`:
+   - form: `(let ((pc (/ kc nc)) (pb (/ kb nb))) (let ((se (sqrt (+ (/ (* pc (- 1 pc)) nc) (/ (* pb (- 1 pb)) nb))))) (cond ((or (< nc 10) (< nb 10)) (list "undetermined" "fewer than 10 held-out examples")) ((= se 0) (list (if (> pc pb) "beyond_noise" "within_noise") 0)) (t (list (if (> (- pc pb) (* 2 se)) "beyond_noise" "within_noise") (- pc pb) (* 2 se))))))`
+   - env: `{ "kc": <candidate correct>, "nc": <candidate examples>, "kb": <baseline correct>, "nb": <baseline examples> }`
+   Accept only when the operator's criterion holds AND the result is
+   `beyond_noise` (the gain exceeds twice the combined standard error of
+   the two proportions). `within_noise` is reported as no demonstrated
+   improvement, with the difference and the noise band; `undetermined`
+   (fewer than 10 examples per side) blocks acceptance and asks for a
+   larger held-out set. Example: 42/50 vs 36/50 is a 12-point gain inside
+   a 16-point noise band — not demonstrated. The practical margin — how
+   large a real gain justifies deployment — remains the operator's. A first adapter can receive
+   an acceptance verdict with NO `ab_comparison`: its loss is not an input.
+   For a RETRAIN, apply the same deployed, matched held-out gate against
+   the agreed baseline (base model or prior deployed adapter, fixed before
+   evaluation). Record `ab_comparison` only if present. If the operator's
+   pre-agreed retrain criterion also requires improved loss vs the prior
+   adapter, include its evidenced `loss_improved` in `lisp_eval`; if that
+   comparison is absent, mark that criterion unresolved, not false or
+   satisfied. Counterexamples to an unconditional loss gate: a first
+   adapter with no `ab_comparison` but verified deployment and a passing
+   operator-approved held-out comparison can be accepted; a retrain with
+   `loss_improved: true` and `auto_promoted: true` but a failed matched
+   held-out criterion cannot. Never treat loss improvement or
+   `auto_promoted` alone as a pass-rate verdict. Missing deployment,
+   route verification, matched evaluation, or an approved criterion means
+   no acceptance/promotion;
+   report the gap rather than fabricate inputs or compare Phase 1 rates.
+   If a measured gate fails, diagnose the failures, curate the exchanges
+   into a feedback file, and re-enter Phase 3 with `training_submit`
+   passing feedback_path and skill_name (retrain mode merges feedback,
+   deduplicates by question, and increments the adapter version). Obtain
+   operator confirmation for each new submission. Bound: max 2 retrain
+   cycles per adapter version; a third failure escalates to the operator.
+10. File the measurements for review — the session that trained the
+    adapter does not record its acceptance (operator ruling 2026-09-24:
+    evaluation is separated from execution). Write
+    { adapter_id, baseline_pass_rate, pass_rate, evaluation_method,
+    model_routes, evidence_gaps, harness logs } via `terminal` to
+    `~/Documents/zk-data/curator/proposals/{agent-or-skill}/{date}-adapter-{adapter_id}.json`.
+    Use null pass rates when unmeasured. The operator accepts or rejects
+    the adapter in `algedonic-review`'s gemba walk; promotion follows only
+    an accepted proposal.
+11. Judge the registered goal — call `kanban_goal_judge` against the
+    goal's criteria with a verdict and per-criterion results from the
+    measured pass rates; mark unmeasured criteria as unresolved rather
+    than guessing. When the operator confirms the outcome,
+    `kanban_goal_score` Brier-scores the intake prediction — the
+    scored acceptance record for this adapter change.
+
+#### Fine-tuning constraints
+
+- Training methods are what the training server accepts: sft (axolotl or ludwig) and dpo/kto/orpo/grpo (ludwig only); PPO is unavailable. The bridge emits only `sft` and `preference` datasets, and `training_validate_config` has no dataset-format check for grpo (G-D0 reports it undetermined) — for grpo, record the dataset-format gate as unverified in the proposal, never as passed.
+
+- Never submit with unresolved refuse-severity gate findings.
+- Do not record acceptance or recommend promotion without verified
+  deployment, matched held-out baseline/candidate evaluation, and the
+  operator's pre-agreed criterion being met. Do not require retrain-only
+  loss comparison for a first adapter or treat it as sufficient for a
+  retrain. The skill files measurements as a proposal; it does not record
+  a verdict, deploy, or promote.
+- Rollouts and training jobs consume provider resources; do not invent a
+  spend quota or promote on the basis of an unverified cost estimate.
+  Present the available estimate and obtain operator confirmation before
+  each Phase 3 submission.
+- If any MCP tool call fails, call `curator_report_skill_use_issue`
+  with skill_name "self-improvement", the tool name, and the error;
+  continue with the best available information.
+- Clean up (storage Cleanup rule). A job the run abandons, or whose
+  retrain supersedes it, is stopped with `training_cancel` and confirmed
+  with `training_status`; never leave a paid pod running. When the
+  proposal is filed, delete this run's dataset files except the exact
+  dataset the proposal cites, and list any kept file with its reason.
+  A discarded or rejected run keeps nothing but its proposal record.
 
 ## Improvement Measure
 

@@ -39,8 +39,9 @@ Context: {{ context | default({}) | tojson }}
    - Scalar rewards: r_t for PPO.
    - Revised targets: y*_t for supervised fine-tuning.
 
-4. **Optimize**:
-   - RL (PPO), preference optimization (DPO), or critique-conditioned fine-tuning.
+4. **Specify the optimization (executed by the SKILL.md Fine-tuning run)**:
+   - GRPO (reward; the training server has no PPO), preference optimization (DPO/KTO/ORPO), or critique-conditioned SFT.
+   - Do not train here. The update runs only through the Fine-tuning run section (lora-training accepted config, `training_validate_config`, operator-confirmed `training_submit`, matched held-out evaluation, proposal filing); non-sft methods require the ludwig harness.
    - θ_{t+1} = IMPROVE_θ(θ_{1:t}; e_t)
 
 5. **Safeguard**: Separate generator and evaluator at different checkpoints or model families. Maintain external anchors.
