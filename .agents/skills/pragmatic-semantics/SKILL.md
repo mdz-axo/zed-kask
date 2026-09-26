@@ -8,6 +8,10 @@ description: "Epistemic discipline for classifying statements by certainty level
 
 Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Classify provenance of facts and their ontology tier (Core / Dual-Axis / Domain Supplement). Resolve conflicts using OT ranking with ontology anchoring.
 
+## Reference models
+
+Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality Theory's strict-domination ranking (Prince & Smolensky, 1993) for conflict resolution; epistemic modality (Palmer, *Mood and Modality*, 1986) for declarative / probabilistic / subjunctive.
+
 ## When to Use
 
 - When a statement needs classification on ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring axes.
@@ -33,7 +37,9 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 4. Identify both the process axis (PKO) and state axis (DC+BIBO) if the statement is dual-axis.
 5. Map the statement to its constraint force (Prohibition, Guardrail, Guideline, Evidence, or Hypothesis) based on its ontological and epistemic modes.
 6. Classify the provenance of the statement (Specification, Implementation, Observation, Inference, External, or Unknown).
-7. Calculate the confidence score from 0.0 to 1.0, applying tier-specific modifiers (e.g., +0.10 for FIBO, +0.05 for SUMO, -0.15 for unanchored). For Specification provenance, confidence should be ≥ 0.8, but verify the spec is current before applying this floor — specs can be stale.
+7. Judge a base confidence (P), then compute the final confidence with `lisp_eval` (D) — tier modifier, clamp to [0,1], Unknown-provenance ceiling 0.3, Specification floor 0.8 only when the spec was actually checked as current:
+   - form: `(let ((c (max 0 (min 1 (+ base (cond ((string= tier "fibo") 0.10) ((string= tier "sumo") 0.05) ((string= tier "unanchored") -0.15) (t 0))))))) (cond ((string= prov "unknown") (min c 0.3)) ((and (string= prov "specification") spec_checked) (max c 0.8)) (t c)))`
+   - env: `{ "base": <judged base confidence>, "tier": "fibo|sumo|core|unanchored", "prov": <provenance, lower-case>, "spec_checked": <true only if the named spec was verified current> }`
 
 ### semantics-provenance-trace
 
@@ -53,8 +59,9 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
 5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > Inference > Unknown).
 6. Use ontology anchoring as the final tiebreaker, prioritizing higher-confidence ontologies (e.g., FIBO over SUMO, unanchored as lowest priority).
-7. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
-8. Escalate to human review if two Prohibitions conflict or if all five tiers result in a genuine tie.
+7. (D) Once each statement's five classifications are fixed, the ranking is a lexicographic comparison — compute it with `lisp_eval`, never judge it. Encode each statement as its rank on each tier (0 = strongest, in the orders of steps 2–6) and compare: `(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))`, env `{ "a": [<5 tier ranks>], "b": [<5 tier ranks>] }`. The classifications themselves remain P.
+8. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
+9. Escalate to human review if two Prohibitions conflict or if the comparison returns `tie`.
 
 ### Convergence
 
