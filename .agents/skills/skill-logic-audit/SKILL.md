@@ -19,6 +19,10 @@ Audit a template as a step-leaf: its goal must serve the SKILL.md phase
 that invokes it, its inputs must match what that phase passes, and its
 outputs must feed the phase that consumes them.
 
+## D/P and the evaluator boundary
+
+Goal loading, case/candidate reconciliation and hard-gate counts are D (`read_file`, `lisp_eval`, the prompt harness's recorded outputs). Critique and candidate design are P: `logic-critique-template` is critiqued by the separate `logic-critique-critique` render, and the candidates by the fixed-case comparison. The final judgment is the operator's in the algedonic review — Goodhart's law (`onto_anchor` → derived `goodharts_law`): the session that designs a candidate does not also accept it.
+
 ## When to Use
 
 - Auditing a .j2 template's logic against its stated `{# goal: ... #}` annotation
