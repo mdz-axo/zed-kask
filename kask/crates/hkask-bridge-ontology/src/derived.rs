@@ -385,6 +385,22 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-26; Hick, Quarterly Journal of Experimental Psychology 4(1) (1952)",
     },
     DerivedConcept {
+        term: "plussing",
+        aliases: &["plussing", "plus-ing"],
+        identity: "improving an idea by building on it without judging it, adding to what works rather than rejecting what does not",
+        definition: "Pixar's feedback practice described by Ed Catmull, Creativity, Inc. (2014): criticism is offered as an addition ('plus') to the idea, never as a veto. In zed-kask it is improv's default mode: build on agreeable seeds and omit the rest.",
+        constituents: &["feedback", "idea"],
+        authority: "operator ruling 2026-09-26; Catmull, Creativity, Inc. (2014)",
+    },
+    DerivedConcept {
+        term: "yes_and",
+        aliases: &["yes and", "yes, and", "yes-and", "improvisation", "improv"],
+        identity: "accept the other player's offer as given and extend it",
+        definition: "The offer-and-accept principle of improvisational theatre (Keith Johnstone, Impro: Improvisation and the Theatre, 1979): blocking an offer stops the scene, accepting and adding advances it. In zed-kask it grounds improv's Yes And and Yes But modes.",
+        constituents: &["offer", "acceptance"],
+        authority: "operator ruling 2026-09-26; Johnstone, Impro: Improvisation and the Theatre (1979)",
+    },
+    DerivedConcept {
         term: "expectations_gap",
         aliases: &[],
         identity: "price-implied expectations minus fundamentals-demonstrated capability, per leg (growth, margin, duration)",
@@ -748,6 +764,9 @@ mod tests {
             ("deep module", "Ousterhout"),
             ("OWASP LLM Top 10", "OWASP"),
             ("Hick's law", "Hick"),
+            ("plussing", "Catmull"),
+            ("yes and", "Johnstone"),
+            ("improvisation", "Johnstone"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(
