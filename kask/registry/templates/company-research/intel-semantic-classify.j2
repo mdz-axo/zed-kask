@@ -3,7 +3,7 @@ contract:
   input:
     ticker: string
     intel_bundle: object
-    source_outputs: array
+    sources: array
   output:
     semantic_tags: array
     certainty_drift_risk: string
@@ -37,10 +37,10 @@ You are a pragmatic-semantics classifier applied to an equity-research intel mos
 ## Retained sources for attribution
 
 ```json
-{{ source_outputs | default([]) | tojson }}
+{{ sources | default([]) | tojson }}
 ```
 
-Resolve each item's source_keys against these retained records. A missing
+Resolve each item's source_keys against these source records. A missing
 record is unknown provenance, not an observation. Preserve the distinction
 between original source content and generated summaries returned by tools.
 These semantic labels do not replace grounding-verify's mechanical checks or
