@@ -350,10 +350,9 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
 /// Compose the alert message for a native-Escalate action from its typed
 /// data and reason — the single source of truth for this format.
 ///
-/// `route_action_as_alert` persists this exact string to the escalation
-/// queue, and condition dedup (`has_pending_alert`) matches its condition
-/// prefix — drift there silently breaks dedup. Callers use this helper so
-/// the identity is structural, not comment-enforced.
+/// `route_action_as_alert` delivers this string to the board; its condition
+/// prefix identifies the open card for repeat comments. Callers use this
+/// helper so alert identity cannot drift with formatting.
 ///
 /// The verb follows the variant's bad direction (see
 /// `RegulationData::below_threshold_is_bad`): floor metrics read

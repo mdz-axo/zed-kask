@@ -8,6 +8,8 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
+#[cfg(test)]
+mod algedonic_board_tests;
 pub mod idempotency;
 pub mod kanban;
 pub(crate) mod pko;

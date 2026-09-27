@@ -121,9 +121,11 @@ pub trait AlertEscalationSink: Send + Sync {
     /// deficit, threshold, severity) for later triage; `confidence` is 1.0
     /// for Critical, 0.5 for Warning.
     ///
-    /// Returns `Ok(Confirmed(id))` when the write is verified (id when the
-    /// sink can report one), `Ok(Attempted)` for best-effort sinks that
-    /// cannot report, and `Err` when the write failed.
+    /// Returns `Ok(Confirmed(Some(id)))` for a new card and
+    /// `Ok(Confirmed(None))` when the open condition card received a repeat
+    /// comment. The regulation loop uses that single delivery outcome to
+    /// suppress duplicate live/archive alerts. `Attempted` is unconfirmed;
+    /// `Err` means delivery failed.
     ///
     /// Errors are logged by the caller and never propagated — alert
     /// persistence is best-effort, never a correctness path.
@@ -133,25 +135,6 @@ pub trait AlertEscalationSink: Send + Sync {
         confidence: f64,
         error_context: &str,
     ) -> Result<AlertDeliveryOutcome, AlertPersistError>;
-
-    /// Check whether an open board card has the condition key of `output`.
-    ///
-    /// Used for deduplication at the source: the regulation loop senses the
-    /// same deficit every cycle (e.g. an unwired efferent action) and would
-    /// otherwise re-escalate every tick. Matching is on the condition key
-    /// (`alert_condition` — the reason prefix before the " — " separator),
-    /// not the full output: the per-cycle value embedded after the separator
-    /// changes every tick, so exact-match dedup never hits for a
-    /// persistently re-sensed condition. The caller still sends a repeat to
-    /// the sink for a card comment, while suppressing duplicate live alerts
-    /// and archive events. Once the card reaches Done, the next observation
-    /// may create a new card.
-    ///
-    /// Default returns `false` (no dedup). The board sink reads open cards.
-    /// Errors are logged by the caller and never propagated.
-    async fn has_pending_alert(&self, _output: &str) -> bool {
-        false
-    }
 }
 
 impl RuntimeAlert {

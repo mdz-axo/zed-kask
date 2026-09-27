@@ -64,16 +64,14 @@ impl super::CyberneticsLoop {
         &self,
         alert: &RuntimeAlert,
         recovery_signal: Option<&Signal>,
-    ) -> bool {
-        let Some(ref sink) = self.alert_escalation_sink else {
-            return false;
-        };
+    ) -> Option<crate::AlertDeliveryOutcome> {
+        let sink = self.alert_escalation_sink.as_ref()?;
         // Skip non-escalated alerts — only escalated alerts (Critical, or
         // Warning with `escalated: true`) belong in the reviewable backlog.
         // Info alerts and non-escalated Warnings are diagnostic, not
         // actionable, and would pollute the board.
         if !alert.escalated {
-            return true;
+            return None;
         }
         let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
         let mut error_context = serde_json::json!({
@@ -106,8 +104,7 @@ impl super::CyberneticsLoop {
             .try_persist_alert(&alert.message, confidence, &error_context.to_string())
             .await
         {
-            Ok(crate::AlertDeliveryOutcome::Confirmed(_)) => true,
-            Ok(crate::AlertDeliveryOutcome::Attempted) => false,
+            Ok(outcome) => Some(outcome),
             Err(error) => {
                 tracing::warn!(
                     target: "reg.alert",
@@ -115,7 +112,7 @@ impl super::CyberneticsLoop {
                     domain = %alert.domain,
                     "Failed to deliver alert to the Algedonic review board"
                 );
-                false
+                None
             }
         }
     }
@@ -611,16 +608,6 @@ impl super::CyberneticsLoop {
             message,
         };
 
-        // Suppress duplicate live alerts and archive events, but deliver
-        // repeat observations to the existing open board card as comments.
-        if let Some(ref sink) = self.alert_escalation_sink {
-            if sink.has_pending_alert(&alert.message).await {
-                // The board sink records a repeat on the existing card. Keep
-                // live-channel and archive dedup, but do not skip the sink.
-                return self.deliver_alert_to_board(&alert, None).await;
-            }
-        }
-
         // Deliver the alert to the board. The RegulationArchive remains
         // a secondary fallback for restart durability.
         // A recovery signal must be a measurable deviation: self-recovery
@@ -637,18 +624,26 @@ impl super::CyberneticsLoop {
             .and_then(SignalMetric::from_str_name)
             .and_then(|metric| self.observations.lock().get(&metric).cloned())
             .filter(|signal| signal.is_recovery_trigger());
-        // Tool-reliability alerts also emit the per-domain breakdown span so
-        // the algedonic log names the failing domain at alert time — the
-        // escalation row carries the same breakdown in its error_context.
+        let delivery = self
+            .deliver_alert_to_board(&alert, observation.as_ref())
+            .await;
+        if matches!(delivery, Some(crate::AlertDeliveryOutcome::Confirmed(None))) {
+            // The existing card received a repeat; no second live alert or
+            // archive event should compete with its review record.
+            return true;
+        }
+        // New tool-reliability conditions also emit a per-domain diagnosis
+        // span; repeated conditions are recorded only on the existing card.
         if observation
             .as_ref()
             .is_some_and(|signal| signal.metric == SignalMetric::ToolReliability)
         {
             self.emit_tool_outcome_breakdown().await;
         }
-        let queue_confirmed = self
-            .deliver_alert_to_board(&alert, observation.as_ref())
-            .await;
+        let board_confirmed = matches!(
+            delivery,
+            Some(crate::AlertDeliveryOutcome::Confirmed(Some(_)))
+        );
 
         // Primary path: live channel to Curator's inbox
         let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
@@ -716,7 +711,7 @@ impl super::CyberneticsLoop {
                 .unwrap_or_else(|error| error.into_inner())
                 .insert(condition);
         }
-        queue_confirmed || archive_persisted
+        board_confirmed || archive_persisted
     }
 
     /// Verify evidence-bearing rollout impact checks (Fermi impact-gate pattern).
@@ -884,13 +879,8 @@ impl super::CyberneticsLoop {
                         action_type,
                     ),
                 };
-                let latched = match &self.alert_escalation_sink {
-                    Some(sink) => sink.has_pending_alert(&alert.message).await,
-                    None => false,
-                };
-                if latched {
-                    self.deliver_alert_to_board(&alert, None).await;
-                } else {
+                let delivery = self.deliver_alert_to_board(&alert, None).await;
+                if !matches!(delivery, Some(crate::AlertDeliveryOutcome::Confirmed(None))) {
                     self.emit_regulation_span(
                         SpanKind::RegulatoryPlateauDetected,
                         serde_json::json!({
@@ -903,7 +893,6 @@ impl super::CyberneticsLoop {
                     if metric == SignalMetric::ToolReliability {
                         self.emit_tool_outcome_breakdown().await;
                     }
-                    self.deliver_alert_to_board(&alert, None).await;
                     if let Some(ref tx) = self.alerts_tx
                         && tx.send(CurationInput::Alert(alert)).is_err()
                     {
@@ -1362,10 +1351,8 @@ mod tests {
         }
     }
 
-    /// An `AlertEscalationSink` whose `has_pending_alert` flips on demand —
-    /// pins the plateau latch: while the queue holds a pending escalation
-    /// for the plateau condition, re-detections must suppress the span, the
-    /// queue persist, and the live-channel send.
+    /// Records the first card id and reports later deliveries as repeat
+    /// comments, so repeated conditions do not replay live/archive alerts.
     struct ConfirmingEscalationSink {
         persisted: Mutex<Vec<String>>,
     }
@@ -1386,17 +1373,10 @@ mod tests {
             _confidence: f64,
             _error_context: &str,
         ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
-            self.persisted
-                .lock()
-                .expect("persisted lock")
-                .push(output.to_string());
-            Ok(crate::AlertDeliveryOutcome::Confirmed(Some(
-                "test-escalation".to_string(),
-            )))
-        }
-
-        async fn has_pending_alert(&self, _output: &str) -> bool {
-            !self.persisted.lock().expect("persisted lock").is_empty()
+            let mut persisted = self.persisted.lock().expect("persisted lock");
+            let id = persisted.is_empty().then(|| "test-escalation".to_string());
+            persisted.push(output.to_string());
+            Ok(crate::AlertDeliveryOutcome::Confirmed(id))
         }
     }
 
@@ -1430,10 +1410,11 @@ mod tests {
                 .lock()
                 .expect("persisted lock")
                 .push(output.to_string());
-            Ok(crate::AlertDeliveryOutcome::Attempted)
-        }
-        async fn has_pending_alert(&self, _output: &str) -> bool {
-            *self.pending.lock().expect("pending lock")
+            if *self.pending.lock().expect("pending lock") {
+                Ok(crate::AlertDeliveryOutcome::Confirmed(None))
+            } else {
+                Ok(crate::AlertDeliveryOutcome::Attempted)
+            }
         }
     }
 
@@ -1595,6 +1576,50 @@ mod tests {
         );
         regulation_loop.route_action_as_alert(&action).await;
         assert_eq!(sink.persisted.lock().expect("persisted").len(), 1);
+    }
+
+    /// expect: "A repeat is written once to its open card and does not replay the live alert" [P9]
+    #[tokio::test]
+    async fn repeat_uses_the_delivery_result_without_a_second_board_read() {
+        struct SingleDeliveryRecorder(std::sync::atomic::AtomicUsize);
+        #[async_trait::async_trait]
+        impl crate::AlertEscalationSink for SingleDeliveryRecorder {
+            async fn try_persist_alert(
+                &self,
+                _output: &str,
+                _confidence: f64,
+                _context: &str,
+            ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
+                let call = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(crate::AlertDeliveryOutcome::Confirmed(if call == 0 {
+                    Some("card-1".to_string())
+                } else {
+                    None
+                }))
+            }
+        }
+        let recorder = Arc::new(SingleDeliveryRecorder(std::sync::atomic::AtomicUsize::new(
+            0,
+        )));
+        let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+                .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+        regulation.set_alert_escalation_sink(Some(recorder.clone()));
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("repeat_delivery_contract"),
+            "test_metric".to_string(),
+        );
+        assert!(regulation.route_action_as_alert(&action).await);
+        assert!(regulation.route_action_as_alert(&action).await);
+        assert_eq!(recorder.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(
+            archive.0.lock().expect("archive").len(),
+            1,
+            "a repeat comment must not re-emit the archive alert"
+        );
     }
 
     fn rollout_impact_check(rollout_id: &str, metric: &str) -> RolloutImpactCheck {
@@ -2980,11 +3005,7 @@ mod tests {
                 _confidence: f64,
                 _error_context: &str,
             ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
-                Ok(crate::AlertDeliveryOutcome::Attempted)
-            }
-
-            async fn has_pending_alert(&self, _output: &str) -> bool {
-                true
+                Ok(crate::AlertDeliveryOutcome::Confirmed(None))
             }
         }
 
@@ -3177,11 +3198,7 @@ mod tests {
                 _confidence: f64,
                 _error_context: &str,
             ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
-                Ok(crate::AlertDeliveryOutcome::Attempted)
-            }
-
-            async fn has_pending_alert(&self, _output: &str) -> bool {
-                true
+                Ok(crate::AlertDeliveryOutcome::Confirmed(None))
             }
         }
 

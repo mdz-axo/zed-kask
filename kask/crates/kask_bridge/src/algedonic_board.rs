@@ -252,18 +252,6 @@ impl AlertEscalationSink for BoardAlertEscalationSink {
         })?;
         Ok(AlertDeliveryOutcome::Confirmed(Some(task_id.to_string())))
     }
-
-    async fn has_pending_alert(&self, output: &str) -> bool {
-        let condition = hkask_regulation::alert_condition(output);
-        match self.open_cards().await {
-            Ok((_, cards)) => cards.iter().any(|card| card.condition == condition),
-            Err(error) => {
-                tracing::warn!(target: "reg.alert", %error,
-                    "Algedonic board not delivered; cannot establish pending alert");
-                false
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -504,6 +492,6 @@ mod tests {
         }
         let sink = BoardAlertEscalationSink::new(Arc::new(Unwired));
         assert!(sink.try_persist_alert("degraded", 0.5, "{}").await.is_err());
-        assert!(!sink.has_pending_alert("degraded").await);
+        assert!(sink.reconcile_conditions(&[]).await.is_err());
     }
 }
