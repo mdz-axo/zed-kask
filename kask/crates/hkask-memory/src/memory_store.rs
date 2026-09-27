@@ -155,7 +155,7 @@ fn normalize_value(value: &str) -> String {
 pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
 
 /// Entity prefixes holding conversation-turn storage, not knowledge facts.
-const TURN_STORAGE_PREFIXES: [&str; 2] = ["curator:thread:", "chat:thread:"];
+const TURN_STORAGE_PREFIX: &str = "curator:thread:";
 
 /// Unified memory store — one store for all h_mems.
 ///
@@ -985,8 +985,8 @@ impl MemoryStore {
     }
 
     /// Prune aged h_mems scoped to entity prefixes — the safe default for
-    /// the curator's forgetting valve. Turn storage (the `curator:thread:`
-    /// and `chat:thread:` prefixes) is episodic and prunable by age;
+    /// the curator's forgetting valve. Turn storage (`curator:thread:`)
+    /// is episodic and prunable by age;
     /// knowledge-layer rows outside the prefixes outlive episodic turnover
     /// unless the caller explicitly opts into full-store [`prune_by_age`].
     pub fn prune_by_age_in_prefixes(
@@ -1096,7 +1096,7 @@ impl MemoryStore {
     /// deleted. Returns the count of deleted duplicates.
     /// Scans all stored h_mems (no perspective filter)
     /// — the curator's memory is a single store and dedup is global.
-    /// Turn-storage entities (`curator:thread:` / `chat:thread:`) are
+    /// Turn-storage entities (`curator:thread:`) are
     /// excluded and counted in `skipped_turn_storage`.
     pub fn dedup_by_normalized_value(
         &self,
@@ -1111,10 +1111,7 @@ impl MemoryStore {
         let mut skipped_turn_storage = 0usize;
 
         for h_mem in &h_mems {
-            if TURN_STORAGE_PREFIXES
-                .iter()
-                .any(|prefix| h_mem.entity.starts_with(prefix))
-            {
+            if h_mem.entity.starts_with(TURN_STORAGE_PREFIX) {
                 skipped_turn_storage += 1;
                 continue;
             }
@@ -1454,7 +1451,7 @@ mod tests {
             .expect("insert aged ruling");
 
         let outcome = store
-            .prune_by_age_in_prefixes(&["curator:thread:", "chat:thread:"], 50, None)
+            .prune_by_age_in_prefixes(&["curator:thread:"], 50, None)
             .expect("scoped prune succeeds");
         assert_eq!(outcome.candidates, 1, "only the turn row is in scope");
         assert_eq!(outcome.deleted_count, 1);

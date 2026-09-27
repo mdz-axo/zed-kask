@@ -6,19 +6,10 @@
 //! The prefix comes from the bridge's ingest path
 //! (`kask_bridge/src/memory/ingest.rs`):
 //!
-//! - `curator:thread:{id}` — the shared copy (Shared), written for
-//!   **every turn**, curator and non-curator alike. Since the
-//!   2026-09-04 single-copy ruling, a turn's content is stored as
-//!   cleaned, tagged chunk h_mems under this entity (attribute
-//!   `chunk:{turn_ms}:{index}`; older rows `chunk:{index}`); legacy rows under the same entity carry the old
-//!   whole-turn `turn` attribute. Discovery is attribute-agnostic —
-//!   both shapes are extraction candidates.
+//! - `curator:thread:{id}` — the one copy of every turn, stored as
+//!   cleaned, tagged chunk h_mems. Discovery is attribute-agnostic.
 //!
-//! The shared-copy prefix is therefore the complete set: a scan over it
-//! alone sees every turn of every thread. The former `chat:thread:`
-//! curator-perspective prefix was retired by the same ruling (its rows
-//! were byte-identical duplicates; the legacy rows were forgotten
-//! (deleted) by the 2026-09-04 therapy hygiene pass).
+//! A scan over this prefix alone sees every turn of every thread.
 
 use std::collections::HashMap;
 
@@ -28,14 +19,7 @@ use hkask_storage::HMem;
 /// The shared-copy turn prefix — every turn, the complete set.
 pub(crate) const SHARED_TURN_PREFIX: &str = "curator:thread:";
 
-/// The retired curator-perspective turn prefix. The single-copy ruling
-/// (2026-09-04) stopped new writes under it, but legacy rows persist —
-/// surfaces that scope or exclude turn storage must treat both prefixes
-/// as turn storage.
-pub(crate) const RETIRED_TURN_PREFIX: &str = "chat:thread:";
-
-/// One thread's turns as extraction presents them: the shared copies
-/// (legacy whole-turn rows and chunk rows alike).
+/// One thread's turns as extraction presents them.
 pub(crate) fn thread_turns(
     memory: &MemoryStore,
     thread_id: &str,
@@ -76,37 +60,24 @@ mod tests {
         MemoryStore::try_new_without_embeddings(h_mem_store).expect("memory store")
     }
 
-    /// `thread_turns` reads the shared-copy prefix — the complete set under
-    /// the single-copy design. Both row shapes (legacy `turn` attribute and
-    /// chunk `chunk:{n}` attribute) are candidates: discovery is
-    /// attribute-agnostic.
+    /// `thread_turns` returns only the requested thread's turns.
     #[test]
-    fn thread_turns_reads_shared_prefix_both_attribute_shapes() {
+    fn thread_turns_reads_one_thread() {
         let store = store();
         let webid = hkask_types::WebID::new();
-        store
-            .store(HMem::new(
-                "curator:thread:t1",
-                "turn",
-                serde_json::json!("legacy whole-turn row"),
-                webid,
-            ))
-            .expect("seed legacy turn");
-        store
-            .store(HMem::new(
-                "curator:thread:t1",
-                "chunk:0",
-                serde_json::json!("chunk row"),
-                webid,
-            ))
-            .expect("seed chunk");
+        for (entity, text) in [("curator:thread:t1", "one"), ("curator:thread:t2", "two")] {
+            store
+                .store(HMem::new(
+                    entity,
+                    "chunk:1:0",
+                    serde_json::json!(text),
+                    webid,
+                ))
+                .expect("seed chunk");
+        }
 
         let turns = thread_turns(&store, "t1").expect("query turns");
-        assert_eq!(
-            turns.len(),
-            2,
-            "legacy and chunk rows are both extraction candidates — got: {turns:?}"
-        );
+        assert_eq!(turns.len(), 1, "got: {turns:?}");
     }
 
     /// The distillation scan reads the shared-copy prefix — the complete

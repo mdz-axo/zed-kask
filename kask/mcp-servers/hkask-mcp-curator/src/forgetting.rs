@@ -28,9 +28,7 @@
 //! Since the 2026-09-04 single-copy ruling there is no separate
 //! curator-perspective original to preserve: a turn's content lives only
 //! in its shared-copy chunks, so forgetting the shared copies forgets
-//! the covered turns (the lessons stay). The legacy `chat:thread:` rows
-//! that predate the ruling were forgotten (deleted) by the 2026-09-04
-//! therapy hygiene pass.
+//! the covered turns (the lessons stay).
 //!
 //! A thread whose every turn is covered keeps the fast whole-entity path
 //! (all its content is proven distilled, including legacy embeddings no
@@ -344,12 +342,7 @@ mod tests {
             "old turn 2",
             covered_turn,
         );
-        seed_turn(
-            &memory,
-            "chat:thread:old-thread",
-            "private original",
-            covered_turn,
-        );
+
         seed_embedding(&memory, "curator:thread:old-thread", "old turn 1", 1.0);
         seed_watermark(&memory, "old-thread", old);
 
@@ -405,14 +398,6 @@ mod tests {
         );
         assert_eq!(
             memory
-                .h_mems_by_entity_prefix("chat:thread:old-thread")
-                .expect("query")
-                .len(),
-            1,
-            "the pass never touches the retired perspective prefix — legacy rows there were forgotten (deleted) by the therapy hygiene pass, not here"
-        );
-        assert_eq!(
-            memory
                 .h_mems_by_entity_prefix("curator:thread:recent-thread")
                 .expect("query")
                 .len(),
@@ -442,7 +427,7 @@ mod tests {
             .get_int(0)
             .expect("integer count");
         assert_eq!(
-            stored_rows, 5,
+            stored_rows, 4,
             "the two forgotten turns must be physically absent"
         );
     }

@@ -1696,7 +1696,7 @@ impl CuratorServer {
     /// confidence decay (lowers weight, never deletes) and confidence-based
     /// consolidation (deletes low-confidence).
     #[tool(
-        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:/chat:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
+        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
     )]
     pub async fn curator_memory_prune(
         &self,
@@ -1723,10 +1723,7 @@ impl CuratorServer {
             } else {
                 memory
                     .prune_by_age_in_prefixes(
-                        &[
-                            thread_turns::SHARED_TURN_PREFIX,
-                            thread_turns::RETIRED_TURN_PREFIX,
-                        ],
+                        &[thread_turns::SHARED_TURN_PREFIX],
                         req.max_age_days,
                         req.spare_recalled_within_days,
                     )
@@ -1753,7 +1750,7 @@ impl CuratorServer {
     /// (entity, attribute, normalized_value), keeps highest-confidence,
     /// deletes the rest. Non-string values skipped.
     #[tool(
-        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:/chat:thread:) skipped."
+        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:) skipped."
     )]
     pub async fn curator_memory_dedup(
         &self,
@@ -1787,19 +1784,10 @@ impl CuratorServer {
         .await
     }
 
-    /// Backfill semantic embeddings for knowledge-layer h_mems whose
-    /// entities have none. Deterministic and embeddings-table-only — no
-    /// h_mem is created, modified, or deleted. Turn-storage entities
-    /// (`chat:thread:` / `curator:thread:`) are excluded by design: their
-    /// embeddings live under the shared copy written at ingest, and
-    /// backfilling the perspective originals would duplicate the semantic
-    /// surface. Distillation watermarks (`curator:distilled:`) are excluded
-    /// as process markers with no recallable meaning.
-    ///
-    /// Exists because the insert paths gained the embedding contract
-    /// 2026-09-04 — h_mems inserted before that (operator rulings, verified
-    /// code status, skill-use reports) are invisible to
-    /// `curator_semantic_search` until backfilled.
+    /// Repair semantic embeddings for knowledge-layer h_mems whose insert-time
+    /// embedding failed. Embeddings-table-only — no h_mem is created,
+    /// modified, or deleted. Turns (embedded at ingest), distillation
+    /// watermarks and goal rows are excluded.
     #[tool(
         description = "Backfill missing semantic passages for knowledge-layer h_mems. Eligibility is exact (entity + canonical passage), not entity-level. Excludes turns, distillation watermarks, and goal rows; invalid goal publication is never repaired by backfill. dry_run lists candidates without embedding."
     )]
@@ -1817,10 +1805,8 @@ impl CuratorServer {
                 .h_mems_by_entity_prefix("")
                 .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
 
-
             let is_excluded = |entity: &str| {
                 entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
-                    || entity.starts_with(thread_turns::RETIRED_TURN_PREFIX)
                     || entity.starts_with(distillation::WATERMARK_PREFIX)
                     || entity.starts_with("curator:goal:")
             };
@@ -1909,9 +1895,7 @@ impl CuratorServer {
         .await
     }
 
-    /// Queries the thread's turn h_mems across both storage prefixes —
-    /// `chat:thread:<thread_id>` (curator-perspective originals) and
-    /// `curator:thread:<thread_id>` (shared copies of every turn) — via
+    /// Queries the thread's turn h_mems (`curator:thread:<thread_id>`) via
     /// `thread_turns::thread_turns`, the one turn-discovery contract shared
     /// with the distillation pass. Returns their IDs and content as
     /// extraction candidates. The curator reviews and inserts the ones

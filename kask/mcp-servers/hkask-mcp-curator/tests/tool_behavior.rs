@@ -844,7 +844,7 @@ async fn consult_returns_semantic_fragments_for_question() {
 async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
     let (server, memory) = make_server_with_embeddings();
     let seed = hkask_storage::HMem::new(
-        "chat:thread:evidence-source",
+        "curator:thread:evidence-source",
         "chatted",
         serde_json::Value::String("the source turn".to_string()),
         WebID::new(),
@@ -895,7 +895,7 @@ async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
 #[tokio::test]
 async fn memory_citation_round_trip_from_tool_surface() {
     let (server, memory) = make_server_with_embeddings();
-    let entity = "chat:thread:evidence-source";
+    let entity = "curator:thread:evidence-source";
     let seed = hkask_storage::HMem::new(
         entity,
         "chatted",
@@ -1045,7 +1045,7 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
 async fn memory_insert_embeds_value_for_semantic_recall() {
     let (server, memory) = make_server_with_embeddings();
     let seed = hkask_storage::HMem::new(
-        "chat:thread:evidence-source",
+        "curator:thread:evidence-source",
         "chatted",
         serde_json::Value::String("the source turn".to_string()),
         WebID::new(),
@@ -1173,7 +1173,7 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
             .expect("memory store init"),
     );
     let seed = hkask_storage::HMem::new(
-        "chat:thread:evidence-source",
+        "curator:thread:evidence-source",
         "chatted",
         serde_json::Value::String("the source turn".to_string()),
         WebID::new(),
@@ -1356,12 +1356,8 @@ async fn backfill_names_unsupported_rows() {
 }
 
 /// `curator_memory_backfill_embeddings` must embed knowledge-layer h_mems
-/// whose entities have no embedding, while excluding turn-storage entities
-/// — both prefixes, `curator:thread:` (shared) and the retired
-/// `chat:thread:` (legacy rows persist) — and distillation watermarks
-/// (process markers). The tool exists because h_mems inserted
-/// before the 2026-09-04 embedding contract are invisible to semantic
-/// search. Also pins dry-run (embeds nothing) and idempotence (a second
+/// whose entities have no embedding, while excluding turn storage
+/// (`curator:thread:`) and distillation watermarks. Also pins dry-run (embeds nothing) and idempotence (a second
 /// run finds no candidates).
 #[tokio::test]
 async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
@@ -1397,15 +1393,7 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         WebID::new(),
     );
     memory.store(shared_turn).expect("seed shared turn");
-    let retired_turn = hkask_storage::HMem::new(
-        "chat:thread:backfill-test",
-        "chatted",
-        serde_json::Value::String("retired perspective turn".to_string()),
-        WebID::new(),
-    );
-    memory
-        .store(retired_turn)
-        .expect("seed retired-perspective turn");
+
     let watermark = hkask_storage::HMem::new(
         "curator:distilled:backfill-test",
         "distilled_through",

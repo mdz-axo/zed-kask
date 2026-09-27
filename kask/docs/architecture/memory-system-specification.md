@@ -785,8 +785,7 @@ construction. Time-based and distillation-gated, never count-based
   2026-09-04 single-copy ruling there is no separate perspective original
   to preserve — a turn's content lives only in its shared chunks, so
   forgetting the shared copies forgets the covered turns (the lessons
-  stay). The legacy `chat:thread:` rows that predate the ruling were
-  deleted by the therapy hygiene pass, not by this pass. The forgetting pass
+  stay). The forgetting pass
   does not delete watermark control state; the distillation publisher
   atomically replaces each thread's prior marker when coverage advances. A
   never-distilled thread is never forgotten (no watermark, no proof of

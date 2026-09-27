@@ -421,7 +421,7 @@ pub struct MemoryDedupRequest {
 /// citation (the turn h_mem ID), preserving the evidence-grounding invariant.
 ///
 /// The tool queries the curator's memory for all h_mems with entity
-/// `chat:thread:<thread_id>`, returns their IDs and content, and suggests
+/// `curator:thread:<thread_id>`, returns their IDs and content, and suggests
 /// candidate (entity, attribute, value) triples the curator might extract.
 /// The curator reviews and inserts the ones worth keeping.
 #[derive(Debug, Deserialize, JsonSchema)]

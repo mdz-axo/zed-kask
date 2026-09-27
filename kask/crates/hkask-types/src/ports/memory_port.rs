@@ -102,7 +102,7 @@ impl GoalEvent {
 pub struct MemorySnippet {
     /// The text content of the memory (e.g., a chat turn, a fact, a summary).
     pub text: String,
-    /// The entity key this memory was stored under (e.g. `chat:thread:{id}`).
+    /// The entity key this memory was stored under (e.g. `curator:thread:{id}`).
     /// Used by the context injector to record co-occurrence links between
     /// entities recalled in the same context — the `connectedness` signal.
     pub entity: String,
