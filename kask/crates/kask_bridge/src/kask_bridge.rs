@@ -75,10 +75,10 @@ pub use mcp_servers::{
     remove_shadowing_context_server_entries, shadowed_context_server_entry_ids,
 };
 pub use memory::{
-    BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, hydrate_operator_feedback,
-    CuratorRegulationArchive, load_operator_feedback, open_curator_escalation_queue,
-    open_curator_regulation_archive,
-    persist_operator_feedback, persist_skill_outcome, persist_skill_tool_failure,
+    BridgeMemoryPort, CuratorRegulationArchive, RealMemoryPort,
+    hydrate_operator_feedback, load_operator_feedback, open_curator_escalation_queue,
+    open_curator_regulation_archive, persist_operator_feedback, persist_skill_outcome,
+    persist_skill_tool_failure,
 };
 pub use model_resolution::resolve_model_names;
 pub use passphrase_rotation::{
@@ -107,6 +107,9 @@ pub use context_server_health_bridge::BridgeContextServerHealthSource;
 
 mod ocr_health_bridge;
 pub use ocr_health_bridge::BridgeOcrHealthSource;
+
+mod algedonic_board;
+pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 
 mod rollout_event_bridge;
 

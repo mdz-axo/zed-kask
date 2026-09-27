@@ -613,7 +613,10 @@ async fn eodhd_normalization_is_provider_pure_in_both_orders_and_after_reopen() 
                 assert_eq!(metrics.price_to_sales(), Some(3.0));
                 assert_eq!(metrics.ev_to_ebitda(), Some(10.5));
                 assert_eq!(metrics.raw()[0]["grossProfitMargin"], 0.4);
-                assert_eq!(metrics.raw()[0]["roic"], 0.125);
+                // Operating income 300m after tax (none reported) / net invested capital 900m.
+                assert!(
+                    (metrics.raw()[0]["roic"].as_f64().expect("roic") - 1.0 / 3.0).abs() < 1e-12
+                );
                 assert!((metrics.revenue_growth().expect("growth") - 1.0 / 9.0).abs() < 1e-12);
                 assert_eq!(output["provider"], "EODHD");
                 assert!(output["warnings"].to_string().contains("approximates"));

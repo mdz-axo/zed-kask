@@ -92,6 +92,8 @@ boundary checks, plus focused stream/schema, skill, persistence, provider,
 and composition-root tests. This is build/test evidence, not an installed
 application smoke test. The merge commit is the completion record.
 
+**D8 algedonic board integration — 2026-09-26 (uncommitted):** `crates/zed/src/main.rs` hands its `PanelToolInvoker` to `kask_bridge::BoardAlertEscalationSink` at the composition root. The bridge dispatches board/task operations through the governed MCP runtime, not through a second DB client or dashboard. The kanban service owns standard columns and verification; the connector may advance a self-recovered card to Review but never Done. Regulation's duplicate-alert routing still records a repeat on the existing card without replaying the live alert and archive. The previous queue-backed sink and its duplicate tests were removed. Status and legacy queue removal are separate uncompleted steps; do not read this as Phase D completion.
+
 ## Core-review continuation — 2026-09-04
 
 **D8 embedding startup:** `crates/zed/src/main.rs` now passes

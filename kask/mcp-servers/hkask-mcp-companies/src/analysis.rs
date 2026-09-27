@@ -203,8 +203,10 @@ pub(crate) fn extract_roic(metrics_json: &Value) -> Vec<(String, f64)> {
     values
 }
 
-/// Extract invested capital from balance sheet JSON by computing total assets.
-/// Returns Vec of (year, total_assets) sorted by year ascending.
+/// Extract invested capital from balance sheet JSON: the reported invested
+/// capital (`investedCapital` / `netInvestedCapital`), falling back to total
+/// assets only when neither is reported. Returns Vec of (year, capital) sorted
+/// by year ascending.
 pub(crate) fn extract_invested_capital(balance_sheets: &Value) -> Vec<(String, f64)> {
     let arr = match balance_sheets.as_array() {
         Some(a) => a,
@@ -214,10 +216,53 @@ pub(crate) fn extract_invested_capital(balance_sheets: &Value) -> Vec<(String, f
         .iter()
         .filter_map(|entry| {
             let year = extract_year(entry)?;
-            let assets = entry.get("totalAssets")?.as_f64()?;
-            Some((year, assets))
+            let capital = entry
+                .get("investedCapital")
+                .or_else(|| entry.get("netInvestedCapital"))
+                .or_else(|| entry.get("totalAssets"))?
+                .as_f64()?;
+            Some((year, capital))
         })
         .collect();
     values.sort_by(|a, b| a.0.cmp(&b.0));
     values
+}
+
+#[cfg(test)]
+mod capital_allocation_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// expect: invested capital is the reported invested capital, not total
+    /// assets, and periods stay in year order so the early/late halves compare
+    /// time (live-observed 2026-09-26, VIRI.PA: "poor" on total assets sorted
+    /// by size, against an audited pattern of flat capital and rising returns).
+    #[test]
+    fn scorer_uses_invested_capital_in_year_order() {
+        let balance = json!([
+            {"calendarYear":"2025","totalAssets":2750.0,"netInvestedCapital":2056.0},
+            {"calendarYear":"2023","totalAssets":3000.0,"netInvestedCapital":2100.0},
+            {"calendarYear":"2024","totalAssets":2900.0,"netInvestedCapital":2080.0},
+            {"calendarYear":"2022","totalAssets":3100.0,"netInvestedCapital":2712.0},
+        ]);
+        let capital = extract_invested_capital(&balance);
+        assert_eq!(
+            capital
+                .iter()
+                .map(|(y, c)| (y.as_str(), *c))
+                .collect::<Vec<_>>(),
+            vec![
+                ("2022", 2712.0),
+                ("2023", 2100.0),
+                ("2024", 2080.0),
+                ("2025", 2056.0)
+            ]
+        );
+        let returns = [0.02, 0.05, 0.07, 0.115];
+        let values: Vec<f64> = capital.iter().map(|(_, c)| *c).collect();
+        assert!(matches!(
+            ceo_capital_allocation_score(&returns, &values),
+            CeoRating::Excellent | CeoRating::Good
+        ));
+    }
 }

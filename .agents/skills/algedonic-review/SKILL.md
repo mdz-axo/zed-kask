@@ -1,127 +1,34 @@
 ---
 name: algedonic-review
 core: true
-description: "Human-in-the-loop review of the regulation system with the operator and the Curator: triage the algedonic alert backlog, then walk the gemba of skill execution (outcomes, operator feedback, skill-use issues, queued proposals) so the operator evaluates skills and decides proposals. The only place skills are evaluated. Invoked when the algedonic log nears its cap, for a skill-performance review, or on demand."
+description: "Human-in-the-loop algedonic review and skill gemba walk through the Algedonic review kanban board. The board is the worklist and durable review record; skill evaluation happens only in this review."
 ---
 
 # Algedonic Review
 
-Human-in-the-loop review of the regulation system. The algedonic system is the cybernetic regulation loop's pain/pleasure feedback — variety deficits, energy exhaustion, outcome plateaus, grounding violations. When these signals breach threshold, the cybernetics loop escalates alerts to a durable review queue. This skill reviews that queue, synthesizes a triage briefing, and guides the operator through resolving or dismissing each alert.
+The **Algedonic review** board in the kanban panel is the shared worklist for the operator and Curator. The regulation loop places new alerts in Backlog and records repeats as comments on the same open condition card. Skill-change proposals also enter this board, not a separate folder. The capped algedonic log is context, not the review backlog; it self-evicts and is never cleared merely to finish a review.
 
-The review's second half is the **gemba walk** (Lean: 現場, going to the actual place where value is created). Here the actual place is skill execution: the operator and the Curator inspect what skills actually did and the operator evaluates them. **Skill evaluation happens only here.** Evaluation is logically separated from execution (operator ruling 2026-09-24; Goodhart's law — a measure the executor targets stops measuring): executing sessions record outcomes and file proposals under `zk-data/curator/proposals/{skill}/`, but only this review, with the operator, records verdicts (`record_skill_feedback` is registered only in Curator sessions) and accepts or rejects proposals. Review records go to `zk-data/curator/reviews/{date}/`.
+## SENSE — Read the worklist
 
-## Initial and target condition
+1. Call `kanban_board_list` to find **Algedonic review**, then `kanban_task_list` for every column. If the board/tool cannot be read, report the backlog as unknown, not empty. Open the board in the kanban panel with the operator; the panel and its existing kanban widget are the visual artifact. `curator_status` supplies loop health, the awaiting-review count (all board cards not Done), and log-cap readings; `curator_algedonic_log` provides recent diagnostic events. Do not confuse latest-cycle new alerts with cards awaiting review.
+2. If `loop_reading` is `wiring-closed` or `broken`, investigate the loop wiring before judging its alerts. If the reading is unavailable, state the uncertainty. A heartbeat absent for more than two observed hourly intervals is a structural concern, not proof of a healthy quiet loop.
+3. Read each open card's description, comments, deliverables and verification criteria. An unreadable card is unknown. Backlog means arrived, Ready triaged, In Progress decided/delegated, Review fixed or self-recovered with evidence, Done verified.
 
-- **Initial condition:** the three SENSE responses (`curator_status` with `loop_reading` and cap fields, `curator_escalations`, `curator_algedonic_log`) and, for the gemba walk, the `reg_query` records, `skill_use_issue` memories and queued proposal files. A failed channel is recorded as unknown.
-- **Target condition:** every pending escalation either has an executed operator decision with its tool receipt and cited observation, or is reported still pending with a reason; every queued proposal either has an operator disposition recorded in `reviews/{date}/` or remains in `proposals/` as undecided; the post-action `curator_escalations` re-query is shown.
-- **PDCA exemption:** one review is one operator session with no in-session iteration. The loop runs across reviews: the regulation loop acts on the decisions, and the next review re-senses the result.
+## TRIAGE and ACT — Work the standard columns
 
-## Step types
+4. Brief the operator using card IDs, observed severity, evidence and next action. Missing/invalid severity stays unknown; confidence is not a severity substitute. Record triage in a comment and move Backlog → Ready. Ask the operator for the actual decision; do not infer it.
+5. For a decided item, record the decision and source observation on its card, assign it or use `kanban_task_spawn` / `spawn_agent` with clear instructions when work is delegated, and move Ready → In Progress. Attach outputs with `kanban_task_add_deliverable`. Do not create a second worklist, a dashboard or a dated review note.
+6. After a fix or self-recovery, attach the fresh observation to that card and move to Review through the standard columns. Self-recovery is evidence for review, **not** authorization to mark Done. A 7-day post-advice observation is recorded as the verification evidence on this same card using `kanban_task_verify` only when the operator (or Curator under a recorded grant) actually judges the evidence; do not recreate an advice baseline/receipt/publication protocol in comments.
+7. Done requires `kanban_task_verify` on a card in Review with the actual observation. The operator verifies by default. A Curator verification requires a grant recorded on that card with its scope; if verification is explicitly skipped under an authorized grant, record who skipped and why without pretending that an unverified change is verified. Re-query `kanban_task_list` after actions; tool-call intent is not a receipt and failed reads do not prove clearance.
 
-| Step | Type | Oracle / critique |
-|------|------|-------------------|
-| SENSE; gemba Sense | D | curator tool responses, `reg_query`, file listing |
-| TRIAGE severity and recommended action; gemba Brief | P | operator decision at PRESENT / Record |
-| ACT decisions; verdict and disposition choice | H | the operator; never inferred |
-| Executing planned calls; VERIFY re-query | D | per-call tool receipts; `curator_escalations` re-query |
+## GEMBA WALK — Skill evaluation with the operator
 
-## When to Use
-
-- The `AlgedonicLogApproachingCap` signal fired (the in-memory alert log is ≥80% full).
-- The operator wants to review accumulated algedonic alerts and escalations.
-- The operator wants to triage pending escalations before they accumulate further.
-- The operator wants a structured digest of recent regulation events for operational awareness.
-- The operator wants to review skill performance, evaluate a skill, or decide queued skill-change proposals (the gemba walk).
-
-
-## When NOT to Use
-
-- A `wiring-closed` or `broken` `loop_reading` — investigate the loop wiring before triage; alerts from a loop that never ticked are not trustworthy input.
-- Autonomous resolution — the skill proposes and the operator decides; it never resolves or dismisses on its own.
-- Evaluating a skill from inside the session that ran it — that is the self-evaluation this review exists to replace; file a proposal instead.
-- Clearing the in-memory log as the goal — `AlgedonicLogApproachingCap` is the trigger, not a condition this skill clears; the log self-evicts when full.
-
-## Instructions
-
-### SENSE — Query alert backlog (step 1)
-
-1. Step 1 calls two curator MCP tools directly (no template): `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
-2. Call the single built-in `curator_status` directly for live loop health; it is available to native and Curator sessions through the same agent toolset. It is not an MCP batch member, and no second MCP status tool or reconstructed status from event history is needed. Read its `status` and `loop_reading` (wiring-closed / turning / broken / unobserved); `provider not wired` and `snapshot unavailable` are failures of visibility, not healthy states. A `wiring-closed` loop has never ticked — investigate its wiring before acting on alerts.
-3. Keep the `curator_status` response as `status_result` (including `loop_reading`, `alert_log_count`, `alert_log_cap`, and `alert_log_approaching_cap`) and the two MCP responses as `escalations_result` and `algedonic_result`. A missing status or failed channel is unknown, not healthy or an empty backlog.
-4. If `loop_reading` is `wiring-closed` or `broken`, stop before triage, report the structural concern and the raw status, and investigate the loop wiring. If the reading is missing or `unobserved`, surface the uncertainty rather than claiming a healthy loop.
-5. The algedonic log's `reg.outcome.loop_quality` events carry `heartbeat: true` on the hourly idle emission (tick 1, then every 360 ticks). Absence of a heartbeat for more than two hourly intervals is a structural concern — a dead ticker and a converged loop are otherwise indistinguishable (both produce silence). Flag it alongside the `loop_reading` when the window was actually observed.
-
-### TRIAGE — Synthesize triage briefing (step 2)
-
-1. Only after the SENSE gate, render `algedonic-review/triage-briefing` with `escalations_result`, `algedonic_result`, and the complete `status_result`. A successful response with zero alerts is a no-alert review, not an error; a failed or unavailable response is not a no-alert review.
-2. Each alert is classified from observed severity or valid deficit/threshold data (Critical → act now, Warning → act soon, Info → acknowledge). Missing or invalid severity remains `Unknown` and requires investigation; alert `confidence` is not a severity substitute.
-3. Each alert gets a recommended action: `resolve` (issue addressed), `dismiss` (not actionable), `investigate` (needs root-cause analysis), or `escalate_to_human` (beyond curator authority).
-4. The briefing includes the alert log cap status (count/cap, approaching flag) so the operator knows whether eviction is imminent.
-5. The briefing carries the observed `loop_reading` and cap fields from `status_result` to `present-triage`; never fill unknown measurements with healthy defaults. A broken or wiring-closed reading was already stopped at SENSE.
-
-### PRESENT — Render triage report (step 3)
-
-1. Before rendering `algedonic-review/present-triage`, inspect the triage JSON: `escalation_triage` and `algedonic_digest` must be arrays and `summary` must contain numeric `total_pending`, `critical`, `warning`, and `info` counts. A malformed shape is a failed handoff, not a no-alert result; stop and report it. Only then render the conversational summary with markdown tables.
-2. The summary opens with the observed loop reading and alert log cap status (or explicitly unavailable status), then the escalation backlog table and algedonic event digest. A successful empty backlog is presented as no pending alerts.
-3. Each escalation entry includes: ID, domain, severity, created_at, recommended action, and a one-line description.
-4. The presentation closes with a prompt for the operator to act on each alert.
-
-### ACT — Execute operator decisions (step 4)
-
-1. Render the `algedonic-review/execute-decisions` template to produce a structured list of resolve/dismiss calls.
-2. The operator reviews the briefing and specifies which alerts to resolve or dismiss.
-3. For each confirmed decision with an observation-backed note applicable to that ID, the skill calls `curator_escalation_resolve` or `curator_escalation_dismiss` with the escalation ID and the note. The template produces planned calls only; execute them separately, retain each tool receipt, and do not report a planned call as completed.
-4. The skill does NOT autonomously resolve or dismiss — the operator must confirm each decision.
-5. Every resolve/dismiss verdict carries evidence: the resolution note must cite the observation that settles the alert (a reading taken, a log line, a metric re-checked). A verdict with nothing attached is a laundering UI pointed at the regulation loop — it costs the loop a correction, so it must cost the reviewer an observation. If the operator cannot name the evidence, the recommended action is `investigate`, not `resolve`.
-
-### GEMBA WALK — Skill evaluation with the operator (steps 5–7)
-
-Runs after alert triage, or alone when the operator asks for a skill review. The PDCA loop here is the operator's: the Curator senses and briefs, the operator checks and acts.
-
-5. **Sense (go and see).** Call `reg_query` with `namespace: "reg.skill"` over the review window (default 7 days) for activation outcomes (each carries `invoker`: `Curator`, `Zed Agent` or `delegated`), automatic `reg.skill.<id>.tool_failure` records (tool failures captured while that skill was active — unclassified evidence; classify `failure_origin` before treating one as a skill defect), and operator-feedback history; `curator_memory_recall` for each `skill_use_issue:<skill>` entity that appears (or `focus_skill`); and list files under `~/Documents/zk-data/curator/proposals/` via `terminal` (`find … -name '*.json'`), reading each proposal. A failed or empty channel is a gap to report, never a healthy reading. Activation success means the skill body loaded; it is not evidence of good work.
-6. **Brief.** Render `algedonic-review/gemba-walk-briefing` with `outcome_records`, `feedback_records`, `issue_reports`, `proposals` and optional `focus_skill`. Present the per-skill table (activations, feedback, issues, health, evidence) and each proposal with its claimed benefit, observed evidence and missing evidence. Self-assessments inside a proposal are claims, not evidence. Close by asking the operator for decisions.
-7. **Record the operator's verdicts.** Wait for the operator's actual decisions; never infer them. Render `algedonic-review/record-skill-verdicts` with the operator's words verbatim, the briefing and today's date. Execute each planned `record_skill_feedback` call and keep its receipt. Write the review record (decisions + receipts) to `~/Documents/zk-data/curator/reviews/{date}/gemba-walk.json` via `terminal`, and move each decided proposal into that review folder under `proposals/` with its disposition, so `curator/proposals/` holds only undecided proposals. An accepted proposal authorizes its change. If the operator decides nothing, record the briefing and state that no verdicts were recorded.
-
-### Proposal authority and done (operator rulings 2026-09-26)
-
-- **Authority.** The operator holds proposal authority by default. The operator may authorize the Curator to decide and run proposals — for a named skill, a proposal class, or a review window; record the grant verbatim with its scope in `reviews/{date}/gemba-walk.json`. Without a recorded grant in scope, the Curator briefs and waits.
-- **Execution.** An accepted proposal (or a schema-evolution request) is executed by an agent the Curator or developer spawns with clear instructions: create a kanban task whose description carries the accepted diff or request, its evidence, the affected files, and its verification criteria, then delegate it (`spawn_agent` or `kanban_task_spawn`). Record the task id in the review record.
-- **Done means verified.** Nothing is done until it is verified: the executing agent re-runs the proposal's predeclared tasks (or the change's tests) and attaches the before/after result to the task. Mark the proposal applied only with that evidence. Verification is skipped only when the operator or the Curator explicitly states so; record who skipped it and why. An unverified applied change stays `continue` and returns to the next review.
-
-### VERIFY — Confirm backlog cleared (step 8)
-
-1. After executing any planned calls, collect their real success/error receipts and re-query `curator_escalations`. If the re-query fails, the remaining backlog is unknown; never infer clearance from a planned call or a missing response. Skip re-query when no calls were made.
-2. Render `algedonic-review/verify-cleared` with `decisions` as an array of `{id, tool, success, response, error}` built from actual MCP responses (not the planned call list), plus the post-query response. Report confirmed resolutions, dismissals, failures and what remains pending. Without decisions, report no actions taken; do not imply the operator approved a call.
-3. Never recommend clearing the in-memory log as part of this workflow; it self-evicts. If the backlog is unchanged, report that observation without claiming the review cleared it.
-
-## Registry Templates
-
-| Template | Purpose |
-|----------|---------|
-| `triage-briefing.j2` | Structure the two signal channels (escalations + algedonic) into a triage list with per-alert severity and recommended action. |
-| `present-triage.j2` | Render the triage briefing as a conversational summary with markdown tables, opening with the alert log cap status. |
-| `execute-decisions.j2` | Produce the structured resolve/dismiss call list from the operator's decisions. |
-| `verify-cleared.j2` | Summarize what was resolved, dismissed, and what remains pending. |
-| `gemba-walk-briefing.j2` | Per-skill gemba-walk briefing from observed outcomes, operator feedback, skill-use issues and queued proposals, with evidence and health — no verdicts. |
-| `record-skill-verdicts.j2` | Plan `record_skill_feedback` calls and proposal dispositions from the operator's explicit decisions only, refusing any verdict without a cited observation. |
-
-To render a template, call the `render_template` tool with the template ref (e.g., `algedonic-review/triage-briefing`) and a context object with the required variables.
+8. Go to skill execution: call `reg_query` for `reg.skill` over the review window (default seven days), inspect `skill_use_issue:<skill>` memories for affected skills and look at prior `record_skill_feedback` entries. Activation means the skill loaded, not that its work was good. Classify tool failures by `failure_origin` before blaming a skill. Read skill-proposal cards and their linked evidence from the same Algedonic review board; a self-assessment on a card is a claim, not independent evidence.
+9. Present observed outcomes, operator feedback, issues, missing evidence and each proposal card to the operator. **Skill evaluation happens only here**, separately from the executing session. Wait for the operator's actual verdict; record it via `record_skill_feedback` and on the proposal card with a cited observation. The operator holds proposal authority unless a scoped grant to the Curator is recorded on the card.
+10. An accepted proposal or schema-evolution request is executed through an assigned or spawned agent from its card, with affected files, evidence and verification criteria recorded there. Move it to In Progress; attach the result, then move to Review. Verify through `kanban_task_verify` only after the operator or authorized Curator checks the predeclared work. An undecided or unverified card remains open for the next review.
 
 ## Constraints
 
-- All templates run at `visibility: Public`.
-- Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT autonomously resolve or dismiss alerts, record a skill verdict, or accept a proposal.
-- Skill evaluation belongs to this review alone. Every verdict and disposition carries the operator's stated reason and the observation behind it; with no observation, the recommended action is to investigate.
-- Ground every claim in the raw alert data. Do not fabricate alerts or severities not present in the inputs.
-- A successful empty alert list means zero pending alerts. Failed, missing, and empty-success responses are different states; never silently substitute one for another.
-- The in-memory algedonic log is a capped ring buffer (default 200 entries). The skill reviews the durable escalation queue, not the in-memory log — the in-memory log self-evicts when full. The `AlgedonicLogApproachingCap` signal is the trigger for running this skill, not a condition the skill itself clears.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
-
-## Design References
-
-- Beer's Viable System Model — algedonic signals are the S1→S5 escalation path (System 1 pain → System 5 executive attention).
-- Ashby's Law of Requisite Variety — the alert backlog is the variety the regulator could not absorb autonomously; human review is the external variety amplifier.
-- Conant-Ashby theorem — "every good regulator of a system must be a model of that system." The triage briefing is the operator's model of the regulation system's state.
-- Toyota Andon cord — algedonic alerts are the digital Andon; this skill is the structured response (not just acknowledgment).
-- Gemba walk (Lean Enterprise Institute lexicon) — managers go to the actual place, observe the work, and ask questions; here, the operator and the Curator observe recorded skill execution before judging it.
-- Goodhart's law (Wikidata Q2575082) — the reason evaluation is separated from the executing session.
+- Do not autonomously evaluate a skill from the session that ran it, accept a proposal without authority, or claim that a planned call succeeded.
+- Every verdict names the observation that could settle it. When that evidence is missing, investigate rather than mark Done.
+- A failed status/board/log/memory read remains an explicit visibility gap. The algedonic log approaching its cap triggers review, not deletion of the log.

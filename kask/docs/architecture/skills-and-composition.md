@@ -696,6 +696,13 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 
 ### Company research verification handoff
 
+`company-research-deep` runs its stages as dependency waves: independent
+stages (evidence collection and the industry outside-view searches; the early
+gate and LISTEN; IMAGINE and THESIS) run in parallel, and each later stage
+waits only for the outputs it consumes. collect-evidence reads the retained
+originals once into `evidence-digest.json`; synthesis stages read the digest,
+while the verifiers check its records against the full hashed originals.
+
 `company-research-deep` and `company-research-flash` retain actual source
 responses separately from generated analysis. Both render
 `company-research/verification-handoff` and delegate the retained packet to

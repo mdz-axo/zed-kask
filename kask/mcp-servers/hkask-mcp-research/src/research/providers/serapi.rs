@@ -14,6 +14,8 @@ pub(crate) struct SerapiProvider {
     client: reqwest::Client,
     api_key: String,
     engine: SerpEngine,
+    /// Request endpoint; `SERPAPI_BASE` except in transport-error tests.
+    base: &'static str,
 }
 
 /// Which SerpAPI engine an instance queries.
@@ -34,6 +36,7 @@ impl SerapiProvider {
             client: super::provider_http_client()?,
             api_key,
             engine,
+            base: SERPAPI_BASE,
         })
     }
 
@@ -168,19 +171,21 @@ impl SerapiProvider {
 
         let resp = self
             .client
-            .get(SERPAPI_BASE)
+            .get(self.base)
             .query(&params)
             .send()
             .await
             .map_err(|e| {
-                WebError::ProviderUnavailable(format!("SerpAPI transcript request failed: {e}"))
+                WebError::ProviderUnavailable(format!(
+                    "SerpAPI transcript request failed: {}",
+                    e.without_url()
+                ))
             })?;
 
         let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
+        let body = resp.text().await.map_err(|e| {
+            WebError::ProviderUnavailable(format!("Serapi body read failed: {}", e.without_url()))
+        })?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),
@@ -301,17 +306,21 @@ impl WebSearchProvider for SerapiProvider {
 
         let resp = self
             .client
-            .get(SERPAPI_BASE)
+            .get(self.base)
             .query(&params)
             .send()
             .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("SerpAPI request failed: {e}")))?;
+            .map_err(|e| {
+                WebError::ProviderUnavailable(format!(
+                    "SerpAPI request failed: {}",
+                    e.without_url()
+                ))
+            })?;
 
         let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Serapi body read failed: {e}")))?;
+        let body = resp.text().await.map_err(|e| {
+            WebError::ProviderUnavailable(format!("Serapi body read failed: {}", e.without_url()))
+        })?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),
@@ -403,12 +412,15 @@ impl WebSearchProvider for SerapiProvider {
         ];
         let resp = self
             .client
-            .get(SERPAPI_BASE)
+            .get(self.base)
             .query(&params)
             .send()
             .await
             .map_err(|e| {
-                WebError::ProviderUnavailable(format!("SerpAPI health check failed: {e}"))
+                WebError::ProviderUnavailable(format!(
+                    "SerpAPI health check failed: {}",
+                    e.without_url()
+                ))
             })?;
         let status = resp.status();
         if status.is_success() || status.as_u16() == 429 {
@@ -438,6 +450,23 @@ mod tests {
 
     fn provider(engine: SerpEngine) -> Result<SerapiProvider, WebError> {
         SerapiProvider::with_engine("test-key".to_string(), engine)
+    }
+
+    /// expect: a transport failure never echoes the request URL, because
+    /// SerpAPI carries `api_key` in the query string (live-observed
+    /// 2026-09-26: a google_books failure printed the key into the run log).
+    #[tokio::test]
+    async fn transport_error_does_not_leak_api_key() -> Result<(), WebError> {
+        let mut provider =
+            SerapiProvider::with_engine("secret-serp-key-123".to_string(), SerpEngine::Books)?;
+        provider.base = "http://127.0.0.1:9/search";
+        let Err(error) = provider.search(&query(&[])).await else {
+            panic!("closed port must fail");
+        };
+        let message = error.to_string();
+        assert!(!message.contains("secret-serp-key-123"), "{message}");
+        assert!(!message.contains("api_key"), "{message}");
+        Ok(())
     }
 
     /// expect: each engine sends SerpAPI's documented selector — google,

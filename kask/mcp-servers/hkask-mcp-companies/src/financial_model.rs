@@ -162,7 +162,7 @@ pub(crate) struct HistoricalSnapshot {
     pub current_assets: Vec<(String, f64)>,
     pub current_liabilities: Vec<(String, f64)>,
     pub cash: Vec<(String, f64)>,
-    pub long_term_debt: Vec<(String, f64)>,
+    pub total_debt: Vec<(String, f64)>,
     /// Accounts receivable (netReceivables from FMP).
     pub accounts_receivable: Vec<(String, f64)>,
     /// Inventory (inventory from FMP).
@@ -288,7 +288,7 @@ impl HistoricalSnapshot {
         let mut current_assets: Vec<(String, f64)> = Vec::new();
         let mut current_liabilities: Vec<(String, f64)> = Vec::new();
         let mut cash: Vec<(String, f64)> = Vec::new();
-        let mut long_term_debt: Vec<(String, f64)> = Vec::new();
+        let mut total_debt: Vec<(String, f64)> = Vec::new();
         let mut accounts_receivable: Vec<(String, f64)> = Vec::new();
         let mut inventory: Vec<(String, f64)> = Vec::new();
         let mut accounts_payable: Vec<(String, f64)> = Vec::new();
@@ -323,9 +323,16 @@ impl HistoricalSnapshot {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0),
             ));
-            long_term_debt.push((
+            // Total financial debt (short + long term, incl. leases where the
+            // provider reports it); long-term debt alone understates net debt
+            // (live-observed 2026-09-26, VIRI.PA: 731.5 vs audited 887.9).
+            total_debt.push((
                 year.to_string(),
-                parse_financial_field(entry, "longTermDebt"),
+                parse_optional_financial_field(
+                    entry,
+                    &["totalDebt", "shortLongTermDebtTotal", "longTermDebt"],
+                )
+                .unwrap_or(0.0),
             ));
             accounts_receivable.push((
                 year.to_string(),
@@ -417,7 +424,7 @@ impl HistoricalSnapshot {
             current_assets,
             current_liabilities,
             cash,
-            long_term_debt,
+            total_debt,
             accounts_receivable,
             inventory,
             accounts_payable,
@@ -451,7 +458,7 @@ impl HistoricalSnapshot {
         self.cash.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
     pub fn latest_debt(&self) -> f64 {
-        self.long_term_debt.last().map(|(_, v)| *v).unwrap_or(0.0)
+        self.total_debt.last().map(|(_, v)| *v).unwrap_or(0.0)
     }
 
     /// Net working capital (net of cash): current_assets - current_liabilities - cash.
@@ -493,13 +500,23 @@ impl HistoricalSnapshot {
         self.latest_capex() / rev
     }
 
-    /// NWC as percentage of revenue.
+    /// NWC as percentage of revenue, on the same operating definition the
+    /// projection starts from (receivables + inventory − payables). Using
+    /// current assets − current liabilities − cash here while the model's base
+    /// year is AR + inventory − AP invents a year-1 working-capital swing (live-
+    /// observed 2026-09-26, VIRI.PA: a −372m "release"). Falls back to the
+    /// balance-sheet definition only when no operating items are reported.
     pub fn nwc_to_revenue(&self) -> f64 {
         let rev = self.latest_revenue();
         if rev <= 0.0 {
             return 0.10;
         }
-        self.latest_nwc() / rev
+        let operating = self.latest_ar() + self.latest_inventory() - self.latest_ap();
+        if operating.abs() > f64::EPSILON {
+            operating / rev
+        } else {
+            self.latest_nwc() / rev
+        }
     }
 
     /// Demonstrated full-period revenue CAGR from positive reported annual
@@ -539,7 +556,7 @@ impl HistoricalSnapshot {
         product.powf(1.0 / growths.len() as f64) - 1.0
     }
 
-    /// Net debt: long_term_debt - cash.
+    /// Net debt: total financial debt (see `from_api_json`) - cash.
     pub fn net_debt(&self) -> f64 {
         self.latest_debt() - self.latest_cash()
     }

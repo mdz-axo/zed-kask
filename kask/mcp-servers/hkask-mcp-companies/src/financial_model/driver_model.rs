@@ -872,13 +872,65 @@ mod tests {
         assert!((model.terminal_value - 1300.0).abs() < 1e-8);
     }
 
+    /// expect: calibrated NWC uses the same operating definition as the
+    /// projection's base year, so a zero-growth first period has no invented
+    /// working-capital swing (live-observed 2026-09-26: VIRI.PA showed a
+    /// −372m year-1 release because the ratio used current assets − current
+    /// liabilities − cash while the base used AR + inventory − AP).
+    #[test]
+    fn calibrated_nwc_has_no_base_year_swing() {
+        let history = HistoricalSnapshot::from_api_json(
+            &[
+                json!({"calendarYear":"2025","revenue":1070.7,"costOfRevenue":750.5,"sellingGeneralAndAdministrativeExpenses":76.1,"depreciationAndAmortization":72.4,"operatingIncome":211.3,"interestExpense":117.2,"incomeTaxExpense":23.4,"incomeBeforeTax":94.8,"netIncome":74.0,"weightedAverageShsOut":7.2}),
+                json!({"calendarYear":"2024","revenue":1211.4,"costOfRevenue":871.2,"sellingGeneralAndAdministrativeExpenses":82.9,"depreciationAndAmortization":108.1,"operatingIncome":143.5,"interestExpense":109.4,"incomeTaxExpense":13.4,"incomeBeforeTax":49.5,"netIncome":49.8,"weightedAverageShsOut":7.2}),
+            ],
+            &[
+                json!({"calendarYear":"2025","totalCurrentAssets":774.8,"totalCurrentLiabilities":532.7,"cashAndCashEquivalents":173.0,"netReceivables":346.7,"inventory":164.3,"accountsPayable":66.5,"longTermDebt":904.5,"totalStockholdersEquity":1130.5,"totalAssets":2750.3}),
+            ],
+            &[json!({"calendarYear":"2025","capitalExpenditure":-42.7})],
+            &[],
+            &json!({}),
+        );
+        let mut assumptions = ProjectionAssumptions::from_history(&history, 0.15)
+            .expect("VIRI-shaped history calibrates");
+        assumptions.revenue_growth = 0.0;
+        let model = project_financial_model(&history, &assumptions).expect("projection");
+        let first = model.periods.first().expect("period");
+        assert!(
+            first.change_in_nwc.abs() < 1e-6,
+            "invented swing {}",
+            first.change_in_nwc
+        );
+    }
+
+    /// expect: net debt uses total financial debt when the provider reports it,
+    /// not long-term debt alone (live-observed 2026-09-26, VIRI.PA: 731.5 from
+    /// long-term debt vs 888 from total debt incl. leases).
+    #[test]
+    fn net_debt_uses_total_financial_debt() {
+        let history = HistoricalSnapshot::from_api_json(
+            &[],
+            &[
+                json!({"calendarYear":"2025","longTermDebt":904.5,"shortLongTermDebtTotal":1061.1,"cashAndCashEquivalents":173.0}),
+            ],
+            &[],
+            &[],
+            &json!({}),
+        );
+        assert!(
+            (history.net_debt() - 888.1).abs() < 1e-9,
+            "{}",
+            history.net_debt()
+        );
+    }
+
     /// MAIA modified WACC: investor target return replaces CAPM cost of equity,
     /// while issuer debt cost, tax shield, and capital weights remain observed.
     #[test]
     fn investor_target_return_drives_modified_wacc() {
         let mut history = worked_history();
         history.total_equity = vec![("2024".to_string(), 600.0), ("2025".to_string(), 600.0)];
-        history.long_term_debt = vec![("2024".to_string(), 400.0), ("2025".to_string(), 400.0)];
+        history.total_debt = vec![("2024".to_string(), 400.0), ("2025".to_string(), 400.0)];
         history.interest_expense = vec![("2024".to_string(), 32.0), ("2025".to_string(), 32.0)];
         history.tax_rate = 0.20;
         let assumptions =
@@ -925,7 +977,7 @@ mod tests {
             }
         }
         history.shares_outstanding = 10.0;
-        history.long_term_debt = vec![("2024".to_string(), 20.0), ("2025".to_string(), 20.0)];
+        history.total_debt = vec![("2024".to_string(), 20.0), ("2025".to_string(), 20.0)];
         let assumptions = ProjectionAssumptions {
             revenue_growth: 0.124,
             gross_margin: 0.432,

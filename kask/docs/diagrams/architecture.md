@@ -837,19 +837,19 @@ flowchart TD
         G[Goal scored by user] -->|kanban_goal_score| O4[Brier score in curator memory]
     end
     subgraph Evaluate["Evaluate - algedonic review"]
-        S[curator_status - escalations awaiting review, log cap] --> R[Alert triage - steps 1-4]
-        R --> W[Gemba walk - steps 5-7: reg_query reg.skill, issue memories, proposals]
+        S[curator_status - board cards not Done, log cap] --> R[Algedonic review board - alert cards triaged in standard columns]
+        R --> W[Gemba walk - reg_query reg.skill, issue memories, proposal cards]
         W --> V[record_skill_feedback - operator verdict, Curator session only]
     end
     subgraph Propose
-        P1[skill-maintenance proposal - zk-data/curator/proposals]
+        P1[skill-maintenance proposal - board card]
         P2[curator_directive evolve_mcp_tool_schema - reg.cybernetics]
         P3[memory_insert / therapy - lessons and reification]
     end
     subgraph Execute["Execute and verify"]
-        D[Decision - operator, or Curator under recorded grant] --> K[Kanban task with evidence and verification criteria, delegated to a spawned agent]
-        K --> T[Re-run predeclared tasks / tests; before and after attached]
-        T -->|verified, or explicit skip recorded| Done[Applied]
+        D[Decision - operator, or Curator under recorded grant] --> K[Same board card assigned or delegated to a spawned agent]
+        K --> T[Before and after evidence attached; move to Review]
+        T -->|kanban_task_verify by authorized reviewer| Done[Done]
         T -->|unverified| W
     end
     O1 --> W
@@ -868,7 +868,7 @@ flowchart TD
 id: DIAG-ARCH-LEARNING-LOOP-001
 verified_date: 2026-09-26
 verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session with_invoker L1019, activate_delegated_skill L4676, DELEGATED_SKILL_INVOKER L4702, RecorderHook L4728, record_skill_outcome L4839, record_skill_tool_failure L4846); crates/agent/src/thread.rs (run_tool active-skill capture L4418, L4499); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (single skill outcome recorder L988 with archive set L1680; tool-failure recorder L1692; operator feedback L1718); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L49, persist_skill_outcome L63, persist_skill_tool_failure L74); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1308, memory_insert L1414); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (Learning loop in CURATOR_STATIC_CONTEXT L60); .agents/skills/algedonic-review/SKILL.md (gemba walk step 5 L81, Proposal authority and done L85); .agents/skills/skill-maintenance/SKILL.md (Act L160)
-status: VERIFIED
+status: PARTIAL — board path verified by focused code tests; full Phase D removal pending
 -->
 
 | Stage | Surface | Record | Who acts |
@@ -877,10 +877,10 @@ status: VERIFIED
 | Observe | `Thread::run_tool` (active skill set) | `reg.skill.<id>.tool_failure` — unclassified evidence | automatic |
 | Observe | `curator_report_skill_use_issue` | `skill_use_issue:<skill>` h_mem with `failure_origin` | Curator, unprompted |
 | Observe | `kanban_goal_score` | Brier-scored outcome in curator memory (D58) | user confirms |
-| Evaluate | `algedonic-review` (triage, then gemba walk) | `zk-data/curator/reviews/{date}/` + `reg.skill.<id>.operator_feedback` | operator with Curator |
-| Propose | `skill-maintenance`, `curator_directive` `evolve_mcp_tool_schema`, `memory_insert` / `therapy` | `zk-data/curator/proposals/`, `reg.cybernetics`, curator memory | Curator / agent |
-| Execute | kanban task delegated to a spawned agent | task id in the review record | delegated agent |
-| Verify | predeclared tasks / tests re-run | before/after on the task; unverified returns to the next review | delegated agent |
+| Evaluate | `algedonic-review` (triage, then gemba walk) | one Algedonic review board + `reg.skill.<id>.operator_feedback` | operator with Curator |
+| Propose | `skill-maintenance`, `curator_directive` `evolve_mcp_tool_schema`, `memory_insert` / `therapy` | proposal card, `reg.cybernetics`, curator memory | Curator / agent |
+| Execute | same card assigned or delegated to a spawned agent | card comments and deliverables | delegated agent |
+| Verify | `kanban_task_verify` in Review | evidence on card, then Done; unverified stays open | operator or Curator under recorded grant |
 
 The review is started by the operator, or by the Curator when `curator_status`
 shows escalations awaiting review or algedonic-log cap pressure. There is no

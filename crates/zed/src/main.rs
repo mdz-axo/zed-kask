@@ -1592,6 +1592,15 @@ fn main() {
 
                 log::info!("kask agent name: {agent_name}");
 
+                // zed-kask: D8 — the governed invoker is shared by the
+                // board sink, its status reader and the panel. No kanban DB
+                // is opened in the editor.
+                let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
+                    tool_port: tool_port_for_deferred.clone(),
+                    executor: cx.background_executor().clone(),
+                    tokio_handle: gpui_tokio::Tokio::handle_async(&*cx),
+                });
+
                 // D6: Provision the agent's storage and wire the memory port.
                 // `provision_agent` handles first-run setup as lookups and
                 // directory creation — no interactive onboarding.
@@ -1621,6 +1630,7 @@ fn main() {
                 // in the `cx.update` block) can access it. Set inside the
                 // `match provision_result` below.
                 let mut embedding_port_for_ipc: Option<kask_bridge::LanguageModelEmbeddingPort> = None;
+                let mut memory_for_status: Option<std::sync::Arc<kask_bridge::RealMemoryPort>> = None;
 
                 match provision_result {
                     Ok(provisioned) => {
@@ -1801,36 +1811,6 @@ fn main() {
                             }
                         }
 
-                        // Open the reviewable escalation queue on the same
-                        // curator curator.db — the same DB the curator MCP
-                        // server's `curator_escalations` /
-                        // `curator_escalation_resolve` /
-                        // `curator_escalation_dismiss` tools read. This is
-                        // the primary durable path for alert review:
-                        // `CyberneticsLoop` writes escalated alerts here
-                        // unconditionally so the Curator/user can review and
-                        // resolve them. Before this, the escalation sink is
-                        // `None` (alerts not persisted to the reviewable
-                        // backlog).
-                        // zed-kask: D8 — the same queue also feeds the status
-                        // tool's "awaiting review" count (provider upgrade below).
-                        let escalation_queue_for_status =
-                            kask_bridge::open_curator_escalation_queue(&passphrase);
-                        match escalation_queue_for_status.clone() {
-                            Some(queue) => {
-                                let sink: std::sync::Arc<dyn hkask_regulation::AlertEscalationSink> =
-                                    std::sync::Arc::new(kask_bridge::BridgeAlertEscalationSink::new(queue));
-                                let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
-                                loop_guard.set_alert_escalation_sink(Some(sink));
-                                log::info!("hKask escalation queue wired — algedonic alerts now persist to the reviewable backlog on curator curator.db");
-                            }
-                            None => {
-                                log::warn!(
-                                    "hKask escalation queue unavailable — algedonic alerts will not persist to the reviewable backlog. \
-                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
-                                );
-                            }
-                        }
 
                         // zed-kask: D8 — F14: embedding credentials (deferred task).
                         // Resolve embedding credentials by reading the API key
@@ -1945,6 +1925,7 @@ fn main() {
                                 // below would lose the concrete type.
                                 let real_memory_typed: std::sync::Arc<kask_bridge::RealMemoryPort> =
                                     std::sync::Arc::new(real);
+                                memory_for_status = Some(real_memory_typed.clone());
                                 let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
                                     real_memory_typed.clone();
                                 let bridge = std::sync::Arc::new(
@@ -1956,28 +1937,6 @@ fn main() {
                                      (agent: {agent_name})"
                                 );
 
-                                // Re-set the metacognition provider with the
-                                // memory-health probe attached — the curator's
-                                // CuratorStatusTool now reports its own memory
-                                // outage (`memory.degraded`) alongside the
-                                // regulation health it already had. The early
-                                // provider (set at startup, without the probe)
-                                // is replaced; `set_metacognition_provider` is
-                                // Mutex-based and re-settable.
-                                let mut provider_with_memory =
-                                    kask_bridge::BridgeMetacognitionProvider::new(
-                                        metacognition_loop_for_deferred.clone(),
-                                    )
-                                    .with_memory_port(real_memory_typed.clone());
-                                if let Some(queue) = escalation_queue_for_status.clone() {
-                                    provider_with_memory =
-                                        provider_with_memory.with_escalation_queue(queue);
-                                }
-                                let provider_with_memory = std::sync::Arc::new(provider_with_memory);
-                                agent::set_metacognition_provider(Some(provider_with_memory));
-                                log::info!(
-                                    "Curator metacognition provider upgraded with memory-health probe"
-                                );
 
                                 // Set env vars for the curator MCP server so it
                                 // reads from the same `agents/curator/curator.db` the
@@ -2293,11 +2252,38 @@ fn main() {
                     // is resolved, curator turns return a clear error with
                     // remediation guidance; when the model resolves, the lazy
                     // port is swapped in and curator turns route through it.
-                    let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
-                        tool_port: tool_port_for_deferred.clone(),
-                        executor: cx.background_executor().clone(),
-                        tokio_handle: gpui_tokio::Tokio::handle(cx),
-                    });
+                    // Status reads the board even when curator memory could not
+                    // open; memory health remains attached when available.
+                    let mut status_provider = kask_bridge::BridgeMetacognitionProvider::new(
+                        metacognition_loop_for_deferred.clone(),
+                    ).with_board(
+                        std::sync::Arc::new(kask_bridge::BoardAlertEscalationSink::new(
+                            panel_tool_invoker.clone(),
+                        )),
+                        cx.background_executor().clone(),
+                    );
+                    if let Some(memory) = memory_for_status.clone() {
+                        status_provider = status_provider.with_memory_port(memory);
+                    }
+                    agent::set_metacognition_provider(Some(std::sync::Arc::new(status_provider)));
+
+                    // zed-kask: D8 — algedonic alerts land on the "Algedonic
+                    // review" kanban board through the same governed channel
+                    // the panels use, handed in here rather than read from a
+                    // global.
+                    let board_sink: std::sync::Arc<dyn hkask_regulation::AlertEscalationSink> =
+                        std::sync::Arc::new(kask_bridge::BoardAlertEscalationSink::new(
+                            panel_tool_invoker.clone(),
+                        ));
+                    let cybernetics_loop_for_board = cybernetics_loop_for_panel_deferred.clone();
+                    gpui_tokio::Tokio::spawn(cx, async move {
+                        cybernetics_loop_for_board
+                            .write()
+                            .await
+                            .set_alert_escalation_sink(Some(board_sink));
+                    })
+                    .detach();
+                    log::info!("hKask algedonic alerts wired to the Algedonic review kanban board");
                     swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
                     log::info!(
                         "Swarm panel tool invoker wired \

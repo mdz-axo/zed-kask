@@ -132,13 +132,17 @@ const SOURCE_CHECK_WORK_PER_BYTE: u64 = 32;
 const MAX_ADMITTED_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Replace each `output.text_file` reference with the file's verified text.
-/// Returns the admitted file bytes. The file must be a plain name inside the
-/// packet's own run directory and match `output.text_sha256` exactly.
+/// Returns the admitted file bytes, counting each distinct file once however
+/// many records cite it. The file is a relative path that must resolve inside
+/// the packet's own run directory (e.g. `originals/urd.txt`) and match
+/// `output.text_sha256` exactly.
 fn load_referenced_texts(
     run_dir: &Path,
     fields: &mut serde_json::Map<String, Value>,
 ) -> Result<u64, McpToolError> {
     let mut admitted = 0u64;
+    let mut loaded: std::collections::HashMap<std::path::PathBuf, String> =
+        std::collections::HashMap::new();
     let Some(sources) = fields
         .get_mut("source_outputs")
         .and_then(Value::as_array_mut)
@@ -155,10 +159,18 @@ fn load_referenced_texts(
         let name = name
             .as_str()
             .filter(|n| {
-                !n.is_empty() && !n.contains('/') && !n.contains('\\') && *n != "." && *n != ".."
+                let path = Path::new(n);
+                !n.is_empty()
+                    && !n.contains('\\')
+                    && path.is_relative()
+                    && path
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_)))
             })
             .ok_or_else(|| {
-                McpToolError::invalid_argument("output.text_file must be a plain file name")
+                McpToolError::invalid_argument(
+                    "output.text_file must be a relative path inside the run directory",
+                )
             })?
             .to_string();
         let expected = output
@@ -187,20 +199,28 @@ fn load_referenced_texts(
         let bytes = std::fs::read(&path).map_err(|error| {
             McpToolError::unavailable(format!("cannot read referenced text {name}: {error}"))
         })?;
-        admitted += bytes.len() as u64;
-        if admitted > MAX_ADMITTED_SOURCE_BYTES {
-            return Err(McpToolError::invalid_argument(
-                "referenced source texts exceed the 8 MiB admitted total",
-            ));
-        }
+        // Every citing record is checked against its own declared digest.
         if format!("{:x}", Sha256::digest(&bytes)) != expected {
             return Err(McpToolError::failed_precondition(format!(
                 "referenced text {name} digest changed: rebind the exact source snapshot"
             )));
         }
-        let text = String::from_utf8(bytes).map_err(|_| {
-            McpToolError::invalid_argument(format!("referenced text {name} is not UTF-8"))
-        })?;
+        let text = match loaded.get(&path) {
+            Some(text) => text.clone(),
+            None => {
+                admitted += bytes.len() as u64;
+                if admitted > MAX_ADMITTED_SOURCE_BYTES {
+                    return Err(McpToolError::invalid_argument(
+                        "referenced source texts exceed the 8 MiB admitted total",
+                    ));
+                }
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    McpToolError::invalid_argument(format!("referenced text {name} is not UTF-8"))
+                })?;
+                loaded.insert(path, text.clone());
+                text
+            }
+        };
         output.insert("text".to_string(), Value::String(text));
     }
     Ok(admitted)
@@ -675,6 +695,26 @@ mod verification_packet_tests {
         ensure!(
             tampered.to_string().contains("digest"),
             "wrong error: {tampered}"
+        );
+        // A retained original under a subfolder, cited by two records, is
+        // admitted and counted once toward the cap.
+        std::fs::write(&text_path, &original)?;
+        std::fs::create_dir(directory.join("originals"))?;
+        std::fs::rename(&text_path, directory.join("originals/original.txt"))?;
+        packet["source_outputs"][0]["output"]["text_file"] = json!("originals/original.txt");
+        let second = packet["source_outputs"][0].clone();
+        packet["source_outputs"]
+            .as_array_mut()
+            .context("source outputs")?
+            .push(second);
+        let nested = serde_json::to_vec(&packet)?;
+        std::fs::write(&file, &nested)?;
+        let nested_digest = format!("{:x}", Sha256::digest(&nested));
+        let nested_checked = evaluate_packet(root.path(), run_id, &nested_digest)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        ensure!(
+            nested_checked["referenced_text_bytes"] == json!(original.len()),
+            "a file cited twice must be counted once: {nested_checked}"
         );
         packet["source_outputs"][0]["output"]["text_file"] = json!("../escape.txt");
         let escaping = serde_json::to_vec(&packet)?;

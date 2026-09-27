@@ -77,15 +77,12 @@ impl super::CyberneticsLoop {
 
     /// Persist an algedonic alert to the reviewable escalation queue.
     ///
-    /// This is the primary durable path for alert review: every escalated
-    /// alert is written here when the sink is wired (not just as a fallback),
-    /// so the Curator/user can review pending alerts via `curator_escalations`
-    /// and resolve/dismiss them with an audit trail. Best-effort — a failing
-    /// or missing sink never breaks the regulation loop. Non-escalated alerts
-    /// (Info severity, or `escalated: false`) are skipped to avoid polluting
-    /// the review queue with non-actionable noise.
+    /// This is the primary board delivery path for escalated alerts; the
+    /// sink creates a card or comments on the existing open condition card.
+    /// Delivery is best-effort and does not break the regulation loop.
+    /// Non-escalated alerts are skipped.
     ///
-    /// The `RuntimeAlert` fields are mapped to `EscalationEntry` columns:
+    /// The `RuntimeAlert` fields are mapped to the board alert payload:
     /// `output` = `alert.message`, `error_context` = serialized alert JSON
     /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
     /// 0.5 for Warning.
@@ -643,33 +640,18 @@ impl super::CyberneticsLoop {
             message,
         };
 
-        // Source-level dedup: if there is already a pending escalation with
-        // this condition (the reason prefix — see `alert_condition`), skip
-        // the entire routing (persist, live channel, archive). The regulation
-        // loop senses the same deficit every cycle; without this check it
-        // re-escalates every tick, flooding the queue, the live channel, and
-        // the archive with alerts for one condition. Matching is on the
-        // condition, not the full message — the embedded value changes every
-        // cycle, so exact-match dedup never hits. The operator reviews the
-        // first one; when they resolve/dismiss it, the next cycle escalates
-        // again.
+        // Suppress duplicate live alerts and archive events, but deliver
+        // repeat observations to the existing open board card as comments.
         if let Some(ref sink) = self.alert_escalation_sink {
             if sink.has_pending_alert(&alert.message).await {
-                tracing::debug!(
-                    target: "reg.cybernetics",
-                    action_type = ?action.action_type,
-                    target_loop = %action.target,
-                    "Suppressing duplicate escalation — pending condition already in queue"
-                );
-                return true;
+                // The board sink records a repeat on the existing card. Keep
+                // live-channel and archive dedup, but do not skip the sink.
+                return self.persist_alert_to_queue(&alert, None).await;
             }
         }
 
-        // Persist to the reviewable escalation queue unconditionally —
-        // the queue is the primary durable path for alert review, not
-        // a fallback. The RegulationArchive below remains as a
-        // secondary fallback for restart durability when the live
-        // channel is down.
+        // Deliver the alert to the board. The RegulationArchive remains
+        // a secondary fallback for restart durability.
         // A recovery signal must be a measurable deviation: `recovered_by`
         // and the advice review both key off `is_recovery_trigger`. The
         // observations map holds the previous sense pass's snapshot, so an
@@ -936,7 +918,9 @@ impl super::CyberneticsLoop {
                     Some(sink) => sink.has_pending_alert(&alert.message).await,
                     None => false,
                 };
-                if !latched {
+                if latched {
+                    self.persist_alert_to_queue(&alert, None).await;
+                } else {
                     self.emit_regulation_span(
                         SpanKind::RegulatoryPlateauDetected,
                         serde_json::json!({
@@ -1651,15 +1635,9 @@ mod tests {
         }
     }
 
-    /// The plateau latch: while a pending escalation for the plateau
-    /// condition sits in the review queue, re-detections suppress the
-    /// entire routing (span, queue persist, live channel). Before the
-    /// latch, a persistent plateau re-fired every cycle — the
-    /// live-observed retry_count 37 on the queue row, the
-    /// `plateau_detected` span flood behind the algedonic log-cap breach,
-    /// and the same alert in the Curator inbox every 10s. The stagnation
-    /// detector keeps counting while latched, so resolving the escalation
-    /// re-fires on the next detection.
+    /// While a plateau card is open, re-detections comment on that card
+    /// without replaying the span or live alert. The stagnation detector
+    /// keeps counting; verification closes the card and permits a new one.
     #[tokio::test]
     async fn plateau_alert_latches_while_pending() {
         let source = Arc::new(MockRolloutEventSource::answering(0.2, 0.2));
@@ -1697,8 +1675,8 @@ mod tests {
         );
         assert_eq!(plateau_spans(), 1, "the first detection emits one span");
 
-        // The operator now has a pending escalation — further detections
-        // must be latched: no new persist, no new span.
+        // The operator now has an open card: further detections reach
+        // its comment path, not the span or live alert.
         escalation.set_pending(true);
         for _ in 0..3 {
             regulation
@@ -1707,8 +1685,8 @@ mod tests {
         }
         assert_eq!(
             escalation.persisted.lock().expect("persisted").len(),
-            1,
-            "latched re-detections must not re-persist"
+            4,
+            "three repeats must be delivered to the same condition card"
         );
         assert_eq!(
             plateau_spans(),
@@ -2703,7 +2681,11 @@ mod tests {
             .persisted
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        assert_eq!(persisted.len(), 1);
+        assert_eq!(
+            persisted.len(),
+            2,
+            "the repeated condition reaches the card sink"
+        );
         assert_eq!(
             persisted.first().map(String::as_str),
             Some("circuit_breaker_open — regulatory escalation")

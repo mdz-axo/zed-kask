@@ -21,10 +21,12 @@ pub struct BridgeMetacognitionProvider {
     /// healthy, memory down" from "all healthy". `None` at startup or when
     /// the real memory port failed to construct.
     memory_port: Option<Arc<crate::memory::RealMemoryPort>>,
-    /// The durable review queue `curator_escalations` reads. Its pending
-    /// count is what "awaiting operator review" means; `None` (not wired)
-    /// and a failed read both surface as `pending_escalations: null`.
-    escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
+    /// Read the board on demand rather than caching a count that would miss
+    /// operator moves and newly created proposal cards.
+    board: Option<(
+        Arc<crate::algedonic_board::BoardAlertEscalationSink>,
+        gpui::BackgroundExecutor,
+    )>,
 }
 
 impl BridgeMetacognitionProvider {
@@ -32,13 +34,17 @@ impl BridgeMetacognitionProvider {
         Self {
             loop_,
             memory_port: None,
-            escalation_queue: None,
+            board: None,
         }
     }
 
-    /// Attach the durable escalation queue (composition root, deferred task).
-    pub fn with_escalation_queue(mut self, queue: Arc<hkask_storage::EscalationQueue>) -> Self {
-        self.escalation_queue = Some(queue);
+    /// Attach the governed board reader (composition root, deferred task).
+    pub fn with_board(
+        mut self,
+        board: Arc<crate::algedonic_board::BoardAlertEscalationSink>,
+        executor: gpui::BackgroundExecutor,
+    ) -> Self {
+        self.board = Some((board, executor));
         self
     }
 
@@ -89,8 +95,7 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
             if let Some(ref port) = self.memory_port {
                 snapshot["memory"] = port.memory_health_json();
             }
-            snapshot["pending_escalations"] =
-                pending_escalations_json(self.escalation_queue.as_deref());
+            snapshot["pending_escalations"] = serde_json::Value::Null;
             // Declared human doors for Manual/Prompted stages (Fermi
             // STAGE_ACTIONS). Each entry is (trigger, stage, [tool_names]).
             let doors = self.loop_.stage_actions().all_doors();
@@ -110,56 +115,18 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
             }
             snapshot
         });
-        Task::ready(result)
-    }
-}
-
-/// Pending durable escalations, or `null` when the queue is not wired or
-/// cannot be read — never 0 for an unknown count.
-fn pending_escalations_json(queue: Option<&hkask_storage::EscalationQueue>) -> serde_json::Value {
-    let Some(queue) = queue else {
-        return serde_json::Value::Null;
-    };
-    match queue.list_pending() {
-        Ok(pending) => json!(pending.len()),
-        Err(error) => {
-            tracing::warn!(
-                target: "reg.storage",
-                error = %error,
-                "escalation queue read failed — status reports pending escalations as unknown"
-            );
-            serde_json::Value::Null
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The status summary's "awaiting review" number is the durable queue's
-    /// pending count; an unwired queue is unknown (null), never 0.
-    #[test]
-    fn pending_escalations_reports_queue_count_or_unknown() {
-        assert_eq!(pending_escalations_json(None), serde_json::Value::Null);
-
-        let queue = hkask_storage::EscalationQueue::from_driver(
-            hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
-        )
-        .expect("queue");
-        assert_eq!(pending_escalations_json(Some(&queue)), json!(0));
-        for output in ["first", "second"] {
-            queue
-                .add(
-                    hkask_types::TemplateID::new(),
-                    hkask_types::BotID::new(),
-                    output.into(),
-                    1.0,
-                    0,
-                    "{}".into(),
-                )
-                .expect("add");
-        }
-        assert_eq!(pending_escalations_json(Some(&queue)), json!(2));
+        let Some((board, executor)) = self.board.as_ref() else {
+            return Task::ready(result);
+        };
+        let board = board.clone();
+        executor.spawn(async move {
+            let mut snapshot = result?;
+            match board.awaiting_review_count().await {
+                Ok(count) => snapshot["pending_escalations"] = json!(count),
+                Err(error) => tracing::warn!(target: "reg.alert", %error,
+                    "Algedonic board count not delivered; awaiting-review count unknown"),
+            }
+            Some(snapshot)
+        })
     }
 }

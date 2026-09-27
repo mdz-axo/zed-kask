@@ -132,12 +132,12 @@ impl CompaniesServer {
                 .iter()
                 .map(|(y, v)| (y.as_str(), *v))
                 .collect();
-            let mut aligned: Vec<(f64, f64)> = capital_values
+            // `capital_values` is year-ascending; keep that order so the
+            // scorer's early/late halves are periods in time, not capital size.
+            let aligned: Vec<(f64, f64)> = capital_values
                 .iter()
                 .filter_map(|(year, cap)| roic_by_year.get(year.as_str()).map(|r| (*r, *cap)))
                 .collect();
-            // Sort by invested capital ascending to preserve original ordering intent
-            aligned.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             let roic_nums: Vec<f64> = aligned.iter().map(|(r, _)| *r).collect();
             let capital_nums: Vec<f64> = aligned.iter().map(|(_, c)| *c).collect();
 

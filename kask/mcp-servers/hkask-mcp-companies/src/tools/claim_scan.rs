@@ -172,6 +172,23 @@ impl SourceIndex {
         }
     }
 
+    /// `needle` occurs in the text as a whole number: not preceded or followed
+    /// by a digit, a digit-group comma or a decimal point ("211.3" is not in
+    /// "1,211.3").
+    fn contains_number(&self, needle: &str) -> bool {
+        let bytes = self.text.as_bytes();
+        let joins = |i: usize| bytes.get(i).is_some_and(|b| b.is_ascii_digit());
+        self.text.match_indices(needle).any(|(start, _)| {
+            let end = start + needle.len();
+            let before_ok = start == 0
+                || !(bytes[start - 1].is_ascii_digit()
+                    || (matches!(bytes[start - 1], b',' | b'.') && start >= 2 && joins(start - 2)));
+            let after_ok =
+                !(joins(end) || (matches!(bytes.get(end), Some(b',' | b'.')) && joins(end + 1)));
+            before_ok && after_ok
+        })
+    }
+
     fn matches(&self, figure: &Figure) -> bool {
         let tolerance = 0.5 * 10f64.powi(-figure.decimals);
         let near = |values: &[f64], target: f64, tol: f64| {
@@ -179,8 +196,8 @@ impl SourceIndex {
         };
         match figure.unit {
             Unit::Percent => {
-                self.text.contains(&format!("{}%", figure.text))
-                    || self.text.contains(&format!("{} percent", figure.text))
+                self.contains_number(&format!("{}%", figure.text))
+                    || self.contains_number(&format!("{} percent", figure.text))
                     || near(&self.percents, figure.value, tolerance)
             }
             unit => {
@@ -192,9 +209,9 @@ impl SourceIndex {
                     // same scale ($331.8 billion vs 331,839).
                     near(&self.millions, target, tol)
                         || near(&self.raw, target, tol)
-                        || (figure.comma && self.text.contains(&figure.text))
+                        || (figure.comma && self.contains_number(&figure.text))
                 } else {
-                    self.text.contains(&figure.text) || near(&self.raw, figure.value, tolerance)
+                    self.contains_number(&figure.text) || near(&self.raw, figure.value, tolerance)
                 }
             }
         }
@@ -366,6 +383,28 @@ mod tests {
             tokens.contains(&"29") && tokens.contains(&"999.9"),
             "{result}"
         );
+    }
+
+    /// expect: a figure embedded in a larger number is not a match — a
+    /// provider operating income of 211.3 stated against a source that only
+    /// shows revenue 1,211.3 is flagged (live-observed 2026-09-26, VIRI.PA).
+    #[test]
+    fn embedded_figure_is_not_a_match() {
+        let sources = HashMap::from([(
+            "urd".to_string(),
+            "Operating revenues 1,070.5 1,211.3\nOperating income 237.3 143.5".to_string(),
+        )]);
+        let result = scan(
+            "Operating income was 211.3 (audited) [urd].\nRevenue 1,070.5 [urd].",
+            &sources,
+        );
+        assert_eq!(result["figures_checked"], 2, "{result}");
+        assert_eq!(result["figures_matched"], 1, "{result}");
+        let tokens: Vec<&str> = result["unmatched"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|u| u["token"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(tokens, vec!["211.3"], "{result}");
     }
 
     /// Calibration probe over a real frozen report (not run by default):

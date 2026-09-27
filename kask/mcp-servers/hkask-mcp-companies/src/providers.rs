@@ -469,7 +469,7 @@ pub async fn fetch_key_metrics(
     )
     .await?;
     if response.provider == Provider::Eodhd {
-        response.warnings.push("EODHD derived metrics: ROIC approximates net income / total assets; working-capital ratios use year-end balances".into());
+        response.warnings.push("EODHD derived metrics: ROIC approximates operating income after tax / net invested capital (net income / total assets when those are not reported); working-capital ratios use year-end balances".into());
         return Ok(response);
     }
     let symbol = strip_us_suffix(symbol);
@@ -1168,7 +1168,8 @@ fn normalize_eodhd_key_metrics(fundamentals: &Value) -> Value {
 ///
 /// Looks up the Income_Statement and Balance_Sheet entries matching `date` and computes:
 /// - grossProfitMargin = grossProfit / revenue
-/// - roic = netIncome / totalAssets (simplified approximation)
+/// - roic = operatingIncome × (1 − tax rate) / netInvestedCapital; falls back
+///   to netIncome / totalAssets only when those inputs are not reported
 /// - daysOfPayablesOutstanding = accountsPayable / (costOfRevenue / 365)
 /// - daysOfSalesOutstanding = accountsReceivable / (revenue / 365)
 fn compute_year_metrics(
@@ -1200,14 +1201,27 @@ fn compute_year_metrics(
                 .or_insert(Value::from(gp / rev));
         }
 
-        // ── roic (simplified: netIncome / totalAssets) ──
+        // ── roic: NOPAT / invested capital (NI / total assets fallback) ──
         let net_income = income.get("netIncome").and_then(|v| v.as_f64());
+        let operating_income = income.get("operatingIncome").and_then(|v| v.as_f64());
+        let tax_rate = match (
+            income.get("incomeTaxExpense").and_then(|v| v.as_f64()),
+            income.get("incomeBeforeTax").and_then(|v| v.as_f64()),
+        ) {
+            (Some(tax), Some(pretax)) if pretax > 0.0 => (tax / pretax).clamp(0.0, 0.5),
+            _ => 0.0,
+        };
         if let Some(balance) = balance_entry {
             let total_assets = balance.get("totalAssets").and_then(|v| v.as_f64());
-            if let (Some(ni), Some(ta)) = (net_income, total_assets)
-                && ta > 0.0
-            {
-                let roic_val = ni / ta;
+            let invested = balance.get("netInvestedCapital").and_then(|v| v.as_f64());
+            let roic = match (operating_income, invested) {
+                (Some(oi), Some(ic)) if ic > 0.0 => Some(oi * (1.0 - tax_rate) / ic),
+                _ => match (net_income, total_assets) {
+                    (Some(ni), Some(ta)) if ta > 0.0 => Some(ni / ta),
+                    _ => None,
+                },
+            };
+            if let Some(roic_val) = roic {
                 obj_map
                     .entry("roic".to_string())
                     .or_insert(Value::from(roic_val));
