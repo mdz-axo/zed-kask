@@ -120,6 +120,12 @@ pub struct VerificationPacketRequest {
     pub expected_sha256: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct PacketBuildRequest {
+    /// Existing research-run folder with sources.json, drafts/*.md, key-claims.json.
+    pub run_folder: String,
+}
+
 const HANDOFF: &str =
     include_str!("../../../../registry/templates/company-research/verification-handoff.j2");
 const MAX_VERIFICATION_PACKET_BYTES: u64 = 512 * 1024;
@@ -298,6 +304,227 @@ fn tier_checks(fields: &serde_json::Map<String, Value>) -> Result<(Value, Value)
             "note": "Mechanical pre-check only: each quote is verbatim in its cited source and the claim text appears in the target. The independent verifier still judges support, context and materiality for every key claim.",
         }),
     ))
+}
+
+/// Build a packet only from files contained in one research run. The manifest
+/// declares provenance; this operation binds bytes, not independent authority.
+fn run_file(run_dir: &Path, name: &str) -> Result<std::path::PathBuf, McpToolError> {
+    let relative = Path::new(name);
+    if name.is_empty()
+        || name.contains('\\')
+        || !relative.is_relative()
+        || !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(McpToolError::invalid_argument(
+            "source path must be a relative path inside the run directory",
+        ));
+    }
+    let path = run_dir
+        .join(relative)
+        .canonicalize()
+        .map_err(|error| McpToolError::not_found(format!("missing run source {name}: {error}")))?;
+    if !path.starts_with(run_dir) || !path.is_file() {
+        return Err(McpToolError::permission_denied(format!(
+            "source path {name} resolves outside the run directory"
+        )));
+    }
+    Ok(path)
+}
+
+fn read_run_json(run_dir: &Path, name: &str) -> Result<Value, McpToolError> {
+    let bytes = std::fs::read(run_file(run_dir, name)?)
+        .map_err(|error| McpToolError::unavailable(format!("cannot read {name}: {error}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| McpToolError::invalid_argument(format!("invalid {name}: {error}")))
+}
+
+fn build_packet(root: &Path, run_folder: &str) -> Result<Value, McpToolError> {
+    // Use the packet check's folder policy before touching any caller path.
+    if run_folder.is_empty()
+        || run_folder.len() > 80
+        || run_folder.starts_with('-')
+        || !run_folder
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(McpToolError::invalid_argument(
+            "invalid research run_folder",
+        ));
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|error| McpToolError::not_found(format!("research-run root: {error}")))?;
+    let run_dir = root
+        .join(run_folder)
+        .canonicalize()
+        .map_err(|error| McpToolError::not_found(format!("research run not found: {error}")))?;
+    if !run_dir.starts_with(&root) || !run_dir.is_dir() {
+        return Err(McpToolError::permission_denied(
+            "run folder resolves outside research-run root",
+        ));
+    }
+    let manifest = read_run_json(&run_dir, "sources.json")?;
+    let issuer = manifest
+        .get("issuer_identifier")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| McpToolError::invalid_argument("sources.json needs issuer_identifier"))?;
+    let as_of = manifest
+        .get("as_of_date")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| McpToolError::invalid_argument("sources.json needs as_of_date"))?;
+    let declared = manifest
+        .get("sources")
+        .and_then(Value::as_array)
+        .filter(|sources| !sources.is_empty())
+        .ok_or_else(|| {
+            McpToolError::invalid_argument("sources.json needs a nonempty sources array")
+        })?;
+    let mut source_outputs = Vec::new();
+    let mut pipeline_tool_log = Vec::new();
+    let mut keys = std::collections::HashSet::new();
+    for source in declared {
+        let required = |field| {
+            source
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| McpToolError::invalid_argument(format!("source missing {field}")))
+        };
+        let key = required("output_key")?;
+        if !keys.insert(key) {
+            return Err(McpToolError::invalid_argument(format!(
+                "duplicate output_key {key}"
+            )));
+        }
+        let name = required("text_file")?;
+        let text = std::fs::read(run_file(&run_dir, name)?).map_err(|error| {
+            McpToolError::unavailable(format!("cannot read source text {name}: {error}"))
+        })?;
+        String::from_utf8(text.clone()).map_err(|_| {
+            McpToolError::invalid_argument(format!("source text {name} is not UTF-8"))
+        })?;
+        let method = required("method")?;
+        let tool = source
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or(match method {
+                "text_extraction" => "corpus_convert",
+                "pdftotext" => "pdftotext",
+                _ => "retained_tool_output",
+            });
+        let mut record = serde_json::json!({
+            "tool_name":tool, "description":source.get("description").and_then(Value::as_str).unwrap_or("Retained run source"),
+            "output_key":key, "source_kind":source.get("source_kind").and_then(Value::as_str).unwrap_or(if method == "tool_response" {"derived"} else {"original"}),
+            "url":source.get("url").cloned().unwrap_or(Value::Null),
+            "retrieved_at":source.get("retrieved_at").cloned().unwrap_or(Value::Null),
+            "period":source.get("period").cloned().unwrap_or(Value::Null),
+            "unit":source.get("unit").cloned().unwrap_or(Value::Null),
+            "output":{"method":method,"text_file":name,"text_sha256":format!("{:x}", Sha256::digest(&text))}
+        });
+        let mut log = serde_json::json!({"tool_name":tool,"output_key":key,"status":"ok"});
+        if let Some(origin) = source.get("origin_path").and_then(Value::as_str) {
+            let path = run_file(&run_dir, origin)?;
+            let bytes = std::fs::read(&path).map_err(|error| {
+                McpToolError::unavailable(format!("cannot read origin {origin}: {error}"))
+            })?;
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let path = path.to_string_lossy().to_string();
+            record["origin_path"] = Value::String(path.clone());
+            record["source_sha256"] = Value::String(digest.clone());
+            log["origin_path"] = Value::String(path);
+            log["source_sha256"] = Value::String(digest);
+        } else if method == "text_extraction" || method == "pdftotext" {
+            return Err(McpToolError::invalid_argument(format!(
+                "source {key} requires origin_path"
+            )));
+        }
+        source_outputs.push(record);
+        pipeline_tool_log.push(log);
+    }
+    let draft_dir = run_file_directory(&run_dir, "drafts")?;
+    let mut drafts = std::fs::read_dir(&draft_dir)
+        .map_err(|error| McpToolError::unavailable(format!("cannot read drafts: {error}")))?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().to_string()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| McpToolError::unavailable(format!("cannot list drafts: {error}")))?;
+    drafts.retain(|name| name.ends_with(".md"));
+    drafts.sort();
+    if drafts.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "drafts/ needs at least one .md file",
+        ));
+    }
+    let mut target = String::new();
+    for draft in &drafts {
+        let name = format!("drafts/{draft}");
+        let text = std::fs::read_to_string(run_file(&run_dir, &name)?)
+            .map_err(|error| McpToolError::unavailable(format!("cannot read {name}: {error}")))?;
+        target.push_str(&format!("\n## {name}\n{text}\n"));
+    }
+    let key_claims = read_run_json(&run_dir, "key-claims.json")?;
+    let optional = |field: &str| -> Result<Value, McpToolError> {
+        match manifest.get(field).and_then(Value::as_str) {
+            Some(name) => read_run_json(&run_dir, name),
+            None => Ok(Value::Array(vec![])),
+        }
+    };
+    let packet = serde_json::json!({
+        "issuer_identifier":issuer, "as_of_date":as_of, "target_text":target,
+        "source_outputs":source_outputs, "pipeline_tool_log":pipeline_tool_log,
+        "key_claims":key_claims, "disclosure_inventory":optional("disclosure_inventory")?,
+        "historical_findings":optional("historical_findings")?,
+        "congruence_rules":optional("congruence_rules")?, "leak_rules":optional("leak_rules")?,
+        "original_forecast":Value::Null, "working_forecast":Value::Null,
+        "research_run_id":manifest.get("research_run_id").cloned().unwrap_or(Value::Null),
+        "frozen_drafts":drafts
+    });
+    let bytes = serde_json::to_vec(&packet)
+        .map_err(|error| McpToolError::internal(format!("cannot serialize packet: {error}")))?;
+    if bytes.len() as u64 > MAX_VERIFICATION_PACKET_BYTES {
+        return Err(McpToolError::invalid_argument(
+            "packet exceeds 512 KiB; retain source texts in files",
+        ));
+    }
+    let staging = run_dir.join(format!(".packet-{}.tmp", uuid::Uuid::new_v4()));
+    let staged = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&staging, run_dir.join("packet.json"))
+    })();
+    if let Err(error) = staged {
+        if let Err(cleanup) = std::fs::remove_file(&staging) {
+            if cleanup.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("could not remove failed packet staging file: {cleanup}");
+            }
+        }
+        return Err(McpToolError::unavailable(format!(
+            "cannot publish packet: {error}"
+        )));
+    }
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    evaluate_packet(&root, run_folder, &digest)
+}
+
+fn run_file_directory(run_dir: &Path, name: &str) -> Result<std::path::PathBuf, McpToolError> {
+    let path = run_dir
+        .join(name)
+        .canonicalize()
+        .map_err(|error| McpToolError::not_found(format!("missing {name}: {error}")))?;
+    if !path.starts_with(run_dir) || !path.is_dir() {
+        return Err(McpToolError::permission_denied(format!(
+            "{name} resolves outside the run directory"
+        )));
+    }
+    Ok(path)
 }
 
 fn evaluate_packet(
@@ -515,6 +742,23 @@ impl CompaniesServer {
     }
 
     #[tool(
+        description = "Build a hash-bound research packet from sources.json, drafts/*.md and key-claims.json in an existing run folder; return its digest and the mechanical packet check in one call."
+    )]
+    pub async fn company_research_packet_build(
+        &self,
+        Parameters(req): Parameters<PacketBuildRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "company_research_packet_build", async move {
+            let root =
+                resolve_under_artifacts_dir(&mcp_artifacts_subdir("companies", "research-runs"));
+            tokio::task::spawn_blocking(move || build_packet(&root, &req.run_folder))
+                .await
+                .map_err(|error| McpToolError::internal(format!("packet worker failed: {error}")))?
+        })
+        .await
+    }
+
+    #[tool(
         description = "Execute the shared company-research source check over a SHA-256-pinned packet in companies-mcp/research-runs/{run_folder}/packet.json, where run_folder is the readable {YYYY-MM-DD}-{company} folder name. Mechanical-only: the verifier must independently confirm original downloads, materiality and discovery coverage before using checked."
     )]
     pub async fn company_verification_packet_check(
@@ -723,6 +967,83 @@ mod verification_packet_tests {
         ensure!(
             evaluate_packet(root.path(), run_id, &escaping_digest).is_err(),
             "path-escaping text_file must be rejected"
+        );
+        Ok(())
+    }
+
+    /// expect: rebuilding a frozen pair of drafts binds the exact changed words
+    /// to a new packet digest and returns the same mechanical check as the verifier.
+    #[test]
+    fn packet_builder_rebinds_changed_draft() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let run = "2026-09-26-exampleco";
+        let dir = root.path().join(run);
+        std::fs::create_dir_all(dir.join("drafts"))?;
+        std::fs::write(dir.join("original.txt"), "ExampleCo revenue was 100 USD.")?;
+        std::fs::write(
+            dir.join("drafts/report.md"),
+            "Revenue was 100 USD. [filing]",
+        )?;
+        std::fs::write(dir.join("drafts/summary.md"), "ExampleCo summary.")?;
+        std::fs::write(dir.join("key-claims.json"), json!([{"id":"revenue","claim":"Revenue was 100 USD","role":"valuation_input","output_key":"filing","quote":"revenue was 100 USD"}]).to_string())?;
+        std::fs::write(dir.join("sources.json"), json!({
+            "issuer_identifier":"ExampleCo", "as_of_date":"2026-09-26",
+            "sources":[{"output_key":"filing", "url":"https://example.invalid/filing", "origin_path":"original.txt", "text_file":"original.txt", "method":"text_extraction", "period":"FY2025"}]
+        }).to_string())?;
+        let first = super::build_packet(root.path(), run).map_err(|e| anyhow::anyhow!("{e}"))?;
+        ensure!(
+            first["packet_sha256"].as_str().is_some(),
+            "no digest: {first}"
+        );
+        ensure!(
+            first["tier2_key_claims"]["status"] == "evidence_found",
+            "missing precheck: {first}"
+        );
+        std::fs::write(dir.join("drafts/summary.md"), "ExampleCo changed summary.")?;
+        let second = super::build_packet(root.path(), run).map_err(|e| anyhow::anyhow!("{e}"))?;
+        ensure!(
+            first["packet_sha256"] != second["packet_sha256"],
+            "changed draft kept digest"
+        );
+        ensure!(
+            std::fs::read_to_string(dir.join("packet.json"))?.contains("changed summary"),
+            "new draft absent"
+        );
+        Ok(())
+    }
+
+    /// expect: missing or escaping source paths never create a checkable packet.
+    #[test]
+    fn packet_builder_rejects_missing_and_escaping_text() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let run = "2026-09-26-exampleco";
+        let dir = root.path().join(run);
+        std::fs::create_dir_all(dir.join("drafts"))?;
+        std::fs::write(dir.join("drafts/report.md"), "ExampleCo report.")?;
+        std::fs::write(dir.join("key-claims.json"), "[]")?;
+        let manifest = |name: &str| {
+            json!({"issuer_identifier":"ExampleCo", "as_of_date":"2026-09-26", "sources":[{"output_key":"filing", "url":"https://example.invalid", "origin_path":name, "text_file":name, "method":"text_extraction", "period":"FY2025"}]}).to_string()
+        };
+        std::fs::write(dir.join("sources.json"), manifest("missing.txt"))?;
+        let missing = super::build_packet(root.path(), run)
+            .err()
+            .context("missing text accepted")?;
+        ensure!(
+            missing.to_string().contains("missing"),
+            "unexpected error: {missing}"
+        );
+        ensure!(
+            !dir.join("packet.json").exists(),
+            "partial packet left after failure"
+        );
+        std::fs::write(root.path().join("outside.txt"), "ExampleCo")?;
+        std::fs::write(dir.join("sources.json"), manifest("../outside.txt"))?;
+        let escape = super::build_packet(root.path(), run)
+            .err()
+            .context("outside text accepted")?;
+        ensure!(
+            escape.to_string().contains("inside the run"),
+            "unexpected error: {escape}"
         );
         Ok(())
     }

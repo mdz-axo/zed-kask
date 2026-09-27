@@ -142,50 +142,6 @@ pub enum ActionDecision {
     Block,
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
-pub struct AdviceReviewMetrics {
-    pub finalized: u64,
-    pub recovered: u64,
-    pub improved: u64,
-    pub no_improvement: u64,
-    pub insufficient_evidence: u64,
-    /// Fraction of determinate observational reviews showing progress.
-    /// `None` means no review had sufficient evidence; it is never coerced to zero.
-    pub progress_score: Option<f64>,
-}
-
-impl AdviceReviewMetrics {
-    pub fn from_receipts(receipts: &[crate::AdviceReviewReceipt]) -> Self {
-        let recovered = receipts
-            .iter()
-            .filter(|receipt| receipt.outcome == crate::AdviceReviewOutcome::Recovered)
-            .count() as u64;
-        let improved = receipts
-            .iter()
-            .filter(|receipt| receipt.outcome == crate::AdviceReviewOutcome::Improved)
-            .count() as u64;
-        let no_improvement = receipts
-            .iter()
-            .filter(|receipt| receipt.outcome == crate::AdviceReviewOutcome::NoImprovement)
-            .count() as u64;
-        let insufficient_evidence = receipts
-            .iter()
-            .filter(|receipt| receipt.outcome == crate::AdviceReviewOutcome::InsufficientEvidence)
-            .count() as u64;
-        let determinate = recovered + improved + no_improvement;
-        let progress_score =
-            (determinate > 0).then_some((recovered + improved) as f64 / determinate as f64);
-        Self {
-            finalized: receipts.len() as u64,
-            recovered,
-            improved,
-            no_improvement,
-            insufficient_evidence,
-            progress_score,
-        }
-    }
-}
-
 /// Loop-quality telemetry — measures the loop's own performance.
 ///
 /// These metrics are about the loop itself, not the signals it processes.
@@ -205,10 +161,7 @@ pub struct LoopMetrics {
     /// Computed as: matched_deviations / total_deviations.
     pub fidelity_score: f64,
     /// Fraction of evidence-bearing rollout impact reports that improved.
-    /// This remains separate from observational post-advice review progress.
     pub rollout_progress_score: Option<f64>,
-    /// Observational post-advice outcomes published during this cycle.
-    pub advice_review: AdviceReviewMetrics,
     /// What triggered this tick.
     pub trigger: TriggerOrigin,
 }
@@ -220,7 +173,7 @@ impl Default for LoopMetrics {
             response_coverage: 1.0,
             fidelity_score: 1.0,
             rollout_progress_score: None,
-            advice_review: AdviceReviewMetrics::default(),
+
             trigger: TriggerOrigin::Scheduled,
         }
     }
@@ -229,25 +182,25 @@ impl Default for LoopMetrics {
 impl LoopMetrics {
     /// Compute loop quality from the cycle's inputs and outputs.
     ///
-    /// expect: "The system distinguishes observed progress from acceptance and causal effectiveness"
+    /// expect: "Only evidence-bearing rollout checks contribute to impact progress"
     /// \[P9\] Homeostatic Self-Regulation — loop quality enables Regulation self-observation
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle
     /// post: returns LoopMetrics with response_coverage, fidelity_score, and
-    ///       separate rollout and advice-review progress computed from cycle data
+    ///       rollout progress computed from evidence-bearing cycle data
     ///
     /// - `elapsed_ms`: wall-clock time from sense start to act end
     /// - `deviations`: deviations detected during compare
     /// - `actions`: actions produced during compute
     /// - `impact_reports`: results from evidence-bearing `verify_impact`
-    /// - `advice_review_receipts`: observational reviews durably published this cycle
+
     /// - `trigger`: what triggered this tick
     pub fn from_cycle(
         elapsed_ms: u64,
         deviations: &[Deviation],
         actions: &[RegulatoryAction],
         impact_reports: &[ImpactReport],
-        advice_review_receipts: &[crate::AdviceReviewReceipt],
+
         trigger: TriggerOrigin,
     ) -> Self {
         // Response coverage. When no deviations exist, the loop is
@@ -283,14 +236,13 @@ impl LoopMetrics {
             let improved = impact_reports.iter().filter(|r| r.improved).count() as f64;
             Some(improved / impact_reports.len() as f64)
         };
-        let advice_review = AdviceReviewMetrics::from_receipts(advice_review_receipts);
 
         Self {
             delay_ms: elapsed_ms,
             response_coverage,
             fidelity_score,
             rollout_progress_score,
-            advice_review,
+
             trigger,
         }
     }
@@ -544,10 +496,8 @@ impl LoopView {
 /// enforced door; the mapping is implicit (in the skill body), not declared.
 ///
 /// Example: `(Prompted, "algedonic_review_act")` maps to
-/// `["curator_escalation_resolve", "curator_escalation_dismiss"]` — the
-/// `algedonic-review` skill's step 4 (ACT) is a `Prompted` stage, and the
-/// MCP tools that serve as its human door are `curator_escalation_resolve`
-/// and `curator_escalation_dismiss`.
+/// `["kanban_task_verify"]` — an authorized reviewer records the
+/// observation as verification evidence on the board.
 #[derive(Debug, Clone, Default)]
 pub struct StageActions {
     doors: std::collections::HashMap<(TriggerOrigin, String), Vec<String>>,
@@ -620,7 +570,7 @@ mod tests {
 
     /// Pins F1 + F2 + F3: when no deviations or measurements exist
     /// (the healthy steady-state), response coverage and fidelity are 1.0,
-    /// while both progress channels remain unknown.
+    /// while rollout progress remains unknown.
     /// Unknown progress is represented as `None`, not a numeric zero or one,
     /// so unmeasured and measured-stagnant cycles remain distinguishable.
     #[test]
@@ -630,7 +580,6 @@ mod tests {
             &[], // no deviations — healthy
             &[], // no actions
             &[], // no impact reports — unverified
-            &[], // no advice reviews — unobserved
             TriggerOrigin::Scheduled,
         );
         assert_eq!(
@@ -642,7 +591,6 @@ mod tests {
             "fidelity=1.0 when healthy (trivially matched)"
         );
         assert_eq!(metrics.rollout_progress_score, None);
-        assert_eq!(metrics.advice_review.progress_score, None);
     }
 
     /// Response coverage counts handled deviations and remains bounded.
@@ -665,14 +613,8 @@ mod tests {
             RegulatoryActionParams::reason("energy_budget_low"),
             "energy_remaining".into(),
         );
-        let metrics = LoopMetrics::from_cycle(
-            0,
-            &deviations,
-            &[action],
-            &[],
-            &[],
-            TriggerOrigin::Scheduled,
-        );
+        let metrics =
+            LoopMetrics::from_cycle(0, &deviations, &[action], &[], TriggerOrigin::Scheduled);
         assert_eq!(
             metrics.response_coverage, 0.5,
             "1 disposition / 2 deviations = 0.5"
@@ -709,7 +651,6 @@ mod tests {
             &[],
             &[],
             &[report_accept, report_block],
-            &[],
             TriggerOrigin::Scheduled,
         );
         assert_eq!(
@@ -720,32 +661,6 @@ mod tests {
         // Response coverage and fidelity are 1.0 because no deviations.
         assert_eq!(metrics.response_coverage, 1.0);
         assert_eq!(metrics.fidelity_score, 1.0);
-    }
-
-    /// Observational advice reviews keep unknown evidence out of the numeric
-    /// denominator instead of silently treating it as no progress.
-    #[test]
-    fn advice_review_progress_preserves_insufficient_evidence_as_unknown() {
-        let receipt = |outcome| crate::AdviceReviewReceipt {
-            event_id: hkask_types::EventID::new(),
-            escalation_id: "escalation".to_string(),
-            outcome,
-            causal_attribution: crate::AdviceReviewCausalAttribution::Unverified,
-        };
-        let insufficient = receipt(crate::AdviceReviewOutcome::InsufficientEvidence);
-        let unknown_only = AdviceReviewMetrics::from_receipts(std::slice::from_ref(&insufficient));
-        assert_eq!(unknown_only.finalized, 1);
-        assert_eq!(unknown_only.insufficient_evidence, 1);
-        assert_eq!(unknown_only.progress_score, None);
-
-        let mixed = AdviceReviewMetrics::from_receipts(&[
-            receipt(crate::AdviceReviewOutcome::Improved),
-            receipt(crate::AdviceReviewOutcome::NoImprovement),
-            insufficient,
-        ]);
-        assert_eq!(mixed.finalized, 3);
-        assert_eq!(mixed.insufficient_evidence, 1);
-        assert_eq!(mixed.progress_score, Some(0.5));
     }
 
     // ── TriggerOrigin::Prompted tests (F1) ─────────────────────────────────
@@ -767,11 +682,10 @@ mod tests {
     /// `Manual` cycles.
     #[test]
     fn prompted_triggers_tracked_separately_from_manual() {
-        let metrics_prompted =
-            LoopMetrics::from_cycle(0, &[], &[], &[], &[], TriggerOrigin::Prompted);
+        let metrics_prompted = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Prompted);
         assert_eq!(metrics_prompted.trigger, TriggerOrigin::Prompted);
 
-        let metrics_manual = LoopMetrics::from_cycle(0, &[], &[], &[], &[], TriggerOrigin::Manual);
+        let metrics_manual = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Manual);
         assert_eq!(metrics_manual.trigger, TriggerOrigin::Manual);
         assert_ne!(
             metrics_prompted.trigger, metrics_manual.trigger,
@@ -942,10 +856,7 @@ mod tests {
         actions.register(
             TriggerOrigin::Prompted,
             "algedonic_review_act",
-            vec![
-                "curator_escalation_resolve".to_string(),
-                "curator_escalation_dismiss".to_string(),
-            ],
+            vec!["kanban_task_verify".to_string()],
         );
 
         assert_eq!(actions.len(), 1);
@@ -953,9 +864,7 @@ mod tests {
 
         // Look up the doors for the Prompted stage.
         let doors = actions.doors(TriggerOrigin::Prompted, "algedonic_review_act");
-        assert_eq!(doors.len(), 2);
-        assert!(doors.contains(&"curator_escalation_resolve".to_string()));
-        assert!(doors.contains(&"curator_escalation_dismiss".to_string()));
+        assert_eq!(doors, ["kanban_task_verify"]);
 
         // A Manual trigger for the same stage name returns no doors —
         // Prompted and Manual are distinct trigger types.
@@ -971,6 +880,6 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].0, TriggerOrigin::Prompted);
         assert_eq!(all[0].1, "algedonic_review_act");
-        assert_eq!(all[0].2.len(), 2);
+        assert_eq!(all[0].2, ["kanban_task_verify"]);
     }
 }

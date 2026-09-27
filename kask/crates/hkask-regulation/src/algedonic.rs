@@ -73,18 +73,11 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
     fn send_alert_email(&self, alert: &RuntimeAlert);
 }
 
-/// Sink for persisting algedonic alerts to the reviewable escalation queue.
-///
-/// This is the primary durable path for alert review: every escalated alert
-/// is written here unconditionally (not just as a fallback), so the Curator
-/// and user can review pending alerts via the `curator_escalations` MCP tool
-/// and resolve/dismiss them with an audit trail. The `RegulationArchive`
-/// (`RegulationSink`) remains as a secondary fallback for restart durability
-/// when this queue is unavailable.
+/// Sink for persisting algedonic alerts to the review board.
 ///
 /// Implementations must be non-blocking and best-effort — a failing or missing
-/// sink never breaks the regulation loop. The sole caller is
-/// `CyberneticsLoop::act` / `verify_impact`, which runs inside `Tokio::spawn`.
+/// sink never breaks the regulation loop. The regulation archive remains a
+/// secondary fallback for alert durability.
 /// The durable-write outcome of [`AlertEscalationSink::try_persist_alert`].
 /// The three states are distinct so an explicit escalation's acknowledgment
 /// never conflates confirmed, attempted, and failed delivery.
@@ -111,60 +104,17 @@ pub enum AlertPersistError {
     QueueRead(String),
     #[error("escalation queue write failed: {0}")]
     QueueWrite(String),
-    #[error("invalid persisted advice review: {0}")]
-    InvalidAdviceReview(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AdviceReviewOutcome {
-    Recovered,
-    Improved,
-    NoImprovement,
-    InsufficientEvidence,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AdviceReviewCausalAttribution {
-    Unverified,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdviceReviewReceipt {
-    pub event_id: hkask_types::EventID,
-    pub escalation_id: String,
-    pub outcome: AdviceReviewOutcome,
-    pub causal_attribution: AdviceReviewCausalAttribution,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AdviceReviewReconciliation {
-    /// Durable applications currently retained by the authoritative queue.
-    pub interventions_confirmed: usize,
-    /// Finalized logical receipts not yet acknowledged as published.
-    pub pending_receipts: Vec<AdviceReviewReceipt>,
 }
 
 #[async_trait::async_trait]
 pub trait AlertEscalationSink: Send + Sync {
-    /// Compare durable triggering conditions with fresh observations each tick,
-    /// then return the queue's intervention gauge and unpublished final-review
-    /// receipts. Missing observations must never resolve an escalation.
+    /// Reconcile open alert conditions against fresh observations for self-recovery.
+    /// Missing observations must never resolve an alert.
     async fn reconcile_conditions(
         &self,
         _observations: &[crate::loops::Signal],
-    ) -> Result<AdviceReviewReconciliation, AlertPersistError> {
-        Ok(AdviceReviewReconciliation::default())
-    }
-
-    /// Mark one logical receipt published after Regulation persistence succeeds.
-    /// `false` means concurrent queue change; retry on a later tick.
-    async fn acknowledge_advice_review(
-        &self,
-        _receipt: &AdviceReviewReceipt,
-    ) -> Result<bool, AlertPersistError> {
-        Ok(false)
+    ) -> Result<(), AlertPersistError> {
+        Ok(())
     }
 
     /// Persist an alert to the reviewable escalation queue, reporting the

@@ -48,33 +48,6 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Publish one observational advice-review receipt with its queue-assigned
-    /// identity. `Some(false)` means the archive already contains that logical
-    /// transition; `None` means no durable event sink is configured.
-    pub(super) async fn persist_advice_review_receipt(
-        &self,
-        receipt: &crate::AdviceReviewReceipt,
-    ) -> Result<Option<bool>, hkask_types::InfrastructureError> {
-        let Some(sink) = &self.event_sink else {
-            tracing::warn!(target: "reg.outcome", "Advice-review receipt retained — no event_sink configured");
-            return Ok(None);
-        };
-        let mut event = RegulationRecord::new(
-            WebID::from_persona(b"regulation"),
-            Span::from_kind(SpanKind::AdviceReviewObserved),
-            CyclePhase::Sense,
-            serde_json::json!({
-                "escalation_id": receipt.escalation_id,
-                "outcome": receipt.outcome,
-                "causal_attribution": receipt.causal_attribution,
-            }),
-            0,
-        );
-        event.id = receipt.event_id;
-        sink.persist_if_absent(&receipt.event_id.to_string(), &event)
-            .map(Some)
-    }
-
     /// Persist an algedonic alert to the reviewable escalation queue.
     ///
     /// This is the primary board delivery path for escalated alerts; the
@@ -1808,7 +1781,7 @@ mod tests {
                 (index + 1) as u32
             );
             assert_eq!(
-                LoopMetrics::from_cycle(0, &[], &[], &reports, &[], TriggerOrigin::Scheduled)
+                LoopMetrics::from_cycle(0, &[], &[], &reports, TriggerOrigin::Scheduled)
                     .rollout_progress_score,
                 Some(0.0)
             );
@@ -2071,14 +2044,8 @@ mod tests {
             parameters: RegulatoryActionParams::reason("some_unrelated_low_thing"),
             metric_name: None,
         };
-        let metrics = LoopMetrics::from_cycle(
-            0,
-            &[deviation],
-            &[action],
-            &[],
-            &[],
-            TriggerOrigin::Scheduled,
-        );
+        let metrics =
+            LoopMetrics::from_cycle(0, &[deviation], &[action], &[], TriggerOrigin::Scheduled);
         assert_eq!(
             metrics.fidelity_score, 0.0,
             "action without metric_name must not match via string fallback"
@@ -2894,10 +2861,7 @@ mod tests {
                     observation.get("rollout_progress_score"),
                     Some(&serde_json::Value::Null)
                 );
-                assert_eq!(
-                    observation.get("advice_review_progress_score"),
-                    Some(&serde_json::Value::Null)
-                );
+                assert!(observation.get("advice_review_progress_score").is_none());
                 // The heartbeat carries the alert log's fill state so the
                 // cap trend is visible from any session, not just Curator
                 // sessions with the curator_status agent tool.
@@ -3000,20 +2964,18 @@ mod tests {
         });
     }
 
-    /// expect: "A confirmed-intervention state change emits immediately even when the persistent condition is otherwise identical" [P9]
+    /// expect: "Alert reconciliation receives fresh observations but produces no advice-review event" [P9]
     #[tokio::test]
-    async fn confirmed_intervention_change_bypasses_steady_state_suppression() {
-        struct InterventionGaugeSink(std::sync::atomic::AtomicUsize);
+    async fn alert_reconciliation_does_not_publish_advice_review() {
+        struct ReconciliationSink(std::sync::atomic::AtomicUsize);
         #[async_trait::async_trait]
-        impl crate::AlertEscalationSink for InterventionGaugeSink {
+        impl crate::AlertEscalationSink for ReconciliationSink {
             async fn reconcile_conditions(
                 &self,
                 _observations: &[Signal],
-            ) -> Result<crate::AdviceReviewReconciliation, crate::AlertPersistError> {
-                Ok(crate::AdviceReviewReconciliation {
-                    interventions_confirmed: self.0.load(std::sync::atomic::Ordering::SeqCst),
-                    pending_receipts: Vec::new(),
-                })
+            ) -> Result<(), crate::AlertPersistError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
             }
 
             async fn try_persist_alert(
@@ -3032,9 +2994,7 @@ mod tests {
 
         let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
         let event_sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-        let advice_sink = Arc::new(InterventionGaugeSink(std::sync::atomic::AtomicUsize::new(
-            0,
-        )));
+        let advice_sink = Arc::new(ReconciliationSink(std::sync::atomic::AtomicUsize::new(0)));
         let mut regulation_loop = CyberneticsLoop::new(ledger)
             .with_event_sink(event_sink.clone() as Arc<dyn hkask_types::RegulationSink>);
         regulation_loop.set_alert_escalation_sink(Some(advice_sink.clone()));
@@ -3049,25 +3009,17 @@ mod tests {
             .iter()
             .filter(|(path, _)| path == "reg.outcome.loop_quality")
             .count();
-        advice_sink.0.store(1, std::sync::atomic::Ordering::SeqCst);
         regulation_loop.tick().await;
         let spans = event_sink
             .0
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let loop_quality = spans
-            .iter()
-            .filter(|(path, _)| path == "reg.outcome.loop_quality")
-            .collect::<Vec<_>>();
-        assert_eq!(
-            loop_quality.len(),
-            before + 1,
-            "confirmed intervention is a state transition, not a steady-state duplicate"
-        );
-        assert_eq!(
-            loop_quality.last().expect("new telemetry").1["interventions_confirmed"],
-            1
-        );
+        assert_eq!(advice_sink.0.load(std::sync::atomic::Ordering::SeqCst), 6);
+        assert_eq!(spans.len(), before);
+        assert!(spans.iter().all(|(path, observation)| {
+            path != "reg.outcome.advice_review_observed"
+                && observation.get("interventions_confirmed").is_none()
+        }));
     }
 
     /// expect: "Telemetry coalescing suppresses only exact steady state; changes, clearing, and measured transitions emit immediately" [P9]
@@ -3077,65 +3029,45 @@ mod tests {
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
         let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.2, 0.8);
         let first = Deviation::from_signal(&signal).expect("deviation");
-        let first_decision = regulation_loop.loop_telemetry_decision(
-            std::slice::from_ref(&first),
-            &[],
-            None,
-            false,
-            4,
-        );
+        let first_decision =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 4);
         assert!(first_decision.emit);
         assert!(!first_decision.steady_state_heartbeat);
 
-        let duplicate = regulation_loop.loop_telemetry_decision(
-            std::slice::from_ref(&first),
-            &[],
-            None,
-            false,
-            5,
-        );
+        let duplicate =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 5);
         assert!(!duplicate.emit);
 
         let mut changed_signal = signal;
         changed_signal.value = 0.3;
         let changed = Deviation::from_signal(&changed_signal).expect("changed deviation");
-        let changed_decision = regulation_loop.loop_telemetry_decision(
-            std::slice::from_ref(&changed),
-            &[],
-            None,
-            false,
-            6,
-        );
+        let changed_decision =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], false, 6);
         assert!(changed_decision.emit);
         assert_eq!(changed_decision.suppressed_cycles, 1);
 
-        let forced_measurement = regulation_loop.loop_telemetry_decision(
-            std::slice::from_ref(&changed),
-            &[],
-            None,
-            true,
-            7,
-        );
+        let forced_measurement =
+            regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], true, 7);
         assert!(
             forced_measurement.emit,
             "measured transitions are never suppressed"
         );
 
-        let cleared = regulation_loop.loop_telemetry_decision(&[], &[], None, false, 8);
+        let cleared = regulation_loop.loop_telemetry_decision(&[], &[], false, 8);
         assert!(cleared.emit);
         assert!(cleared.condition_cleared);
         assert!(
             !regulation_loop
-                .loop_telemetry_decision(&[], &[], None, false, 9)
+                .loop_telemetry_decision(&[], &[], false, 9)
                 .emit
         );
 
         assert!(
             regulation_loop
-                .loop_telemetry_decision(std::slice::from_ref(&first), &[], None, false, 10,)
+                .loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 10)
                 .emit
         );
-        let steady = regulation_loop.loop_telemetry_decision(&[first], &[], None, false, 360);
+        let steady = regulation_loop.loop_telemetry_decision(&[first], &[], false, 360);
         assert!(steady.emit);
         assert!(steady.steady_state_heartbeat);
         assert_eq!(steady.suppressed_cycles, 1);

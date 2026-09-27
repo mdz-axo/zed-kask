@@ -162,7 +162,7 @@ struct RolloutImpactCheck {
 #[derive(Default)]
 struct LoopTelemetryState {
     steady_fingerprint: Option<serde_json::Value>,
-    intervention_observation: Option<Option<usize>>,
+
     suppressed_cycles: usize,
 }
 
@@ -673,7 +673,6 @@ impl CyberneticsLoop {
         &self,
         deviations: &[crate::loops::Deviation],
         actions: &[crate::loops::RegulatoryAction],
-        interventions_confirmed: Option<usize>,
         force_transition: bool,
         tick_number: usize,
     ) -> LoopTelemetryDecision {
@@ -697,11 +696,6 @@ impl CyberneticsLoop {
             .loop_telemetry_state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let intervention_changed = state
-            .intervention_observation
-            .is_some_and(|previous| previous != interventions_confirmed);
-        state.intervention_observation = Some(interventions_confirmed);
-        let force_transition = force_transition || intervention_changed;
 
         match fingerprint {
             Some(fingerprint) if state.steady_fingerprint.as_ref() != Some(&fingerprint) => {
@@ -761,8 +755,7 @@ impl CyberneticsLoop {
 
     /// Full regulation cycle with loop-quality telemetry.
     ///
-    /// Measures elapsed time and computes separate rollout-impact and
-    /// observational advice-review progress after each cycle.
+    /// Measures elapsed time and computes rollout-impact progress after each cycle.
     /// Computed advisories are routed for operator action; only externally
     /// submitted checks with before/after evidence enter `verify_impact`.
     pub async fn tick(&self) {
@@ -775,19 +768,11 @@ impl CyberneticsLoop {
             .iter()
             .map(|signal| (signal.metric, signal.clone()))
             .collect();
-        let (advice_reconciliation, advice_observation_available) = if let Some(sink) =
-            &self.alert_escalation_sink
-        {
-            match sink.reconcile_conditions(&signals).await {
-                Ok(reconciliation) => (reconciliation, true),
-                Err(error) => {
-                    tracing::warn!(target: "reg.alert", %error, "Advice-review reconciliation unavailable; receipts retained");
-                    (crate::AdviceReviewReconciliation::default(), false)
-                }
+        if let Some(sink) = &self.alert_escalation_sink {
+            if let Err(error) = sink.reconcile_conditions(&signals).await {
+                tracing::warn!(target: "reg.alert", %error, "Alert condition reconciliation failed");
             }
-        } else {
-            (crate::AdviceReviewReconciliation::default(), false)
-        };
+        }
         let deviations = self.compare(&signals).await;
         let actions = self.compute(&deviations).await;
         // Drain externally submitted checks separately from computed advice.
@@ -807,46 +792,7 @@ impl CyberneticsLoop {
         // Fermi impact-gate: verify only evidence-bearing submitted checks.
         let impact_reports = self.verify_impact(&impact_checks).await;
 
-        // Publish finalized observational reviews separately from rollout
-        // impact. The queue-assigned event id makes archive insertion
-        // idempotent; acknowledgment follows durable insertion or confirmation
-        // that the same event already exists.
-        let mut published_advice_reviews = Vec::new();
-        if let Some(sink) = &self.alert_escalation_sink {
-            for receipt in &advice_reconciliation.pending_receipts {
-                match self.persist_advice_review_receipt(receipt).await {
-                    Ok(Some(inserted)) => {
-                        match sink.acknowledge_advice_review(receipt).await {
-                            Ok(true) => {}
-                            Ok(false) => tracing::debug!(
-                                target: "reg.alert",
-                                receipt_id = %receipt.event_id,
-                                "Advice-review publication acknowledgment conflicted; retrying idempotently"
-                            ),
-                            Err(error) => tracing::warn!(
-                                target: "reg.alert",
-                                %error,
-                                receipt_id = %receipt.event_id,
-                                "Advice-review publication acknowledgment failed; retrying idempotently"
-                            ),
-                        }
-                        if inserted {
-                            published_advice_reviews.push(receipt.clone());
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(error) => tracing::warn!(
-                        target: "reg.outcome",
-                        %error,
-                        receipt_id = %receipt.event_id,
-                        "Advice-review receipt publication failed; durable receipt retained"
-                    ),
-                }
-            }
-        }
-
-        // Feed per-metric rollout outcomes into strategy evaluator. Advice
-        // reviews remain observational and never enter this causal-impact path.
+        // Feed per-metric rollout outcomes into strategy evaluator.
         // Collect promoted metrics in a locked scope; emit spans outside
         // to avoid holding MutexGuard across .await (not Send).
         let promoted_metrics = {
@@ -919,7 +865,6 @@ impl CyberneticsLoop {
             &deviations,
             &actions,
             &impact_reports,
-            &published_advice_reviews,
             TriggerOrigin::Scheduled,
         );
         *self.loop_quality.write().await = quality;
@@ -930,27 +875,25 @@ impl CyberneticsLoop {
             response_coverage = quality.response_coverage,
             fidelity = quality.fidelity_score,
             rollout_progress = ?quality.rollout_progress_score,
-            advice_review_progress = ?quality.advice_review.progress_score,
+
             deviations = deviations.len(),
             advisories_computed = actions.len(),
             rollout_impact_reports = impact_reports.len(),
-            advice_reviews_finalized = quality.advice_review.finalized,
+
             "Loop-quality telemetry recorded"
         );
 
         // Coalesce only semantically identical persistent deviation/advisory
-        // cycles. Changed values, clearing, rollout measurements, and newly
-        // published advice reviews always emit. Exact repeats accumulate until
+        // cycles. Changed values, clearing, and rollout measurements always emit.
+        // Exact repeats accumulate until
         // the existing hourly tick boundary re-announces liveness and reports
         // how many records were suppressed.
         let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
-        let interventions_confirmed =
-            advice_observation_available.then_some(advice_reconciliation.interventions_confirmed);
+
         let decision = self.loop_telemetry_decision(
             &deviations,
             &actions,
-            interventions_confirmed,
-            !impact_reports.is_empty() || !published_advice_reviews.is_empty(),
+            !impact_reports.is_empty(),
             tick_number,
         );
         if decision.emit {
@@ -959,19 +902,13 @@ impl CyberneticsLoop {
                 "response_coverage": quality.response_coverage,
                 "fidelity_score": quality.fidelity_score,
                 "rollout_progress_score": quality.rollout_progress_score,
-                "advice_review_progress_score": quality.advice_review.progress_score,
+
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "advisories_computed": actions.len(),
-                "interventions_confirmed": interventions_confirmed,
+
                 "rollout_impact_reports": impact_reports.len(),
-                "advice_reviews_finalized": quality.advice_review.finalized,
-                "advice_reviews_recovered": quality.advice_review.recovered,
-                "advice_reviews_improved": quality.advice_review.improved,
-                "advice_reviews_no_improvement": quality.advice_review.no_improvement,
-                "advice_reviews_insufficient_evidence": quality.advice_review.insufficient_evidence,
-                "advice_review_observation_available": advice_observation_available,
-                "advice_review_causal_attribution": (quality.advice_review.finalized > 0).then_some("unverified"),
+
                 "suppressed_steady_state_cycles": decision.suppressed_cycles,
             });
             if decision.idle_heartbeat || decision.steady_state_heartbeat {

@@ -193,83 +193,6 @@ impl SignalMetric {
 mod tests {
     use super::*;
 
-    /// expect: "Advice is assessed seven days after confirmed action, with absent evidence kept unknown" [P9]
-    #[test]
-    fn weekly_advice_review_distinguishes_progress_from_acceptance() {
-        let applied = chrono::Utc::now();
-        let mut trigger = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.3, 0.8);
-        trigger.timestamp = applied;
-        let mut current = trigger.clone();
-        let due = applied + chrono::Duration::days(7);
-        let now = due;
-        current.timestamp = now;
-        assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), None, None, now),
-            "awaiting_action"
-        );
-        assert_eq!(
-            trigger.advice_review(
-                Some(&trigger),
-                Some(&current),
-                Some(applied),
-                Some(due),
-                applied + chrono::Duration::days(6)
-            ),
-            "observation_window"
-        );
-        assert_eq!(
-            trigger.advice_review(Some(&trigger), Some(&current), Some(applied), None, now),
-            "insufficient_evidence"
-        );
-        assert_eq!(
-            trigger.advice_review(
-                Some(&trigger),
-                Some(&current),
-                Some(applied),
-                Some(due),
-                now
-            ),
-            "no_improvement"
-        );
-        current.value = 0.4;
-        assert_eq!(
-            trigger.advice_review(
-                Some(&trigger),
-                Some(&current),
-                Some(applied),
-                Some(due),
-                now
-            ),
-            "improved"
-        );
-        current.value = 0.8;
-        assert_eq!(
-            trigger.advice_review(
-                Some(&trigger),
-                Some(&current),
-                Some(applied),
-                Some(due),
-                now
-            ),
-            "recovered"
-        );
-        assert_eq!(
-            trigger.advice_review(Some(&trigger), None, Some(applied), Some(due), now),
-            "insufficient_evidence"
-        );
-        current.timestamp = applied;
-        assert_eq!(
-            trigger.advice_review(
-                Some(&trigger),
-                Some(&current),
-                Some(applied),
-                Some(due),
-                now
-            ),
-            "insufficient_evidence"
-        );
-    }
-
     /// Pins the per-metric impact direction: energy remaining, fleet
     /// health, and tool reliability improve upward; variety deficit
     /// improves downward; everything else has no verified impact path
@@ -374,46 +297,6 @@ impl Signal {
 
     pub fn is_recovery_trigger(&self) -> bool {
         Deviation::from_signal(self).is_some()
-    }
-
-    /// Post-application review at the persisted due time, not a causal-effect estimate.
-    pub fn advice_review(
-        &self,
-        baseline: Option<&Signal>,
-        current: Option<&Signal>,
-        applied_at: Option<chrono::DateTime<chrono::Utc>>,
-        review_due_at: Option<chrono::DateTime<chrono::Utc>>,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> &'static str {
-        let Some(applied_at) = applied_at else {
-            return "awaiting_action";
-        };
-        let Some(review_due_at) = review_due_at else {
-            return "insufficient_evidence";
-        };
-        if now < review_due_at {
-            return "observation_window";
-        }
-        let (Some(baseline), Some(current)) = (baseline, current) else {
-            return "insufficient_evidence";
-        };
-        if !self.is_recovery_trigger()
-            || baseline.metric != self.metric
-            || current.metric != self.metric
-            || !baseline.is_fresh_at(applied_at)
-            || !current.is_fresh_at(now)
-        {
-            return "insufficient_evidence";
-        }
-        if self.recovered_by(current) {
-            "recovered"
-        } else if (self.value < self.set_point && current.value > baseline.value)
-            || (self.value > self.set_point && current.value < baseline.value)
-        {
-            "improved"
-        } else {
-            "no_improvement"
-        }
     }
 
     /// Whether a fresh observation crosses this original trigger's threshold

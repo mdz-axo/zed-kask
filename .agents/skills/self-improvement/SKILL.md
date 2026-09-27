@@ -157,13 +157,17 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
 7. If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use a distinct judge configuration for final reporting.
 8. Respond with a JSON object containing `performance_trajectory`, `baseline_pass_rate`, `pass_rate`, `regressions`, `transfer_score`, `cost_summary`, `safety_violations`, and `evaluation_method` (metric-based, judge-based, or none_available).
 
+### Proposal card handoff (all improvement pathways)
+
+Use only **Algedonic review** for proposals. `kanban_board_list` must succeed before treating the board as absent: use the unique matching board ID, create it with `kanban_board_create` (name `Algedonic review`, default columns) if none matches, or stop on ambiguous matches. For `kanban_task_create`, supply that board ID, a title identifying the target and change, a description with the full proposed diff (or the complete adapter/prompt change), evidence and its limits, and verification criteria; set `criteria` to observable checks, `advances: []` unless a known goal criterion is cited, and reuse the same `idempotency_key` on retries. Keep the returned card ID and attach existing artifacts with `kanban_task_add_deliverable` when relevant. A failed lookup or write blocks filing; never create a file proposal or dated review note.
+
 ### si-propose-or-discard (PDCA Act)
 
 The executing session never commits a durable change to a skill, prompt, memory, tool configuration or model — that would make the session the judge of its own work (Goodhart's law; operator ruling 2026-09-24). It decides only whether its candidate is worth the operator's review.
 
 1. Call `lisp_eval` on the measured Check result: form `(and (not (member evaluation_method (list "none_available"))) (numberp pass_rate) (numberp baseline_pass_rate) (> pass_rate baseline_pass_rate) (= regressions 0) (= (length safety_violations) 0))` (`member` is the string-equality primitive). `baseline_pass_rate`/`pass_rate` are the `overall_pass_rate` of the recorded before/after `swarm_eval_agent_local` reports on the same task set; `regressions` counts tasks whose after `tasks[].pass_rate` fell below baseline, computed with `lisp_eval` from the two reports' per-task pass rates written as ordered number lists in the form: `(begin (define regs (lambda (b a) (if (is_null b) 0 (+ (if (< (car a) (car b)) 1 0) (regs (cdr b) (cdr a)))))) (regs (list b1 b2 ...) (list a1 a2 ...)))`. A missing report means null values and a false gate. A baseline `overall_pass_rate` of 1 is saturated: no candidate can pass, so the discard carries no information — record `failure_mode: "saturated baseline"` and choose a harder held-out task set before re-planning (observed 2026-09-26, `local_extractor` harness runs `bac52690`/`b950572f`).
 2. Render `self-improvement/si-propose-or-discard` with `evaluation_result`, `gate_result` (the `lisp_eval` boolean), `improvement_plan` and `proposed_artifact`.
-3. `gate_result` true → **propose**: find **Algedonic review** with `kanban_board_list`, creating it with `kanban_board_create` if absent. Call `kanban_task_create` on that board with a title naming the skill/component and change; include the full diff, measurements, evaluation method, goal ID, evidence and verification criteria in its description. Attach existing harness logs using `kanban_task_add_deliverable` when relevant. If the board or card cannot be created, report filing blocked; do not write a proposal file or use another queue. Nothing is applied; the gemba walk decides it with the operator.
+3. `gate_result` true → **propose**: follow the Proposal card handoff above with a title naming the skill/component and change; include the full diff, measurements, evaluation method, goal ID, evidence and verification criteria in its description. If the board or card cannot be created, report filing blocked; do not write a proposal file or use another queue. Nothing is applied; the gemba walk decides it with the operator.
 4. `gate_result` false → **discard**: keep the configuration unchanged, record the failure mode (noisy signal, misaligned operator, missing harness) in the Kata obstacle parking lot, and re-plan.
 5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
 6. Respond with `decision` ("propose", "discard", or "blocked"), `proposal_card_id` (only after card creation succeeds), `failure_mode` (if discarded or blocked), and `next_step` ("re-enter", "exit", or "refine").
@@ -184,7 +188,7 @@ Reflect and Propose are P steps executed by an agent: send the rendered template
 4. **Test** (`self-improvement/gpa-test-variants`) — run every variant's temporary card, and the target itself, through `swarm_eval_agent_local` on the identical selection set and repeats; each report (`agent_name` = variant id, `overall_pass_rate`, `tasks[].pass_rate`, `total_tokens`, `tasks[].mean_latency_ms`) is its `recorded_runs` entry. Aggregate per-objective scores and cost from those reports only. Logs go under `~/Documents/zk-data/skills/self-improvement/gepa/{date}-{run}/`.
 5. **Update frontier** (`self-improvement/gpa-frontier-update`) — pass Test's `tested_variants` array; merge, keep non-dominated members (A dominates B when at least as good on every objective and strictly better on one). Compute dominance with `lisp_eval`; a cost objective (`total_tokens`, `mean_latency_ms`) counts as better only when it is more than 10% lower, otherwise the two are tied on it — paired same-set runs on 2026-09-26 differed by 6–7% in tokens (789/848, 1676/1569), so a smaller gap is noise. Cost comparisons are valid only between runs on the same selection set. Form over `(pass_rate total_tokens)` pairs: `(begin (define better-cost (lambda (a b) (< a (* 0.9 b)))) (define dom (lambda (a b) (and (>= (car a) (car b)) (not (better-cost (nth 1 b) (nth 1 a))) (or (> (car a) (car b)) (better-cost (nth 1 a) (nth 1 b)))))) (dom a b))`; prune by crowding distance past `frontier_size`, record who dominated whom.
 6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
-7. **Act** — never adopt. Find or create **Algedonic review** with `kanban_board_list` / `kanban_board_create`, then call `kanban_task_create` with a title naming the target and a description containing the proposed prompt diff, frontier content, measured scores, cost, lineage, eval-set identity, evidence and verification criteria. Attach existing logs with `kanban_task_add_deliverable` when relevant. Report a blocked filing if the board or card cannot be created; never use a file fallback. The operator chooses on that card in the gemba walk.
+7. **Act** — never adopt. Follow the Proposal card handoff above with a title naming the target and a description containing the proposed prompt diff, frontier content, measured scores, cost, lineage, eval-set identity, evidence and verification criteria. Report a blocked filing if the board or card cannot be created; never use a file fallback. The operator chooses on that card in the gemba walk.
 
 ### Fine-tuning run — the θ pathway executor (formerly `adapter-lifecycle`)
 
@@ -322,12 +326,11 @@ surface that blocker. Only an explicit operator choice may override the model.
    cycles per adapter version; a third failure escalates to the operator.
 10. File the measurements for review — the session that trained the
     adapter does not record its acceptance (operator ruling 2026-09-24:
-    evaluation is separated from execution). Find or create **Algedonic review**
-    with `kanban_board_list` / `kanban_board_create`; call `kanban_task_create`
-    with a title naming the adapter and a description containing the proposed
-    change/diff, adapter_id, baseline_pass_rate, pass_rate, evaluation_method,
-    model_routes, evidence_gaps, verification criteria and evidence. Attach
-    existing harness logs with `kanban_task_add_deliverable` when relevant.
+    evaluation is separated from execution). Follow the Proposal card handoff
+    above with a title naming the adapter and a description containing the
+    proposed change/diff, adapter_id, baseline_pass_rate, pass_rate,
+    evaluation_method, model_routes, evidence_gaps, verification criteria
+    and evidence.
     Use null pass rates when unmeasured. If board or card creation fails,
     report filing blocked, never write a file fallback. The operator accepts
     or rejects the adapter on that card in the gemba walk; promotion follows

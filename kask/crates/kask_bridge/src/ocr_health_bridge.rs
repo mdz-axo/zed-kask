@@ -110,13 +110,12 @@ mod tests {
         async fn reconcile_conditions(
             &self,
             observations: &[hkask_regulation::Signal],
-        ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
-        {
+        ) -> Result<(), hkask_regulation::AlertPersistError> {
             self.observations
                 .lock()
                 .expect("observations lock")
                 .push(observations.to_vec());
-            Ok(hkask_regulation::AdviceReviewReconciliation::default())
+            Ok(())
         }
 
         async fn try_persist_alert(
