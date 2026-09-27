@@ -7,7 +7,7 @@
 //! defaulted, because real-world providers routinely omit fields or send
 //! explicit `null`s where the OpenAI reference implementation would not.
 
-use crate::util::{fix_streamed_json, parse_tool_arguments};
+use crate::util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error};
 use crate::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelToolUse,
     LanguageModelToolUseInput, StopReason, TokenUsage,
@@ -16,7 +16,6 @@ use collections::HashMap;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use serde_json::error::Category;
 use std::pin::Pin;
 
 /// A single decoded Chat Completions stream chunk: either an event or a
@@ -462,26 +461,19 @@ impl ChatCompletionEventMapper {
     }
 
     /// zed-kask: D36 — the first accumulated call whose arguments ended
-    /// mid-JSON, with the tool name, parse error, and accumulated argument
-    /// length: the transport-cut signature at stream end, under any finish
-    /// reason. The discriminator is serde's error category — `Category::Eof`
-    /// means the input ended before the JSON was complete (every signature
-    /// in the 2026-09-27 storm, and all 35 pre-restart log occurrences,
-    /// were "EOF while parsing …"; the storm finished with
-    /// `finish_reason="tool_calls"`, not "stop", so a finish-reason test
-    /// alone cannot catch it). A syntax-classified failure is complete-input
-    /// model fault, not a cut, and drains as the per-call parse-error
-    /// recovery. Empty arguments are not a signature (a genuine no-argument
-    /// call is indistinguishable from a cut before any argument text
-    /// arrived), so they still drain and are the tool boundary's problem,
-    /// not the mapper's.
-    fn first_eof_truncated_tool_call(&self) -> Option<(String, String, usize)> {
-        self.tool_calls.calls.iter().find_map(|call| {
-            parse_tool_arguments(&call.arguments)
-                .err()
-                .filter(|error| matches!(error.classify(), Category::Eof))
-                .map(|error| (call.name.clone(), error.to_string(), call.arguments.len()))
-        })
+    /// mid-JSON (an EOF-classified parse failure): the transport-cut
+    /// signature at stream end, under any finish reason. Classification
+    /// lives in the shared `tool_call_truncation_error` primitive
+    /// (`util.rs`) so every provider mapper door uses one discriminator.
+    /// Empty arguments are not a signature (a genuine no-argument call is
+    /// indistinguishable from a cut before any argument text arrived), so
+    /// they still drain and are the tool boundary's problem, not the
+    /// mapper's.
+    fn first_eof_truncated_tool_call(&self) -> Option<LanguageModelCompletionError> {
+        self.tool_calls
+            .calls
+            .iter()
+            .find_map(|call| tool_call_truncation_error(&call.name, &call.arguments))
     }
 
     /// zed-kask: D36 — record an EOF-classified mid-JSON cut as the typed
@@ -491,22 +483,25 @@ impl ChatCompletionEventMapper {
     fn push_truncation(
         &mut self,
         events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-        found: (String, String, usize),
+        truncation: LanguageModelCompletionError,
     ) {
-        let (tool_name, json_parse_error, raw_input_chars) = found;
-        log::warn!(
-            "tool call '{}' arguments ended mid-JSON (EOF): classifying the stream as \
-             truncated and dispatching nothing ({} chars of arguments received)",
-            tool_name,
-            raw_input_chars,
-        );
-        self.tool_call_accumulation_failed = true;
-        self.tool_calls = ToolCallAccumulator::default();
-        events.push(Err(LanguageModelCompletionError::ToolCallTruncated {
+        if let LanguageModelCompletionError::ToolCallTruncated {
             tool_name,
             json_parse_error,
             raw_input_chars,
-        }));
+        } = &truncation
+        {
+            log::warn!(
+                "tool call '{}' arguments ended mid-JSON ({}): classifying the stream \
+                 as truncated and dispatching nothing ({} chars of arguments received)",
+                tool_name,
+                json_parse_error,
+                raw_input_chars,
+            );
+        }
+        self.tool_call_accumulation_failed = true;
+        self.tool_calls = ToolCallAccumulator::default();
+        events.push(Err(truncation));
     }
 
     pub fn map_event(

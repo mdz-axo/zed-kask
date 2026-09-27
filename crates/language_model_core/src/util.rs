@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::LanguageModelCompletionError;
+
 /// Parses tool call arguments JSON, treating empty strings as empty objects.
 ///
 /// Many LLM providers return empty strings for tool calls with no arguments.
@@ -10,6 +12,32 @@ pub fn parse_tool_arguments(arguments: &str) -> Result<serde_json::Value, serde_
     } else {
         serde_json::Value::from_str(arguments)
     }
+}
+
+/// zed-kask: D36 — classify an accumulated tool-call argument string at a
+/// drain point. An EOF-classified parse failure means the input ended
+/// before the JSON was complete — a transport cut mid-tool-call — and the
+/// caller must surface the returned `ToolCallTruncated` error, dispatch
+/// nothing, and not end the turn cleanly. A syntax-classified failure is
+/// complete-input model fault and keeps the per-call parse-error
+/// recovery. Complete arguments (and empty arguments, which are
+/// indistinguishable from a genuine no-argument call) return `None`.
+/// Every provider mapper door (shared Chat-Completions, Anthropic, OpenAI
+/// Responses, Copilot, Mistral, DeepSeek) classifies through this one
+/// primitive so a cut is named identically regardless of the wire dialect.
+pub fn tool_call_truncation_error(
+    tool_name: &str,
+    arguments: &str,
+) -> Option<LanguageModelCompletionError> {
+    let error = parse_tool_arguments(arguments).err()?;
+    if !matches!(error.classify(), serde_json::error::Category::Eof) {
+        return None;
+    }
+    Some(LanguageModelCompletionError::ToolCallTruncated {
+        tool_name: tool_name.to_string(),
+        json_parse_error: error.to_string(),
+        raw_input_chars: arguments.len(),
+    })
 }
 
 /// `partial_json_fixer::fix_json` converts a trailing `\` inside a string into `\\`

@@ -27,7 +27,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::util::{
     fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
-    parse_tool_arguments,
+    parse_tool_arguments, tool_call_truncation_error,
 };
 pub use gpui_shared_string::SharedString;
 

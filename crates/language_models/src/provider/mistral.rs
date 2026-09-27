@@ -21,7 +21,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
@@ -749,6 +749,21 @@ impl MistralEventMapper {
     fn process_tool_calls(
         &mut self,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // zed-kask: D36 — pre-scan the whole accumulated batch for an
+        // EOF-classified mid-JSON argument fragment (the transport-cut
+        // signature), classified by the shared `tool_call_truncation_error`
+        // primitive, before draining: a complete sibling call must not
+        // dispatch ahead of the cut. The map is cleared so no later event
+        // revives the batch.
+        if let Some(truncation) = self
+            .tool_calls_by_index
+            .values()
+            .find_map(|call| tool_call_truncation_error(&call.name, &call.arguments))
+        {
+            self.tool_calls_by_index.clear();
+            return vec![Err(truncation)];
+        }
+
         let mut results = Vec::new();
 
         for (_, tool_call) in self.tool_calls_by_index.drain() {
@@ -860,6 +875,72 @@ mod tests {
         assert_eq!(
             tool_use.input,
             language_model::LanguageModelToolUseInput::Json(serde_json::json!({"path": "a.txt"}))
+        );
+    }
+
+    #[test]
+    fn test_streamed_tool_call_eof_truncated_arguments_reject_the_batch() {
+        // A transport cut mid-JSON (EOF-classified) must reject the whole
+        // batch with the typed truncation error instead of draining the
+        // fragment into a parse-error event.
+        let mut mapper = MistralEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("call_1"),
+            Some("search"),
+            Some("{\"query\":"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Err(LanguageModelCompletionError::ToolCallTruncated { tool_name, .. })
+                    if tool_name == "search"
+            )),
+            "expected a ToolCallTruncated error for the cut batch, got: {events:?}"
+        );
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+            )),
+            "no complete ToolUse may be dispatched from truncated arguments, got: {events:?}"
+        );
+    }
+
+    #[test]
+    fn test_streamed_tool_call_syntax_fault_keeps_parse_error_recovery() {
+        // A syntax-classified failure is a complete-input model fault, not a
+        // transport cut: the per-call parse-error recovery stays unchanged.
+        let mut mapper = MistralEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("call_1"),
+            Some("search"),
+            Some("{not json}"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                Err(LanguageModelCompletionError::ToolCallTruncated { .. })
+            )),
+            "a syntax fault must not be classified as truncation, got: {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    tool_name,
+                    raw_input,
+                    ..
+                }) if &**tool_name == "search" && &**raw_input == "{not json}"
+            )),
+            "expected a ToolUseJsonParseError event, got: {events:?}"
         );
     }
 

@@ -9,7 +9,7 @@ use language_model_core::{
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
     ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
-    util::{fix_streamed_json, parse_tool_arguments},
+    util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error},
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -943,6 +943,17 @@ impl OpenAiResponseEventMapper {
                             ))]
                         }
                         Err(error) => {
+                            // zed-kask: D36 — an EOF-classified parse failure
+                            // means the argument string ended mid-JSON: a
+                            // transport cut, not model-fault JSON. Surface the
+                            // shared truncation error instead of a parse-error
+                            // recovery event; syntax-classified failures keep
+                            // the ToolUseJsonParseError recovery below.
+                            if let Some(truncation) =
+                                tool_call_truncation_error(&entry.name, &entry.arguments)
+                            {
+                                return vec![Err(truncation)];
+                            }
                             vec![Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                 tool_name: entry.name.clone(),
@@ -1153,6 +1164,20 @@ impl OpenAiResponseEventMapper {
         &mut self,
         output: &[ResponseOutputItem],
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // zed-kask: D36 — pre-scan the whole batch before emitting: an
+        // EOF-classified argument string means the transport cut mid-call,
+        // so the batch surfaces the truncation error only — a complete
+        // sibling must not dispatch before the cut is seen. Syntax-classified
+        // failures keep the per-call recovery inside the loop below.
+        if let Some(truncation) = output.iter().find_map(|item| match item {
+            ResponseOutputItem::FunctionCall(function_call) => tool_call_truncation_error(
+                function_call.name.as_deref().unwrap_or_default(),
+                &function_call.arguments,
+            ),
+            _ => None,
+        }) {
+            return vec![Err(truncation)];
+        }
         let mut events = Vec::new();
         for item in output {
             match item {
@@ -1588,6 +1613,19 @@ mod tests {
                 .into_iter()
                 .map(Result::unwrap)
                 .collect()
+        })
+    }
+
+    /// Like [`map_response_events`], but preserves stream errors instead of
+    /// panicking on them, so truncation tests can assert on the `Err` items.
+    fn map_response_events_results(
+        events: Vec<ResponsesStreamEvent>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        block_on(async {
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
         })
     }
 
@@ -3488,6 +3526,85 @@ mod tests {
             LanguageModelCompletionEvent::ToolUseJsonParseError { ref raw_input, .. }
             if raw_input.as_ref() == "{invalid json"
         ));
+    }
+
+    #[test]
+    fn responses_stream_classifies_eof_fragment_arguments_as_truncated() {
+        // zed-kask: D36 — arguments that end mid-JSON (an EOF-classified
+        // parse failure) are a transport cut, not model-fault bad JSON: the
+        // call must surface as a typed truncation error naming the tool,
+        // never as a ToolUseJsonParseError recovery event.
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_function_call("item_fn", Some("{\"query\":")),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "{\"query\":".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events_results(events);
+        assert!(matches!(
+            mapped.first(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                raw_input_chars: 9,
+            })) if tool_name == "get_weather"
+                && json_parse_error.contains("EOF while parsing")
+        ));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+    }
+
+    #[test]
+    fn responses_stream_completed_batch_with_eof_fragment_dispatches_nothing() {
+        // zed-kask: D36 — one EOF-classified fragment in a completed
+        // response's output truncates the whole batch: the truncation error
+        // is surfaced and no sibling call — however complete its arguments —
+        // is dispatched before the cut is seen.
+        let events = vec![ResponsesStreamEvent::Completed {
+            response: ResponseSummary {
+                output: vec![
+                    response_item_function_call("item_fn_complete", Some("{\"query\":\"test\"}")),
+                    response_item_function_call("item_fn_cut", Some("{\"query\":")),
+                ],
+                ..Default::default()
+            },
+        }];
+
+        let mapped = map_response_events_results(events);
+        assert!(mapped.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                raw_input_chars: 9,
+                ..
+            }) if tool_name == "get_weather"
+        )));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(
+                LanguageModelToolUse {
+                    is_input_complete: true,
+                    ..
+                }
+            ))
+        )));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
     }
 
     #[test]

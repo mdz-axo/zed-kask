@@ -22,7 +22,7 @@ use std::sync::{Arc, LazyLock};
 
 use ui::IconName;
 
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -681,28 +681,44 @@ impl DeepSeekEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
+                // zed-kask: D36 — pre-scan the whole accumulated batch for an
+                // EOF-classified mid-JSON argument fragment (the transport-cut
+                // signature), classified by the shared `tool_call_truncation_error`
+                // primitive, before draining: a complete sibling call must not
+                // dispatch ahead of the cut, and the cut batch must not end
+                // with a clean ToolUse stop. The map is cleared without
+                // draining so no later event revives the batch.
+                if let Some(truncation) = self
+                    .tool_calls_by_index
+                    .values()
+                    .find_map(|call| tool_call_truncation_error(&call.name, &call.arguments))
+                {
+                    self.tool_calls_by_index.clear();
+                    events.push(Err(truncation));
+                } else {
+                    events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                        match parse_tool_arguments(&tool_call.arguments) {
+                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_call.id.clone().into(),
+                                    name: tool_call.name.as_str().into(),
+                                    is_input_complete: true,
+                                    input: language_model::LanguageModelToolUseInput::Json(input),
+                                    raw_input: tool_call.arguments.clone(),
+                                    thought_signature: None,
+                                },
+                            )),
+                            Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.clone().into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
+                                tool_name: tool_call.name.as_str().into(),
+                                raw_input: tool_call.arguments.into(),
+                                json_parse_error: error.to_string(),
+                            }),
+                        }
+                    }));
 
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                }
             }
             Some(stop_reason) => {
                 log::error!("Unexpected DeepSeek stop_reason: {stop_reason:?}",);
@@ -774,5 +790,80 @@ mod tests {
             assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
         }
         Ok(())
+    }
+
+    fn tool_call_chunk(
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+        finish_reason: Option<&str>,
+    ) -> deepseek::StreamResponse {
+        deepseek::StreamResponse {
+            id: "resp".into(),
+            object: "chat.completion.chunk".into(),
+            created: 0,
+            model: "test".into(),
+            choices: vec![deepseek::StreamChoice {
+                index: 0,
+                delta: deepseek::StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: if finish_reason.is_some() {
+                        None
+                    } else {
+                        Some(vec![deepseek::ToolCallChunk {
+                            index: 0,
+                            id: id.map(Into::into),
+                            function: Some(deepseek::FunctionChunk {
+                                name: name.map(Into::into),
+                                arguments: arguments.map(Into::into),
+                            }),
+                        }])
+                    },
+                    reasoning_content: None,
+                },
+                finish_reason: finish_reason.map(Into::into),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn streamed_tool_call_eof_truncated_arguments_reject_the_batch_without_stop() {
+        // A transport cut mid-JSON (EOF-classified) must reject the whole
+        // batch with the typed truncation error, and the cut batch must not
+        // end with a clean ToolUse stop.
+        let mut mapper = DeepSeekEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("call_1"),
+            Some("search"),
+            Some("{\"query\":"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Err(LanguageModelCompletionError::ToolCallTruncated { tool_name, .. })
+                    if tool_name == "search"
+            )),
+            "expected a ToolCallTruncated error for the cut batch, got: {events:?}"
+        );
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+            )),
+            "no complete ToolUse may be dispatched from truncated arguments, got: {events:?}"
+        );
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+            )),
+            "a truncated batch must not end with a clean ToolUse stop, got: {events:?}"
+        );
     }
 }

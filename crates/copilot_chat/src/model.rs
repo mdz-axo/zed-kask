@@ -27,7 +27,7 @@ use language_model::{
 };
 use util::debug_panic;
 
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error};
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 pub const PROVIDER_NAME: LanguageModelProviderName =
@@ -483,6 +483,23 @@ pub fn map_to_language_model_completion_events(
                                     ));
                                 }
 
+                                // zed-kask: D36 — an EOF-classified parse failure on
+                                // any accumulated tool-call arguments is a
+                                // transport cut mid-tool-call: clear the whole
+                                // batch, surface the typed truncation error, and
+                                // end the turn without a clean Stop(ToolUse).
+                                // Syntax-classified failures keep the per-call
+                                // parse-error recovery below.
+                                if let Some(truncation) =
+                                    state.tool_calls_by_index.values().find_map(|call| {
+                                        tool_call_truncation_error(&call.name, &call.arguments)
+                                    })
+                                {
+                                    state.tool_calls_by_index.clear();
+                                    events.push(Err(truncation));
+                                    return Some((events, state));
+                                }
+
                                 events.extend(state.tool_calls_by_index.drain().map(
                                     |(_, tool_call)| match parse_tool_arguments(
                                         &tool_call.arguments,
@@ -606,6 +623,16 @@ impl CopilotResponsesEventMapper {
                             },
                         ))),
                         Err(error) => {
+                            // zed-kask: D36 — an EOF-classified parse failure
+                            // means the arguments were cut mid-JSON: surface
+                            // the typed truncation error alone — no
+                            // parse-error recovery event, no pending stop
+                            // reason, no clean Stop(ToolUse).
+                            if let Some(truncation) =
+                                tool_call_truncation_error(name.as_str(), &arguments)
+                            {
+                                return vec![Err(truncation)];
+                            }
                             events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: call_id.into(),
                                 tool_name: name.as_str().into(),
@@ -1671,6 +1698,46 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_truncated_tool_arguments_emit_error_not_stop() {
+        let events = vec![responses::StreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item: responses::ResponseOutputItem::FunctionCall {
+                id: Some("fn_1".into()),
+                call_id: "call_1".into(),
+                name: "do_it".into(),
+                arguments: "{\"query\":".into(),
+                status: None,
+                thought_signature: None,
+            },
+        }];
+
+        let mapped_results = futures::executor::block_on(async {
+            CopilotResponsesEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+        });
+
+        assert_eq!(
+            mapped_results.len(),
+            1,
+            "a truncated call must emit exactly one event (the typed error, no Stop)"
+        );
+        match &mapped_results[0] {
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                ..
+            }) => {
+                assert_eq!(tool_name, "do_it");
+                assert!(json_parse_error.contains("EOF while parsing"));
+            }
+            other => panic!("expected ToolCallTruncated, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn responses_stream_maps_reasoning_summary_and_encrypted_content() {
         let events = vec![responses::StreamEvent::OutputItemDone {
             output_index: 0,
@@ -2087,6 +2154,91 @@ mod tests {
             reasoning_text_value,
             Some("Let me check the directory".to_string()),
             "Should capture reasoning_text"
+        );
+    }
+
+    #[test]
+    fn chat_completions_stream_truncated_tool_arguments_emit_error_not_stop() {
+        use crate::{
+            FunctionChunk, ResponseChoice, ResponseDelta, ResponseEvent, Role, ToolCallChunk,
+        };
+
+        let events = vec![
+            ResponseEvent {
+                choices: vec![ResponseChoice {
+                    index: Some(0),
+                    finish_reason: None,
+                    delta: Some(ResponseDelta {
+                        content: None,
+                        role: Some(Role::Assistant),
+                        tool_calls: vec![ToolCallChunk {
+                            index: Some(0),
+                            id: Some("call_1".to_string()),
+                            function: Some(FunctionChunk {
+                                name: Some("web_search".to_string()),
+                                arguments: Some("{\"query\":".to_string()),
+                                thought_signature: None,
+                            }),
+                        }],
+                        reasoning_opaque: None,
+                        reasoning_text: None,
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+            ResponseEvent {
+                choices: vec![ResponseChoice {
+                    index: Some(0),
+                    finish_reason: Some("tool_calls".to_string()),
+                    delta: Some(ResponseDelta {
+                        content: None,
+                        role: None,
+                        tool_calls: vec![],
+                        reasoning_opaque: None,
+                        reasoning_text: None,
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+        ];
+
+        let mapped = futures::executor::block_on(async {
+            map_to_language_model_completion_events(
+                Box::pin(futures::stream::iter(events.into_iter().map(Ok))),
+                true,
+            )
+            .collect::<Vec<_>>()
+            .await
+        });
+
+        assert!(
+            mapped.iter().any(|event| matches!(
+                event,
+                Err(LanguageModelCompletionError::ToolCallTruncated {
+                    tool_name,
+                    json_parse_error,
+                    ..
+                }) if tool_name == "web_search"
+                    && json_parse_error.contains("EOF while parsing")
+            )),
+            "EOF-cut tool arguments must surface the typed truncation error"
+        );
+        assert!(
+            !mapped
+                .iter()
+                .any(|event| matches!(event, Ok(LanguageModelCompletionEvent::Stop(_)))),
+            "a truncated batch must not end with a Stop event"
+        );
+        assert!(
+            !mapped.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+            )),
+            "a truncated batch must not dispatch a complete ToolUse"
         );
     }
 }

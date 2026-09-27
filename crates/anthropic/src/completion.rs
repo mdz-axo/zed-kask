@@ -8,7 +8,7 @@ use language_model_core::{
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, LanguageModelToolUseInput, MessageContent, ProviderCompactionState, Role,
     SharedString, StopReason, TokenUsage,
-    util::{fix_streamed_json, parse_tool_arguments},
+    util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error},
 };
 use std::pin::Pin;
 use std::str::FromStr;
@@ -703,12 +703,22 @@ impl AnthropicEventMapper {
                             },
                         )),
                         Err(json_parse_err) => {
-                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: tool_use.id.into(),
-                                tool_name: tool_use.name.into(),
-                                raw_input: input_json.into(),
-                                json_parse_error: json_parse_err.to_string(),
-                            })
+                            // zed-kask: D36 — an EOF-classified argument
+                            // fragment is a transport cut (nothing dispatched,
+                            // no clean Stop), not a model fault; the
+                            // primitive's doc has the full rationale.
+                            if let Some(truncation) =
+                                tool_call_truncation_error(&tool_use.name, input_json)
+                            {
+                                Err(truncation)
+                            } else {
+                                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    id: tool_use.id.into(),
+                                    tool_name: tool_use.name.into(),
+                                    raw_input: input_json.into(),
+                                    json_parse_error: json_parse_err.to_string(),
+                                })
+                            }
                         }
                     };
 
@@ -1782,6 +1792,96 @@ mod tests {
                 CompactionUpdate::Failed
             )]
         );
+    }
+
+    /// A tool-use block whose accumulated `input_json_delta` fragments end
+    /// mid-JSON (`{"query":`) is the transport-cut signature: the
+    /// ContentBlockStop arm must classify it as `ToolCallTruncated` (nothing
+    /// dispatched, no clean Stop) instead of a model-fault parse error.
+    #[test]
+    fn test_event_mapper_classifies_eof_fragment_as_truncated() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "tool_use", "id": "toolu_eof", "name": "reg_query", "input": {} }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": r#"{"query":"# }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(stop_event));
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                raw_input_chars: 9,
+            }) if tool_name == "reg_query"
+                && json_parse_error.contains("EOF while parsing")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+    }
+
+    /// A complete-but-malformed argument string (`{not json}`) is a model
+    /// fault, not a transport cut: the ContentBlockStop arm keeps surfacing
+    /// `ToolUseJsonParseError` so the turn still flows through the
+    /// tool-boundary recovery path.
+    #[test]
+    fn test_event_mapper_maps_syntax_failure_to_json_parse_error() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "tool_use", "id": "toolu_syntax", "name": "reg_query", "input": {} }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": r#"{not json}"# }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(stop_event));
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                tool_name,
+                ..
+            }) if tool_name.as_ref() == "reg_query"
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated { .. })
+        )));
     }
 
     #[test]
