@@ -73,7 +73,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 | Skill | Purpose |
 |-------|---------|
-| `company-research-deep` | Rich sourced company analysis through COMPANY, LISTEN, industry outside view, Falstaffian, Wardley, economic trajectory, GORILLA, Simon and IMAGINE; independent early and late factual checks; investment-grade thesis judgment is separate |
+| `company-research-deep` | Equity research deep pipeline. 16 stages run as dependency waves (independent stages in parallel) over one extract-once evidence digest, converging on the THESIS investment-grade verdict |
 | `company-research-flash` | Equity research flash pipeline. Sequential 23-step process with early-exit gates converging on LENS verdict consistency |
 | `portfolio-review` | Transaction-ledger portfolio performance review: seed prices from live quotes, TWR/MWR returns, Brinson-style attribution, durable review note |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |

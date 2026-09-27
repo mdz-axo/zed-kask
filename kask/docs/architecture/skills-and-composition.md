@@ -696,16 +696,41 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 
 ### Company research verification handoff
 
-`company-research-deep` runs the company, listening, industry outside-view,
-Falstaffian rotation, Wardley, economic trajectory, GORILLA, Simon and IMAGINE
-perspectives before its full report and summary. The perspective outputs are
-analytical inputs, not a licence to invent facts or an investment-grade verdict.
-The candidate and late verification gates use the shared
-`company-research/verification-handoff` and retained source packet; a packet
-hash or Tier 1 match is only a mechanical check, never independent source
-review or proof of a thesis. Unsupported claims remain explicit gaps and
-incomplete reports remain deliverable. The flash pipeline uses the same factual
-source-check boundary with its separate publication criteria.
+`company-research-deep` runs its stages as dependency waves: independent
+stages (evidence collection and the industry outside-view searches; the early
+gate and LISTEN; IMAGINE and THESIS) run in parallel, and each later stage
+waits only for the outputs it consumes. collect-evidence reads the retained
+originals once into `evidence-digest.json`; synthesis stages read the digest,
+while the verifiers check its records against the full hashed originals.
+
+`company-research-deep` and `company-research-flash` retain actual source
+responses separately from generated analysis. Both render
+`company-research/verification-handoff` and delegate the retained packet to
+`grounding-verify`; rendering alone performs no verification. At candidate
+commitment both run the SAME handoff before expensive synthesis on a sourced
+factual candidate note, then rerun on materially changed targets, sources,
+forecasts or as-of dates. Deep rechecks the CompanyBoard and final report;
+flash rechecks the complete deliverable after KATA/LENS before publication.
+ENTER's eligibility is provisional. The handoff's original-disclosure check
+and frozen-forecast gate report material omissions and field mutation
+separately from factual grounding. A generated answer is not original content;
+only disclosures bearing on the company's economics or thesis are listed;
+boilerplate is never retrieved, listed or counted, and its absence is not a
+gap. The source check returns coverage and known-omission signals separately.
+The gate reads a material failure, known omission or fact score below 0.60
+first and returns `needs_work` (repair); only then does unmatched or
+unperformed coverage (`not_checked`) return `incomplete`, which blocks a
+verified report but permits a labelled draft. Neither signal is part of
+`fact_score`. The agent-executed
+forms validate supplied bytes, not a read-only capability boundary.
+
+The skill bodies own collection and the shared three-iteration correction
+budget. A missing/unperformed check, nil score, zero checked claims or
+in-thread self-check cannot approve a report. Material findings override an
+aggregate passing score. Corrected reports and newly composed summaries need
+new checks; prior verification records remain immutable history. The shared
+template defines the source packet and caller-executed source check and `lisp_eval` gate; these
+are agent-executed process constraints, not a Rust publication interceptor.
 
 ### Gas Consumption
 
