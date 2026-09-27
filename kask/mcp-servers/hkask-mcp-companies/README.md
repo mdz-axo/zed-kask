@@ -2,7 +2,7 @@
 
 Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts.
 
-## Tools (40)
+## Tools (42)
 
 | Group | Tools |
 |---|---:|
@@ -13,7 +13,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | Economic-profit and expectations analysis | 2 |
 | Company notes and files | 6 |
 | Transcript retrieval | 1 |
-| Artifact management | 3 |
+| Artifact management | 5 |
 
 ### Financial data
 
@@ -83,7 +83,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 
 ### Retained company-research output
 
-`stock_quote`, `moat_check`, `management_scorecard`, `working_capital_cycle`, `dcf_valuation`, `reverse_dcf`, `scenario_analysis`, `comparable_analysis`, `sensitivity_analysis`, `equity_duration`, `monte_carlo_dcf`, `scenario_impact_valuation`, and `calibrate_forecast` accept optional `run_folder` and `output_key`. With `run_folder`, the exact successful tool response is written once to `companies-mcp/research-runs/{run_folder}/{output_key}.txt`; the key defaults to the tool name. Supply a distinct key for repeated calls in one run. Existing keys fail rather than overwrite, and unsafe names or symlinked destinations are rejected. Without `run_folder`, responses are unchanged and no file is written. Retained texts replace hand-condensed `tool-outputs.json` as the source snapshots for the research packet; the packet still supplies its own references and digests.
+`stock_quote`, `moat_check`, `management_scorecard`, `working_capital_cycle`, `dcf_valuation`, `reverse_dcf`, `scenario_analysis`, `comparable_analysis`, `sensitivity_analysis`, `equity_duration`, `monte_carlo_dcf`, `scenario_impact_valuation`, and `calibrate_forecast` accept optional `run_folder` and `output_key`. With `run_folder`, the exact successful tool response is written once to `companies-mcp/research-runs/{run_folder}/{output_key}.txt`; the key defaults to the tool name. Supply a distinct key for repeated calls in one run. Existing keys fail rather than overwrite, and unsafe names or symlinked destinations are rejected. Without `run_folder`, responses are unchanged and no file is written. Retained texts replace hand-condensed `tool-outputs.json` as the source snapshots for the research packet. In the same run folder, put `sources.json` (issuer_identifier, as_of_date, and a sources array of output_key, url, relative text_file, method, period; for converted originals also relative origin_path), `key-claims.json`, and `drafts/*.md`. Optional historical_findings, disclosure_inventory, congruence_rules and leak_rules are relative JSON file paths in `sources.json`. Call `company_research_packet_build(run_folder)` to hash the sources and drafts into `packet.json` and receive the digest plus mechanical Tier 1/Tier 2 checks. A tool response uses `method: "tool_response"` and its actual tool_name; it is derived evidence, not an audited original. The independent late verifier reruns `company_verification_packet_check` with the returned digest and performs its separate source and context review.
 
 See the [Companies MCP Server Reference](../../docs/reference/mcp-servers/companies.md) for the full tool catalog, behavioral boundaries, and the code-anchored tool-routing diagram (DIAG-RF-004). The [Companies User Guide](../../docs/how-to/companies-mcp.md) covers task-oriented procedures for company valuation, forecasting, and research artifacts.
 

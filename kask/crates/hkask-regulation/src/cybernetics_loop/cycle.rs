@@ -4,7 +4,7 @@
 //! orchestrates these phases; each phase is `pub(super)` so the facade can
 //! call it. Action construction (`build_regulation_action`), alert routing
 //! (`route_action_as_alert`), and the cycle-internal helpers
-//! (`persist_alert_to_queue`) is private to this module.
+//! (`deliver_alert_to_board`) is private to this module.
 
 use crate::algedonic::{AlertSeverity, RuntimeAlert};
 use crate::loops::RegulationData;
@@ -60,7 +60,7 @@ impl super::CyberneticsLoop {
     /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
     /// 0.5 for Warning.
     ///
-    async fn persist_alert_to_queue(
+    async fn deliver_alert_to_board(
         &self,
         alert: &RuntimeAlert,
         recovery_signal: Option<&Signal>,
@@ -106,8 +106,8 @@ impl super::CyberneticsLoop {
             .try_persist_alert(&alert.message, confidence, &error_context.to_string())
             .await
         {
-            Ok(crate::AlertQueueOutcome::Confirmed(_)) => true,
-            Ok(crate::AlertQueueOutcome::Attempted) => false,
+            Ok(crate::AlertDeliveryOutcome::Confirmed(_)) => true,
+            Ok(crate::AlertDeliveryOutcome::Attempted) => false,
             Err(error) => {
                 tracing::warn!(
                     target: "reg.alert",
@@ -537,7 +537,7 @@ impl super::CyberneticsLoop {
                 // the queue is the primary durable path for alert review, not
                 // a fallback (the RegulationArchive below is the fallback for
                 // restart durability when the live channel is down).
-                self.persist_alert_to_queue(&alert, None).await;
+                self.deliver_alert_to_board(&alert, None).await;
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -619,7 +619,7 @@ impl super::CyberneticsLoop {
             if sink.has_pending_alert(&alert.message).await {
                 // The board sink records a repeat on the existing card. Keep
                 // live-channel and archive dedup, but do not skip the sink.
-                return self.persist_alert_to_queue(&alert, None).await;
+                return self.deliver_alert_to_board(&alert, None).await;
             }
         }
 
@@ -650,7 +650,7 @@ impl super::CyberneticsLoop {
             self.emit_tool_outcome_breakdown().await;
         }
         let queue_confirmed = self
-            .persist_alert_to_queue(&alert, observation.as_ref())
+            .deliver_alert_to_board(&alert, observation.as_ref())
             .await;
 
         // Primary path: live channel to Curator's inbox
@@ -892,7 +892,7 @@ impl super::CyberneticsLoop {
                     None => false,
                 };
                 if latched {
-                    self.persist_alert_to_queue(&alert, None).await;
+                    self.deliver_alert_to_board(&alert, None).await;
                 } else {
                     self.emit_regulation_span(
                         SpanKind::RegulatoryPlateauDetected,
@@ -906,7 +906,7 @@ impl super::CyberneticsLoop {
                     if metric == SignalMetric::ToolReliability {
                         self.emit_tool_outcome_breakdown().await;
                     }
-                    self.persist_alert_to_queue(&alert, None).await;
+                    self.deliver_alert_to_board(&alert, None).await;
                     if let Some(ref tx) = self.alerts_tx
                         && tx.send(CurationInput::Alert(alert)).is_err()
                     {
@@ -945,7 +945,7 @@ impl super::CyberneticsLoop {
                         block_worsening_ratio * 100.0,
                     ),
                 };
-                self.persist_alert_to_queue(&alert, None).await;
+                self.deliver_alert_to_board(&alert, None).await;
                 if let Some(ref tx) = self.alerts_tx
                     && tx.send(CurationInput::Alert(alert)).is_err()
                 {
@@ -1352,7 +1352,7 @@ mod tests {
             output: &str,
             _confidence: f64,
             error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+        ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
             self.persisted
                 .lock()
                 .expect("persisted lock")
@@ -1361,7 +1361,7 @@ mod tests {
                 .lock()
                 .expect("contexts lock")
                 .push(error_context.to_string());
-            Ok(crate::AlertQueueOutcome::Attempted)
+            Ok(crate::AlertDeliveryOutcome::Attempted)
         }
     }
 
@@ -1388,12 +1388,12 @@ mod tests {
             output: &str,
             _confidence: f64,
             _error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+        ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
             self.persisted
                 .lock()
                 .expect("persisted lock")
                 .push(output.to_string());
-            Ok(crate::AlertQueueOutcome::Confirmed(Some(
+            Ok(crate::AlertDeliveryOutcome::Confirmed(Some(
                 "test-escalation".to_string(),
             )))
         }
@@ -1428,12 +1428,12 @@ mod tests {
             output: &str,
             _confidence: f64,
             _error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+        ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
             self.persisted
                 .lock()
                 .expect("persisted lock")
                 .push(output.to_string());
-            Ok(crate::AlertQueueOutcome::Attempted)
+            Ok(crate::AlertDeliveryOutcome::Attempted)
         }
         async fn has_pending_alert(&self, _output: &str) -> bool {
             *self.pending.lock().expect("pending lock")
@@ -1677,9 +1677,8 @@ mod tests {
     }
 
     /// Tool-reliability alerts carry the per-domain outcome breakdown in
-    /// both durable surfaces: the escalation row's error_context (what the
-    /// Curator reviews via `curator_escalations`) and the
-    /// `reg.outcome.tool_domains` span (what the algedonic log serves via
+    /// the board card's context and the `reg.outcome.tool_domains` span
+    /// (what the algedonic log serves via
     /// `curator_algedonic_log`). Before this, the escalation carried only
     /// the aggregate success rate — triage could see THAT tools were
     /// failing but never WHICH domain or with what error kinds.
@@ -2983,8 +2982,8 @@ mod tests {
                 _output: &str,
                 _confidence: f64,
                 _error_context: &str,
-            ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
-                Ok(crate::AlertQueueOutcome::Attempted)
+            ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
+                Ok(crate::AlertDeliveryOutcome::Attempted)
             }
 
             async fn has_pending_alert(&self, _output: &str) -> bool {
@@ -3180,8 +3179,8 @@ mod tests {
                 _output: &str,
                 _confidence: f64,
                 _error_context: &str,
-            ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
-                Ok(crate::AlertQueueOutcome::Attempted)
+            ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
+                Ok(crate::AlertDeliveryOutcome::Attempted)
             }
 
             async fn has_pending_alert(&self, _output: &str) -> bool {

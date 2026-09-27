@@ -123,13 +123,13 @@ mod tests {
             output: &str,
             _confidence: f64,
             _error_context: &str,
-        ) -> Result<hkask_regulation::AlertQueueOutcome, hkask_regulation::AlertPersistError>
+        ) -> Result<hkask_regulation::AlertDeliveryOutcome, hkask_regulation::AlertPersistError>
         {
             self.alerts
                 .lock()
                 .expect("alerts lock")
                 .push(output.to_string());
-            Ok(hkask_regulation::AlertQueueOutcome::Attempted)
+            Ok(hkask_regulation::AlertDeliveryOutcome::Attempted)
         }
     }
 

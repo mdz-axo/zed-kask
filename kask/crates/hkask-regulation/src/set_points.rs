@@ -81,10 +81,10 @@ pub(crate) const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 /// Default maximum algedonic alerts retained in the in-memory log.
 ///
 /// Bounds memory growth in long-running sessions. The log is a diagnostic
-/// ring buffer; escalated alerts are persisted to the `EscalationQueue`
+/// ring buffer; escalated alerts are delivered to the review board
 /// separately, so eviction from this log loses only the diagnostic trail.
-/// When the log approaches this cap, the `algedonic-review` skill should be
-/// invoked to review and clear reviewed entries.
+/// When the log approaches this cap, review the board and recent log entries;
+/// log clearing is a separate maintenance choice, not verification.
 pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
 
 // ── Memory health defaults ──

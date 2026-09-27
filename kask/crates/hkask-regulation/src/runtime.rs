@@ -652,11 +652,9 @@ impl RegulationLedger {
 
     /// Clear reviewed alerts from the in-memory algedonic log.
     ///
-    /// Called by the `algedonic-review` skill (via the `AlgedonicLogSink`
-    /// bridge) after the operator has reviewed the log and confirmed that
-    /// escalated alerts have been persisted to the `EscalationQueue`. Retains
-    /// unresolved Critical alerts (those that have not been escalated yet)
-    /// so the live signal is not lost.
+    /// Separate log-maintenance operation; the review workflow neither calls
+    /// it nor uses it to verify a board card. Retains unresolved Critical
+    /// alerts so the live signal is not lost.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — clearing reviewed alerts closes the review loop
@@ -669,8 +667,7 @@ impl RegulationLedger {
 
     /// Clear ALL alerts from the in-memory log, including unresolved Critical.
     /// Use with caution — this loses live signals. The operator should only
-    /// call this when the log is being reset for a fresh session or when all
-    /// alerts have been reviewed and persisted to the `EscalationQueue`.
+    /// call this only for a separately authorized log reset.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — hard reset clears the log for a fresh session
@@ -685,7 +682,7 @@ impl RegulationLedger {
     ///
     /// When true, the cybernetics loop emits an `AlgedonicLogApproachingCap`
     /// signal so the operator (or the `algedonic-review` skill) can review
-    /// and clear reviewed entries before they are evicted unread.
+    /// inspect the board and log before entries self-evict.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// post: returns true iff the log is ≥ 80% of the cap
@@ -715,9 +712,9 @@ impl RegulationLedger {
         state.algedonic.read().actionable_alert_count()
     }
 
-    /// Number of escalated alerts currently in the in-memory algedonic log —
-    /// routed toward the durable `EscalationQueue` but not yet resolved.
-    /// Sensed by the cybernetics loop as `PendingEscalations`.
+    /// Number of escalated alerts still in the in-memory diagnostic log.
+    /// This is not the board's awaiting-review count; that count is read
+    /// from cards not yet Done. Sensed as `PendingEscalations`.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
     /// post: returns the current escalated-alert count
@@ -761,7 +758,6 @@ impl RegulationLedger {
         let state = self.state.read().await;
         state.tracker.variety_for_domain(domain)
     }
-
 
     // ── Outcome Quality Tracking ──
 
@@ -866,7 +862,6 @@ impl RegulationLedger {
         mgr.check_outcome(domain, success_rate?, total_ops).cloned()
     }
 
-
     /// Per-domain outcome snapshots for the tool-reliability diagnosis
     /// surfaces, ordered by domain name for deterministic output. A domain
     /// whose window has expired reports zero operations and no error kinds
@@ -898,7 +893,6 @@ impl RegulationLedger {
         snapshots.sort_by(|a, b| a.domain.cmp(&b.domain));
         snapshots
     }
-
 
     /// Increment variety counter for a domain.
     ///
@@ -955,7 +949,6 @@ impl RegulationLedger {
         }
         drop(state);
     }
-
 }
 
 impl Default for RegulationLedger {

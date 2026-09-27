@@ -44,13 +44,6 @@ pub use curator_stores::{
 };
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 
-// ── Alert escalation — extracted to `memory/alert_escalation.rs` ──────────
-// Deep-module split (bridge-audit BD-04): the algedonic alert path implements a
-// separate concern with zero coupling to the memory port. `open_curator_escalation_queue` borrows `curator_db_path` from the
-// `curator_stores` re-export above.
-mod alert_escalation;
-pub use alert_escalation::open_curator_escalation_queue;
-
 // ── Ingest write path — extracted to `memory/ingest.rs` ────────────────────
 // Deep-module split (bridge-audit BD-04 continuation): the turn write path
 // (h_mem writes + embedding) is independent of the port

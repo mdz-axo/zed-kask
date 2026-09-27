@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use hkask_regulation::{
-    AdviceReviewReconciliation, AlertEscalationSink, AlertPersistError, AlertQueueOutcome, Signal,
-};
+use hkask_regulation::{AlertEscalationSink, AlertPersistError, AlertDeliveryOutcome, Signal};
 use hkask_tool_invoker::ToolInvoker;
 use hkask_types::TaskStatus;
 use hkask_types::kanban_wire::{KANBAN_SERVER_NAME, KANBAN_TASK_MOVE_TOOL};
@@ -157,11 +155,11 @@ impl BoardAlertEscalationSink {
         &self,
         observations: &[Signal],
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<AdviceReviewReconciliation, AlertPersistError> {
+    ) -> Result<(), AlertPersistError> {
         let (_, cards) = self
             .open_cards()
             .await
-            .map_err(AlertPersistError::QueueRead)?;
+            .map_err(AlertPersistError::BoardRead)?;
         for card in cards {
             let Some(trigger) = card.recovery_signal.as_ref() else {
                 continue;
@@ -193,7 +191,7 @@ impl BoardAlertEscalationSink {
                     "Recovery not delivered to board Review; retrying next tick");
             }
         }
-        Ok(AdviceReviewReconciliation::default())
+        Ok(())
     }
 }
 
@@ -205,10 +203,7 @@ fn marker_value<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
 
 #[async_trait::async_trait]
 impl AlertEscalationSink for BoardAlertEscalationSink {
-    async fn reconcile_conditions(
-        &self,
-        observations: &[Signal],
-    ) -> Result<AdviceReviewReconciliation, AlertPersistError> {
+    async fn reconcile_conditions(&self, observations: &[Signal]) -> Result<(), AlertPersistError> {
         self.reconcile_at(observations, chrono::Utc::now()).await
     }
 
@@ -217,17 +212,17 @@ impl AlertEscalationSink for BoardAlertEscalationSink {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<AlertQueueOutcome, AlertPersistError> {
+    ) -> Result<AlertDeliveryOutcome, AlertPersistError> {
         let condition = hkask_regulation::alert_condition(output);
         let (board_id, cards) = self
             .open_cards()
             .await
-            .map_err(AlertPersistError::QueueRead)?;
+            .map_err(AlertPersistError::BoardRead)?;
         if let Some(card) = cards.iter().find(|card| card.condition == condition) {
             self.comment(&card.task_id, format!("Repeated: {output}"))
                 .await
-                .map_err(AlertPersistError::QueueWrite)?;
-            return Ok(AlertQueueOutcome::Confirmed(None));
+                .map_err(AlertPersistError::BoardWrite)?;
+            return Ok(AlertDeliveryOutcome::Confirmed(None));
         }
         let context = serde_json::from_str::<Value>(error_context)
             .unwrap_or_else(|_| json!({ "raw": error_context }));
@@ -242,11 +237,11 @@ impl AlertEscalationSink for BoardAlertEscalationSink {
                 }),
             )
             .await
-            .map_err(AlertPersistError::QueueWrite)?;
+            .map_err(AlertPersistError::BoardWrite)?;
         let task_id = created["task_id"].as_str().ok_or_else(|| {
-            AlertPersistError::QueueWrite("kanban_task_create: missing task_id".into())
+            AlertPersistError::BoardWrite("kanban_task_create: missing task_id".into())
         })?;
-        Ok(AlertQueueOutcome::Confirmed(Some(task_id.to_string())))
+        Ok(AlertDeliveryOutcome::Confirmed(Some(task_id.to_string())))
     }
 
     async fn has_pending_alert(&self, output: &str) -> bool {
@@ -332,7 +327,7 @@ mod tests {
             sink.try_persist_alert("degraded — new reading", 0.5, "{}")
                 .await
                 .expect("repeat"),
-            AlertQueueOutcome::Confirmed(None)
+            AlertDeliveryOutcome::Confirmed(None)
         );
         assert_eq!(
             recorder.names(),
@@ -361,7 +356,7 @@ mod tests {
             sink.try_persist_alert("degraded — reading", 0.5, "{}")
                 .await
                 .expect("create"),
-            AlertQueueOutcome::Confirmed(Some("t".into()))
+            AlertDeliveryOutcome::Confirmed(Some("t".into()))
         );
         assert_eq!(
             recorder.names(),

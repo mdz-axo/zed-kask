@@ -182,10 +182,9 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Deliver an explicit domain escalation to the reviewable escalation
-    /// queue (the `curator_escalations` human-review surface), retaining
-    /// domain, severity, and evidence. The queue entry is marked `explicit`
-    /// and carries NO deficit/threshold fields — an explicit concern is a
+    /// Deliver an explicit domain escalation to the Algedonic review board,
+    /// retaining domain, severity and evidence. Its card carries NO measured
+    /// deficit/threshold fields — an explicit concern is a
     /// request for review, not a fabricated measured threshold breach.
     ///
     /// The message's condition key ("Explicit escalation ({domain},
@@ -228,9 +227,12 @@ impl super::CyberneticsLoop {
                 );
                 EscalationDelivery::MissingSink
             }
-            Some(sink) => match sink.try_persist_alert(&output, confidence, &error_context).await {
-                Ok(crate::AlertQueueOutcome::Confirmed(id)) => EscalationDelivery::Queued(id),
-                Ok(crate::AlertQueueOutcome::Attempted) => EscalationDelivery::Attempted,
+            Some(sink) => match sink
+                .try_persist_alert(&output, confidence, &error_context)
+                .await
+            {
+                Ok(crate::AlertDeliveryOutcome::Confirmed(id)) => EscalationDelivery::Queued(id),
+                Ok(crate::AlertDeliveryOutcome::Attempted) => EscalationDelivery::Attempted,
                 Err(error) => {
                     tracing::warn!(
                         target: "reg.cybernetics",
@@ -704,14 +706,14 @@ mod tests {
     /// `try_persist_alert` outcome — the escalation delivery seam under test.
     struct ScriptedEscalationSink {
         received: Mutex<Vec<(String, f64, String)>>,
-        result: Result<crate::AlertQueueOutcome, crate::AlertPersistError>,
+        result: Result<crate::AlertDeliveryOutcome, crate::AlertPersistError>,
     }
 
     impl ScriptedEscalationSink {
         fn confirmed(id: &str) -> Self {
             Self {
                 received: Mutex::new(Vec::new()),
-                result: Ok(crate::AlertQueueOutcome::Confirmed(Some(id.to_string()))),
+                result: Ok(crate::AlertDeliveryOutcome::Confirmed(Some(id.to_string()))),
             }
         }
     }
@@ -723,7 +725,7 @@ mod tests {
             output: &str,
             confidence: f64,
             error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+        ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
             self.received
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -743,13 +745,13 @@ mod tests {
             output: &str,
             confidence: f64,
             error_context: &str,
-        ) -> Result<crate::AlertQueueOutcome, crate::AlertPersistError> {
+        ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
             self.0.lock().unwrap_or_else(|e| e.into_inner()).push((
                 output.to_string(),
                 confidence,
                 error_context.to_string(),
             ));
-            Ok(crate::AlertQueueOutcome::Attempted)
+            Ok(crate::AlertDeliveryOutcome::Attempted)
         }
     }
 
@@ -845,7 +847,7 @@ mod tests {
             loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
         regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
-            result: Ok(crate::AlertQueueOutcome::Confirmed(None)),
+            result: Ok(crate::AlertDeliveryOutcome::Confirmed(None)),
         })
             as Arc<dyn crate::AlertEscalationSink>));
 
@@ -890,7 +892,7 @@ mod tests {
             loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
         regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
-            result: Err(crate::AlertPersistError::QueueWrite(
+            result: Err(crate::AlertPersistError::BoardWrite(
                 "queue unavailable".to_string(),
             )),
         })

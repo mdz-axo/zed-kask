@@ -1120,18 +1120,16 @@ fn main() {
                 .with_alert_sink(alert_sink)
                 .with_stage_actions({
                     let mut actions = hkask_regulation::StageActions::new();
-                    // The algedonic-review skill's step 4 (ACT — Execute
-                    // operator decisions) is a Prompted stage: the skill
-                    // presents the triage, the operator confirms each
-                    // resolve/dismiss. The MCP tools that serve as its human
-                    // door are curator_escalation_resolve and
-                    // curator_escalation_dismiss.
+                    // The algedonic review is a Prompted stage: the
+                    // operator's decision is recorded on a board card, and
+                    // verified work reaches Done through kanban_task_verify.
                     actions.register(
                         hkask_regulation::TriggerOrigin::Prompted,
                         "algedonic_review_act",
                         vec![
-                            "curator_escalation_resolve".to_string(),
-                            "curator_escalation_dismiss".to_string(),
+                            "kanban_task_comment".to_string(),
+                            "kanban_task_move".to_string(),
+                            "kanban_task_verify".to_string(),
                         ],
                     );
                     actions

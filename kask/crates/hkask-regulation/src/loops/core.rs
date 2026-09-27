@@ -193,7 +193,6 @@ impl LoopMetrics {
     /// - `deviations`: deviations detected during compare
     /// - `actions`: actions produced during compute
     /// - `impact_reports`: results from evidence-bearing `verify_impact`
-
     /// - `trigger`: what triggered this tick
     pub fn from_cycle(
         elapsed_ms: u64,

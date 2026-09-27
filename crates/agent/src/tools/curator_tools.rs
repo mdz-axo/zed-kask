@@ -72,9 +72,8 @@ pub struct CuratorStatusOutput {
     pub regulation_acceptance_rate: Option<f64>,
     /// Alerts the metacognition loop raised in its most recent cycle only.
     pub escalation_count: Option<usize>,
-    /// Escalations pending operator review in the durable queue that
-    /// `curator_escalations` lists. `None` when that queue is not wired or
-    /// cannot be read — rendered as unknown, never 0.
+    /// Cards on the Algedonic review board not yet Done. `None` when the
+    /// governed board reader cannot deliver a count — unknown, never 0.
     #[serde(default)]
     pub pending_escalations: Option<usize>,
     pub critical_alerts: Option<usize>,
@@ -524,10 +523,9 @@ fn curator_directive_sink() -> Option<Arc<dyn CuratorDirectiveSink>> {
 /// `AlgedonicManager`). The trait lives here (not in `hkask-types`) so the
 /// agent crate can use it without depending on `hkask-regulation`.
 ///
-/// The `algedonic-review` skill calls this after the operator has reviewed
-/// the log and confirmed that escalated alerts have been persisted to the
-/// `EscalationQueue`. Clearing reviewed entries frees the in-memory log
-/// before it reaches its cap and evicts entries unread.
+/// This is a separate, explicit log-maintenance operation, not a step in
+/// algedonic review. The in-memory log self-evicts; clearing it can discard
+/// diagnostic history and never verifies a board card.
 ///
 /// Methods are async because the `RegulationLedger` is behind a
 /// `tokio::sync::RwLock` — the sink spawns the lock acquisition on the
@@ -546,8 +544,8 @@ pub trait AlgedonicLogSink: Send + Sync {
 
     /// Clear ALL alerts from the in-memory log, including unresolved Critical.
     /// Use with caution — this loses live signals. The operator should only
-    /// call this when the log is being reset for a fresh session or when all
-    /// alerts have been reviewed and persisted to the `EscalationQueue`.
+    /// call this only for a separately authorized log reset, not to complete
+    /// algedonic review.
     ///
     /// Returns `Ok(cleared_count)` where `cleared_count` is the number of
     /// alerts removed.
@@ -580,10 +578,8 @@ fn algedonic_log_sink() -> Option<Arc<dyn AlgedonicLogSink>> {
 
 /// Clear reviewed alerts from the in-memory algedonic alert log.
 ///
-/// Called by the `algedonic-review` skill after the operator has reviewed
-/// the log and confirmed that escalated alerts have been persisted to the
-/// `EscalationQueue`. Retains unresolved Critical alerts (those that have
-/// not been escalated yet) so the live signal is not lost.
+/// Separate from the board review workflow. Retains unresolved Critical
+/// alerts when used without `clear_all`.
 pub struct CuratorClearAlgedonicLogTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

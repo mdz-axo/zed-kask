@@ -1012,6 +1012,37 @@ mod verification_packet_tests {
         Ok(())
     }
 
+    /// expect: a retained computed response cited by output_key is checked by
+    /// Tier 1 as text, without promoting it to original evidence.
+    #[test]
+    fn retained_tool_response_is_checkable_without_original_claim() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let run = "2026-09-26-exampleco";
+        let dir = root.path().join(run);
+        std::fs::create_dir_all(dir.join("drafts"))?;
+        std::fs::write(
+            dir.join("dcf_valuation_default.txt"),
+            r#"{"intrinsic_value":1234.50}"#,
+        )?;
+        std::fs::write(
+            dir.join("drafts/report.md"),
+            "Model output is $1234.50. [dcf_valuation_default]",
+        )?;
+        std::fs::write(dir.join("key-claims.json"), json!([{"id":"model","claim":"Model output is $1234.50","role":"valuation_input","output_key":"dcf_valuation_default","quote":"1234.50"}]).to_string())?;
+        std::fs::write(dir.join("sources.json"), json!({"issuer_identifier":"ExampleCo", "as_of_date":"2026-09-26", "sources":[{"output_key":"dcf_valuation_default", "url":null, "text_file":"dcf_valuation_default.txt", "method":"tool_response", "tool_name":"dcf_valuation", "period":"FY2025"}]}).to_string())?;
+        let result = super::build_packet(root.path(), run).map_err(|e| anyhow::anyhow!("{e}"))?;
+        ensure!(
+            result["tier1_claim_scan"]["figures_matched"] == 1,
+            "tool figure not matched: {result}"
+        );
+        let packet: Value = serde_json::from_slice(&std::fs::read(dir.join("packet.json"))?)?;
+        ensure!(
+            packet["source_outputs"][0]["source_kind"] == "derived",
+            "computed result was promoted to original"
+        );
+        Ok(())
+    }
+
     /// expect: missing or escaping source paths never create a checkable packet.
     #[test]
     fn packet_builder_rejects_missing_and_escaping_text() -> Result<()> {

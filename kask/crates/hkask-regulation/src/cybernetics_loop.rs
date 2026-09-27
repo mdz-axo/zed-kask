@@ -205,13 +205,9 @@ pub struct CyberneticsLoop {
     dampener: Arc<Dampener>,
     /// When present, algedonic alerts are persisted to RegulationArchive for restart durability.
     event_sink: Option<Arc<dyn RegulationSink>>,
-    /// When present, algedonic alerts are persisted to the reviewable escalation
-    /// queue (the `EscalationQueue` on the curator's curator.db). This is the
-    /// primary durable path for alert review — every escalated alert is written
-    /// here unconditionally, so the Curator/user can review pending alerts via
-    /// the `curator_escalations` MCP tool and resolve/dismiss them. The
-    /// `event_sink` (`RegulationArchive`) remains as a secondary fallback for
-    /// restart durability when this queue is unavailable.
+    /// When present, delivers algedonic alerts to the reviewable kanban board
+    /// via the governed tool channel. The `event_sink` retains regulation
+    /// history independently if board delivery fails.
     alert_escalation_sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
     /// Direct alerts channel: Cybernetics → Curation (CurationInput).
     alerts_tx: Option<mpsc::UnboundedSender<CurationInput>>,

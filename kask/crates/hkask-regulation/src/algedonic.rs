@@ -82,7 +82,7 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
 /// The three states are distinct so an explicit escalation's acknowledgment
 /// never conflates confirmed, attempted, and failed delivery.
 #[derive(Debug, Clone, PartialEq)]
-pub enum AlertQueueOutcome {
+pub enum AlertDeliveryOutcome {
     /// The alert is confirmed in the reviewable queue. Carries the
     /// queue-assigned escalation id when the write inserted a new row;
     /// `None` when an existing pending row was updated in place
@@ -101,9 +101,9 @@ pub enum AlertQueueOutcome {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AlertPersistError {
     #[error("escalation queue read failed: {0}")]
-    QueueRead(String),
+    BoardRead(String),
     #[error("escalation queue write failed: {0}")]
-    QueueWrite(String),
+    BoardWrite(String),
 }
 
 #[async_trait::async_trait]
@@ -136,7 +136,7 @@ pub trait AlertEscalationSink: Send + Sync {
         output: &str,
         confidence: f64,
         error_context: &str,
-    ) -> Result<AlertQueueOutcome, AlertPersistError>;
+    ) -> Result<AlertDeliveryOutcome, AlertPersistError>;
 
     /// Check whether a pending alert with the same condition as `output`
     /// already exists in the escalation queue.
@@ -260,9 +260,8 @@ pub(crate) struct AlgedonicManager {
     default_expected_variety: u64,
     expected_variety: HashMap<String, u64>,
     /// Diagnostic alert ring buffer. Capped at `max_alerts`; oldest entries
-    /// are evicted on overflow. Escalated (Critical) alerts are persisted to
-    /// the `EscalationQueue` separately, so eviction from this log loses only
-    /// the diagnostic trail, not the actionable backlog.
+    /// are evicted on overflow. Alert cards are the actionable backlog;
+    /// this buffer is diagnostic history, not review state.
     alerts: Vec<RuntimeAlert>,
     /// Maximum alerts retained before oldest are evicted.
     max_alerts: usize,
@@ -517,9 +516,8 @@ impl AlgedonicManager {
         self.alerts.len()
     }
 
-    /// Number of escalated alerts currently in the log — routed toward the
-    /// durable `EscalationQueue` but not yet resolved. The cybernetics loop
-    /// senses this as `PendingEscalations`.
+    /// Number of escalated alerts still in the diagnostic log, independent
+    /// of the board's non-Done card count. Sensed as `PendingEscalations`.
     pub(crate) fn escalated_alert_count(&self) -> usize {
         self.alerts.iter().filter(|alert| alert.escalated).count()
     }
@@ -545,18 +543,15 @@ impl AlgedonicManager {
     /// `ALERT_CAP_APPROACHING_FRACTION * max_alerts`). When true, the
     /// cybernetics loop should emit an `AlgedonicLogApproachingCap` signal
     /// so the operator (or the `algedonic-review` skill) can review and
-    /// clear reviewed entries before they are evicted unread.
+    /// inspect recent diagnostics before they self-evict.
     pub(crate) fn log_approaching_cap(&self) -> bool {
         let threshold = (self.max_alerts as f64 * ALERT_CAP_APPROACHING_FRACTION) as usize;
         self.alerts.len() >= threshold
     }
 
-    /// Clear reviewed alerts from the log. Called by the `algedonic-review`
-    /// skill (via `RegulationLedger::clear_reviewed_alerts`) after the
-    /// operator has reviewed the log and the escalated alerts have been
-    /// persisted to the `EscalationQueue`. Retains unresolved Critical
-    /// alerts that have not yet been persisted to the escalation queue —
-    /// clearing those would lose the live signal.
+    /// Clear non-critical diagnostic history as an explicit maintenance
+    /// action, not as a board-review step. Retains unresolved Critical alerts;
+    /// clearing those could discard the live signal.
     ///
     /// `retain_unresolved` controls what survives: when `true` (the default
     /// from `RegulationLedger`), only Info and Warning alerts and already-

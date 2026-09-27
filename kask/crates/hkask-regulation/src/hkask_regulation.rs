@@ -23,7 +23,7 @@ pub(crate) mod strategy_evaluator;
 
 pub(crate) mod runtime;
 pub use algedonic::{
-    AlertEmailSink, AlertEscalationSink, AlertPersistError, AlertQueueOutcome, RuntimeAlert,
+    AlertEmailSink, AlertEscalationSink, AlertPersistError, AlertDeliveryOutcome, RuntimeAlert,
 };
 pub use cybernetics_loop::{
     CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
