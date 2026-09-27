@@ -30,7 +30,7 @@
 use hkask_mcp_server::server::McpToolError;
 
 use crate::abw_client::SwarmClient;
-use crate::abw_util::{effective_hire_cost, url_encode_segment};
+use crate::abw_util::{effective_hire_cost, optional_u64_field, url_encode_segment};
 use crate::consent::{ConsentGrant, ConsentStore};
 use crate::error::SwarmError;
 
@@ -199,15 +199,30 @@ pub(crate) async fn authorize_hire(
             )));
         }
     };
+    // The optional-inclusive quote adds the component costs to the base.
+    // ABSENT fields keep their documented defaults (required → the validated
+    // base-cost floor, optional → 0 — no optional dependencies); a field
+    // PRESENT but unparseable must not silently underquote the spend (the
+    // `.rules` trap) — it refuses naming the offending value, and the
+    // pre-dispatch refusal releases the reservation.
     let actual_cost = if include_optional {
-        let required = deps
-            .get("required_cost")
-            .and_then(|c| c.as_u64())
-            .unwrap_or(base_cost);
-        let optional = deps
-            .get("optional_cost")
-            .and_then(|c| c.as_u64())
-            .unwrap_or(0);
+        let (required, optional) = match (
+            optional_u64_field(&deps, "required_cost", base_cost),
+            optional_u64_field(&deps, "optional_cost", 0),
+        ) {
+            (Ok(required), Ok(optional)) => (required, optional),
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %agent_name,
+                    "spend_gate::authorize_hire: ABW re-verify component cost unreadable — refusing: {e}"
+                );
+                release(&pending);
+                return Err(McpToolError::unavailable(format!(
+                    "hire cost unknown — ABW re-verify response: {e}"
+                )));
+            }
+        };
         std::cmp::max(base_cost, required.saturating_add(optional))
     } else {
         base_cost
@@ -925,6 +940,84 @@ mod tests {
         );
         assert!(
             store.consume(&token, "hire", "agent", 10).is_ok(),
+            "the pre-dispatch refusal must refund the single-use token"
+        );
+    }
+
+    /// A present-but-unparseable `optional_cost` (float) must fail the gate
+    /// naming the offending value — pre-fix it fell through `.as_u64()` to
+    /// `.unwrap_or(0)`, silently dropping the optional component from the
+    /// re-verified spend (the `.rules` trap: a failed measurement must be
+    /// distinguishable from a measured zero). An ABSENT `optional_cost`
+    /// keeps its documented default (0 — no optional dependencies).
+    #[tokio::test]
+    async fn unparseable_optional_cost_refuses_naming_the_value() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let token = store.mint("hire", "agent", 20).expect("mint");
+        let server = FixtureServer::start(vec![Behavior::Respond(
+            200,
+            "{\"total_hire_cost\": 10, \"has_dependencies\": true, \"required_cost\": 3, \"optional_cost\": 2.5}"
+                .to_string(),
+        )]);
+        let client = test_client(&server.base_url());
+        let error = authorize_hire(
+            &client,
+            &store,
+            SpendAuth::SingleUse(&token),
+            "agent",
+            20,
+            None,
+            true,
+        )
+        .await
+        .err()
+        .expect("a float optional_cost must not silently underquote the spend");
+        assert!(
+            error.message.contains("2.5"),
+            "the refusal must name the unparseable value, got: {error:?}"
+        );
+        assert!(
+            store.consume(&token, "hire", "agent", 20).is_ok(),
+            "the pre-dispatch refusal must refund the single-use token"
+        );
+    }
+
+    /// A present-but-unparseable `required_cost` (string) must fail the
+    /// gate naming the offending value — pre-fix it fell through
+    /// `.as_u64()` to `.unwrap_or(base_cost)`, substituting the base quote
+    /// for the required component and underquoting the spend. An ABSENT
+    /// `required_cost` keeps its documented default (the validated
+    /// base-cost floor).
+    #[tokio::test]
+    async fn unparseable_required_cost_refuses_naming_the_value() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let token = store.mint("hire", "agent", 20).expect("mint");
+        let server = FixtureServer::start(vec![Behavior::Respond(
+            200,
+            "{\"total_hire_cost\": 10, \"has_dependencies\": true, \"required_cost\": \"7\", \"optional_cost\": 2}"
+                .to_string(),
+        )]);
+        let client = test_client(&server.base_url());
+        let error = authorize_hire(
+            &client,
+            &store,
+            SpendAuth::SingleUse(&token),
+            "agent",
+            20,
+            None,
+            true,
+        )
+        .await
+        .err()
+        .expect("a string required_cost must not silently underquote the spend");
+        assert!(
+            error.message.contains("\"7\""),
+            "the refusal must name the unparseable value, got: {error:?}"
+        );
+        assert!(
+            store.consume(&token, "hire", "agent", 20).is_ok(),
             "the pre-dispatch refusal must refund the single-use token"
         );
     }

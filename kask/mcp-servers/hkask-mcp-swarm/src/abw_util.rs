@@ -181,6 +181,26 @@ pub fn effective_hire_cost(deps: &serde_json::Value) -> Result<u64, LocalSwarmEr
     })
 }
 
+/// Read an optional u64 cost field from an ABW dependencies payload. An
+/// ABSENT field keeps the caller's documented default (absent
+/// `required_cost` falls back to the validated base-cost floor; absent
+/// `optional_cost` means no optional dependencies → 0). A field PRESENT
+/// but not a JSON u64 (float/string/null) is an error naming the offending
+/// value — a failed measurement must not silently underquote the spend
+/// ceiling (the `.rules` trap).
+pub fn optional_u64_field(
+    deps: &serde_json::Value,
+    field: &str,
+    default: u64,
+) -> Result<u64, LocalSwarmError> {
+    match deps.get(field) {
+        Some(value) => value.as_u64().ok_or_else(|| {
+            LocalSwarmError::InvalidInput(format!("{field} present but not a u64: {value}"))
+        }),
+        None => Ok(default),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +278,37 @@ mod tests {
     fn absent_has_dependencies_reads_as_dependency_less() {
         let deps = serde_json::json!({"total_hire_cost": 10});
         assert_eq!(effective_hire_cost(&deps).expect("valid quote"), 10);
+    }
+
+    #[test]
+    fn optional_u64_field_keeps_the_default_when_absent() {
+        let deps = serde_json::json!({"total_hire_cost": 10});
+        assert_eq!(
+            optional_u64_field(&deps, "required_cost", 10).expect("absent field defaults"),
+            10
+        );
+        assert_eq!(
+            optional_u64_field(&deps, "optional_cost", 0).expect("absent field defaults"),
+            0
+        );
+    }
+
+    #[test]
+    fn optional_u64_field_errors_naming_present_but_unparseable_value() {
+        let deps = serde_json::json!({"required_cost": "7", "optional_cost": 2.5});
+        let error = optional_u64_field(&deps, "optional_cost", 0)
+            .err()
+            .expect("a float must error, not default to 0");
+        assert!(
+            error.to_string().contains("2.5"),
+            "the error must name the unparseable value, got: {error}"
+        );
+        let error = optional_u64_field(&deps, "required_cost", 10)
+            .err()
+            .expect("a string must error, not default");
+        assert!(
+            error.to_string().contains("\"7\""),
+            "the error must name the unparseable value, got: {error}"
+        );
     }
 }
