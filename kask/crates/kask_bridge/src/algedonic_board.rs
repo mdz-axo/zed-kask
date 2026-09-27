@@ -228,9 +228,27 @@ impl AlertEscalationSink for BoardAlertEscalationSink {
             .await
             .map_err(AlertPersistError::BoardRead)?;
         if let Some(card) = cards.iter().find(|card| card.condition == condition) {
-            self.comment(&card.task_id, format!("Repeated: {output}"))
+            let was_in_review = card.status == TaskStatus::Review;
+            let note = if was_in_review {
+                format!("Re-degraded before verification: {output}")
+            } else {
+                format!("Repeated: {output}")
+            };
+            self.comment(&card.task_id, note)
                 .await
                 .map_err(AlertPersistError::BoardWrite)?;
+            if was_in_review {
+                // A fresh bad observation invalidates the unverified recovery.
+                // Review → In Progress is one standard backward transition.
+                self.call(
+                    KANBAN_TASK_MOVE_TOOL,
+                    json!({
+                        "task_id": card.task_id, "target_status": TaskStatus::InProgress.as_str(),
+                    }),
+                )
+                .await
+                .map_err(AlertPersistError::BoardWrite)?;
+            }
             return Ok(AlertDeliveryOutcome::Confirmed(None));
         }
         let context = serde_json::from_str::<Value>(error_context)

@@ -697,8 +697,8 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 ### Company research verification handoff
 
 `company-research-deep` defaults to one source collection, the full report
-and short summary, one frozen packet build and one narrow independent check of
-the two drafts. It does not run an early candidate gate, LISTEN, the
+and short summary, one frozen packet build, immediate publication as incomplete,
+and one narrow independent check of the already delivered drafts. It does not run an early candidate gate, LISTEN, the
 GORILLA/Wardley/Simon/IMAGINE chain or a thesis judge by default. Those analyses
 are not prerequisites for the requested background/overview/outlook. The
 optional investment-grade extension is a separate request. A time limit on

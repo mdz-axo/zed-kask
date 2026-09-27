@@ -164,6 +164,24 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     );
     assert_eq!(tasks["tasks"].as_array().expect("tasks").len(), 1);
     assert_eq!(sink.awaiting_review_count().await.expect("status count"), 1);
+    tool_content(
+        server
+            .kanban_task_create(Parameters(TaskCreateRequest {
+                board_id: board_id.to_string(),
+                title: "Skill change proposal".into(),
+                description: Some("Proposal evidence and verification criteria".into()),
+                criteria: None,
+                advances: Vec::new(),
+                idempotency_key: None,
+            }))
+            .await,
+    );
+    assert_eq!(
+        sink.awaiting_review_count()
+            .await
+            .expect("alert plus proposal"),
+        2
+    );
     let comments = tool_content(
         server
             .kanban_task_comments_since(Parameters(
@@ -182,7 +200,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
                 .is_some_and(|body| body.contains("value 30")))
     );
 
-    sink.reconcile_conditions(&[recovered.clone()])
+    sink.reconcile_conditions(std::slice::from_ref(&recovered))
         .await
         .expect("self-recovery");
     let review = tool_content(
@@ -263,6 +281,6 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
         sink.awaiting_review_count()
             .await
             .expect("after verification"),
-        0
+        1
     );
 }
