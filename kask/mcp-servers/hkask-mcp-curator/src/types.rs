@@ -29,8 +29,12 @@ pub struct FederatedSearchRequest {
 pub struct RegQueryRequest {
     /// Optional Regulation path prefix. Matches the exact path or dot-delimited
     /// descendants (for example, `reg.skill` includes `reg.skill.<id>`).
+    /// At least one of `namespace` or `window_seconds` must be present: a
+    /// request with neither is the truncated-argument signature and is
+    /// rejected as `invalid_argument`, not defaulted.
     pub namespace: Option<String>,
-    /// Lookback window in seconds (default: 3600 = 1 hour)
+    /// Lookback window in seconds (default: 3600 = 1 hour) when `namespace`
+    /// is set. Required when `namespace` is absent (see above).
     pub window_seconds: Option<u64>,
     /// Maximum events to return (default: 100)
     pub limit: Option<usize>,

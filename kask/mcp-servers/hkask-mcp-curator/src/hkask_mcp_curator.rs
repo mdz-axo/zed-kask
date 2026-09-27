@@ -1051,13 +1051,26 @@ impl CuratorServer {
     // ── Regulation Query (for platform governance transparency) ────────────────
 
     #[tool(
-        description = "Query Regulation records across all namespaces within a time window. An optional namespace prefix matches that path or dot-delimited descendants before the chronological result limit is applied."
+        description = "Query Regulation records across namespaces within a time window. An optional namespace prefix matches that path or dot-delimited descendants before the chronological result limit is applied. At least one of `namespace` or `window_seconds` must be provided — a request with neither is rejected as invalid_argument (the truncated-argument signature), not defaulted to all records."
     )]
     pub async fn reg_query(
         &self,
         Parameters(req): Parameters<RegQueryRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "reg_query", async {
+            // A query with neither a namespace nor a window is the truncated-argument
+            // signature: the tool-call JSON was cut before dispatch, so every `Option`
+            // field landed as `None`. Reject it loudly rather than silently defaulting
+            // to "all namespaces / last hour" and returning wrong-filtered data as a
+            // success (`.rules`: a silent fallback is a broken feedback loop). A
+            // deliberate `namespace: None` with a `window_seconds` still means the
+            // documented all-namespaces query.
+            if req.namespace.is_none() && req.window_seconds.is_none() {
+                return Err(McpToolError::invalid_argument(
+                    "reg_query requires a namespace or window_seconds; both absent means the \
+                     arguments did not arrive (truncated tool-call JSON), not an all-records query",
+                ));
+            }
             let stores = self.db.get();
             let store = stores.regulation_store()?;
             let window_secs = req.window_seconds.unwrap_or(3600);

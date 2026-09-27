@@ -42,6 +42,12 @@ Focus skill: {{ focus_skill }}
 ### Operator feedback history (`reg_query`, namespace `reg.skill`)
 {{ feedback_records | tojson }}
 
+Each `reg_query` record set must be checked against the namespace that was
+requested. When a record set's `namespace` field is `"all"` (or anything
+other than `reg.skill`) it is NOT skill evidence — report it under
+`signal_gaps` as a scope mismatch and do not present it as skill activation
+or feedback. A truncated or defaulted query is unknown, not an empty channel.
+
 ### Skill-use issue reports (`curator_memory_recall`, entity `skill_use_issue:<skill>`)
 {{ issue_reports | tojson }}
 
@@ -63,6 +69,9 @@ Return one JSON object with these fields:
 
 Use only actual card IDs and observed records. Include every open proposal card;
 never infer a skill's quality from activation success. Report failed or empty
-channels in `signal_gaps`. If board lookup or card read failed, set
+channels in `signal_gaps`. When a `reg_query` record set's `namespace` is not
+the requested `reg.skill`, add a `signal_gaps` entry naming the mismatch and
+leave the corresponding `per_skill` entries at `"unobserved"` — do not fill
+them from all-namespace data. If board lookup or card read failed, set
 `briefing_complete` to false and mark the backlog unknown. An empty successful
 board read is not a failure. Do not rank, accept, reject or close cards.

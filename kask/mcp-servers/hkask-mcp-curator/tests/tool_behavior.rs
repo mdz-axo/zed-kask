@@ -1529,6 +1529,32 @@ async fn reg_query_filters_namespace_in_sql_before_limit() {
     );
 }
 
+/// A query whose arguments carried no scope at all is the truncation
+/// signature (the model's tool-call JSON was cut before dispatch, so every
+/// `Option` field landed as `None`). It must fail loud, naming what is
+/// missing — never silently default to "all namespaces / last hour" and
+/// return wrong-filtered data as a success. `namespace: None` WITH a
+/// `window_seconds` remains the documented "all namespaces" query.
+#[tokio::test]
+async fn reg_query_rejects_scopeless_arguments_instead_of_defaulting() {
+    let (server, _archive) = make_server_with_regulation_archive();
+
+    let error = server
+        .reg_query(Parameters(RegQueryRequest {
+            namespace: None,
+            window_seconds: None,
+            limit: None,
+        }))
+        .await
+        .expect_err("scopeless arguments must be rejected, not defaulted");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("namespace") || error.message.contains("window_seconds"),
+        "the rejection must name the missing scope field: {}",
+        error.message
+    );
+}
+
 #[tokio::test]
 async fn reg_query_surfaces_unavailable_archive_as_typed_error() {
     let server = CuratorServer::new(
