@@ -48,17 +48,27 @@ impl BoardAlertEscalationSink {
         let entries = boards["boards"]
             .as_array()
             .ok_or_else(|| "kanban_board_list: missing boards".to_string())?;
-        if let Some(id) = entries
+        let mut matching = entries
             .iter()
-            .find(|board| board["name"] == ALGEDONIC_BOARD_NAME)
-            .and_then(|board| board["board_id"].as_str())
-        {
-            return Ok(id.to_string());
+            .filter(|board| board["name"] == ALGEDONIC_BOARD_NAME);
+        if let Some(board) = matching.next() {
+            if matching.next().is_some() {
+                return Err(
+                    "kanban_board_list: multiple Algedonic review boards; cannot choose a worklist"
+                        .into(),
+                );
+            }
+            return board["board_id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "kanban_board_list: matching board has no board_id".to_string());
         }
         let created = self
             .call(
                 "kanban_board_create",
-                json!({ "name": ALGEDONIC_BOARD_NAME }),
+                // First-use status reads and alerts may race. The kanban
+                // service atomically reserves this key across both callers.
+                json!({ "name": ALGEDONIC_BOARD_NAME, "idempotency_key": "algedonic-review-board" }),
             )
             .await?;
         created["board_id"]
@@ -366,6 +376,48 @@ mod tests {
             ]
         );
         assert_eq!(recorder.calls.lock().expect("calls")[2].1["board_id"], "b");
+    }
+
+    #[tokio::test]
+    async fn duplicate_review_board_names_fail_instead_of_splitting_the_worklist() {
+        let recorder = Recorder::with_replies(vec![json!({ "boards": [
+            { "board_id": "b1", "name": ALGEDONIC_BOARD_NAME },
+            { "board_id": "b2", "name": ALGEDONIC_BOARD_NAME },
+        ] })]);
+        let sink = BoardAlertEscalationSink::new(recorder.clone());
+        assert!(sink.awaiting_review_count().await.is_err());
+        assert_eq!(recorder.names(), ["kanban_board_list"]);
+    }
+
+    /// expect: "Concurrent first-use requests cannot create multiple review boards" [P9]
+    #[tokio::test]
+    async fn first_alert_creates_the_one_review_board_with_replay_protection() {
+        let recorder = Recorder::with_replies(vec![
+            json!({ "boards": [] }),
+            json!({ "board_id": "b" }),
+            json!({ "tasks": [] }),
+            json!({ "task_id": "t" }),
+        ]);
+        let sink = BoardAlertEscalationSink::new(recorder.clone());
+        assert_eq!(
+            sink.try_persist_alert("degraded — first", 0.5, "{}")
+                .await
+                .expect("create"),
+            AlertDeliveryOutcome::Confirmed(Some("t".into()))
+        );
+        assert_eq!(
+            recorder.names(),
+            [
+                "kanban_board_list",
+                "kanban_board_create",
+                "kanban_task_list",
+                "kanban_task_create"
+            ]
+        );
+        assert_eq!(
+            recorder.calls.lock().expect("calls")[1].1["idempotency_key"],
+            "algedonic-review-board"
+        );
     }
 
     /// expect: "Self-recovery reaches Review with evidence, never Done" [P9]

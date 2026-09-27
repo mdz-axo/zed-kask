@@ -4,8 +4,8 @@
 //! The five standard task-status wire strings now live in
 //! [`crate::TaskStatus`] (re-exported from [`crate::kanban_status`]), which is
 //! the single source of truth shared by the server and the widget. This module
-//! retains only the server-binary name, the move-tool name, and the
-//! board-name length cap — the wire constants that are *not* derivable from
+//! retains the server and move-tool names, the operator-specified review
+//! board name, and the board-name length cap — constants not derivable from
 //! the `TaskStatus` enum.
 
 /// MCP server id — MUST match the `id` field in
