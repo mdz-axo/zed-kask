@@ -10,29 +10,14 @@ use serde::{Deserialize, Serialize};
 // ── Financial data request structs ──────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SymbolRequest {
+pub(crate) struct ResolveSymbolRequest {
     pub symbol: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SymbolLimitRequest {
-    pub symbol: String,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RetainedSymbolRequest {
-    pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct RetainedSymbolLimitRequest {
     pub symbol: String,
     pub limit: Option<u32>,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -150,8 +135,6 @@ pub(crate) struct ResultFeedbackRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct DcfValuationRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Stage 1 years (1–3, default 3)
@@ -190,8 +173,6 @@ pub(crate) struct DcfValuationRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct EquityDurationRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// Stage 1 years (1–3, default 3)
     #[schemars(range(min = 1, max = 3))]
     pub stage1_years: Option<u8>,
@@ -228,8 +209,6 @@ pub(crate) struct EquityDurationRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ReverseDcfRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// Stage 1 years (1–3, default 3)
     pub stage1_years: Option<u8>,
     /// Stage 2 years (2–7, default 7)
@@ -243,8 +222,6 @@ pub(crate) struct ReverseDcfRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ScenarioAnalysisRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// Discount rate (default 0.10)
     pub discount_rate: Option<f64>,
     /// Terminal growth rate (default 0.025)
@@ -261,8 +238,6 @@ pub(crate) struct ScenarioAnalysisRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CalibrateForecastRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Your estimate of future revenue growth rate (0.0–1.0).
@@ -408,8 +383,6 @@ pub(crate) struct ForecastPersistRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SensitivityAnalysisRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     pub stage1_years: Option<u8>,
     pub stage2_years: Option<u8>,
     pub discount_rate: Option<f64>,
@@ -431,8 +404,6 @@ fn default_sensitivity_range() -> f64 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct MonteCarloDcfRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     pub stage1_years: Option<u8>,
     pub stage2_years: Option<u8>,
     pub discount_rate: Option<f64>,
@@ -472,8 +443,6 @@ fn default_mc_range_small() -> f64 {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ComparableAnalysisRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     pub peers: Option<String>,
     /// Discount rate / WACC (0.05–0.30, default 0.10).
     pub discount_rate: Option<f64>,
@@ -618,8 +587,6 @@ pub struct ResearchSearchRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ScenarioImpactValuationRequest {
     pub symbol: String,
-    pub run_folder: Option<String>,
-    pub output_key: Option<String>,
     /// JSON string of the resolved scenario event tree from `scenario_quantify`
     /// (hkask-mcp-scenarios). Accepts both the scenario server's native
     /// `EventTree` format (nested `event` fields, `topo_order`) and the

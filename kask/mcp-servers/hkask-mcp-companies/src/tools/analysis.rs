@@ -1,7 +1,7 @@
 //! MAIA analysis and research tools.
 use crate::{
     CompaniesServer, analysis, fibo, providers, research, screener,
-    types::{self, RetainedSymbolLimitRequest, RetainedSymbolRequest},
+    types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -14,14 +14,10 @@ impl CompaniesServer {
     )]
     pub async fn moat_check(
         &self,
-        Parameters(req): Parameters<RetainedSymbolRequest>,
+        Parameters(req): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
         let symbol = req.symbol;
-        super::retained_output::retain(
-            req.run_folder.as_deref(),
-            req.output_key.as_deref(),
-            "moat_check",
-            execute_tool(self, "moat_check", async {
+        execute_tool(self, "moat_check", async {
                 validate_symbol(&symbol)?;
 
                 // Fetch 10 years of key metrics for gross margin stability analysis
@@ -101,10 +97,10 @@ impl CompaniesServer {
     )]
     pub async fn management_scorecard(
         &self,
-        Parameters(req): Parameters<RetainedSymbolRequest>,
+        Parameters(req): Parameters<SymbolRequest>,
     ) -> Result<String, McpToolError> {
         let symbol = req.symbol;
-        super::retained_output::retain(req.run_folder.as_deref(), req.output_key.as_deref(), "management_scorecard", execute_tool(self, "management_scorecard", async {
+        execute_tool(self, "management_scorecard", async {
             validate_symbol(&symbol)?;
 
             let limit = "10";
@@ -160,7 +156,7 @@ impl CompaniesServer {
                 "framework": "MAIA: Good = decreasing capital with improving returns, OR increasing capital with improving returns. Bad = increasing capital with decreasing returns.",
             });
             Ok(fibo::enrich_with_ontology(output, "management_scorecard"))
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -168,10 +164,10 @@ impl CompaniesServer {
     )]
     pub async fn working_capital_cycle(
         &self,
-        Parameters(req): Parameters<RetainedSymbolLimitRequest>,
+        Parameters(req): Parameters<SymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
         let (symbol, limit) = (req.symbol, req.limit);
-        super::retained_output::retain(req.run_folder.as_deref(), req.output_key.as_deref(), "working_capital_cycle", execute_tool(self, "working_capital_cycle", async {
+        execute_tool(self, "working_capital_cycle", async {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
 
@@ -249,7 +245,7 @@ impl CompaniesServer {
                 "framework": "MAIA CFO scorecard: stability of working capital management through economic conditions. The level is structural; consistency is management skill.",
             });
             Ok(fibo::enrich_with_ontology(output, "working_capital_cycle"))
-        }).await)
+        }.await
     }
 
     #[tool(

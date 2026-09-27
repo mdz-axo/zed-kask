@@ -18,12 +18,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::DcfValuationRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(
-            retention.0.as_deref(),
-            retention.1.as_deref(),
-            "dcf_valuation",
-            execute_tool(self, "dcf_valuation", async {
+        execute_tool(self, "dcf_valuation", async {
                 validate_symbol(&req.symbol)?;
                 if let Some(ref revision_of) = req.revision_of {
                     let revision_of = revision_of.clone();
@@ -114,8 +109,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ReverseDcfRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "reverse_dcf", execute_tool(self, "reverse_dcf", async {
+        execute_tool(self, "reverse_dcf", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -263,7 +257,7 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "reverse_dcf"))
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -273,8 +267,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScenarioAnalysisRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "scenario_analysis", execute_tool(self, "scenario_analysis", async {
+        execute_tool(self, "scenario_analysis", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -589,6 +582,6 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "scenario_analysis"))
-        }).await)
+        }.await
     }
 }

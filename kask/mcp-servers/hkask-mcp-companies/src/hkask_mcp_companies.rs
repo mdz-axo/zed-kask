@@ -459,7 +459,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
-    use crate::types::{ResolveSymbolRequest, RetainedSymbolRequest};
+    use crate::types::{ResolveSymbolRequest, SymbolRequest};
     use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
 
@@ -543,10 +543,8 @@ mod tool_behavior_tests {
     async fn moat_check_rejects_invalid_symbol_with_typed_error() {
         let (server, _store_dir) = make_server();
         let error = server
-            .moat_check(Parameters(RetainedSymbolRequest {
+            .moat_check(Parameters(SymbolRequest {
                 symbol: "../etc/passwd".to_string(),
-                run_folder: None,
-                output_key: None,
             }))
             .await
             .expect_err("invalid symbol must yield a typed error, not a panic");
@@ -567,10 +565,8 @@ mod tool_behavior_tests {
         let (server, _store_dir) = make_server();
         let long_symbol = "A".repeat(64);
         let error = server
-            .moat_check(Parameters(RetainedSymbolRequest {
+            .moat_check(Parameters(SymbolRequest {
                 symbol: long_symbol,
-                run_folder: None,
-                output_key: None,
             }))
             .await
             .expect_err("over-long symbol must yield a typed error");
@@ -597,10 +593,8 @@ mod tool_behavior_tests {
             .scope(fixture.origin.clone(), async {
                 let server = crate::acquisition_tests::server(directory.path());
                 let error = server
-                    .moat_check(Parameters(RetainedSymbolRequest {
+                    .moat_check(Parameters(SymbolRequest {
                         symbol: "AAPL".into(),
-                        run_folder: None,
-                        output_key: None,
                     }))
                     .await
                     .expect_err("provider failure must be surfaced");

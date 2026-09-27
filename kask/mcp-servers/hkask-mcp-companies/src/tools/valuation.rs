@@ -127,8 +127,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ComparableAnalysisRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "comparable_analysis", execute_tool(self, "comparable_analysis", async {
+        execute_tool(self, "comparable_analysis", async {
             validate_symbol(&req.symbol)?;
 
             let profile_response = self.fetch_response("company_profile", &req.symbol, &[]).await?;
@@ -203,7 +202,7 @@ impl CompaniesServer {
 
             Ok(output)
         })
-        .await)
+        .await
     }
 
     async fn build_dcf_overlay(
@@ -313,8 +312,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::SensitivityAnalysisRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "sensitivity_analysis", execute_tool(self, "sensitivity_analysis", async {
+        execute_tool(self, "sensitivity_analysis", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -406,7 +404,7 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -416,8 +414,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::EquityDurationRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "equity_duration", execute_tool(self, "equity_duration", async {
+        execute_tool(self, "equity_duration", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -514,7 +511,7 @@ impl CompaniesServer {
             };
 
             Ok(output)
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -524,8 +521,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::MonteCarloDcfRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "monte_carlo_dcf", execute_tool(self, "monte_carlo_dcf", async {
+        execute_tool(self, "monte_carlo_dcf", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -618,7 +614,7 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -628,8 +624,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScenarioImpactValuationRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "scenario_impact_valuation", execute_tool(self, "scenario_impact_valuation", async {
+        execute_tool(self, "scenario_impact_valuation", async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -866,7 +861,7 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "scenario_impact_valuation"))
-        }).await)
+        }.await
     }
 
     #[tool(
@@ -876,8 +871,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::CalibrateForecastRequest>,
     ) -> Result<String, McpToolError> {
-        let retention = (req.run_folder.clone(), req.output_key.clone());
-        super::retained_output::retain(retention.0.as_deref(), retention.1.as_deref(), "calibrate_forecast", execute_tool(self, "calibrate_forecast", async {
+        execute_tool(self, "calibrate_forecast", async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
@@ -1059,7 +1053,7 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }).await)
+        }.await
     }
 
     #[tool(
