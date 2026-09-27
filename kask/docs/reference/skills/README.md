@@ -177,4 +177,4 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > gate machinery). Folded 2026-09-26: `adapter-lifecycle` into
 > `self-improvement` (Fine-tuning run), `calibration-stewardship` into
 > `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 57
-> template namespaces holding 280 `.j2` and 2 `.jinja` files.
+> template namespaces holding 279 `.j2` and 2 `.jinja` files.

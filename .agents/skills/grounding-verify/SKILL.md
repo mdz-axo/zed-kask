@@ -72,8 +72,9 @@ cited.
   output are grounded in the source data they cite.
 - When you need a `fact_score` metric measuring the grounding quality of a
   text against its sources.
-- When you are composing a larger pipeline (e.g., company-research-flash)
-  and need a decoupled verification step that runs as a `spawn_agent` call.
+- When you are composing a larger pipeline that produces claims against
+  source data and need a decoupled verification step that runs as a
+  `spawn_agent` call.
 - When you need a `verified_claims` registry — an append-only record of
   which claims are grounded, with provenance tier and source reference for
   each.
@@ -553,16 +554,10 @@ variables.
 This skill is designed as a **delegation target**, mirroring the
 architectural role of `essentialist` and `falsifiability`:
 
-- **company-research-flash** requires `grounding-verify` after KATA/LENS
-  and any revisions, before publication. It uses
-  `company-research/verification-handoff` to pass the complete target and
-  retained sources; its SKILL.md body owns correction and release gates.
-  The spawned agent receives the stage output + source outputs as inputs —
-  it has no shared conversation history with the generator. This is the
-  self-improvement §9.1 decoupling enforcement.
-- **company-research-deep** runs its own author-side evidence review
-  (`company-research/evidence-review`) over the frozen drafts instead of a
-  decoupled verifier; it does not invoke this skill.
+- **company-research-deep** and **company-research-flash** each run their
+  own author-side evidence review (`company-research/evidence-review`) over
+  their frozen drafts instead of a decoupled verifier; neither invokes this
+  skill.
 - Any pipeline that produces claims against source data can compose this
   skill as a verification step.
 

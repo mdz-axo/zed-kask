@@ -703,45 +703,23 @@ outputs it consumes. collect-evidence reads the retained originals once into
 `evidence-digest.json`; synthesis stages read the digest. Every perspective
 runs on every report; none is skipped or bypassed.
 
-Deep's checking is one author-side evidence review over the frozen drafts,
-modeled on published verification practice (operator rulings 2026-09-27):
-ISA 500 assertion-orientation (evidence must be relevant to the claim being
-tested — never excerpt-matching), vouching (claim → source) and tracing
-(source → report) so omissions surface, ISA 320 materiality scoping (only the
-claims the report's conclusions depend on), and ISA 230 documentation — the
-review writes `evidence-review.json`, and without that record the report is
-labelled "no evidence review performed". The review never labels the report
-verified, and its mechanical match counts are never verdicts. There is no
-investment-grade verdict in deep: an investment-grade judgment is a separate
-outcome the pipeline never claims.
+Both company pipelines check their work with one author-side evidence review
+over the frozen drafts, modeled on published verification practice (operator
+rulings 2026-09-27): ISA 500 assertion-orientation (evidence must be relevant
+to the claim being tested — never excerpt-matching), vouching (claim →
+source) and tracing (source → report) so omissions surface, ISA 320 materiality
+scoping (only the claims the report's conclusions depend on), and ISA 230
+documentation — the review writes `evidence-review.json`, and without that
+record the report is labelled "no evidence review performed". The review never
+labels a report verified, and its mechanical match counts are never verdicts.
+There is no investment-grade verdict in either pipeline: an investment-grade
+judgment is a separate outcome the pipelines never claim. Flash's publication
+decision additionally requires its ENTER gate and adjusted confidence ≥ 0.50,
+computed with its in-skill `lisp_eval` form over the review's outcome.
 
-`company-research-flash` retains actual source responses separately from
-generated analysis and renders `company-research/verification-handoff`,
-delegating the retained packet to `grounding-verify`; rendering alone
-performs no verification. At candidate commitment flash runs the handoff
-before expensive synthesis on a sourced factual candidate note, then reruns
-on materially changed targets, sources, forecasts or as-of dates, and
-rechecks the complete deliverable after KATA/LENS before publication.
-ENTER's eligibility is provisional. The handoff's original-disclosure check
-and frozen-forecast gate report material omissions and field mutation
-separately from factual grounding. A generated answer is not original content;
-only disclosures bearing on the company's economics or thesis are listed;
-boilerplate is never retrieved, listed or counted, and its absence is not a
-gap. The source check returns coverage and known-omission signals separately.
-The gate reads a material failure, known omission or fact score below 0.60
-first and returns `needs_work` (repair); only then does unmatched or
-unperformed coverage (`not_checked`) return `incomplete`, which blocks a
-verified report but permits a labelled draft. Neither signal is part of
-`fact_score`. The agent-executed forms validate supplied bytes, not a
-read-only capability boundary.
-
-The skill bodies own collection and correction. A missing/unperformed check,
-nil score, zero checked claims or in-thread self-check cannot approve a flash
-report. Material findings override an aggregate passing score. Corrected
-reports and newly composed summaries need new checks; prior verification
-records remain immutable history. The shared template defines the source
-packet and caller-executed source check and `lisp_eval` gate; these are
-agent-executed process constraints, not a Rust publication interceptor.
+The skill bodies own collection and correction. A missing or unperformed check
+is a recorded limitation, never a clean result. Corrected reports and newly
+composed summaries need the review to run again on the edited deliverable.
 
 ### Gas Consumption
 
