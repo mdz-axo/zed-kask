@@ -3427,6 +3427,15 @@ impl Thread {
                                 }
                             }
                             Err(err) => {
+                                // zed-kask: D36 — a stream that ends
+                                // mid-tool-call is truncation, not
+                                // cancellation: mark the completion
+                                // truncated (D25) so pending partial tool
+                                // input is reported as truncated when the
+                                // turn is flushed.
+                                if crate::kask_thread_state::KaskThreadState::is_tool_call_truncation(&err) {
+                                    this.kask.on_max_tokens();
+                                }
                                 batch_error = Some(err.into());
                                 break;
                             }
@@ -4610,14 +4619,17 @@ impl Thread {
 
         let error_message = format!("Error parsing input JSON: {json_parse_error}");
 
-        // Failure-signal rule: a tool-call argument parse failure at stream
-        // end is the truncation signature — the model's output ended mid-JSON
-        // and the provider reported finish_reason="stop" (the D36 drain), so
-        // the MaxTokens path never fires and the turn looks clean. Warn with
-        // the raw-input length so the operator can distinguish a truncated
-        // large payload (split it) from model parameter-dropping.
+        // A parse failure that reaches this handler means the stream
+        // reported a completed tool-call turn with malformed JSON — either
+        // model fault (finish_reason "tool_calls" garbage) or a provider
+        // whose mapper has not classified the cut (non-Chat-Completions
+        // APIs). The Chat-Completions mid-JSON cut under
+        // finish_reason="stop" is classified as ToolCallTruncated at the
+        // shared mapper and never reaches this handler (D36). Warn with
+        // the raw-input length so the operator can distinguish malformed
+        // model output from a large payload the model should split.
         log::warn!(
-            "Tool '{}' arguments failed to parse — likely truncated at stream end (no MaxTokens stop reason): {} (raw input {} chars)",
+            "Tool '{}' arguments failed to parse (malformed JSON on a completed tool-call turn): {} (raw input {} chars)",
             tool_use.name,
             json_parse_error,
             raw_input.len()
@@ -5735,6 +5747,11 @@ impl Thread {
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
+            // zed-kask: D36 — a stream cut mid-tool-call re-sends the same
+            // request and gets cut again at the same output-length boundary;
+            // the remedy is the model splitting its payload, which the
+            // error message instructs. Never retried.
+            ToolCallTruncated { .. } => None,
             // `Other` includes mid-stream mapping failures that can be caused by
             // a transient malformed or interrupted provider event.
             Other(..) => Some(RetryStrategy::FixedDelay {
@@ -12781,7 +12798,11 @@ mod tests {
                 verdict
             );
             thread.update(cx, |thread, _cx| {
-                thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
+                thread
+                    .kask
+                    .retry_tracker_handle()
+                    .borrow()
+                    .record_failure(tool_name, &input);
             });
         }
 
@@ -12808,7 +12829,11 @@ mod tests {
 
         // Record one more failure (total 4).
         thread.update(cx, |thread, _cx| {
-            thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_failure(tool_name, &input);
         });
 
         // 5th check — still allowed (4 < HARD_CAP of 5), but with warning.
@@ -12826,7 +12851,11 @@ mod tests {
 
         // Record one more failure (total 5).
         thread.update(cx, |thread, _cx| {
-            thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_failure(tool_name, &input);
         });
 
         // 6th check — after 5 failures, should return Refuse.
@@ -12850,7 +12879,11 @@ mod tests {
 
         // Verify that a successful call resets the tracker.
         thread.update(cx, |thread, _cx| {
-            thread.kask.retry_tracker_handle().borrow().record_success(tool_name, &input);
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_success(tool_name, &input);
         });
 
         let verdict = thread.read_with(cx, |thread, _| {
@@ -12904,5 +12937,28 @@ mod tests {
             .next()
             .expect("batch failure arguments");
         assert!(record_call.contains("owning_message_ix,"));
+    }
+
+    #[test]
+    fn stream_truncation_sets_the_d25_flag_at_the_stream_error_boundary() {
+        // zed-kask: D36 — source-structure pin (the D43
+        // turn_failure_surfaces_provider_rejection_detail precedent, with
+        // concat!-assembled needles so this test's own source cannot
+        // satisfy it): the batch loop's stream-error arm must classify
+        // ToolCallTruncated and set the truncation flag before the turn
+        // fails, so pending partial tool input reads as truncated, not
+        // canceled.
+        let arm_marker = concat!("Err(err)", " => {");
+        let truncation_call = concat!("is_tool_call_trunc", "ation(&err)");
+        let flag_call = concat!("this.kask.on_", "max_tokens()");
+        let fail_call = concat!("batch_error = Some(err", ".into());");
+        let source = include_str!("thread.rs");
+        let arm = source
+            .split(arm_marker)
+            .find(|segment: &&str| segment.contains(truncation_call))
+            .expect("stream-error arm classifies ToolCallTruncated");
+        let arm = &arm[..arm.find("break;").expect("arm breaks the batch loop")];
+        assert!(arm.contains(flag_call));
+        assert!(arm.contains(fail_call));
     }
 }

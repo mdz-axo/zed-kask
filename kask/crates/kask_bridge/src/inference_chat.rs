@@ -218,6 +218,11 @@ fn inference_error_from_completion(error: LanguageModelCompletionError) -> Infer
         LanguageModelCompletionError::ProviderRejection { .. }
         | LanguageModelCompletionError::DeserializeResponse { .. }
         | LanguageModelCompletionError::StreamEndedUnexpectedly { .. }
+        // zed-kask: D36 — a generation stream cut mid-tool-call. Generation
+        // error with a non-transient detail (no "classification: transient"
+        // marker), so `is_transient_inference_failure` reports false —
+        // matching the zed-side non-retryable classification.
+        | LanguageModelCompletionError::ToolCallTruncated { .. }
         | LanguageModelCompletionError::Other(_) => InferenceError::Generation(detail),
     }
 }
@@ -1255,6 +1260,27 @@ mod tests {
             .ensure_terminal_stop()
             .expect("explicit terminal stop");
         assert_eq!(complete.into_result().finish_reason, "stop");
+    }
+
+    #[test]
+    fn tool_call_truncation_maps_to_non_transient_generation_error() {
+        // zed-kask: D36 — a generation stream cut mid-tool-call reaches
+        // MCP-server inference as a Generation error whose detail names the
+        // tool and the cut, with no "classification: transient" marker —
+        // matching the zed-side non-retryable classification.
+        let error = LanguageModelCompletionError::ToolCallTruncated {
+            tool_name: "corpus_query".to_string(),
+            json_parse_error: "EOF while parsing a value at line 1 column 9".to_string(),
+            raw_input_chars: 9,
+        };
+        let inference_error = super::inference_error_from_completion(error);
+        let InferenceError::Generation(detail) = &inference_error else {
+            panic!("truncation must map to a Generation error");
+        };
+        assert!(detail.contains("corpus_query"));
+        assert!(detail.contains("truncated mid-JSON"));
+        assert!(!detail.contains("classification: transient"));
+        assert!(!super::is_transient_inference_failure(&inference_error));
     }
 
     // ── Provider-rejection detail preservation (D43-adjacent, bridge path) ──

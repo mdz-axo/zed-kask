@@ -105,10 +105,26 @@ impl KaskThreadState {
 
     // ── Truncation detection (D25) ────────────────────────────────────
 
-    /// Called when a completion stops with `StopReason::MaxTokens`,
-    /// indicating the model's output was truncated before it finished.
+    /// Called when a completion is truncated before it finished: either a
+    /// `StopReason::MaxTokens` stop (D25) or a stream that ended
+    /// mid-tool-call (D36 `ToolCallTruncated`). Sets the flag
+    /// `flush_pending_message` reads to report pending tool calls as
+    /// truncated rather than canceled.
     pub fn on_max_tokens(&mut self) {
         self.last_completion_truncated = true;
+    }
+
+    /// zed-kask: D36 — whether a completion stream error is the truncation
+    /// classification: the stream ended (`finish_reason: "stop"`) with a
+    /// tool call's arguments still incomplete, so the mapper refused to
+    /// dispatch it. Read at the stream-error boundary to set
+    /// [`Self::on_max_tokens`], so pending partial tool input is reported
+    /// as truncated rather than canceled.
+    pub fn is_tool_call_truncation(error: &LanguageModelCompletionError) -> bool {
+        matches!(
+            error,
+            LanguageModelCompletionError::ToolCallTruncated { .. }
+        )
     }
 
     /// Whether the last completion was truncated. Read by
@@ -412,5 +428,26 @@ mod tests {
     fn provider_rejection_detail_is_none_for_non_rejections() {
         let transport = LanguageModelCompletionError::Other(anyhow!("transport error"));
         assert!(KaskThreadState::provider_rejection_turn_end_warning(&transport).is_none());
+    }
+
+    #[test]
+    fn is_tool_call_truncation_classifies_only_the_typed_variant() {
+        // zed-kask: D36 — only the typed truncation classification sets
+        // the D25 flag; a malformed-transport `Other` must not (it
+        // retries), and neither must an unexpected stream end.
+        let truncated = LanguageModelCompletionError::ToolCallTruncated {
+            tool_name: "reg_query".to_string(),
+            json_parse_error: "EOF while parsing a value at line 1 column 14".to_string(),
+            raw_input_chars: 47,
+        };
+        assert!(KaskThreadState::is_tool_call_truncation(&truncated));
+        assert!(!KaskThreadState::is_tool_call_truncation(
+            &LanguageModelCompletionError::Other(anyhow!("stream ended unexpectedly"))
+        ));
+        assert!(!KaskThreadState::is_tool_call_truncation(
+            &LanguageModelCompletionError::StreamEndedUnexpectedly {
+                provider: LanguageModelProviderName::new("OpenRouter"),
+            }
+        ));
     }
 }

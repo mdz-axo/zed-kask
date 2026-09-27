@@ -243,6 +243,21 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// zed-kask: D36 — the stream ended (`finish_reason: "stop"`) with a
+    /// tool call's arguments still incomplete: the accumulated argument
+    /// string is a JSON fragment, so the call is truncated, not runnable.
+    /// Emitted by the shared `ChatCompletionEventMapper` instead of
+    /// draining the fragment into a tool-call turn; nothing is dispatched.
+    #[error(
+        "tool call '{tool_name}' was truncated mid-JSON before dispatch \
+         ({json_parse_error}; {raw_input_chars} chars of arguments received); \
+         the call was not executed — resend it with complete arguments"
+    )]
+    ToolCallTruncated {
+        tool_name: String,
+        json_parse_error: String,
+        raw_input_chars: usize,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -397,6 +412,9 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            // zed-kask: D36 — retrying a cut stream re-sends the same
+            // request and cuts at the same output-length boundary.
+            | Self::ToolCallTruncated { .. }
             | Self::Other(_) => false,
         }
     }
@@ -426,6 +444,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ToolCallTruncated { .. }
             | Self::Other(_) => None,
         }
     }

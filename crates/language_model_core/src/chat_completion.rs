@@ -460,6 +460,21 @@ impl ChatCompletionEventMapper {
         })
     }
 
+    /// zed-kask: D36 — the first accumulated call whose arguments are not
+    /// complete JSON, with the tool name, parse error, and accumulated
+    /// argument length: the truncation signature at stream end. Empty
+    /// arguments are not a signature (a genuine no-argument call is
+    /// indistinguishable from a cut before any argument text arrived), so
+    /// they still drain and are the tool boundary's problem, not the
+    /// mapper's.
+    fn first_truncated_tool_call(&self) -> Option<(String, String, usize)> {
+        self.tool_calls.calls.iter().find_map(|call| {
+            parse_tool_arguments(&call.arguments)
+                .err()
+                .map(|error| (call.name.clone(), error.to_string(), call.arguments.len()))
+        })
+    }
+
     pub fn map_event(
         &mut self,
         event: ResponseStreamEvent,
@@ -544,16 +559,43 @@ impl ChatCompletionEventMapper {
         }
 
         // zed-kask: D36 — some providers finish tool calls with "stop". Reuse
-        // the normal drain without reviving calls rejected as ambiguous.
+        // the normal drain without reviving calls rejected as ambiguous —
+        // but only when every accumulated call's arguments parse as complete
+        // JSON. A stop with a JSON fragment is a stream that was cut
+        // mid-tool-call: classify it as truncation, dispatch nothing, and
+        // emit no stop event so the turn cannot end cleanly.
         let finish_reason = match choice.finish_reason.as_deref() {
             Some("stop")
                 if !self.tool_call_accumulation_failed && !self.tool_calls.calls.is_empty() =>
             {
-                log::warn!(
-                    "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
-                    self.tool_calls.calls.len()
-                );
-                Some("tool_calls")
+                match self.first_truncated_tool_call() {
+                    Some((tool_name, json_parse_error, raw_input_chars)) => {
+                        log::warn!(
+                            "finish_reason=\"stop\" with {} accumulated tool calls, but \
+                             '{}' arguments are incomplete; classifying the stream as \
+                             truncated and dispatching nothing",
+                            self.tool_calls.calls.len(),
+                            tool_name,
+                        );
+                        // The rest of the batch is from the same cut: suppress
+                        // every later tool event for this stream.
+                        self.tool_call_accumulation_failed = true;
+                        self.tool_calls = ToolCallAccumulator::default();
+                        events.push(Err(LanguageModelCompletionError::ToolCallTruncated {
+                            tool_name,
+                            json_parse_error,
+                            raw_input_chars,
+                        }));
+                        return events;
+                    }
+                    None => {
+                        log::warn!(
+                            "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
+                            self.tool_calls.calls.len()
+                        );
+                        Some("tool_calls")
+                    }
+                }
             }
             finish_reason => finish_reason,
         };
@@ -826,6 +868,20 @@ mod tests {
             .collect()
     }
 
+    /// Like [`map_completion_events`], but preserves stream errors instead
+    /// of panicking on them, so truncation tests can assert on the `Err`
+    /// items.
+    fn map_completion_results(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut mapper = ChatCompletionEventMapper::new();
+        let mut all_events = Vec::new();
+        for event in events {
+            all_events.extend(mapper.map_event(event));
+        }
+        all_events
+    }
+
     #[test]
     fn test_map_event_populates_cost_from_usage() {
         // zed-kask: D20 — exercise wire decoding as well as mapping. In
@@ -908,7 +964,13 @@ mod tests {
     }
 
     #[test]
-    fn stop_with_invalid_tool_arguments_surfaces_parse_error() {
+    fn stop_with_truncated_tool_arguments_is_classified_as_truncated_not_a_clean_turn() {
+        // zed-kask: D36 — a stream that ends mid-tool-call under
+        // finish_reason="stop" is a truncated stream, not a tool-call
+        // turn: it must surface as a typed truncation error naming the
+        // tool and the cut, and must not end the turn with a stop event.
+        // Supersedes stop_with_invalid_tool_arguments_surfaces_parse_error,
+        // which pinned the fragment-drain contract this change removes.
         let event = serde_json::from_value(json!({"choices": [{
             "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
                 "name": "corpus_query", "arguments": "{\"query\":"
@@ -916,13 +978,104 @@ mod tests {
             "finish_reason": "stop"
         }]}))
         .expect("valid stream envelope with incomplete arguments");
-        let events = map_completion_events(vec![event]);
+        let events = map_completion_results(vec![event]);
+        assert!(matches!(
+            events.last(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                raw_input_chars: 9,
+            })) if tool_name == "corpus_query"
+                && json_parse_error.contains("EOF while parsing")
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Ok(LanguageModelCompletionEvent::Stop(_))))
+        );
+    }
+
+    #[test]
+    fn truncated_tool_arguments_do_not_dispatch_a_defaulted_or_partial_call() {
+        // zed-kask: D36 — the cut fragment must never reach a tool as a
+        // complete (defaulted or partial) argument object, and must not
+        // be handed to the run-with-invalid-json path either: it errors
+        // at the boundary instead.
+        let event = serde_json::from_value(json!({"choices": [{
+            "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
+                "name": "reg_query",
+                "arguments": "{\"namespace\":\"reg.skill\",\"window_seconds\":24"
+            }}]},
+            "finish_reason": "stop"
+        }]}))
+        .expect("valid stream envelope with incomplete arguments");
+        let events = map_completion_results(vec![event]);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated { tool_name, .. })
+                if tool_name == "reg_query"
+        )));
+    }
+
+    #[test]
+    fn stop_with_one_truncated_call_truncates_the_whole_batch() {
+        // zed-kask: D36 — a cut stream is unreliable as a batch: when any
+        // accumulated call has incomplete arguments, none of the batch is
+        // dispatched as complete input (partial streaming prefixes may
+        // still be emitted during streaming, and are dropped when the
+        // turn errors).
+        let chunks = serde_json::from_value(json!([
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "function": {
+                    "name": "corpus_query", "arguments": "{\"query\":\"test\"}"
+                }},
+                {"index": 1, "id": "call_2", "function": {
+                    "name": "corpus_chunk", "arguments": "{\"path\":"
+                }}
+            ]}}]},
+            {"choices": [{"finish_reason": "stop"}]}
+        ]))
+        .expect("valid mixed batch");
+        let events = map_completion_results(chunks);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated { tool_name, .. }))
+                if tool_name == "corpus_chunk"
+        ));
+    }
+
+    #[test]
+    fn tool_calls_finish_with_invalid_arguments_still_surfaces_parse_error() {
+        // zed-kask: D36 — the genuine-garbage path is unchanged: a
+        // finish_reason="tool_calls" whose arguments do not parse is model
+        // fault, surfaced as a per-call parse error inside a normal
+        // tool-call turn so the model can correct its JSON.
+        let event = serde_json::from_value(json!({"choices": [{
+            "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
+                "name": "corpus_query", "arguments": "{\"query\":"
+            }}]},
+            "finish_reason": "tool_calls"
+        }]}))
+        .expect("valid stream envelope with malformed arguments");
+        let events = map_completion_results(vec![event]);
         assert!(matches!(events.as_slice(), [..,
-            LanguageModelCompletionEvent::ToolUseJsonParseError { id, raw_input, .. },
-            LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { id, raw_input, .. }),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
         ] if id.to_string() == "call_1" && raw_input.as_ref() == "{\"query\":"));
         assert!(!events.iter().any(|event| matches!(
-            event, LanguageModelCompletionEvent::ToolUse(tool_use) if tool_use.is_input_complete
+            event, Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
         )));
     }
 
