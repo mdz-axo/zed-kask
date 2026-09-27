@@ -16,7 +16,7 @@ use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::id::{BoardId, TaskId};
-use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
+use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use serde_json::Value;
 
 use super::types::KanbanError;
@@ -598,7 +598,11 @@ impl KanbanService {
                 id: task.board_id.to_string(),
             })
         })?;
-        if !board.can_transition(task.status, target) {
+        // The review board's Done status is a verification outcome, never
+        // an ordinary column move. Other boards keep their existing policy.
+        if (board.name == ALGEDONIC_BOARD_NAME && target == TaskStatus::Done)
+            || !board.can_transition(task.status, target)
+        {
             return Err(KanbanError::InvalidTransition {
                 task: task_id,
                 from: task.status,

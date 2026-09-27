@@ -215,9 +215,9 @@ This does not change board condition matching, archive retention, or the in-memo
 
 `curator_algedonic_log` is an incident-response view: within its requested time window and 500-row bound, it returns newest events first and declares `ordering: "newest_first"`. The storage layer keeps this operation separate from chronological `query_algedonic`, so weighted replay and historical processing remain oldest-first. Ordering does not alter category selection, act-phase filtering, archive retention, or the ledger alert-log cap.
 
-**§9.6 — Queue-unavailable fallback alert deduplication (2026-09-17)**
+**§9.6 — Board-unavailable fallback alert deduplication (updated 2026-09-26)**
 
-When the escalation queue is unavailable, successful archive fallback becomes the process-local retention authority for that condition. The loop records one fallback alert for an unchanged escalation disposition, retries when archive persistence fails, clears the latch when the disposition disappears, and emits again on recurrence. Queue-backed pending-condition dedup remains authoritative when present. Call-cap exhaustion is not coalesced: each alert requires a fresh cap exhaustion after the per-tick reset and therefore represents new observed work, not repeated serialization of unchanged state.
+When board delivery is unavailable, a successful archive fallback latches the condition locally so an unchanged escalation disposition does not flood history. Failed archive persistence retries; clearing the disposition releases the latch and a recurrence emits again. When the board is readable, its open condition card governs deduplication and repeat observations are comments. Call-cap exhaustion is not coalesced: each alert requires fresh cap exhaustion after the per-tick reset.
 
 > **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 12 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04, recount 2026-09-18); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 

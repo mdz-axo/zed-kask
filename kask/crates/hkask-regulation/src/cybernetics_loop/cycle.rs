@@ -623,13 +623,12 @@ impl super::CyberneticsLoop {
 
         // Deliver the alert to the board. The RegulationArchive remains
         // a secondary fallback for restart durability.
-        // A recovery signal must be a measurable deviation: `recovered_by`
-        // and the advice review both key off `is_recovery_trigger`. The
+        // A recovery signal must be a measurable deviation: self-recovery
+        // uses `recovered_by` only on `is_recovery_trigger`. The
         // observations map holds the previous sense pass's snapshot, so an
         // event-driven escalation routed mid-sense (a reopened circuit)
         // would otherwise attach a stale, healthy reading — a trigger that
-        // can never be recovered-by, stranding the row as permanently
-        // unmeasurable in the reconcile pass. Drop non-trigger
+        // can never be recovered-by, stranding the card in manual review. Drop non-trigger
         // observations; such an escalation becomes manual-review-only
         // (null recovery signal), like permanent inference failures.
         let observation = action

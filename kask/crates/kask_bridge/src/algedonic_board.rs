@@ -4,15 +4,14 @@
 
 use std::sync::Arc;
 
-use hkask_regulation::{AlertEscalationSink, AlertPersistError, AlertDeliveryOutcome, Signal};
+use hkask_regulation::{AlertDeliveryOutcome, AlertEscalationSink, AlertPersistError, Signal};
 use hkask_tool_invoker::ToolInvoker;
 use hkask_types::TaskStatus;
+pub use hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME;
 use hkask_types::kanban_wire::{KANBAN_SERVER_NAME, KANBAN_TASK_MOVE_TOOL};
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use serde_json::{Value, json};
 
-/// The operator-specified worklist shared by alerts and skill proposals.
-pub const ALGEDONIC_BOARD_NAME: &str = "Algedonic review";
 const CONDITION_MARKER: &str = "algedonic-condition: ";
 const CONTEXT_MARKER: &str = "algedonic-context: ";
 

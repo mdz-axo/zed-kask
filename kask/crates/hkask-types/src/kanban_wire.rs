@@ -22,6 +22,9 @@ pub const KANBAN_SERVER_NAME: &str = "kata-kanban";
 /// block) with `{ task_id, target_status }` args.
 pub const KANBAN_TASK_MOVE_TOOL: &str = "kanban_task_move";
 
+/// The one operator-specified board where Done requires explicit verification.
+pub const ALGEDONIC_BOARD_NAME: &str = "Algedonic review";
+
 /// The maximum board-name length, in characters, enforced at the
 /// kata-kanban service boundary (`validate_board_name` — the single
 /// validation point every caller routes through: the panel's forms, MCP

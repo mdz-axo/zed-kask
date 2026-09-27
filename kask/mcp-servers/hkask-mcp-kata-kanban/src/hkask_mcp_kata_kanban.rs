@@ -845,7 +845,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Move a task to a new column (status transition). The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
+        description = "Move a task to a new column (status transition). On the Algedonic review board, use kanban_task_verify in Review to reach Done; moving to Done directly is refused. The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
     )]
     pub async fn kanban_task_move(
         &self,

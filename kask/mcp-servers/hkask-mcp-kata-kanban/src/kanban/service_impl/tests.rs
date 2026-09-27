@@ -7,7 +7,7 @@ use crate::kanban::{
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
-use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
+use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 
 use super::types::KanbanError;
 
@@ -463,6 +463,37 @@ fn task_move_forward() {
         .task_move(task.id, TaskStatus::InProgress, owner)
         .unwrap();
     assert_eq!(t.status, TaskStatus::InProgress);
+}
+
+/// expect: "An Algedonic review card reaches Done only through verification" [P9]
+#[test]
+fn algedonic_review_done_requires_task_verify() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board = svc
+        .board_create(owner, ALGEDONIC_BOARD_NAME, &make_default_columns())
+        .expect("board");
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Observed alert".into()), owner)
+        .expect("card");
+    svc.task_move(task.id, TaskStatus::Ready, owner)
+        .expect("triage");
+    svc.task_move(task.id, TaskStatus::InProgress, owner)
+        .expect("action");
+    svc.task_move(task.id, TaskStatus::Review, owner)
+        .expect("review");
+    assert!(
+        svc.task_move(task.id, TaskStatus::Done, owner).is_err(),
+        "moving a card directly to Done must not bypass verification"
+    );
+    assert_eq!(
+        svc.task_get(task.id).expect("read").expect("card").status,
+        TaskStatus::Review
+    );
+    let (verified, _) = svc
+        .task_verify(task.id, "Observation and reviewer decision", owner)
+        .expect("verify");
+    assert_eq!(verified.status, TaskStatus::Done);
 }
 
 #[test]
