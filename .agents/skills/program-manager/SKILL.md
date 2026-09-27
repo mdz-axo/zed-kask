@@ -218,7 +218,10 @@ each one structurally impossible to repeat:
      redundant — old paths, duplicate copies of a pattern, tests of
      removed behavior, settings, doc sections — and delete them in the
      same change. Report net lines added/removed. A change that only
-     adds is `continue`, never done.
+     adds is `continue`, never done. After each buildup pass, run a
+     cleanup pass over what it touched — stale citations and comments,
+     duplicate test doubles, test-only wrappers, copied patterns — and
+     report that pass's net lines too.
    - **Residue sweep**: grep for what the change orphaned — deleted
      deps (`use <dep>` hits), stale comments describing old behavior,
      probe/test artifacts in production trees, hallucinated ids
