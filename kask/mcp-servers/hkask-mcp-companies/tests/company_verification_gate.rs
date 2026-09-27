@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 const HANDOFF: &str =
     include_str!("../../../registry/templates/company-research/verification-handoff.j2");
 const FLASH: &str = include_str!("../../../../.agents/skills/company-research-flash/SKILL.md");
+const DEEP: &str = include_str!("../../../../.agents/skills/company-research-deep/SKILL.md");
 const FIXTURES: &str =
     include_str!("../../../registry/company-research-fixtures/verification.json");
 
@@ -177,6 +178,35 @@ fn known_material_omission_survives_unmatched_disclosure() -> Result<()> {
     Ok(())
 }
 
+/// expect: Both research consumers supply the same snapshot inputs at first
+/// commitment and on changes; these pins only check instructions, not execution.
+#[test]
+fn company_consumers_keep_shared_handoff_wired_at_both_times() -> Result<()> {
+    for (name, skill) in [("flash", FLASH), ("deep", DEEP)] {
+        ensure!(
+            skill.contains("candidate commitment") || skill.contains("first commitment"),
+            "{name}: missing early interruption"
+        );
+        for field in [
+            "issuer_identifier",
+            "as_of_date",
+            "disclosure_inventory",
+            "original_forecast",
+            "working_forecast",
+            "source_review_status",
+        ] {
+            ensure!(
+                skill.contains(field),
+                "{name}: missing shared handoff input {field}"
+            );
+        }
+        ensure!(
+            skill.contains("company-research/verification-handoff"),
+            "{name}: missing shared handoff call"
+        );
+    }
+    Ok(())
+}
 
 /// expect: A high verification score cannot authorize flash publication if a
 /// load-bearing claim failed, checks were not performed, or the source packet

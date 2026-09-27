@@ -696,32 +696,16 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 
 ### Company research verification handoff
 
-`company-research-deep` defaults to one source collection, the full report
-and short summary, one frozen packet build, immediate publication as incomplete,
-and one narrow independent check of the already delivered drafts. It does not run an early candidate gate, LISTEN, the
-GORILLA/Wardley/Simon/IMAGINE chain or a thesis judge by default. Those analyses
-are not prerequisites for the requested background/overview/outlook. The
-optional investment-grade extension is a separate request. A time limit on
-research leads to labelled gaps and delivery, not an invented verification.
-
-The deep skill retains complete cited originals and computed tool responses
-separately from generated analysis. `company_research_packet_build` binds the
-exact drafts and cited sources; `company_verification_packet_check` checks the
-same digest mechanically. A separate verifier checks cited key claims in
-context against retained originals and checks material disclosures in the
-actual drafts. A packet match is not an original-download attestation or a
-semantic judgment. Unknown source identity, a false load-bearing figure or an
-unperformed check cannot become a verified report; the frozen full report and
-summary are delivered with an explicit incomplete label instead. Factual
-corrections require a new packet and check. The old early candidate handoff,
-all-stage digest choreography and numerical thesis score are not part of this
-default delivery path.
-
-`company-research-flash` retains the shared
-`company-research/verification-handoff` and its source-check and forecast
-integrity gates, including the distinction between a material omission and
-unperformed coverage. The template's result remains an agent-executed process
-constraint, not a Rust publication interceptor.
+`company-research-deep` runs the company, listening, industry outside-view,
+Falstaffian rotation, Wardley, economic trajectory, GORILLA, Simon and IMAGINE
+perspectives before its full report and summary. The perspective outputs are
+analytical inputs, not a licence to invent facts or an investment-grade verdict.
+The candidate and late verification gates use the shared
+`company-research/verification-handoff` and retained source packet; a packet
+hash or Tier 1 match is only a mechanical check, never independent source
+review or proof of a thesis. Unsupported claims remain explicit gaps and
+incomplete reports remain deliverable. The flash pipeline uses the same factual
+source-check boundary with its separate publication criteria.
 
 ### Gas Consumption
 
