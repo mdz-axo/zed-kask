@@ -229,19 +229,17 @@ mod status_snapshot_tests {
     }
 
     /// The latest-cycle alert count is labelled as such, and the review
-    /// backlog is shown separately; an unreadable queue is "unknown", never 0
+    /// board backlog is shown separately; an unreadable board is unknown, never 0
     /// (observed: "Escalations: 1" while 5 awaited review).
     #[test]
     fn status_labels_cycle_alerts_and_review_backlog_separately() {
         let text = rendered(Some(1), Some(5));
         assert!(text.contains("New Alerts (latest cycle): 1\n"));
-        assert!(text.contains("Escalations Awaiting Review: 5\n"));
+        assert!(text.contains("Algedonic Review Cards Not Done: 5\n"));
         assert!(!text.contains("\nEscalations: "));
 
         let unknown = rendered(Some(0), None);
-        assert!(
-            unknown.contains("Escalations Awaiting Review: unknown (review queue not readable)")
-        );
+        assert!(unknown.contains("Algedonic Review Cards Not Done: unknown (board not readable)"));
     }
 }
 
@@ -419,7 +417,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
             "Curator Status: {}\n\
              Regulation Acceptance Rate: {}\n\
              New Alerts (latest cycle): {}\n\
-             Escalations Awaiting Review: {}\n\
+             Algedonic Review Cards Not Done: {}\n\
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
              Memory: {}\n\
@@ -438,7 +436,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
             output
                 .pending_escalations
                 .map(|c| c.to_string())
-                .unwrap_or_else(|| "unknown (review queue not readable)".to_string()),
+                .unwrap_or_else(|| "unknown (board not readable)".to_string()),
             output
                 .critical_alerts
                 .map(|c| c.to_string())

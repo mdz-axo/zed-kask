@@ -73,7 +73,7 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
     fn send_alert_email(&self, alert: &RuntimeAlert);
 }
 
-/// Sink for persisting algedonic alerts to the review board.
+/// Sink for delivering algedonic alerts to the review board.
 ///
 /// Implementations must be non-blocking and best-effort — a failing or missing
 /// sink never breaks the regulation loop. The regulation archive remains a
@@ -83,10 +83,8 @@ pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
 /// never conflates confirmed, attempted, and failed delivery.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlertDeliveryOutcome {
-    /// The alert is confirmed in the reviewable queue. Carries the
-    /// queue-assigned escalation id when the write inserted a new row;
-    /// `None` when an existing pending row was updated in place
-    /// (superseded — no new id exists).
+    /// The alert is confirmed on the board. Carries the new card id, or
+    /// `None` when an existing open card received a repeat comment.
     Confirmed(Option<String>),
     /// The alert was handed to a best-effort sink that cannot report
     /// whether the durable write succeeded.
@@ -95,14 +93,13 @@ pub enum AlertDeliveryOutcome {
 
 /// Persistence failure for an algedonic alert. Best-effort surface: the
 /// caller logs it and never propagates — alert persistence is never a
-/// correctness path. The queue lives behind the sink boundary, so the
-/// variant carries the underlying store's formatted error rather than the
-/// store's own error type.
+/// correctness path. The board lives behind the governed tool boundary, so
+/// the variant carries the tool failure message.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AlertPersistError {
-    #[error("escalation queue read failed: {0}")]
+    #[error("algedonic board read failed: {0}")]
     BoardRead(String),
-    #[error("escalation queue write failed: {0}")]
+    #[error("algedonic board write failed: {0}")]
     BoardWrite(String),
 }
 
@@ -117,8 +114,7 @@ pub trait AlertEscalationSink: Send + Sync {
         Ok(())
     }
 
-    /// Persist an alert to the reviewable escalation queue, reporting the
-    /// durable-write outcome.
+    /// Deliver an alert to the reviewable board, reporting the tool outcome.
     ///
     /// `output` is the human-readable alert message; `error_context` is a
     /// serialized JSON blob carrying the structured alert fields (domain,
@@ -138,8 +134,7 @@ pub trait AlertEscalationSink: Send + Sync {
         error_context: &str,
     ) -> Result<AlertDeliveryOutcome, AlertPersistError>;
 
-    /// Check whether a pending alert with the same condition as `output`
-    /// already exists in the escalation queue.
+    /// Check whether an open board card has the condition key of `output`.
     ///
     /// Used for deduplication at the source: the regulation loop senses the
     /// same deficit every cycle (e.g. an unwired efferent action) and would
@@ -147,14 +142,12 @@ pub trait AlertEscalationSink: Send + Sync {
     /// (`alert_condition` — the reason prefix before the " — " separator),
     /// not the full output: the per-cycle value embedded after the separator
     /// changes every tick, so exact-match dedup never hits for a
-    /// persistently re-sensed condition. The caller checks this before
-    /// routing an alert — if a pending alert with the same condition exists,
-    /// the entire routing (log, live channel, persist, archive) is skipped.
-    /// When the operator resolves or dismisses the original, the next cycle
-    /// escalates again.
+    /// persistently re-sensed condition. The caller still sends a repeat to
+    /// the sink for a card comment, while suppressing duplicate live alerts
+    /// and archive events. Once the card reaches Done, the next observation
+    /// may create a new card.
     ///
-    /// Default returns `false` (no dedup). Implementations backed by a
-    /// durable queue should query for pending alerts with this condition.
+    /// Default returns `false` (no dedup). The board sink reads open cards.
     /// Errors are logged by the caller and never propagated.
     async fn has_pending_alert(&self, _output: &str) -> bool {
         false

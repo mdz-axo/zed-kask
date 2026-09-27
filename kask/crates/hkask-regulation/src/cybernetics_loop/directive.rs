@@ -6,7 +6,7 @@
 //! persists an acknowledgment carrying the ACTUAL outcome (`DirectiveOutcome`):
 //! "applied" only when a supported effect changed live state, "recorded" for
 //! persisted requests, "log_only" when no effect handler exists, and the
-//! escalation delivery states ("queued"/"attempted"/"missing_sink") for
+//! escalation delivery states ("confirmed"/"attempted"/"missing_sink") for
 //! `EscalateDomain`. Dampened directives produce no acknowledgment. The
 //! `apply_*` methods are directive-internal.
 
@@ -26,21 +26,20 @@ enum DirectiveOutcome {
     Recorded,
     /// No effect handler exists — the directive was logged only.
     LogOnly,
-    /// An explicit escalation was routed to the human-review queue.
+    /// An explicit escalation was routed to the review board.
     Escalated(EscalationDelivery),
 }
 
 /// The delivery state of an explicit `EscalateDomain` directive — the
-/// acknowledgment's truth value for the human-review path. Queued,
-/// attempted, and missing-sink are distinct so a confirmed durable
+/// acknowledgment's truth value for the board path. Confirmed,
+/// attempted, and missing-sink are distinct so a confirmed
 /// delivery is never conflated with a best-effort handoff or a missing
 /// sink.
 #[derive(Clone, PartialEq, Eq)]
 enum EscalationDelivery {
-    /// Confirmed in the reviewable queue (the queue-assigned id when the
-    /// write inserted a new row; `None` when an existing pending row was
-    /// superseded in place).
-    Queued(Option<String>),
+    /// Confirmed on the board (new task id, or `None` when the existing
+    /// open card received a repeat comment).
+    Confirmed(Option<String>),
     /// Attempted but not confirmed — a best-effort sink that cannot report,
     /// or a failed write (surfaced via warn).
     Attempted,
@@ -54,7 +53,7 @@ impl DirectiveOutcome {
             Self::Applied => "applied",
             Self::Recorded => "recorded",
             Self::LogOnly => "log_only",
-            Self::Escalated(EscalationDelivery::Queued(_)) => "queued",
+            Self::Escalated(EscalationDelivery::Confirmed(_)) => "confirmed",
             Self::Escalated(EscalationDelivery::Attempted) => "attempted",
             Self::Escalated(EscalationDelivery::MissingSink) => "missing_sink",
         }
@@ -189,13 +188,12 @@ impl super::CyberneticsLoop {
     ///
     /// The message's condition key ("Explicit escalation ({domain},
     /// {severity})") is stable per concern: a re-raised concern updates the
-    /// pending row (supersede) instead of duplicating it; different concerns
-    /// get their own rows. Rapid repeats are handled by the directive
+    /// existing open card via a comment; different concerns get their own cards. Rapid repeats are handled by the directive
     /// dampener.
     ///
     /// NOT routed to the live `CurationInput` channel: that channel only
     /// carries `RuntimeAlert` (measured deficit/threshold); dressing an
-    /// explicit concern as one would fabricate a sensor reading. The queue
+    /// explicit concern as one would fabricate a sensor reading. The board
     /// is the human-review path of record; the acknowledgment record (with
     /// the full payload) is the archive copy.
     async fn apply_escalate_domain(
@@ -231,14 +229,14 @@ impl super::CyberneticsLoop {
                 .try_persist_alert(&output, confidence, &error_context)
                 .await
             {
-                Ok(crate::AlertDeliveryOutcome::Confirmed(id)) => EscalationDelivery::Queued(id),
+                Ok(crate::AlertDeliveryOutcome::Confirmed(id)) => EscalationDelivery::Confirmed(id),
                 Ok(crate::AlertDeliveryOutcome::Attempted) => EscalationDelivery::Attempted,
                 Err(error) => {
                     tracing::warn!(
                         target: "reg.cybernetics",
                         domain = %domain,
                         error = %error,
-                        "EscalateDomain queue write failed — surfaced as attempted, not queued"
+                        "EscalateDomain board write failed — surfaced as attempted, not confirmed"
                     );
                     EscalationDelivery::Attempted
                 }
@@ -250,8 +248,8 @@ impl super::CyberneticsLoop {
             "severity": severity_str,
             "evidence": evidence,
         });
-        if let EscalationDelivery::Queued(Some(ref id)) = delivery {
-            payload["escalation_id"] = serde_json::Value::String(id.clone());
+        if let EscalationDelivery::Confirmed(Some(ref id)) = delivery {
+            payload["task_id"] = serde_json::Value::String(id.clone());
         }
         (DirectiveOutcome::Escalated(delivery), Some(payload))
     }
@@ -810,7 +808,7 @@ mod tests {
         assert_eq!(
             context.get("explicit").and_then(|e| e.as_bool()),
             Some(true),
-            "the queue entry must be marked as an explicit escalation"
+            "the board alert context must mark an explicit escalation"
         );
         assert!(
             context.get("deficit").is_none() && context.get("threshold").is_none(),
@@ -822,11 +820,8 @@ mod tests {
         let acks = directive_acks(&sink);
         assert_eq!(acks.len(), 1);
         let ack = &acks[0];
-        assert_eq!(outcome_of(ack), "queued");
-        assert_eq!(
-            ack.get("escalation_id").and_then(|i| i.as_str()),
-            Some("esc-42")
-        );
+        assert_eq!(outcome_of(ack), "confirmed");
+        assert_eq!(ack.get("task_id").and_then(|i| i.as_str()), Some("esc-42"));
         assert_eq!(ack.get("domain").and_then(|d| d.as_str()), Some("storage"));
         assert_eq!(
             ack.get("severity").and_then(|s| s.as_str()),
@@ -838,10 +833,10 @@ mod tests {
         );
     }
 
-    /// A confirmed in-place supersede (an existing pending row updated,
-    /// no new id) still reports "queued" — the concern IS in the queue.
+    /// A repeat comment on an existing open card has no new id, but still
+    /// reports confirmed delivery to the board.
     #[tokio::test]
-    async fn explicit_escalation_supersede_reports_queued_without_id() {
+    async fn explicit_escalation_repeat_reports_confirmed_without_new_id() {
         let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
         let (mut regulation_loop, tx) =
             loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
@@ -856,10 +851,10 @@ mod tests {
 
         let acks = directive_acks(&sink);
         assert_eq!(acks.len(), 1);
-        assert_eq!(outcome_of(&acks[0]), "queued");
+        assert_eq!(outcome_of(&acks[0]), "confirmed");
         assert!(
-            acks[0].get("escalation_id").is_none(),
-            "a superseded row has no new id — the ack must not invent one"
+            acks[0].get("task_id").is_none(),
+            "a repeat comment has no new task id — the ack must not invent one"
         );
     }
 
@@ -883,8 +878,7 @@ mod tests {
         );
     }
 
-    /// A failed queue write is surfaced as "attempted" — tried, not
-    /// confirmed; never conflated with a confirmed queue write.
+    /// A failed board write is surfaced as attempted, never confirmed.
     #[tokio::test]
     async fn explicit_escalation_failed_write_reports_attempted() {
         let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
@@ -893,7 +887,7 @@ mod tests {
         regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
             result: Err(crate::AlertPersistError::BoardWrite(
-                "queue unavailable".to_string(),
+                "board unavailable".to_string(),
             )),
         })
             as Arc<dyn crate::AlertEscalationSink>));

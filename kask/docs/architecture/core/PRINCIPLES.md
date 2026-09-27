@@ -195,19 +195,21 @@ Skill outcomes and operator feedback both have live writers. `SkillTool::run` re
 | Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:974-1015, 1680`) | Metacognition senses per-skill activation reliability |
 | Operator skill feedback | The Curator-only `record_skill_feedback` rating uses the process-global feedback recorder; its production implementation persists to `RegulationArchive` before acknowledging the write (`crates/zed/src/main.rs:1718-1750`; `kask/crates/kask_bridge/src/memory/curator_stores.rs:49-104`) | Startup hydration rebuilds the bounded ledger view from valid chronological archive records; metacognition trends operator acceptance (`curator_stores.rs:109-156`) |
 
-**§9.3 — Operator-applied advice review (2026-09-17)**
+**§9.3 — Board-backed algedonic review (2026-09-26)**
 
-A confirmed advice application is an intervention record, not proof that the advice worked. `curator_advice_mark_applied` persists the fresh baseline, `applied_at`, and the authoritative `review_due_at` in the originating `EscalationQueue` row. Reconciliation before that persisted due time remains `observation_window`; at or after it, fresh comparable readings distinguish `recovered`, `improved`, and `no_improvement`, while missing or stale readings become `insufficient_evidence`. Every finalized review retains `causal_attribution: "unverified"`.
-
-The queue remains authoritative across early alert resolution and reconstructed server/sink instances. A real non-final→final transition persists a stable Regulation event identity in the same context update before publication. `CyberneticsLoop` idempotently publishes that receipt as `reg.outcome.advice_review_observed` and acknowledges the queue only after durable insertion or confirmation that the same identity already exists. Publication or acknowledgment failure leaves the receipt retryable; repeated ticks and restart retries do not double-count it.
-
-These observations remain separate from evidence-bearing rollout `ImpactReport`s. Loop telemetry reports `rollout_progress_score` and `advice_review_progress_score` independently, along with computed-advisory, confirmed-intervention, rollout-report, finalized-review, and per-outcome counts. Both progress fields are nullable: no rollout report is unknown, and advice reviews containing only `insufficient_evidence` remain unknown rather than becoming zero. Insufficient evidence is counted but excluded from the observational score denominator. Advice reviews never feed the rollout strategy evaluator, and every receipt keeps `causal_attribution: "unverified"`. Finalized reviews remain queryable through `curator_advice_reviews`.
+An alert delivered to the Algedonic review board creates a card, or adds a
+repeat observation to the existing open condition card. Fresh self-recovery is
+recorded as evidence and moves the card to Review, never Done. The operator, or
+the Curator under a grant recorded on the card, verifies through
+`kanban_task_verify`. The seven-day post-advice observation belongs in that
+verification evidence, not in a separate queue, receipt or progress score.
+Rollout `ImpactReport`s remain a separate measured channel.
 
 **§9.4 — Persistent-condition telemetry coalescing (2026-09-17)**
 
-`LoopMetricsTelemetry` is transition-oriented. A timestamp-free semantic fingerprint covers deviation metric, value, set-point, magnitude, direction, and computed advisories. The first condition and every changed fingerprint emit immediately. Semantically identical scheduled cycles are coalesced; the existing 360-tick hourly boundary emits one `steady_state_heartbeat` carrying `suppressed_steady_state_cycles`. Clearing emits immediately with `condition_cleared`. The confirmed-intervention gauge is observed separately: initialization is silent, while count or availability changes emit immediately. Rollout impact reports and newly published advice-review receipts also force emission even when the condition fingerprint is unchanged.
+`LoopMetricsTelemetry` is transition-oriented. A timestamp-free semantic fingerprint covers deviation metric, value, set-point, magnitude, direction, and computed advisories. The first condition and every changed fingerprint emit immediately. Semantically identical scheduled cycles are coalesced; the existing 360-tick hourly boundary emits one `steady_state_heartbeat` carrying `suppressed_steady_state_cycles`. Clearing emits immediately with `condition_cleared`. Rollout impact reports force emission even when the condition fingerprint is unchanged.
 
-This does not change escalation-queue supersession, archive retention, or the in-memory alert-log cap. `RegulationArchive` remains time-bounded by maintenance. Coalescing prevents unchanged loop-quality records from consuming the operational read budget. Idle heartbeats remain hourly and continue reporting the alert-log fill state.
+This does not change board condition matching, archive retention, or the in-memory alert-log cap. `RegulationArchive` remains time-bounded by maintenance. Coalescing prevents unchanged loop-quality records from consuming the operational read budget. Idle heartbeats remain hourly and continue reporting the alert-log fill state.
 
 **§9.5 — Operational algedonic recency (2026-09-17)**
 

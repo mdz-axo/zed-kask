@@ -225,7 +225,7 @@ pub struct CyberneticsLoop {
     loop_quality: RwLock<LoopMetrics>,
     /// Coalesces only semantically identical persistent signal telemetry.
     loop_telemetry_state: Mutex<LoopTelemetryState>,
-    /// Conditions already retained by archive fallback while the queue is absent.
+    /// Conditions already archived while board delivery was unavailable.
     fallback_alert_conditions: Mutex<HashSet<String>>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
     /// Fermi-inspired early-stopping pattern for cybernetic regulation.
@@ -355,9 +355,8 @@ impl CyberneticsLoop {
 
     /// Set or clear the alert escalation sink after construction.
     ///
-    /// Used by the composition root to lazily wire the escalation queue after
-    /// the curator DB passphrase resolves (deferred task), mirroring
-    /// `set_event_sink`. Pass `None` to disable escalation-queue persistence.
+    /// The composition root installs the board connector after constructing
+    /// its governed tool invoker. Pass `None` to disable board delivery.
     pub fn set_alert_escalation_sink(
         &mut self,
         sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,

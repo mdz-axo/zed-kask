@@ -359,7 +359,7 @@ impl OutcomeTracker {
 
 /// One domain's outcome-tracker state, serialized into the tool-reliability
 /// diagnosis surfaces: the `reg.outcome.tool_domains` span and the
-/// escalation queue's `error_context`. This is the surface that names the
+/// board card's alert context. This names the
 /// failing domain — the aggregate success rate the sensor reports cannot.
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct DomainOutcomeSnapshot {

@@ -48,7 +48,7 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Persist an algedonic alert to the reviewable escalation queue.
+    /// Deliver an algedonic alert to the reviewable board.
     ///
     /// This is the primary board delivery path for escalated alerts; the
     /// sink creates a card or comments on the existing open condition card.
@@ -71,7 +71,7 @@ impl super::CyberneticsLoop {
         // Skip non-escalated alerts — only escalated alerts (Critical, or
         // Warning with `escalated: true`) belong in the reviewable backlog.
         // Info alerts and non-escalated Warnings are diagnostic, not
-        // actionable, and would pollute the queue.
+        // actionable, and would pollute the board.
         if !alert.escalated {
             return true;
         }
@@ -86,8 +86,8 @@ impl super::CyberneticsLoop {
             "timestamp": alert.timestamp.to_rfc3339(),
         });
         // Tool-reliability alerts carry the per-domain outcome breakdown so
-        // triage can name the failing domain from the escalation row itself —
-        // the queue is the one surface the Curator reviews, and the aggregate
+        // triage can name the failing domain from the card context itself —
+        // the board is the one surface the Curator reviews, and the aggregate
         // success rate in the message cannot name a domain. Covers both
         // alert shapes: the degradation alert (identified by its recovery
         // signal's metric) and the plateau alert (domain
@@ -113,7 +113,7 @@ impl super::CyberneticsLoop {
                     target: "reg.alert",
                     error = %error,
                     domain = %alert.domain,
-                    "Failed to persist alert to the reviewable escalation queue"
+                    "Failed to deliver alert to the Algedonic review board"
                 );
                 false
             }
@@ -533,10 +533,8 @@ impl super::CyberneticsLoop {
                 if !sent {
                     tracing::warn!(target: "reg.alert", domain = %alert.domain, "call-cap exhaustion alert send failed or channel not connected");
                 }
-                // Persist to the reviewable escalation queue unconditionally —
-                // the queue is the primary durable path for alert review, not
-                // a fallback (the RegulationArchive below is the fallback for
-                // restart durability when the live channel is down).
+                // Deliver to the board; archive only if the live channel
+                // cannot carry the event.
                 self.deliver_alert_to_board(&alert, None).await;
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
@@ -3151,7 +3149,7 @@ mod tests {
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
                 .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
 
-        // No escalation queue is wired: this exercises the archive fallback,
+        // No board sink is wired: this exercises the archive fallback,
         // not the production queue's pending-condition deduplication.
         for _ in 0..520 {
             regulation_loop.tick().await;

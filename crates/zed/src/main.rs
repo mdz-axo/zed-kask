@@ -2607,8 +2607,7 @@ fn main() {
         // What stays in the deferred task:
         // - Memory port, context injector, curator injector (use fallback
         //   identity if Zed user hasn't resolved)
-        // - Regulation archive, escalation queue (need passphrase from
-        //   provisioning)
+        // - Regulation archive (needs passphrase), board sink (governed tool invoker)
         // - IPC server (needs embedding port from provisioning)
         // - MCP server launch, email sink, collab server
         {

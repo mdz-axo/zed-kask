@@ -30,7 +30,7 @@ The crate root declares and exports the current modules at
 | `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:12-18` |
 | `rotation` | `rotate_passphrase`, `verify_database_key`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
 | `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
-| `escalation` | `EscalationEntry`, `EscalationQueue`, `EscalationStatus`, `EscalationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:30,35` |
+
 | `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:31,36-37` |
 | `regulation_store` | `RegulationArchive` | `kask/crates/hkask-storage/src/hkask_storage.rs:32,38` |
 | `gallery` | gallery index, scan/reconciliation, tags, faces, workflows, generations, OMC graphs, and albums | `kask/crates/hkask-storage/src/hkask_storage.rs:11,40-43`; `kask/crates/hkask-storage/src/gallery.rs:73-135,203-293` |
@@ -75,7 +75,7 @@ classDiagram
     class EmbeddingStore
     class GalleryStore
     class RegulationArchive
-    class EscalationQueue
+
     SqliteDriver ..|> DatabaseDriver
     Database --> SqliteDriver : supplies pool
     Database --> DatabaseInventory : records managed path
@@ -84,14 +84,14 @@ classDiagram
     EmbeddingStore --> DatabaseDriver
     GalleryStore --> DatabaseDriver
     RegulationArchive --> DatabaseDriver
-    EscalationQueue --> DatabaseDriver
+
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-09-18
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:70-104; kask/crates/hkask-storage/src/escalation.rs:58-103
-status: VERIFIED
+verified_date: 2026-09-26
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:70-104
+status: PARTIAL — retired queue removed; other line citations not rechecked
 -->
 
 ## Maintenance inventory
