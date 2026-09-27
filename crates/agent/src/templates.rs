@@ -1095,10 +1095,27 @@ mod tests {
             <CuratorClearAlgedonicLogTool as AgentTool>::NAME,
         ];
 
-        // Extract every backtick token from the overlay that looks like a
+        // Extract every backtick token from the overlay — the base context and
+        // each interaction-mode block it is composed with — that looks like a
         // curator tool reference (`curator_...`).
+        let overlay = [
+            settings::CuratorInteractionMode::Control,
+            settings::CuratorInteractionMode::Collaboration,
+            settings::CuratorInteractionMode::LearningCollaboration,
+        ]
+        .into_iter()
+        .map(crate::curator_agent_server::interaction_mode_context)
+        .fold(CURATOR_STATIC_CONTEXT.to_string(), |acc, mode| acc + mode);
+        assert!(
+            overlay.contains("`memory_insert`")
+                && crate::curator_agent_server::interaction_mode_context(
+                    settings::CuratorInteractionMode::LearningCollaboration
+                )
+                .contains("`memory_insert`"),
+            "the Level 3 block routes lessons to `memory_insert`"
+        );
         let mut advertised: Vec<&str> = Vec::new();
-        for segment in CURATOR_STATIC_CONTEXT.split('`') {
+        for segment in overlay.split('`') {
             let token = segment.trim();
             if token.starts_with("curator_")
                 && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')

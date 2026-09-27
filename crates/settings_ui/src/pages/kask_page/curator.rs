@@ -1,8 +1,25 @@
 //! Curator sub-pages:
-//! - Curator: `always_on` toggle + `algedonic_threshold`.
+//! - Curator: `interaction_mode` (dyad level) + `always_on` toggle +
+//!   `algedonic_threshold`.
 //! - Curator Email: MXroute SMTP config + keychain-backed password.
 
 use super::*;
+use settings::CuratorInteractionMode;
+use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition};
+
+const INTERACTION_MODES: [CuratorInteractionMode; 3] = [
+    CuratorInteractionMode::Control,
+    CuratorInteractionMode::Collaboration,
+    CuratorInteractionMode::LearningCollaboration,
+];
+
+fn interaction_mode_label(mode: CuratorInteractionMode) -> &'static str {
+    match mode {
+        CuratorInteractionMode::Control => "Level 1 — Control",
+        CuratorInteractionMode::Collaboration => "Level 2 — Collaboration",
+        CuratorInteractionMode::LearningCollaboration => "Level 3 — Learning collaboration",
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Curator sub-page
@@ -11,7 +28,7 @@ use super::*;
 pub(crate) fn render_curator_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
@@ -22,6 +39,39 @@ pub(crate) fn render_curator_page(
         .unwrap_or_default();
     let always_on = curator.always_on;
     let algedonic_threshold = curator.algedonic_threshold.to_string();
+    let interaction_mode = curator.interaction_mode;
+
+    let interaction_mode_menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+        for mode in INTERACTION_MODES {
+            menu = menu.toggleable_entry(
+                interaction_mode_label(mode),
+                mode == interaction_mode,
+                IconPosition::Start,
+                None,
+                move |_, cx| {
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .curator
+                                .get_or_insert_default()
+                                .interaction_mode = Some(mode);
+                        },
+                    );
+                },
+            );
+        }
+        menu
+    });
+    let interaction_mode_dropdown = DropdownMenu::new(
+        "kask-curator-interaction-mode",
+        interaction_mode_label(interaction_mode),
+        interaction_mode_menu,
+    )
+    .style(DropdownStyle::Outlined)
+    .full_width(true);
 
     let always_on_toggle = SwitchField::new(
         "kask-curator-always-on",
@@ -95,6 +145,23 @@ pub(crate) fn render_curator_page(
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Interaction Mode"))
+                .child(
+                    Label::new(
+                        "How you work with the Curator. Level 1: you control and the Curator \
+                         proposes. Level 2: you collaborate toward shared understanding and \
+                         decisions. Level 3: you collaborate and learn from and challenge each \
+                         other. Applies to new Curator threads.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(interaction_mode_dropdown),
         )
         .child(Divider::horizontal())
         .child(always_on_toggle)

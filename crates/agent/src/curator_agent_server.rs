@@ -82,6 +82,65 @@ Your methods are skills: `pragmatic-cybernetics`, `pragmatic-semantics`,\n\
 `metacognition` and `superforecasting`. Load the one the situation needs.\n\
 ";
 
+/// The user–Curator dyad level as session guidance, appended to the Curator
+/// overlay for each new Curator thread (`NativeAgent::new_session`). The level
+/// is the user's setting (`kask.curator.interaction_mode`); the semantics are
+/// documented in `kask/docs/architecture/functional-interaction-spec.md` §9.
+/// Keep the two in step.
+pub fn interaction_mode_context(mode: settings::CuratorInteractionMode) -> &'static str {
+    use settings::CuratorInteractionMode::*;
+    match mode {
+        Control => {
+            "\
+### Interaction mode: Level 1 — control\n\
+\n\
+The user is the controller and regulator of this work. You propose; the user\n\
+decides. Every proposal, `curator_directive`, skill change and algedonic\n\
+review decision waits for the user's explicit decision — do not act under\n\
+standing grants. Present options with their evidence and consequences, and\n\
+give a recommendation when asked. Keep recording learning signals (issue\n\
+reports, evidenced lessons): they are observations, not decisions.\n\
+\n\
+The user sets this level in Settings > Kask > Curator. Never change it.\n\
+"
+        }
+        Collaboration => {
+            "\
+### Interaction mode: Level 2 — collaboration\n\
+\n\
+You and the user work toward shared understanding and shared solutions.\n\
+Restate the user's goal as an interpretation for them to correct; give your\n\
+recommendation with its reasoning; decide functional questions together and\n\
+technical ones yourself, with their functional consequence. In\n\
+`algedonic-review`, reach decisions jointly and record the shared reasoning\n\
+on the card. Act under a user grant only when it is recorded on the card.\n\
+\n\
+The user sets this level in Settings > Kask > Curator. Never change it.\n\
+"
+        }
+        LearningCollaboration => {
+            "\
+### Interaction mode: Level 3 — learning collaboration\n\
+\n\
+Everything in Level 2 (shared understanding, joint decisions recorded on the\n\
+card, grants only when recorded), plus learning in both directions:\n\
+- Challenge the user when evidence disagrees with a premise or decision:\n\
+  name the evidence and what would change your view. Do not smooth a\n\
+  disagreement over; record it and its resolution on the card or in memory.\n\
+- Invite the user's challenges. Treat a correction as evidence about your\n\
+  own method: record the lesson with `memory_insert` and propose method\n\
+  changes through `skill-maintenance` or `therapy`.\n\
+- Share what the user can learn from you: your calibration record (goal\n\
+  Brier scores), your uncertainty, and the reasoning behind a recommendation.\n\
+- End each bit of work by naming what each side learned.\n\
+\n\
+The user sets this level in Settings > Kask > Curator. Never change it; you\n\
+may argue for a different level, with evidence.\n\
+"
+        }
+    }
+}
+
 /// Format a compact system-state block from the regulation loop's health
 /// snapshot. The block is explicitly labeled as a snapshot so the model
 /// knows it's stale at decision time and must pull `curator_status` for live
@@ -254,6 +313,26 @@ impl AgentServer for CuratorAgentServer {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+#[cfg(test)]
+mod interaction_mode_tests {
+    use super::*;
+    use settings::CuratorInteractionMode::*;
+
+    #[test]
+    fn each_level_gives_the_curator_distinct_guidance() {
+        let control = interaction_mode_context(Control);
+        let collaboration = interaction_mode_context(Collaboration);
+        let learning = interaction_mode_context(LearningCollaboration);
+        assert!(control.contains("Level 1") && control.contains("do not act under"));
+        assert!(collaboration.contains("Level 2") && collaboration.contains("jointly"));
+        assert!(learning.contains("Level 3") && learning.contains("Challenge the user"));
+        for text in [control, collaboration, learning] {
+            assert!(text.contains("Never change it"));
+            assert!(!text.contains("Level 4"));
+        }
     }
 }
 

@@ -9,6 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
+pub use settings_content::CuratorInteractionMode;
 use settings_content::{
     KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
     KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskGeneralSettingsContent,
@@ -181,6 +182,11 @@ pub struct KaskCuratorSettings {
     /// Algedonic signal threshold (0.0–1.0).
     pub algedonic_threshold: f64,
 
+    /// How the user works with the Curator: Level 1 control, Level 2
+    /// collaboration, Level 3 learning collaboration. Set only by the user;
+    /// read by `NativeAgent::new_session` for each new Curator thread.
+    pub interaction_mode: CuratorInteractionMode,
+
     /// Curator email configuration (outbound algedonic alerts via MXroute).
     /// When `None` or unconfigured, the alert email sink falls back to the
     /// log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
@@ -192,6 +198,7 @@ impl Default for KaskCuratorSettings {
         Self {
             always_on: true,
             algedonic_threshold: 0.8,
+            interaction_mode: CuratorInteractionMode::default(),
             email: KaskCuratorEmailSettings::default(),
         }
     }
@@ -881,6 +888,7 @@ impl From<KaskCuratorSettingsContent> for KaskCuratorSettings {
         Self {
             always_on: c.always_on.unwrap_or(default.always_on),
             algedonic_threshold: c.algedonic_threshold.unwrap_or(default.algedonic_threshold),
+            interaction_mode: c.interaction_mode.unwrap_or(default.interaction_mode),
             email: c.email.map(Into::into).unwrap_or(default.email),
         }
     }
@@ -1252,6 +1260,10 @@ mod tests {
         assert!(settings.mcp.load_default);
         assert!(settings.curator.always_on);
         assert_eq!(settings.curator.algedonic_threshold, 0.8);
+        assert_eq!(
+            settings.curator.interaction_mode,
+            CuratorInteractionMode::Collaboration
+        );
         assert!(settings.memory.auto_inject);
         assert_eq!(settings.memory.consolidation_cadence_secs, 300);
         assert!(!settings.memory.federated_auto_inject);
@@ -1290,6 +1302,25 @@ mod tests {
     // is `None`, `From` hits `.unwrap_or(default.field)`. This test verifies the
     // field-level defaults also come from `Default`, not inlined literals.
     #[test]
+    fn curator_interaction_mode_is_read_from_the_user_setting() {
+        let content: KaskCuratorSettingsContent =
+            serde_json::from_str(r#"{"interaction_mode": "learning_collaboration"}"#)
+                .expect("interaction_mode must deserialize from its snake_case name");
+        let curator = KaskCuratorSettings::from(content);
+        assert_eq!(
+            curator.interaction_mode,
+            CuratorInteractionMode::LearningCollaboration
+        );
+        let control: KaskCuratorSettingsContent =
+            serde_json::from_str(r#"{"interaction_mode": "control"}"#)
+                .expect("control must deserialize");
+        assert_eq!(
+            KaskCuratorSettings::from(control).interaction_mode,
+            CuratorInteractionMode::Control
+        );
+    }
+
+    #[test]
     fn kask_settings_from_present_subsection_with_null_fields_uses_defaults() {
         let content = KaskSettingsContent {
             mcp: Some(KaskMcpSettingsContent {
@@ -1300,6 +1331,7 @@ mod tests {
             curator: Some(KaskCuratorSettingsContent {
                 always_on: None,
                 algedonic_threshold: None,
+                interaction_mode: None,
                 email: None,
             }),
             memory: Some(KaskMemorySettingsContent {

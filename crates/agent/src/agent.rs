@@ -924,8 +924,22 @@ impl NativeAgent {
         // The curator context is appended via `static_context`.
         // zed-kask: D2 — Curator agent wiring. See DIVERGENCE.md D2.
         if let Some(ref curator_context) = self.curator_static_context {
+            // The user's dyad level is read per new Curator thread, so a
+            // changed setting applies to the next thread without reconnecting.
+            let interaction_mode = cx
+                .global::<settings::SettingsStore>()
+                .merged_settings()
+                .kask
+                .as_ref()
+                .and_then(|kask| kask.curator.as_ref())
+                .and_then(|curator| curator.interaction_mode)
+                .unwrap_or_default();
+            let curator_context = SharedString::from(format!(
+                "{curator_context}\n\n{}",
+                curator_agent_server::interaction_mode_context(interaction_mode)
+            ));
             thread.update(cx, |thread, cx| {
-                thread.set_static_context(curator_context.clone(), cx);
+                thread.set_static_context(curator_context, cx);
                 // Tag the thread with the Curator agent ID so the memory
                 // ingestion path (D6) routes Curator turns to the curator's
                 // sovereign DB, and the context injector dispatch (D8)
@@ -9993,6 +10007,84 @@ mod internal_tests {
                 });
             });
         }
+    }
+
+    /// The user's dyad level (`kask.curator.interaction_mode`) reaches the
+    /// Curator: the default is Level 2, and a changed setting applies to the
+    /// next Curator thread on the same connection.
+    #[gpui::test]
+    async fn test_curator_session_carries_the_users_interaction_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let agent = connection
+            .clone()
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+
+        let static_context_of_new_session = async |cx: &mut TestAppContext| {
+            let acp_thread = cx
+                .update(|cx| {
+                    connection.clone().new_session(
+                        project.clone(),
+                        PathList::new(&[Path::new("/a")]),
+                        cx,
+                    )
+                })
+                .await
+                .expect("new_session");
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+            cx.update(|cx| {
+                thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .agent_static_context()
+                        .expect("curator static context set")
+                        .to_string()
+                })
+            })
+        };
+
+        let default_context = static_context_of_new_session(cx).await;
+        assert!(default_context.contains("Curator Role"));
+        assert!(
+            default_context.contains("Level 2 — collaboration"),
+            "default mode must be Level 2, got: {default_context}"
+        );
+
+        cx.update(|cx| {
+            use gpui::UpdateGlobal as _;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .curator
+                        .get_or_insert_default()
+                        .interaction_mode = Some(settings::CuratorInteractionMode::Control);
+                });
+            });
+        });
+        let control_context = static_context_of_new_session(cx).await;
+        assert!(control_context.contains("Level 1 — control"));
+        assert!(!control_context.contains("Level 2 — collaboration"));
     }
 
     /// Native sessions share the one read-only Curator status tool, while

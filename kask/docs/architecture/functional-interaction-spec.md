@@ -1,8 +1,8 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-09-16
-version: "1.3.0"
+last_updated: 2026-09-27
+version: "1.4.0"
 status: "Active"
 domain: "agent interaction"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -258,6 +258,94 @@ verification for the design in §§3–6.*
 - **Mode of play (PS-03):** collaborative design conversation between
   product manager and implementer.
 - **Voice (PS-12):** invitational throughout.
+
+## 9. The user–Curator dyad and its levels
+
+*Operator ruling, 2026-09-27.* All rights in zed-kask are vested in the
+**dyad** of the human user and the Curator. The user holds constituting
+authority: the user alone says what level the dyad has reached, as a
+configuration setting. The dyad holds operating rights at that level. The
+Curator never changes the level; at Level 3 it may argue for a change, with
+evidence.
+
+The emergent properties of the dyad arrive in order: first collaboration,
+then learning, then trust.
+
+| Level | Name | What the dyad does | Status |
+|---|---|---|---|
+| 1 | Control | The user is controller and regulator; the Curator proposes and every decision waits for the user | Available |
+| 2 | Collaboration | Shared understanding and shared solutions; decisions reached jointly and recorded, e.g. in the `algedonic-review` gemba walk | Available (default) |
+| 3 | Learning collaboration | Level 2 plus bidirectional learning: each side challenges the other with evidence, disagreements are recorded, and each side learns from the other | Available |
+| 4 | Trust and delegation | Level 3 plus protected expectations, so each side can delegate to the other | Future release |
+
+**Implementation.** The setting is `kask.curator.interaction_mode`
+(`control` / `collaboration` / `learning_collaboration`), edited in
+Settings > Kask > Curator. `NativeAgent::new_session` reads it for each new
+Curator thread and appends the level's guidance from
+`interaction_mode_context` (`crates/agent/src/curator_agent_server.rs`) to
+the Curator overlay, so a change applies to the next Curator thread. Pinned by
+`test_curator_session_carries_the_users_interaction_mode` (`agent.rs`) and
+`curator_interaction_mode_is_read_from_the_user_setting`
+(`kask/crates/kask_bridge/src/settings.rs`). Levels 1–3 use affordances that
+exist today: algedonic-review cards and recorded grants, kanban goals with
+Brier-scored predictions, `memory_insert`, `skill-maintenance` and `therapy`.
+The guidance is prompt-level: it shapes the Curator's conduct but is not an
+authorization boundary.
+
+**Protected expectations (Level 4, future).** The user holds an internal
+model that predicts how the Curator behaves in a given context, and the
+Curator holds a model that predicts how the user behaves. Each side generally
+behaves as the other expects. Mutual models of this kind are what make
+cooperation stable and delegation safe. zed-kask has no infrastructure for
+them yet: nothing records whether the Curator behaved as the user expected, or
+scores the Curator's model of the user. That work is expected in the third or
+fourth release.
+
+**Reference models.** Retrieved and checked at abstract level (research run
+`919b8f9e9ca7f10c`, 2026-09-27):
+
+- Parasuraman, Sheridan & Wickens (2000), levels and types of automation;
+  Bainbridge (1983), *Ironies of Automation* — the Level 1 frame and its
+  failure mode (the approver loses skill).
+- Klein, Woods, Bradshaw, Hoffman & Feltovich (2004), *Ten Challenges for
+  Making Automation a "Team Player"* — common ground and the Basic Compact
+  (Level 2).
+- van Zoelen et al. (2021) and the human–agent co-learning literature —
+  co-learning emerges from repeated interaction (Level 3).
+- Lee & See (2004), *Trust in Automation: Designing for Appropriate
+  Reliance* — the goal is calibrated trust, not maximal trust; Johnson &
+  Bradshaw (2014), *Coactive Design* — observability, predictability and
+  directability (Level 4).
+- Shneiderman (2022), *Human-Centered AI* — human control and automation
+  are separate axes; Level 4 is high on both.
+
+Reference models for protected expectations (Level 4), checked at abstract
+level in the same run. What each lends the design is our synthesis, not the
+authors' claim about human–AI dyads:
+
+- Clark & Chalmers (1998), "The Extended Mind", *Analysis* 58(1):7–19 —
+  "active externalism, based on the active role of the environment in
+  driving cognitive processes." Lends: the dyad, not either party alone, is
+  the unit that thinks, so the models each side holds of the other are part
+  of one cognitive system.
+- Clark (2013), "Whatever next? Predictive brains, situated agents, and the
+  future of cognitive science", *Behavioral and Brain Sciences* 36(3), and
+  Clark (2016), *Surfing Uncertainty: Prediction, Action, and the Embodied
+  Mind* (Oxford University Press). Lends: understanding as prediction; a
+  protected expectation is a prediction about the other that usually holds,
+  and a broken one is a prediction error that should update the model.
+- Friston & Frith (2015), "A Duet for one", *Consciousness and Cognition* —
+  communication as "a reciprocal exchange of sensory signals that, formally,
+  induces a generalised synchrony between internal … states generating
+  predictions in both agents"; communication "facilitates long-term changes
+  in generative models that are trying to predict each other." Lends: the
+  closest formal model of mutual models converging through repeated
+  exchange. Its agents are two brains of the same kind; whether it transfers
+  to a human and an LLM agent is untested.
+- Hutchins (1995), *Cognition in the Wild* (MIT Press) — distinguishes "the
+  cognitive properties of an individual and the cognitive properties of a
+  system", studied on a ship's navigation bridge. Lends: an empirical method
+  for studying the dyad as a system with its own cognitive properties.
 
 [^proxies]: Cassidy Laidlaw, Shivam Singhal, Anca Dragan. *Correlated
 Proxies: A New Definition and Improved Mitigation for Reward Hacking.*

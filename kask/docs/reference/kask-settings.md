@@ -184,6 +184,7 @@ Providers, find the provider, and add models via its configuration sub-page.
 |-------|------|---------|-------|
 | `always_on` | `bool` | `true` | Curator agent runs regulation loops in background |
 | `algedonic_threshold` | `f64` | `0.8` | Algedonic signal threshold (0.0–1.0) |
+| `interaction_mode` | `CuratorInteractionMode` | `collaboration` | User–Curator dyad level, set only by the user: `control` (Level 1), `collaboration` (Level 2), `learning_collaboration` (Level 3). Read per new Curator thread; see `architecture/functional-interaction-spec.md` §9 |
 | `email` | `KaskCuratorEmailSettings` | `Default` | Outbound algedonic alerts via MXroute |
 
 ### Curator Email (`KaskCuratorEmailSettings`)

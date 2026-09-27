@@ -1758,10 +1758,32 @@ pub struct KaskMcpSettingsContent {
 pub struct KaskCuratorSettingsContent {
     pub always_on: Option<bool>,
     pub algedonic_threshold: Option<f64>,
+    /// How the user works with the Curator (the user–Curator dyad level).
+    /// Set only by the user. Default: `collaboration` (Level 2).
+    pub interaction_mode: Option<CuratorInteractionMode>,
     /// Curator email configuration (outbound algedonic alerts via MXroute).
     /// When `None`, the alert email sink falls back to the log-only sink.
     #[serde(default)]
     pub email: Option<KaskCuratorEmailSettingsContent>,
+}
+
+/// The level the user–Curator dyad works at, chosen by the user
+/// (`kask/docs/architecture/functional-interaction-spec.md` §9). Level 4 (trust, protected
+/// expectations, mutual delegation) is a future release and has no variant.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CuratorInteractionMode {
+    /// Level 1 — the user is controller and regulator; the Curator proposes.
+    Control,
+    /// Level 2 — the user and the Curator collaborate toward shared
+    /// understanding and shared solutions.
+    #[default]
+    Collaboration,
+    /// Level 3 — collaboration plus bidirectional learning: the user and the
+    /// Curator challenge and learn from each other.
+    LearningCollaboration,
 }
 
 /// Curator email configuration (non-secret fields).
