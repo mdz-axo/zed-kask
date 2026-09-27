@@ -2092,8 +2092,21 @@ mod tool_surface_tests {
     use super::CuratorServer;
 
     #[test]
-    fn tool_surface_is_exactly_21_registered_tools() {
-        let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(n, 21, "curator registered tool surface changed; got {n}");
+    fn tool_surface_is_exactly_15_registered_tools() {
+        let tools = CuratorServer::tool_router().list_all();
+        assert_eq!(tools.len(), 15, "curator registered tool surface changed");
+        for removed in [
+            "curator_escalations",
+            "curator_escalation_resolve",
+            "curator_escalation_dismiss",
+            "curator_escalation_dismiss_by_pattern",
+            "curator_advice_mark_applied",
+            "curator_advice_reviews",
+        ] {
+            assert!(
+                !tools.iter().any(|tool| tool.name == removed),
+                "removed tool {removed} must not be registered"
+            );
+        }
     }
 }

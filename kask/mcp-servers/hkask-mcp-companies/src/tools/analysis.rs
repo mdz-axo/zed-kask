@@ -1,7 +1,7 @@
 //! MAIA analysis and research tools.
 use crate::{
     CompaniesServer, analysis, fibo, providers, research, screener,
-    types::{self, SymbolLimitRequest, SymbolRequest},
+    types::{self, RetainedSymbolLimitRequest, RetainedSymbolRequest},
     validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -14,80 +14,86 @@ impl CompaniesServer {
     )]
     pub async fn moat_check(
         &self,
-        Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
+        Parameters(req): Parameters<RetainedSymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "moat_check", async {
-            validate_symbol(&symbol)?;
+        let symbol = req.symbol;
+        super::retained_output::retain(
+            req.run_folder.as_deref(),
+            req.output_key.as_deref(),
+            "moat_check",
+            execute_tool(self, "moat_check", async {
+                validate_symbol(&symbol)?;
 
-            // Fetch 10 years of key metrics for gross margin stability analysis
-            let limit = "10";
-            let metrics_result = self
-                .fetch("key_metrics", &symbol, &[("limit", limit)])
-                .await;
+                // Fetch 10 years of key metrics for gross margin stability analysis
+                let limit = "10";
+                let metrics_result = self
+                    .fetch("key_metrics", &symbol, &[("limit", limit)])
+                    .await;
 
-            let metrics = match metrics_result {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(e);
+                let metrics = match metrics_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+
+                // Fetch income statement for gross margin computation.
+                // The stable key-metrics endpoint does not include grossProfitMargin,
+                // so we compute it from grossProfit / revenue in the income statement.
+                let income_result = self
+                    .fetch("income_statement", &symbol, &[("limit", limit)])
+                    .await;
+
+                let income = match income_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+
+                let gross_margins = analysis::extract_gross_margins(&income);
+                if gross_margins.is_empty() {
+                    let output = serde_json::json!({
+                        "symbol": symbol,
+                        "moat": "insufficient_data",
+                        "reason": "No gross margin data available for this symbol",
+                    });
+                    return Ok(output);
                 }
-            };
 
-            // Fetch income statement for gross margin computation.
-            // The stable key-metrics endpoint does not include grossProfitMargin,
-            // so we compute it from grossProfit / revenue in the income statement.
-            let income_result = self
-                .fetch("income_statement", &symbol, &[("limit", limit)])
-                .await;
+                let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
+                let stability = analysis::gross_margin_stability(&margin_values);
 
-            let income = match income_result {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(e);
-                }
-            };
+                let wc_data = analysis::extract_wc_days(&metrics);
+                let (wc_spread, dpo, dso) = match wc_data {
+                    Some((dpo_val, dso_val)) => (
+                        analysis::working_capital_spread(dpo_val, dso_val),
+                        Some(dpo_val),
+                        Some(dso_val),
+                    ),
+                    None => (0.0, None, None),
+                };
 
-            let gross_margins = analysis::extract_gross_margins(&income);
-            if gross_margins.is_empty() {
+                let wc_label = analysis::wc_signal_label(wc_spread);
+                let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
+
                 let output = serde_json::json!({
                     "symbol": symbol,
-                    "moat": "insufficient_data",
-                    "reason": "No gross margin data available for this symbol",
+                    "moat": moat,
+                    "margin_stability": stability,
+                    "gross_margins": gross_margins,
+                    "working_capital": {
+                        "spread_days": wc_spread,
+                        "dpo": dpo,
+                        "dso": dso,
+                        "signal": wc_label,
+                    },
+                    "data_periods": gross_margins.len(),
                 });
-                return Ok(output);
-            }
-
-            let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
-            let stability = analysis::gross_margin_stability(&margin_values);
-
-            let wc_data = analysis::extract_wc_days(&metrics);
-            let (wc_spread, dpo, dso) = match wc_data {
-                Some((dpo_val, dso_val)) => (
-                    analysis::working_capital_spread(dpo_val, dso_val),
-                    Some(dpo_val),
-                    Some(dso_val),
-                ),
-                None => (0.0, None, None),
-            };
-
-            let wc_label = analysis::wc_signal_label(wc_spread);
-            let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
-
-            let output = serde_json::json!({
-                "symbol": symbol,
-                "moat": moat,
-                "margin_stability": stability,
-                "gross_margins": gross_margins,
-                "working_capital": {
-                    "spread_days": wc_spread,
-                    "dpo": dpo,
-                    "dso": dso,
-                    "signal": wc_label,
-                },
-                "data_periods": gross_margins.len(),
-            });
-            Ok(fibo::enrich_with_ontology(output, "moat_check"))
-        })
-        .await
+                Ok(fibo::enrich_with_ontology(output, "moat_check"))
+            })
+            .await,
+        )
     }
 
     #[tool(
@@ -95,9 +101,10 @@ impl CompaniesServer {
     )]
     pub async fn management_scorecard(
         &self,
-        Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
+        Parameters(req): Parameters<RetainedSymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "management_scorecard", async {
+        let symbol = req.symbol;
+        super::retained_output::retain(req.run_folder.as_deref(), req.output_key.as_deref(), "management_scorecard", execute_tool(self, "management_scorecard", async {
             validate_symbol(&symbol)?;
 
             let limit = "10";
@@ -153,7 +160,7 @@ impl CompaniesServer {
                 "framework": "MAIA: Good = decreasing capital with improving returns, OR increasing capital with improving returns. Bad = increasing capital with decreasing returns.",
             });
             Ok(fibo::enrich_with_ontology(output, "management_scorecard"))
-        }).await
+        }).await)
     }
 
     #[tool(
@@ -161,9 +168,10 @@ impl CompaniesServer {
     )]
     pub async fn working_capital_cycle(
         &self,
-        Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
+        Parameters(req): Parameters<RetainedSymbolLimitRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "working_capital_cycle", async {
+        let (symbol, limit) = (req.symbol, req.limit);
+        super::retained_output::retain(req.run_folder.as_deref(), req.output_key.as_deref(), "working_capital_cycle", execute_tool(self, "working_capital_cycle", async {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
 
@@ -241,7 +249,7 @@ impl CompaniesServer {
                 "framework": "MAIA CFO scorecard: stability of working capital management through economic conditions. The level is structural; consistency is management skill.",
             });
             Ok(fibo::enrich_with_ontology(output, "working_capital_cycle"))
-        }).await
+        }).await)
     }
 
     #[tool(

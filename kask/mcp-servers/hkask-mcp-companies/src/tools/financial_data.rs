@@ -2,7 +2,8 @@
 use crate::{
     CompaniesServer, fibo, providers,
     types::{
-        HistoricalRequest, ResolveSymbolRequest, SearchRequest, SymbolLimitRequest, SymbolRequest,
+        HistoricalRequest, ResolveSymbolRequest, RetainedSymbolRequest, SearchRequest,
+        SymbolLimitRequest, SymbolRequest,
     },
     validate_symbol,
 };
@@ -27,14 +28,20 @@ impl CompaniesServer {
     #[tool(description = "Get stock quote")]
     pub async fn stock_quote(
         &self,
-        Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
+        Parameters(req): Parameters<RetainedSymbolRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "stock_quote", async {
-            validate_symbol(&symbol)?;
-            let result = self.fetch("stock_quote", &symbol, &[]).await?;
-            Ok(fibo::enrich_with_ontology(result, "stock_quote"))
-        })
-        .await
+        let symbol = req.symbol;
+        super::retained_output::retain(
+            req.run_folder.as_deref(),
+            req.output_key.as_deref(),
+            "stock_quote",
+            execute_tool(self, "stock_quote", async {
+                validate_symbol(&symbol)?;
+                let result = self.fetch("stock_quote", &symbol, &[]).await?;
+                Ok(fibo::enrich_with_ontology(result, "stock_quote"))
+            })
+            .await,
+        )
     }
 
     #[tool(description = "Get income statement")]

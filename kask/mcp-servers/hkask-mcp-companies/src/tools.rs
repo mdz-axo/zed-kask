@@ -5,6 +5,7 @@ pub(crate) mod economic_profit;
 pub(crate) mod expectations;
 pub(crate) mod financial_data;
 pub(crate) mod notes;
+pub(crate) mod retained_output;
 
 pub(crate) mod artifacts;
 pub(crate) mod claim_scan;
