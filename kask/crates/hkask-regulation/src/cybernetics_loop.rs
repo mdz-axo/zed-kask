@@ -778,7 +778,7 @@ impl CyberneticsLoop {
         let (advice_reconciliation, advice_observation_available) = if let Some(sink) =
             &self.alert_escalation_sink
         {
-            match sink.reconcile_conditions(&signals) {
+            match sink.reconcile_conditions(&signals).await {
                 Ok(reconciliation) => (reconciliation, true),
                 Err(error) => {
                     tracing::warn!(target: "reg.alert", %error, "Advice-review reconciliation unavailable; receipts retained");
@@ -816,7 +816,7 @@ impl CyberneticsLoop {
             for receipt in &advice_reconciliation.pending_receipts {
                 match self.persist_advice_review_receipt(receipt).await {
                     Ok(Some(inserted)) => {
-                        match sink.acknowledge_advice_review(receipt) {
+                        match sink.acknowledge_advice_review(receipt).await {
                             Ok(true) => {}
                             Ok(false) => tracing::debug!(
                                 target: "reg.alert",

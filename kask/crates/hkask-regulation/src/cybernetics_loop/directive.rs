@@ -228,7 +228,7 @@ impl super::CyberneticsLoop {
                 );
                 EscalationDelivery::MissingSink
             }
-            Some(sink) => match sink.try_persist_alert(&output, confidence, &error_context) {
+            Some(sink) => match sink.try_persist_alert(&output, confidence, &error_context).await {
                 Ok(crate::AlertQueueOutcome::Confirmed(id)) => EscalationDelivery::Queued(id),
                 Ok(crate::AlertQueueOutcome::Attempted) => EscalationDelivery::Attempted,
                 Err(error) => {
@@ -716,8 +716,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl crate::AlertEscalationSink for ScriptedEscalationSink {
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             confidence: f64,
@@ -735,8 +736,9 @@ mod tests {
     /// best-effort `Attempted` outcome — handed off, not confirmed.
     struct BestEffortEscalationSink(Mutex<Vec<(String, f64, String)>>);
 
+    #[async_trait::async_trait]
     impl crate::AlertEscalationSink for BestEffortEscalationSink {
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             confidence: f64,

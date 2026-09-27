@@ -3820,8 +3820,8 @@ pub(crate) mod tests {
     /// pins the Store seam end-to-end (sink → queue → `curator_escalations`).
     /// If the adapter drops the call or the queue write fails silently, the
     /// alert never reaches the reviewable backlog.
-    #[test]
-    fn bridge_alert_escalation_sink_writes_to_queue() {
+    #[tokio::test]
+    async fn bridge_alert_escalation_sink_writes_to_queue() {
         use hkask_regulation::AlertEscalationSink;
         use hkask_storage::EscalationQueue;
         use hkask_storage::database::sqlite::SqliteDriver;
@@ -3837,6 +3837,7 @@ pub(crate) mod tests {
                 1.0,
                 r#"{"domain":"test","deficit":150,"threshold":100,"severity":"Critical"}"#,
             )
+            .await
             .expect("try_persist_alert");
         assert!(
             matches!(
@@ -3868,8 +3869,8 @@ pub(crate) mod tests {
     /// per cycle. The per-cycle value changes every tick — exact-match
     /// dedup never hit, which is how 22 near-identical
     /// `variety_deficit_exceeded` escalations accumulated in one session.
-    #[test]
-    fn bridge_sink_supersedes_pending_escalation_for_same_condition() {
+    #[tokio::test]
+    async fn bridge_sink_supersedes_pending_escalation_for_same_condition() {
         use hkask_regulation::AlertEscalationSink;
         use hkask_storage::EscalationQueue;
         use hkask_storage::database::sqlite::SqliteDriver;
@@ -3884,6 +3885,7 @@ pub(crate) mod tests {
                 1.0,
                 r#"{"deficit":53}"#,
             )
+            .await
             .expect("first persist");
         let second = sink
             .try_persist_alert(
@@ -3891,6 +3893,7 @@ pub(crate) mod tests {
                 1.0,
                 r#"{"deficit":2149}"#,
             )
+            .await
             .expect("second persist");
         assert!(
             matches!(
@@ -3921,8 +3924,8 @@ pub(crate) mod tests {
     /// `has_pending_alert` must match on the condition, not the exact
     /// output — the pending escalation's embedded value differs from the
     /// current cycle's, so exact matching never suppresses the re-route.
-    #[test]
-    fn bridge_sink_has_pending_alert_matches_condition() {
+    #[tokio::test]
+    async fn bridge_sink_has_pending_alert_matches_condition() {
         use hkask_regulation::AlertEscalationSink;
         use hkask_storage::EscalationQueue;
         use hkask_storage::database::sqlite::SqliteDriver;
@@ -3936,51 +3939,24 @@ pub(crate) mod tests {
             1.0,
             "{}",
         )
+            .await
         .expect("try_persist_alert");
         assert!(
-            sink.has_pending_alert("variety_deficit_exceeded — value 999 exceeds threshold 20"),
+            sink.has_pending_alert("variety_deficit_exceeded — value 999 exceeds threshold 20").await,
             "a different value for the same condition must count as pending"
         );
         assert!(
-            !sink.has_pending_alert("tool_reliability_degraded — value 40 fell below threshold 80"),
+            !sink.has_pending_alert("tool_reliability_degraded — value 40 fell below threshold 80").await,
             "a different condition must not match"
         );
-    }
-
-    /// Auto-resolve must clear a pending escalation whose embedded value
-    /// differs from the clearing cycle's reconstruction — exact-output
-    /// matching left stale escalations pending forever.
-    #[test]
-    fn bridge_sink_auto_resolve_matches_condition() {
-        use hkask_regulation::AlertEscalationSink;
-        use hkask_storage::EscalationQueue;
-        use hkask_storage::database::sqlite::SqliteDriver;
-
-        let driver = SqliteDriver::in_memory_driver();
-        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
-        let sink = BridgeAlertEscalationSink::new(queue.clone());
-
-        sink.try_persist_alert(
-            "variety_deficit_exceeded — value 53 exceeds threshold 20",
-            1.0,
-            "{}",
-        )
-        .expect("try_persist_alert");
-        sink.auto_resolve_cleared(
-            "variety_deficit_exceeded — value 0 exceeds threshold 20",
-            "Auto-resolved by verify_impact: metric improved.",
-        );
-
-        let pending = queue.list_pending().expect("list_pending must succeed");
-        assert_eq!(pending.len(), 0, "the stale escalation must be resolved");
     }
 
     /// When the queue write fails, `try_persist_alert` must not panic — it
     /// reports the error to the caller, which logs and never propagates.
     /// This pins the best-effort contract: a failing queue
     /// never breaks the regulation loop.
-    #[test]
-    fn bridge_alert_escalation_sink_does_not_panic_on_write_failure() {
+    #[tokio::test]
+    async fn bridge_alert_escalation_sink_does_not_panic_on_write_failure() {
         use hkask_regulation::AlertEscalationSink;
         use hkask_storage::EscalationQueue;
         use hkask_storage::database::sqlite::SqliteDriver;
@@ -3993,6 +3969,7 @@ pub(crate) mod tests {
         // call (the error path is covered by the queue's own tests).
         let sink = BridgeAlertEscalationSink::new(queue);
         sink.try_persist_alert("test", 0.5, "{}")
+            .await
             .expect("happy-path persist reports its outcome");
     }
 }

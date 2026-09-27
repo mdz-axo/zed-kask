@@ -146,11 +146,12 @@ pub struct AdviceReviewReconciliation {
     pub pending_receipts: Vec<AdviceReviewReceipt>,
 }
 
+#[async_trait::async_trait]
 pub trait AlertEscalationSink: Send + Sync {
     /// Compare durable triggering conditions with fresh observations each tick,
     /// then return the queue's intervention gauge and unpublished final-review
     /// receipts. Missing observations must never resolve an escalation.
-    fn reconcile_conditions(
+    async fn reconcile_conditions(
         &self,
         _observations: &[crate::loops::Signal],
     ) -> Result<AdviceReviewReconciliation, AlertPersistError> {
@@ -159,7 +160,7 @@ pub trait AlertEscalationSink: Send + Sync {
 
     /// Mark one logical receipt published after Regulation persistence succeeds.
     /// `false` means concurrent queue change; retry on a later tick.
-    fn acknowledge_advice_review(
+    async fn acknowledge_advice_review(
         &self,
         _receipt: &AdviceReviewReceipt,
     ) -> Result<bool, AlertPersistError> {
@@ -180,7 +181,7 @@ pub trait AlertEscalationSink: Send + Sync {
     ///
     /// Errors are logged by the caller and never propagated — alert
     /// persistence is best-effort, never a correctness path.
-    fn try_persist_alert(
+    async fn try_persist_alert(
         &self,
         output: &str,
         confidence: f64,
@@ -205,31 +206,8 @@ pub trait AlertEscalationSink: Send + Sync {
     /// Default returns `false` (no dedup). Implementations backed by a
     /// durable queue should query for pending alerts with this condition.
     /// Errors are logged by the caller and never propagated.
-    fn has_pending_alert(&self, _output: &str) -> bool {
+    async fn has_pending_alert(&self, _output: &str) -> bool {
         false
-    }
-
-    /// Auto-resolve a pending escalation when the triggering condition has
-    /// cleared.
-    ///
-    /// Called after a fresh measurement crosses the original trigger threshold
-    /// back toward health. An Accept decision or partial improvement alone
-    /// must not resolve the condition. The implementation should resolve pending
-    /// escalations matching the condition key of `output` (`alert_condition`)
-    /// with the provided resolution note. Condition matching (not exact
-    /// output matching) is required because the persisted escalation's
-    /// embedded value differs from the reconstruction's — the two were
-    /// sensed in different cycles.
-    ///
-    /// This closes the stuck-loop pattern: without auto-resolve, the loop
-    /// senses a deviation, escalates it, the condition self-resolves, but the
-    /// escalation remains pending until manual review.
-    ///
-    /// Default is a no-op (no auto-resolve). Implementations backed by a
-    /// durable queue should resolve the matching pending escalation.
-    /// Errors are logged by the caller and never propagated.
-    fn auto_resolve_cleared(&self, _output: &str, _resolution_note: &str) {
-        // No-op — auto-resolve is opt-in.
     }
 }
 

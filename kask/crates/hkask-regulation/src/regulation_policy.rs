@@ -351,10 +351,9 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
 /// data and reason — the single source of truth for this format.
 ///
 /// `route_action_as_alert` persists this exact string to the escalation
-/// queue, and `verify_impact`'s `auto_resolve_cleared` reconstruction must
-/// match it byte-for-byte to find the pending escalation — drift there
-/// silently breaks stuck-loop auto-resolution. Both sites call this
-/// helper so the identity is structural, not comment-enforced.
+/// queue, and condition dedup (`has_pending_alert`) matches its condition
+/// prefix — drift there silently breaks dedup. Callers use this helper so
+/// the identity is structural, not comment-enforced.
 ///
 /// The verb follows the variant's bad direction (see
 /// `RegulationData::below_threshold_is_bad`): floor metrics read

@@ -393,8 +393,9 @@ impl BridgeAlertEscalationSink {
     }
 }
 
+#[async_trait::async_trait]
 impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
-    fn reconcile_conditions(
+    async fn reconcile_conditions(
         &self,
         observations: &[hkask_regulation::Signal],
     ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
@@ -402,14 +403,14 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
         self.reconcile_conditions_at(observations, chrono::Utc::now())
     }
 
-    fn acknowledge_advice_review(
+    async fn acknowledge_advice_review(
         &self,
         receipt: &hkask_regulation::AdviceReviewReceipt,
     ) -> Result<bool, hkask_regulation::AlertPersistError> {
         self.acknowledge_advice_review_at(receipt, chrono::Utc::now())
     }
 
-    fn try_persist_alert(
+    async fn try_persist_alert(
         &self,
         output: &str,
         confidence: f64,
@@ -418,7 +419,7 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
         self.persist_alert_reporting(output, confidence, error_context)
     }
 
-    fn has_pending_alert(&self, output: &str) -> bool {
+    async fn has_pending_alert(&self, output: &str) -> bool {
         // Condition match, not exact output: the pending escalation's
         // embedded value differs from this cycle's, so exact matching
         // never suppresses a re-sensed condition.
@@ -433,45 +434,6 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
                     "Dedup query failed — assuming no pending alert"
                 );
                 false
-            }
-        }
-    }
-
-    fn auto_resolve_cleared(&self, output: &str, resolution_note: &str) {
-        // Condition match, not exact output: the persisted escalation and
-        // the clearing cycle's reconstruction embed different values (they
-        // were sensed in different cycles), so exact matching would leave
-        // the stale escalation pending forever.
-        let condition = hkask_regulation::alert_condition(output);
-        match self
-            .queue
-            .resolve_pending_by_condition(condition, "cybernetics_loop:auto_resolve")
-        {
-            Ok(count) => {
-                if count > 0 {
-                    tracing::info!(
-                        target: "reg.alert",
-                        count = count,
-                        note = %resolution_note,
-                        "Auto-resolved pending escalation — triggering condition cleared"
-                    );
-                } else {
-                    // No pending escalation with this condition — either it
-                    // was already resolved/dismissed by the operator, or the
-                    // condition never escalated. Not an error; the condition
-                    // is clear.
-                    tracing::debug!(
-                        target: "reg.alert",
-                        "Auto-resolve found no pending escalation with this condition — already cleared or not found"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "reg.alert",
-                    error = %e,
-                    "Auto-resolve query failed — escalation remains pending"
-                );
             }
         }
     }
@@ -607,8 +569,8 @@ mod tests {
     /// real queue — a new insert is Confirmed with the row's id and the row
     /// is readable with the exact payload; a re-fired condition supersedes
     /// the pending row (Confirmed, no new id) instead of duplicating it.
-    #[test]
-    fn try_persist_alert_reports_confirmed_insert_and_supersede() {
+    #[tokio::test]
+    async fn try_persist_alert_reports_confirmed_insert_and_supersede() {
         let queue = in_memory_queue();
         let sink = BridgeAlertEscalationSink::new(queue.clone());
         let context =
@@ -622,6 +584,7 @@ mod tests {
                 0.5,
                 &context,
             )
+            .await
             .expect("insert");
         let hkask_regulation::AlertQueueOutcome::Confirmed(Some(id)) = first else {
             panic!("a fresh insert must report Confirmed with the row id: {first:?}")
@@ -641,6 +604,7 @@ mod tests {
                 0.5,
                 &context,
             )
+            .await
             .expect("supersede");
         assert_eq!(
             second,

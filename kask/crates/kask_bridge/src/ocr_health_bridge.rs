@@ -105,8 +105,9 @@ mod tests {
         observations: std::sync::Mutex<Vec<Vec<hkask_regulation::Signal>>>,
     }
 
+    #[async_trait::async_trait]
     impl hkask_regulation::AlertEscalationSink for RecordingAlertSink {
-        fn reconcile_conditions(
+        async fn reconcile_conditions(
             &self,
             observations: &[hkask_regulation::Signal],
         ) -> Result<hkask_regulation::AdviceReviewReconciliation, hkask_regulation::AlertPersistError>
@@ -118,7 +119,7 @@ mod tests {
             Ok(hkask_regulation::AdviceReviewReconciliation::default())
         }
 
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             _confidence: f64,

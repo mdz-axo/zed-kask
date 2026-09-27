@@ -132,7 +132,10 @@ impl super::CyberneticsLoop {
                 error_context["outcome_breakdown"] = serde_json::json!(breakdown);
             }
         }
-        match sink.try_persist_alert(&alert.message, confidence, &error_context.to_string()) {
+        match sink
+            .try_persist_alert(&alert.message, confidence, &error_context.to_string())
+            .await
+        {
             Ok(crate::AlertQueueOutcome::Confirmed(_)) => true,
             Ok(crate::AlertQueueOutcome::Attempted) => false,
             Err(error) => {
@@ -651,7 +654,7 @@ impl super::CyberneticsLoop {
         // first one; when they resolve/dismiss it, the next cycle escalates
         // again.
         if let Some(ref sink) = self.alert_escalation_sink {
-            if sink.has_pending_alert(&alert.message) {
+            if sink.has_pending_alert(&alert.message).await {
                 tracing::debug!(
                     target: "reg.cybernetics",
                     action_type = ?action.action_type,
@@ -929,10 +932,10 @@ impl super::CyberneticsLoop {
                         action_type,
                     ),
                 };
-                let latched = self
-                    .alert_escalation_sink
-                    .as_ref()
-                    .is_some_and(|sink| sink.has_pending_alert(&alert.message));
+                let latched = match &self.alert_escalation_sink {
+                    Some(sink) => sink.has_pending_alert(&alert.message).await,
+                    None => false,
+                };
                 if !latched {
                     self.emit_regulation_span(
                         SpanKind::RegulatoryPlateauDetected,
@@ -1374,7 +1377,6 @@ mod tests {
         /// The error_context JSON each persist carried — the breakdown test
         /// asserts on its contents.
         contexts: Mutex<Vec<String>>,
-        auto_resolved: Mutex<Vec<String>>,
     }
 
     impl RecordingEscalationSink {
@@ -1382,13 +1384,13 @@ mod tests {
             Self {
                 persisted: Mutex::new(Vec::new()),
                 contexts: Mutex::new(Vec::new()),
-                auto_resolved: Mutex::new(Vec::new()),
             }
         }
     }
 
+    #[async_trait::async_trait]
     impl crate::AlertEscalationSink for RecordingEscalationSink {
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             _confidence: f64,
@@ -1403,12 +1405,6 @@ mod tests {
                 .expect("contexts lock")
                 .push(error_context.to_string());
             Ok(crate::AlertQueueOutcome::Attempted)
-        }
-        fn auto_resolve_cleared(&self, output: &str, _resolution_note: &str) {
-            self.auto_resolved
-                .lock()
-                .expect("auto_resolved lock")
-                .push(output.to_string());
         }
     }
 
@@ -1428,8 +1424,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl crate::AlertEscalationSink for ConfirmingEscalationSink {
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             _confidence: f64,
@@ -1444,7 +1441,7 @@ mod tests {
             )))
         }
 
-        fn has_pending_alert(&self, _output: &str) -> bool {
+        async fn has_pending_alert(&self, _output: &str) -> bool {
             !self.persisted.lock().expect("persisted lock").is_empty()
         }
     }
@@ -1467,8 +1464,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl crate::AlertEscalationSink for LatchingEscalationSink {
-        fn try_persist_alert(
+        async fn try_persist_alert(
             &self,
             output: &str,
             _confidence: f64,
@@ -1480,7 +1478,7 @@ mod tests {
                 .push(output.to_string());
             Ok(crate::AlertQueueOutcome::Attempted)
         }
-        fn has_pending_alert(&self, _output: &str) -> bool {
+        async fn has_pending_alert(&self, _output: &str) -> bool {
             *self.pending.lock().expect("pending lock")
         }
     }
@@ -1621,18 +1619,10 @@ mod tests {
 
         // Control: the reset alone earns no advice-progress credit — the
         // transient exhaustion alert never enters the reviewable queue
-        // (nothing persisted, nothing auto-resolved).
+        // (nothing persisted).
         assert!(
             escalation.persisted.lock().expect("persisted").is_empty(),
             "the transient exhaustion alert must not enter the reviewable queue"
-        );
-        assert!(
-            escalation
-                .auto_resolved
-                .lock()
-                .expect("resolved")
-                .is_empty(),
-            "the automatic reset must not earn advice-progress credit"
         );
     }
 
@@ -1651,7 +1641,6 @@ mod tests {
         );
         regulation_loop.route_action_as_alert(&action).await;
         assert_eq!(sink.persisted.lock().expect("persisted").len(), 1);
-        assert!(sink.auto_resolved.lock().expect("resolved").is_empty());
     }
 
     fn rollout_impact_check(rollout_id: &str, metric: &str) -> RolloutImpactCheck {
@@ -3033,8 +3022,9 @@ mod tests {
     #[tokio::test]
     async fn confirmed_intervention_change_bypasses_steady_state_suppression() {
         struct InterventionGaugeSink(std::sync::atomic::AtomicUsize);
+        #[async_trait::async_trait]
         impl crate::AlertEscalationSink for InterventionGaugeSink {
-            fn reconcile_conditions(
+            async fn reconcile_conditions(
                 &self,
                 _observations: &[Signal],
             ) -> Result<crate::AdviceReviewReconciliation, crate::AlertPersistError> {
@@ -3044,7 +3034,7 @@ mod tests {
                 })
             }
 
-            fn try_persist_alert(
+            async fn try_persist_alert(
                 &self,
                 _output: &str,
                 _confidence: f64,
@@ -3053,7 +3043,7 @@ mod tests {
                 Ok(crate::AlertQueueOutcome::Attempted)
             }
 
-            fn has_pending_alert(&self, _output: &str) -> bool {
+            async fn has_pending_alert(&self, _output: &str) -> bool {
                 true
             }
         }
@@ -3269,8 +3259,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn unchanged_signal_telemetry_does_not_displace_later_novel_events() {
         struct PendingConditionSink;
+        #[async_trait::async_trait]
         impl crate::AlertEscalationSink for PendingConditionSink {
-            fn try_persist_alert(
+            async fn try_persist_alert(
                 &self,
                 _output: &str,
                 _confidence: f64,
@@ -3279,7 +3270,7 @@ mod tests {
                 Ok(crate::AlertQueueOutcome::Attempted)
             }
 
-            fn has_pending_alert(&self, _output: &str) -> bool {
+            async fn has_pending_alert(&self, _output: &str) -> bool {
                 true
             }
         }
