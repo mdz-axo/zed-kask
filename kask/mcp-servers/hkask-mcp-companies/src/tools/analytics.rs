@@ -19,87 +19,86 @@ impl CompaniesServer {
         Parameters(req): Parameters<types::DcfValuationRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "dcf_valuation", async {
-                validate_symbol(&req.symbol)?;
-                if let Some(ref revision_of) = req.revision_of {
-                    let revision_of = revision_of.clone();
-                    let symbol = req.symbol.clone();
-                    run_store(self.research.clone(), move |portfolio| {
-                        portfolio.validate_forecast_revision(&revision_of, &symbol)
-                    })
-                    .await?;
-                }
-
-                let profile = self.fetch_profile(&req.symbol).await?;
-                let prepared = match crate::valuation_service::prepare_dcf(
-                    self,
-                    &req.symbol,
-                    &profile,
-                    types::ProjectionAssumptionOverrides::from(&req),
-                )
-                .await
-                {
-                    Ok(prepared) => prepared,
-                    Err(error) => return error.into_tool_result(),
-                };
-                let crate::valuation_service::PreparedDcf {
-                    history: hist,
-                    signal_quality,
-                    assumptions,
-                    model,
-                    current_price,
-                    provenance,
-                    warnings,
-                } = prepared;
-                let shares = hist.shares_outstanding;
-
-                // Emit the same model quality carried by the comparable overlay.
-                crate::data_quality::emit_data_quality_span(
-                    &req.symbol,
-                    "dcf_valuation",
-                    &signal_quality,
-                );
-
-                // Generate forecast ID for later decomposition
-                let forecast_id = Uuid::new_v4().to_string();
-
-                // Persist the forecast model for later decomposition across restarts.
-                let stored = StoredForecast {
-                    model: model.clone(),
-                    assumptions: assumptions.clone(),
-                    current_price,
-                    intrinsic_per_share: model.intrinsic_per_share,
-                };
-                self.save_forecast(PersistedForecast {
-                    id: forecast_id.clone(),
-                    symbol: req.symbol.clone(),
-                    revision_of: req.revision_of.clone(),
-                    snapshot: stored.snapshot(),
-                    outcomes: Vec::new(),
-                    created_at: now_rfc3339(),
+            validate_symbol(&req.symbol)?;
+            if let Some(ref revision_of) = req.revision_of {
+                let revision_of = revision_of.clone();
+                let symbol = req.symbol.clone();
+                run_store(self.research.clone(), move |portfolio| {
+                    portfolio.validate_forecast_revision(&revision_of, &symbol)
                 })
                 .await?;
+            }
 
-                // The response assembly is pure — delegate to `valuation_service`
-                // so it is testable without HTTP/API keys. The tool handler retains
-                // only fetch, validate, persist, and the span.
-                let mut output = crate::valuation_service::build_dcf_response(
-                    &req.symbol,
-                    &forecast_id,
-                    &req.revision_of,
-                    &model,
-                    &assumptions,
-                    &hist,
-                    &signal_quality,
-                    current_price,
-                    shares,
-                );
+            let profile = self.fetch_profile(&req.symbol).await?;
+            let prepared = match crate::valuation_service::prepare_dcf(
+                self,
+                &req.symbol,
+                &profile,
+                types::ProjectionAssumptionOverrides::from(&req),
+            )
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => return error.into_tool_result(),
+            };
+            let crate::valuation_service::PreparedDcf {
+                history: hist,
+                signal_quality,
+                assumptions,
+                model,
+                current_price,
+                provenance,
+                warnings,
+            } = prepared;
+            let shares = hist.shares_outstanding;
 
-                output["provenance"] = provenance;
-                output["warnings"] = serde_json::json!(warnings);
-                Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
+            // Emit the same model quality carried by the comparable overlay.
+            crate::data_quality::emit_data_quality_span(
+                &req.symbol,
+                "dcf_valuation",
+                &signal_quality,
+            );
+
+            // Generate forecast ID for later decomposition
+            let forecast_id = Uuid::new_v4().to_string();
+
+            // Persist the forecast model for later decomposition across restarts.
+            let stored = StoredForecast {
+                model: model.clone(),
+                assumptions: assumptions.clone(),
+                current_price,
+                intrinsic_per_share: model.intrinsic_per_share,
+            };
+            self.save_forecast(PersistedForecast {
+                id: forecast_id.clone(),
+                symbol: req.symbol.clone(),
+                revision_of: req.revision_of.clone(),
+                snapshot: stored.snapshot(),
+                outcomes: Vec::new(),
+                created_at: now_rfc3339(),
             })
-            .await,
-        )
+            .await?;
+
+            // The response assembly is pure — delegate to `valuation_service`
+            // so it is testable without HTTP/API keys. The tool handler retains
+            // only fetch, validate, persist, and the span.
+            let mut output = crate::valuation_service::build_dcf_response(
+                &req.symbol,
+                &forecast_id,
+                &req.revision_of,
+                &model,
+                &assumptions,
+                &hist,
+                &signal_quality,
+                current_price,
+                shares,
+            );
+
+            output["provenance"] = provenance;
+            output["warnings"] = serde_json::json!(warnings);
+            Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
+        })
+        .await
     }
 
     #[tool(
@@ -257,7 +256,8 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "reverse_dcf"))
-        }.await
+        })
+        .await
     }
 
     #[tool(
@@ -582,6 +582,7 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "scenario_analysis"))
-        }.await
+        })
+        .await
     }
 }

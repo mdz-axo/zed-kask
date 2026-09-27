@@ -404,7 +404,8 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }.await
+        })
+        .await
     }
 
     #[tool(
@@ -511,7 +512,8 @@ impl CompaniesServer {
             };
 
             Ok(output)
-        }.await
+        })
+        .await
     }
 
     #[tool(
@@ -614,7 +616,8 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }.await
+        })
+        .await
     }
 
     #[tool(
@@ -861,7 +864,8 @@ impl CompaniesServer {
             });
 
             Ok(fibo::enrich_with_ontology(output, "scenario_impact_valuation"))
-        }.await
+        })
+        .await
     }
 
     #[tool(
@@ -1053,7 +1057,8 @@ impl CompaniesServer {
             });
 
             Ok(output)
-        }.await
+        })
+        .await
     }
 
     #[tool(

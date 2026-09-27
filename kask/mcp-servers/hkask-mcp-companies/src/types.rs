@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 // ── Financial data request structs ──────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ResolveSymbolRequest {
+pub(crate) struct SymbolRequest {
     pub symbol: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RetainedSymbolLimitRequest {
+pub(crate) struct SymbolLimitRequest {
     pub symbol: String,
     pub limit: Option<u32>,
 }
