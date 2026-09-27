@@ -10751,40 +10751,6 @@ impl SubagentCompactionTest {
     }
 }
 
-/// A tool that always fails with a fixed message (D59 skill tool-failure pin).
-#[derive(JsonSchema, Serialize, Deserialize)]
-struct AlwaysFailingToolInput {}
-
-struct AlwaysFailingTool;
-
-impl AgentTool for AlwaysFailingTool {
-    type Input = AlwaysFailingToolInput;
-    type Output = String;
-
-    const NAME: &'static str = "always_failing";
-
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Other
-    }
-
-    fn initial_title(
-        &self,
-        _input: Result<Self::Input, serde_json::Value>,
-        _cx: &mut App,
-    ) -> SharedString {
-        "always failing".into()
-    }
-
-    fn run(
-        self: Arc<Self>,
-        _input: ToolInput<Self::Input>,
-        _event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |_cx| Err("provider unavailable".into()))
-    }
-}
-
 /// expect: skill-use issue capture is always on and mechanical — a tool that
 /// fails after the model activated a skill in the same thread is recorded
 /// against that skill and its invoker, with no model report; a failure with
@@ -10810,7 +10776,7 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
                             "name": "Skill probe",
                             "tools": {
                                 crate::SkillTool::NAME: true,
-                                AlwaysFailingTool::NAME: true,
+                                StreamingFailingEchoTool::NAME: true,
                             }
                         }
                     }
@@ -10854,7 +10820,9 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     let skills = Arc::new(vec![skill]);
     let fs_for_body = fs.clone();
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(AlwaysFailingTool);
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 0,
+        });
         thread.add_tool(crate::SkillTool::with_body_resolver(
             move |_cx| skills.clone(),
             move |skill, cx| {
@@ -10886,7 +10854,7 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     cx.run_until_parked();
 
     // A failure before any skill is active is not a skill-use issue.
-    fake_model.send_last_completion_stream_event(tool_use("t0", "always_failing", json!({})));
+    fake_model.send_last_completion_stream_event(tool_use("t0", StreamingFailingEchoTool::NAME, json!({ "text": "x" })));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
     assert!(recorded.lock().expect("lock").is_empty());
@@ -10898,7 +10866,7 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
-    fake_model.send_last_completion_stream_event(tool_use("t2", "always_failing", json!({})));
+    fake_model.send_last_completion_stream_event(tool_use("t2", StreamingFailingEchoTool::NAME, json!({ "text": "x" })));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -10907,6 +10875,6 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     let (skill, invoker, tool, error) = &entries[0];
     assert_eq!(skill, "probe-skill");
     assert_eq!(invoker, "Zed Agent");
-    assert_eq!(tool, "always_failing");
-    assert!(error.contains("provider unavailable"), "error text: {error}");
+    assert_eq!(tool, StreamingFailingEchoTool::NAME);
+    assert!(error.contains("failed"), "error text: {error}");
 }

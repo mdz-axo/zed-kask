@@ -804,9 +804,9 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 
 | Record key | Producer |
 |---|---|
-| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:196-310`; `crates/zed/src/main.rs:987, 1680`). |
-| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4418-4508`; `crates/zed/src/main.rs:1715`). |
-| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1741-1773`). |
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:196-310`; `crates/zed/src/main.rs:988`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4418-4507`; `crates/zed/src/main.rs:1692`). |
+| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1718-1750`). |
 
 ---
 

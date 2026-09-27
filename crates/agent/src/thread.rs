@@ -12781,7 +12781,7 @@ mod tests {
                 verdict
             );
             thread.update(cx, |thread, _cx| {
-                thread.kask.record_tool_failure(tool_name, &input);
+                thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
             });
         }
 
@@ -12808,7 +12808,7 @@ mod tests {
 
         // Record one more failure (total 4).
         thread.update(cx, |thread, _cx| {
-            thread.kask.record_tool_failure(tool_name, &input);
+            thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
         });
 
         // 5th check — still allowed (4 < HARD_CAP of 5), but with warning.
@@ -12826,7 +12826,7 @@ mod tests {
 
         // Record one more failure (total 5).
         thread.update(cx, |thread, _cx| {
-            thread.kask.record_tool_failure(tool_name, &input);
+            thread.kask.retry_tracker_handle().borrow().record_failure(tool_name, &input);
         });
 
         // 6th check — after 5 failures, should return Refuse.
@@ -12850,7 +12850,7 @@ mod tests {
 
         // Verify that a successful call resets the tracker.
         thread.update(cx, |thread, _cx| {
-            thread.kask.record_tool_success(tool_name, &input);
+            thread.kask.retry_tracker_handle().borrow().record_success(tool_name, &input);
         });
 
         let verdict = thread.read_with(cx, |thread, _| {

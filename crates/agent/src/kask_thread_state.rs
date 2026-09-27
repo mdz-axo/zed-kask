@@ -293,23 +293,6 @@ impl KaskThreadState {
         self.tool_retry_tracker.borrow().check(tool_name, input)
     }
 
-    /// Record a tool failure. Test seam — production records via the
-    /// `retry_tracker` directly in `Thread::run_turn`.
-    #[cfg(test)]
-    pub fn record_tool_failure(&self, tool_name: &str, input: &serde_json::Value) {
-        self.tool_retry_tracker
-            .borrow()
-            .record_failure(tool_name, input);
-    }
-
-    /// Record a tool success. Test seam — see `record_tool_failure`.
-    #[cfg(test)]
-    pub fn record_tool_success(&self, tool_name: &str, input: &serde_json::Value) {
-        self.tool_retry_tracker
-            .borrow()
-            .record_success(tool_name, input);
-    }
-
     // ── Deferred tool results ────────────────────────────────────────
 
     /// Enqueue a deferred tool result.
