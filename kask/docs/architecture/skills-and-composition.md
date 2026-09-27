@@ -800,12 +800,13 @@ Coverage assessment: **full** (fit >= 0.80), **partial** (0.40-0.79), **none** (
 
 ### Regulation feedback records
 
-Routing and discovery are model-coordinated skill behavior; they do not emit dedicated runtime events. The process-global ledger accepts exactly two persisted skill-feedback phases (`kask/crates/hkask-regulation/src/runtime.rs:773-790`):
+Routing and discovery are model-coordinated skill behavior; they do not emit dedicated runtime events. The durable `RegulationArchive` holds three skill phases, read by the algedonic review's gemba walk through `reg_query` (the whole loop is `DIAG-ARCH-LEARNING-LOOP-001` in [`../diagrams/architecture.md`](../diagrams/architecture.md#skill-learning-loop)); `outcome` and `operator_feedback` also feed the in-memory ledger (`kask/crates/hkask-regulation/src/runtime.rs:780`):
 
 | Record key | Producer |
 |---|---|
-| `reg.skill.<skill-id>.outcome` | `SkillTool::run` records successful envelope delivery and dependency/body-resolution failures; not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:203-288`). |
-| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:991-1020`). |
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:196-310`; `crates/zed/src/main.rs:987, 1680`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4418-4508`; `crates/zed/src/main.rs:1715`). |
+| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1741-1773`). |
 
 ---
 

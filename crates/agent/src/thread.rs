@@ -4413,7 +4413,8 @@ impl Thread {
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         let retry_tracker = self.kask.retry_tracker_handle(); // zed-kask: .rules
         let tool_name_for_tracking = tool_name.clone();
-        // zed-kask: D59 — mechanical skill-use issue capture.
+        // zed-kask: D59 — mechanical skill-use issue capture (observe stage of
+        // the skill learning loop, DIAG-ARCH-LEARNING-LOOP-001).
         let active_skill = self.kask.active_skill_handle();
         let skill_invoker: SharedString = self
             .kask

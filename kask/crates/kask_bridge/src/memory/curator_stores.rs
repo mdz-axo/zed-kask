@@ -53,10 +53,12 @@ pub fn persist_operator_feedback(
     persist_skill_span(archive, skill_id, "operator_feedback", payload)
 }
 
-/// Persist one skill activation outcome (`reg.skill.<id>.outcome`) so the
-/// algedonic review's gemba walk can read it through `reg_query`. Skill
-/// evaluation happens in that review, not in the session that ran the skill
-/// (operator ruling 2026-09-24), so the outcome must outlive the session.
+/// Persist one skill activation outcome (`reg.skill.<id>.outcome`, payload
+/// carries `success`, `invoker` and optional `error`) so the algedonic
+/// review's gemba walk can read it through `reg_query`. Skill evaluation
+/// happens in that review, not in the session that ran the skill (operator
+/// ruling 2026-09-24), so the outcome must outlive the session. Observe stage
+/// of `DIAG-ARCH-LEARNING-LOOP-001` (`kask/docs/diagrams/architecture.md`).
 pub fn persist_skill_outcome(
     archive: &hkask_storage::RegulationArchive,
     skill_id: &str,

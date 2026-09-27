@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-09-23
+last_updated: 2026-09-26
 version: "2.3.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,20 +10,20 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-19 the corpus contains **105 active alignment records representing 105 unique IDs**: 34 records in the five consolidated diagram files and 71 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-26 the corpus contains **106 active alignment records representing 106 unique IDs**: 35 records in the five consolidated diagram files and 71 inline records.
 
-The corpus contains 105 Mermaid blocks, all current-state and each carrying one immediately adjacent alignment record. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter.
+The corpus contains 106 Mermaid blocks, all current-state and each carrying one immediately adjacent alignment record. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter.
 
 ## Consolidated files
 
 | File | Alignment records |
 | --- | ---: |
-| [`diagrams/architecture.md`](./diagrams/architecture.md) | 13 |
+| [`diagrams/architecture.md`](./diagrams/architecture.md) | 14 |
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 4 |
 | [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
 | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 8 |
-| **Total** | **34** |
+| **Total** | **35** |
 
 ## Current metadata registry
 
@@ -31,6 +31,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 
 | DIAGRAM_ID | Location | Verified date | Status |
 | --- | --- | --- | --- |
+| `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-26 | VERIFIED |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARCH-SPREADSHEET-001` | [`plans/logisheets-spreadsheet-capability-plan.md`](./plans/logisheets-spreadsheet-capability-plan.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-19 | VERIFIED |
@@ -137,7 +138,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-16 | VERIFIED |
 
-Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, and twenty at 2026-09-19. All 105 active records are `VERIFIED`.
+Metadata-date distribution: nine records at 2026-08-28, four at 2026-09-04, sixty-nine at 2026-09-16, three at 2026-09-18, twenty at 2026-09-19, and one at 2026-09-26. All 106 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

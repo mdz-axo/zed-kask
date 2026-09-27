@@ -37,6 +37,11 @@ use crate::{CURATOR_AGENT_ID, ThreadStore};
 /// `Thread::static_context` and rendered after the project context section.
 /// The Zed Agent's system prompt remains intact — the Curator gets all the
 /// coding instructions PLUS this regulatory context.
+///
+/// The `### Learning loop` block states the Curator's part in the skill
+/// learning loop; the loop itself is documented and diagrammed as
+/// `DIAG-ARCH-LEARNING-LOOP-001` in `kask/docs/diagrams/architecture.md`.
+/// Keep the two in step.
 pub const CURATOR_STATIC_CONTEXT: &str = "\
 ## Curator Role\n\
 \n\

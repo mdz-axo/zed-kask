@@ -4784,19 +4784,21 @@ pub fn record_mcp_tool_outcome(
     }
 }
 
-/// Callback type for skill-execution outcome recording. Receives
-/// (skill_id, success, error) — the write side of the per-skill feedback
-/// loop: the composition root forwards each outcome to
-/// `RegulationLedger::record_skill_span(skill_id, "outcome", ...)`, which
+/// Callback type for skill-execution outcome recording — the observe stage
+/// of the skill learning loop (`kask/docs/diagrams/architecture.md`,
+/// `DIAG-ARCH-LEARNING-LOOP-001`). Arguments: skill id, invoker (the session
+/// agent id — `Curator` or `Zed Agent` — or [`DELEGATED_SKILL_INVOKER`]),
+/// success, error. The composition root persists each outcome as a durable
+/// `reg.skill.<id>.outcome` record (read by the algedonic review's gemba walk
+/// via `reg_query`) and feeds `RegulationLedger::record_skill_span`, which
 /// the metacognition loop's `sense_feedback_drift` reads for per-skill
 /// success-rate decline.
 ///
-/// Scope: fired by `SkillTool::run` for skills that were found and attempted
-/// (success, missing dependencies, unreadable body). A skill-not-found is a
-/// request error with no skill to attribute; an authorization denial is the
-/// operator's choice, not a skill reliability signal — neither is recorded.
-/// Arguments: skill id, invoker (the session agent id, or
-/// [`DELEGATED_SKILL_INVOKER`]), success, error.
+/// Scope: fired by `SkillTool::run` and `activate_delegated_skill` for skills
+/// that were found and attempted (success, missing dependencies, unreadable
+/// body). A skill-not-found is a request error with no skill to attribute; an
+/// authorization denial is the operator's choice, not a skill reliability
+/// signal — neither is recorded.
 pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
 
 /// Global hook for skill outcome recording. Wired in `main.rs` to a closure
@@ -4845,9 +4847,11 @@ pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error:
 
 /// Records a tool failure that happened while a skill was active in a
 /// thread: skill id, invoker, tool name, error text. This is the mechanical
-/// half of skill-use issue capture (always on, no model decision); the
-/// model-classified half is `curator_report_skill_use_issue`. Production
-/// persists it as `reg.skill.<id>.tool_failure` for the gemba walk.
+/// half of skill-use issue capture in the skill learning loop's observe stage
+/// (always on, no model decision); the model-classified half is
+/// `curator_report_skill_use_issue`. Production persists it as
+/// `reg.skill.<id>.tool_failure`, which the algedonic review's gemba walk
+/// reads as unclassified evidence.
 pub type SkillToolFailureRecorder = Arc<dyn Fn(&str, &str, &str, &str) + Send + Sync>;
 
 static SKILL_TOOL_FAILURE_RECORDER: ProcessGlobal<SkillToolFailureRecorder> = ProcessGlobal::new();

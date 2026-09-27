@@ -1,7 +1,7 @@
 ---
-title: "hKask Architecture Diagrams — CMP Pipeline, Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core"
+title: "hKask Architecture Diagrams — CMP Pipeline, Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
+last_updated: 2026-09-26
 version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -810,6 +810,81 @@ to the default code-block renderer.
 
 **Wiring seam:** `crates/agent_ui/src/conversation_view.rs` —
 `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`.
+
+## Skill Learning Loop
+
+How the agent and the Curator turn skill and tool use into durable
+improvements. It is a cybernetic feedback loop (`onto_anchor` → derived
+`cybernetic_feedback_loop`: sense → compare against a set point → act → the
+effect is sensed again). The **algedonic review** is the one evaluation
+mechanism; its second half, the **gemba walk**, is where skills are evaluated
+and proposals decided. Evaluation is separated from execution (operator ruling
+2026-09-24, Goodhart's law): executing sessions record and propose, but only
+the review records verdicts and accepts changes.
+
+Operator rulings 2026-09-26: capture is always on and covers every agent's
+skill use; proposal authority is the operator's by default and may be granted
+to the Curator; accepted work is executed by a spawned agent with clear
+instructions; nothing is done until verified unless the operator or Curator
+explicitly skips verification.
+
+```mermaid
+flowchart TD
+    subgraph Observe["Observe (always on)"]
+        A[Skill activation - SkillTool / host skill] -->|record_skill_outcome| O1[reg.skill.id.outcome - success, invoker]
+        B[Tool failure while a skill is active - Thread run_tool] -->|record_skill_tool_failure| O2[reg.skill.id.tool_failure - invoker, tool, error]
+        C[Curator classifies an issue] -->|curator_report_skill_use_issue| O3[skill_use_issue h_mem - failure_origin]
+        G[Goal scored by user] -->|kanban_goal_score| O4[Brier score in curator memory]
+    end
+    subgraph Evaluate["Evaluate - algedonic review"]
+        S[curator_status - escalations awaiting review, log cap] --> R[Alert triage - steps 1-4]
+        R --> W[Gemba walk - steps 5-7: reg_query reg.skill, issue memories, proposals]
+        W --> V[record_skill_feedback - operator verdict, Curator session only]
+    end
+    subgraph Propose
+        P1[skill-maintenance proposal - zk-data/curator/proposals]
+        P2[curator_directive evolve_mcp_tool_schema - reg.cybernetics]
+        P3[memory_insert / therapy - lessons and reification]
+    end
+    subgraph Execute["Execute and verify"]
+        D[Decision - operator, or Curator under recorded grant] --> K[Kanban task with evidence and verification criteria, delegated to a spawned agent]
+        K --> T[Re-run predeclared tasks / tests; before and after attached]
+        T -->|verified, or explicit skip recorded| Done[Applied]
+        T -->|unverified| W
+    end
+    O1 --> W
+    O2 --> W
+    O3 --> W
+    O4 --> W
+    W --> P1
+    C --> P2
+    P1 --> D
+    P2 --> K
+    P3 --> W
+    Done -->|next skill use is observed again| A
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-LEARNING-LOOP-001
+verified_date: 2026-09-26
+verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session with_invoker L1019, activate_delegated_skill L4676, DELEGATED_SKILL_INVOKER L4702, record_skill_outcome L4832, record_skill_tool_failure L4876); crates/agent/src/thread.rs (run_tool active-skill capture L4418, L4499); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (skill outcome recorders L987, L1680; tool-failure recorder L1715; operator feedback L1741); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L48, persist_skill_outcome L62, persist_skill_tool_failure L73); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1308, memory_insert L1414); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (Learning loop in CURATOR_STATIC_CONTEXT L61); .agents/skills/algedonic-review/SKILL.md (gemba walk step 5 L81, Proposal authority and done L85); .agents/skills/skill-maintenance/SKILL.md (Act L160)
+status: VERIFIED
+-->
+
+| Stage | Surface | Record | Who acts |
+|-------|---------|--------|----------|
+| Observe | `SkillTool` / `activate_delegated_skill` | `reg.skill.<id>.outcome` with `invoker` (`Curator`, `Zed Agent`, `delegated`) | automatic |
+| Observe | `Thread::run_tool` (active skill set) | `reg.skill.<id>.tool_failure` — unclassified evidence | automatic |
+| Observe | `curator_report_skill_use_issue` | `skill_use_issue:<skill>` h_mem with `failure_origin` | Curator, unprompted |
+| Observe | `kanban_goal_score` | Brier-scored outcome in curator memory (D58) | user confirms |
+| Evaluate | `algedonic-review` (triage, then gemba walk) | `zk-data/curator/reviews/{date}/` + `reg.skill.<id>.operator_feedback` | operator with Curator |
+| Propose | `skill-maintenance`, `curator_directive` `evolve_mcp_tool_schema`, `memory_insert` / `therapy` | `zk-data/curator/proposals/`, `reg.cybernetics`, curator memory | Curator / agent |
+| Execute | kanban task delegated to a spawned agent | task id in the review record | delegated agent |
+| Verify | predeclared tasks / tests re-run | before/after on the task; unverified returns to the next review | delegated agent |
+
+The review is started by the operator, or by the Curator when `curator_status`
+shows escalations awaiting review or algedonic-log cap pressure. There is no
+separate trigger: new records wait for the next review.
 
 ## See also
 
