@@ -7,42 +7,6 @@ use serde::{Deserialize, Serialize};
 pub struct PingRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AdviceAppliedRequest {
-    pub id: String,
-    /// Describe the action the operator confirms actually occurred.
-    pub action_note: String,
-    pub operator_confirmed: bool,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EscalationResolveRequest {
-    pub id: String,
-    pub resolution: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EscalationDismissRequest {
-    pub id: String,
-    pub reason: String,
-}
-
-/// Dismiss all pending escalations matching a given output string.
-///
-/// Used to clear runaway escalation floods from a single broken feedback
-/// loop (e.g. an unwired efferent action that the regulation loop senses
-/// every cycle) in one operation, rather than dismissing each duplicate
-/// individually. Only pending escalations with an exact `output` match are
-/// dismissed — this will not collapse distinct alerts that happen to share
-/// a prefix.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EscalationDismissByPatternRequest {
-    /// The exact `output` string to match against pending escalations.
-    pub output: String,
-    /// The dismissal reason recorded for each dismissed escalation.
-    pub reason: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct BackfillEmbeddingsRequest {
     /// List the candidates that would be embedded, without embedding
     /// anything. Default false.

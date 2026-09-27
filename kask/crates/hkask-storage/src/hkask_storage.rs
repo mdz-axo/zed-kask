@@ -27,12 +27,12 @@ pub use hkask_types::time::now_rfc3339;
 pub use rotation::{RotationError, rotate_passphrase, verify_database_key};
 
 pub(crate) mod embeddings;
-pub(crate) mod escalation;
+
 pub(crate) mod hmem;
 pub(crate) mod regulation_store;
 
 pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult};
-pub use escalation::{EscalationEntry, EscalationError, EscalationQueue, EscalationStatus};
+
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore};
 pub use regulation_store::RegulationArchive;

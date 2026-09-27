@@ -2518,7 +2518,6 @@ mod tests {
     ) -> (Arc<CuratorDb>, Arc<hkask_memory::MemoryStore>) {
         let store = Arc::new(store);
         let db = Arc::new(CuratorDb::from_stores(crate::CuratorStores {
-            escalation_queue: None,
             regulation_store: None,
             memory: Some(Arc::clone(&store)),
         }));

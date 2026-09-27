@@ -1,20 +1,15 @@
 # hkask-mcp-curator — Curator MCP Server
 
-MCP server exposing escalation management, Regulation history, memory search and per-store liveness (`curator_ping`). Live regulation health (`loop_reading`, alert-log cap and acceptance rate) comes from the **one** built-in `curator_status` AgentTool over the host's metacognition provider, not from a second MCP implementation or an inferred event-history snapshot.
+MCP server exposing Regulation history, memory search and per-store liveness (`curator_ping`). Live regulation health (`loop_reading`, alert-log cap and acceptance rate) comes from the **one** built-in `curator_status` AgentTool over the host's metacognition provider, not from a second MCP implementation or an inferred event-history snapshot.
 
 **Version:** v0.40.0 | **Crate:** `hkask-mcp-curator`
 
-## Tools (21)
+## Tools (15)
 
 | Tool | Description |
 | --- | --- |
 | `curator_ping` | Report per-store liveness. |
-| `curator_escalations` | List pending escalations requiring review. |
-| `curator_advice_mark_applied` | Record an explicitly confirmed intervention and start its seven-day observation window without resolving the alert or claiming effectiveness. |
-| `curator_advice_reviews` | Read observational advice reviews, including resolved alerts; outcomes preserve `causal_attribution: "unverified"`. |
-| `curator_escalation_resolve` | Resolve an escalation and retain its Regulation audit note. |
-| `curator_escalation_dismiss` | Dismiss an escalation as not actionable. |
-| `curator_escalation_dismiss_by_pattern` | Dismiss pending escalations with an exact output match. |
+
 | `curator_semantic_search` | Search Curator memory by semantic similarity. |
 | `curator_federated_search` | Search Curator memory plus configured sealed corpus sources without merging stores; returns source/record provenance and per-source status. |
 | `curator_memory_recall` | Recall memory about an entity, optionally scoped to an ontology axis. |
@@ -44,11 +39,6 @@ SQL before the requested limit. `curator_algedonic_log` remains the separate
 act-phase, algedonic-category view; it returns at most 500 events newest-first
 and declares that ordering in its response.
 
-## Advice review semantics
-
-`curator_advice_mark_applied` records a confirmed intervention, not an effectiveness verdict. Its persisted `review_due_at` controls when review can finalize. Missing or stale readings finalize as `insufficient_evidence`, and every review retains `causal_attribution: "unverified"`.
-
-Final review transitions use the escalation row as a durable outbox and publish one idempotent `reg.outcome.advice_review_observed` record. Regulation telemetry keeps `advice_review_progress_score` separate from evidence-bearing `rollout_progress_score`; either is `null` when its evidence channel has no determinate measurement. `curator_advice_reviews` remains the complete read path, including reviews whose originating alerts resolved early.
 
 ## Configuration
 
@@ -100,5 +90,5 @@ current sealed-corpus contract.
 
 - `hkask-mcp-server` — MCP runtime and dispatch
 - `hkask-storage` / `hkask-memory` — sovereign `curator.db` stores
-- `governance` module — escalation CRUD + Regulation event emission
+
 - `hkask-tool-port` — DelegationToken consent registry

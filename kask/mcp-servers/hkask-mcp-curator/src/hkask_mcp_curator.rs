@@ -11,15 +11,14 @@
 #![allow(unused_crate_dependencies)]
 //! hkask-mcp-curator — Curator MCP server library.
 //!
-//! Exposes escalation management, Regulation history, memory search,
-//! and per-store liveness as MCP tools. Live metacognition health belongs
+//! Exposes Regulation history, memory search, and per-store liveness as MCP tools. Live metacognition health belongs
 //! to the single built-in `curator_status` AgentTool; do not mirror it
 //! in this child process or reconstruct its reading from event history.
 
 pub(crate) mod distillation;
 pub(crate) mod federated;
 pub(crate) mod forgetting;
-pub(crate) mod governance;
+
 pub(crate) mod thread_turns;
 pub mod types;
 
@@ -28,10 +27,9 @@ pub mod types;
 use hkask_mcp_server::server::{
     McpToolError, execute_tool, map_infra_error, map_memory_store_error, resolve_db_passphrase,
 };
-use hkask_services_core::{ErrorKind, ServiceError};
+
 use hkask_storage::database::sqlite::SqliteDriver;
 
-use hkask_types::event::RegulationSink;
 use hkask_types::regulation::RegulationSpan;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::json;
@@ -85,7 +83,7 @@ enum SemanticRecallError {
     EmbeddingNotConfigured,
 }
 
-/// The four stores the curator's tools read, all backed by the curator's
+/// The curator's stores, backed by the curator's
 /// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
 ///
@@ -94,7 +92,6 @@ enum SemanticRecallError {
 /// to the wrong store.
 #[derive(Clone)]
 pub struct CuratorStores {
-    pub escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
     pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
     /// The curator's unified memory. One store holds all of the curator's
     /// h_mems — the `HMemOntology` blob on each h_mem carries dual-axis
@@ -107,24 +104,15 @@ pub struct CuratorStores {
 impl CuratorStores {
     /// All stores `None` — the DB-open level failed and a re-open may help.
     fn all_none(&self) -> bool {
-        self.escalation_queue.is_none() && self.regulation_store.is_none() && self.memory.is_none()
+        self.regulation_store.is_none() && self.memory.is_none()
     }
 
     /// Empty store set — used when the DB cannot be opened at all.
     pub fn empty() -> Self {
         Self {
-            escalation_queue: None,
             regulation_store: None,
             memory: None,
         }
-    }
-
-    /// Guarded accessor — folds the repeated `permission_denied` store check
-    /// that every tool used to inline.
-    fn escalation_queue(&self) -> Result<&Arc<hkask_storage::EscalationQueue>, McpToolError> {
-        self.escalation_queue
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("EscalationQueue not available"))
     }
 
     fn regulation_store(&self) -> Result<&Arc<hkask_storage::RegulationArchive>, McpToolError> {
@@ -417,186 +405,11 @@ impl CuratorServer {
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
                 "stores": {
-                    "escalation_queue": stores.escalation_queue.is_some(),
+
                     "regulation_store": stores.regulation_store.is_some(),
                     "memory": stores.memory.is_some(),
                 }
             }))
-        })
-        .await
-    }
-
-    // ── Escalation Management ──────────────────────────────────────────
-
-    #[tool(description = "List all pending escalations requiring review")]
-    pub async fn curator_escalations(
-        &self,
-        Parameters(_req): Parameters<PingRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_escalations", async {
-            let stores = self.db.get();
-            let queue = stores.escalation_queue()?;
-            match governance::list_escalations_direct(queue) {
-                Ok(entries) => {
-                    let serialized: Vec<serde_json::Value> = entries
-                        .iter()
-                        .map(|e| {
-                            json!({
-                                "id": e.id,
-                                "template_id": e.template_id,
-                                "bot_id": e.bot_id,
-                                "output": e.output,
-                                "confidence": e.confidence,
-                                "retry_count": e.retry_count,
-                                "error_context": e.error_context,
-                                "created_at": e.created_at,
-                                "status": e.status,
-                                "resolved_at": e.resolved_at,
-                                "resolved_by": e.resolved_by,
-                            })
-                        })
-                        .collect();
-                    Ok(json!({"count": serialized.len(), "escalations": serialized}))
-                }
-                Err(e) => Err(to_tool_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Record an operator-confirmed action taken on an escalation. Starts a seven-day observation window; does not resolve the alert or claim effectiveness. Requires explicit operator confirmation."
-    )]
-    pub async fn curator_advice_mark_applied(
-        &self,
-        Parameters(req): Parameters<AdviceAppliedRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_advice_mark_applied", async {
-            if !req.operator_confirmed || req.action_note.trim().is_empty() {
-                return Err(McpToolError::failed_precondition("An operator-confirmed action and nonempty note are required"));
-            }
-            let stores = self.db.get();
-            let queue = stores.escalation_queue()?;
-            let entry = queue.get(&req.id).map_err(|error| map_escalation_error(error, "Read escalation"))?
-                .ok_or_else(|| McpToolError::not_found("Escalation not found"))?;
-            let mut context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid escalation context: {error}")))?;
-            let trigger: hkask_regulation::Signal = serde_json::from_value(context.get("recovery_signal").cloned().unwrap_or(serde_json::Value::Null))
-                .map_err(|_| McpToolError::failed_precondition("This escalation has no measurable triggering condition"))?;
-            if !trigger.is_recovery_trigger() {
-                return Err(McpToolError::failed_precondition("This escalation has no measurable triggering condition"));
-            }
-            if context.get("applied_at").is_none_or(|value| value.is_null()) {
-                let now = chrono::Utc::now();
-                // An unavailable latest reading must not fall back to an old trigger.
-                // Recording the action remains possible, but its evidence stays unknown.
-                let baseline = context.get("latest_observation").or_else(|| context.get("recovery_signal"))
-                    .and_then(|value| serde_json::from_value::<hkask_regulation::Signal>(value.clone()).ok())
-                    .filter(|signal| signal.metric == trigger.metric && signal.is_fresh_at(now));
-                context["applied_baseline"] = json!(baseline);
-                context["applied_at"] = json!(now);
-                context["review_due_at"] = json!(now + chrono::Duration::days(7));
-                context["action_note"] = json!(req.action_note);
-                context["advice_review"] = json!({"status":"observation_window", "finalized":false, "causal_attribution":"unverified"});
-                if !queue.update_advice_context(&req.id, &entry.error_context, &context.to_string()).map_err(|error| map_escalation_error(error, "Persist advice application"))? {
-                    return Err(McpToolError::unavailable("Escalation changed concurrently; retry confirmation"));
-                }
-            }
-            Ok(json!({"id":req.id, "applied_at":context["applied_at"], "review_due_at":context["review_due_at"], "review":context["advice_review"]}))
-        }).await
-    }
-
-    #[tool(
-        description = "Read observational progress reviews of operator-applied advice, including resolved alerts. Reviews remain separate from rollout impact, distinguish recovery, improvement, no improvement, and insufficient evidence, and keep causal attribution unverified."
-    )]
-    pub async fn curator_advice_reviews(
-        &self,
-        Parameters(_req): Parameters<PingRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_advice_reviews", async {
-            let stores = self.db.get();
-            let entries = stores.escalation_queue()?.list_advice_observations().map_err(|error| map_escalation_error(error, "Read advice reviews"))?;
-            let mut reviews = Vec::new();
-            for entry in entries {
-                let context: serde_json::Value = serde_json::from_str(&entry.error_context).map_err(|error| McpToolError::failed_precondition(format!("Invalid advice context: {error}")))?;
-                if context.get("applied_at").is_some_and(|value| !value.is_null()) {
-                    reviews.push(json!({"id":entry.id, "output":entry.output, "status":entry.status, "application":context}));
-                }
-            }
-            Ok(json!({"reviews":reviews}))
-        }).await
-    }
-
-    #[tool(description = "Resolve an escalation by ID")]
-    pub async fn curator_escalation_resolve(
-        &self,
-        Parameters(req): Parameters<EscalationResolveRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_escalation_resolve", async {
-            let stores = self.db.get();
-            let queue = stores.escalation_queue()?;
-            let events_store = stores.regulation_store()?;
-            let events: Arc<dyn RegulationSink> =
-                Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            // Attribution is server-side: the MCP request carries no caller
-            // identity. The resolution note is recorded in the Regulation
-            // event so the audit trail keeps it.
-            match governance::resolve_direct(
-                queue,
-                &events,
-                &req.id,
-                "curator",
-                Some(&req.resolution),
-            ) {
-                Ok(()) => Ok(json!({"resolved": true, "id": req.id})),
-                Err(e) => Err(to_tool_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(description = "Dismiss an escalation as not actionable")]
-    pub async fn curator_escalation_dismiss(
-        &self,
-        Parameters(req): Parameters<EscalationDismissRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_escalation_dismiss", async {
-            let stores = self.db.get();
-            let queue = stores.escalation_queue()?;
-            let events_store = stores.regulation_store()?;
-            let events: Arc<dyn RegulationSink> =
-                Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::dismiss_direct(queue, &events, &req.id, "curator", Some(&req.reason))
-            {
-                Ok(()) => Ok(json!({"dismissed": true, "id": req.id})),
-                Err(e) => Err(to_tool_error(e)),
-            }
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Dismiss all pending escalations matching an exact output string. Used to clear runaway escalation floods from a single broken feedback loop in one operation. Returns the count of dismissed escalations."
-    )]
-    pub async fn curator_escalation_dismiss_by_pattern(
-        &self,
-        Parameters(req): Parameters<EscalationDismissByPatternRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "curator_escalation_dismiss_by_pattern", async {
-            let stores = self.db.get();
-            let queue = stores.escalation_queue()?;
-            let events_store = stores.regulation_store()?;
-            let events: Arc<dyn RegulationSink> =
-                Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::dismiss_by_pattern_direct(
-                queue,
-                &events,
-                &req.output,
-                "curator",
-                Some(&req.reason),
-            ) {
-                Ok(count) => Ok(json!({"dismissed": true, "count": count, "output": req.output})),
-                Err(e) => Err(to_tool_error(e)),
-            }
         })
         .await
     }
@@ -1950,25 +1763,6 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
-/// Preserve the queue's recovery category at the MCP boundary.
-fn map_escalation_error(error: hkask_storage::EscalationError, context: &str) -> McpToolError {
-    match error {
-        hkask_storage::EscalationError::Infra(error) => map_infra_error(&error, context),
-        hkask_storage::EscalationError::NotFound(error) => {
-            McpToolError::not_found(format!("{context}: {error}"))
-        }
-    }
-}
-
-/// Map a governance `ServiceError` to the structured MCP wire error,
-/// not_found) instead of flattening everything to `internal`.
-fn to_tool_error(e: ServiceError) -> McpToolError {
-    match e.kind() {
-        ErrorKind::NotFound => McpToolError::not_found(e.to_string()),
-        _ => McpToolError::internal(e.to_string()),
-    }
-}
-
 /// Output note surfaced by the insert paths when the semantic embedding
 /// could not be stored — the degradation must be visible in the tool
 /// result, never a silent success.
@@ -2167,9 +1961,8 @@ fn open_curator_stores(
         }
     };
 
-    // Memory degrades independently of the escalation/regulation/token stores
-    // below — a memory failure must not take down the escalation queue and
-    // regulation archive with it.
+    // Memory degrades independently of the Regulation archive below — a
+    // memory failure must not take down Regulation queries.
     //
     // An unavailable EmbeddingStore must NOT disable curator memory: the
     // semantic tools (`curator_semantic_search`, `curator_consult`) degrade
@@ -2205,13 +1998,6 @@ fn open_curator_stores(
             None
         }
     };
-    let escalation_queue = match hkask_storage::EscalationQueue::from_driver(Arc::clone(&driver)) {
-        Ok(q) => Some(Arc::new(q)),
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create EscalationQueue");
-            None
-        }
-    };
     let regulation_store = match hkask_storage::RegulationArchive::from_driver(Arc::clone(&driver))
     {
         Ok(store) => Some(Arc::new(store)),
@@ -2221,7 +2007,6 @@ fn open_curator_stores(
         }
     };
     CuratorStores {
-        escalation_queue,
         regulation_store,
         memory,
     }
@@ -2244,36 +2029,6 @@ mod tests {
     // compiles stale.
 
     use super::*;
-
-    /// expect: "Advice queue failures preserve their recovery category at the MCP boundary" [P9]
-    #[test]
-    fn advice_queue_errors_are_classified_per_variant() {
-        let connection = map_escalation_error(
-            hkask_storage::EscalationError::Infra(hkask_types::InfrastructureError::Database {
-                message: "offline".to_string(),
-                kind: hkask_types::DatabaseErrorKind::Connection,
-            }),
-            "Read advice",
-        );
-        assert_eq!(connection.kind, hkask_types::McpErrorKind::Unavailable);
-
-        let malformed = map_escalation_error(
-            hkask_storage::EscalationError::Infra(hkask_types::InfrastructureError::Serialization(
-                "invalid row".to_string(),
-            )),
-            "Read advice",
-        );
-        assert_eq!(malformed.kind, hkask_types::McpErrorKind::Internal);
-
-        let missing = map_escalation_error(
-            hkask_storage::EscalationError::NotFound(hkask_types::NotFound {
-                entity_type: "escalation".to_string(),
-                id: "missing".to_string(),
-            }),
-            "Read advice",
-        );
-        assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
-    }
 
     /// expect: "A malformed memory-life setting warns and falls back to the
     /// default — never a silent fallback." [P1]

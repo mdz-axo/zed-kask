@@ -1,8 +1,8 @@
 //! Tool-behavior contract tests for `hkask-mcp-curator`.
 //!
 //! Drives the real `Parameters<T>` tool seam in-process: the server is
-//! constructed over an in-memory `SqliteDriver` so the four backing stores
-//! (escalation queue, Regulation archive, curator memory) are live, and every
+//! constructed over an in-memory `SqliteDriver` so the Regulation archive
+//! and curator memory are live, and every
 //! tool call goes through `execute_tool` → the `#[tool]` method. This catches
 //! wiring regressions that a unit test of the store alone would miss.
 //!
@@ -16,7 +16,7 @@
 use hkask_mcp_curator::types::*;
 use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{EmbeddingStore, EscalationQueue, HMemStore, RegulationArchive};
+use hkask_storage::{EmbeddingStore, HMemStore, RegulationArchive};
 use hkask_types::event::{CyclePhase, Span, SpanNamespace};
 use hkask_types::{RegulationRecord, RegulationSink, WebID};
 use rmcp::handler::server::wrapper::Parameters;
@@ -112,7 +112,7 @@ fn ensure_embedding_model_env() {
 }
 
 /// Build a `CuratorServer` backed by a single shared in-memory driver, so all
-/// four stores see the same data (the production shape — one `curator.db`).
+/// stores see the same data (the production shape — one `curator.db`).
 /// Healing is disabled (no path, no passphrase) via `CuratorDb::from_stores`,
 /// so the self-heal loop never fires during a test.
 fn make_server() -> CuratorServer {
@@ -131,13 +131,10 @@ fn make_server_with_regulation_archive() -> (CuratorServer, Arc<RegulationArchiv
         hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store)
             .expect("memory store init"),
     );
-    let escalation_queue =
-        Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
     let regulation_store =
         Arc::new(RegulationArchive::from_driver(driver.clone()).expect("regulation archive init"));
 
     let stores = CuratorStores {
-        escalation_queue: Some(escalation_queue),
         regulation_store: Some(regulation_store.clone()),
         memory: Some(memory),
     };
@@ -160,13 +157,10 @@ fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStor
     let embedding_store =
         EmbeddingStore::from_driver(driver.clone(), test_dim()).expect("embedding store init");
     let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
-    let escalation_queue =
-        Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
     let regulation_store =
         Arc::new(RegulationArchive::from_driver(driver.clone()).expect("regulation archive init"));
 
     let stores = CuratorStores {
-        escalation_queue: Some(escalation_queue),
         regulation_store: Some(regulation_store),
         memory: Some(memory.clone()),
     };
@@ -187,149 +181,9 @@ fn parse(output: &str) -> serde_json::Value {
         .unwrap_or_else(|| panic!("tool output must be valid JSON, got: {output}"))
 }
 
-/// expect: "Only confirmed human action starts advice review, once, and resolved advice remains visible" [P9]
-#[tokio::test]
-async fn advice_tools_preserve_confirmation_and_resolved_reviews() {
-    let queue =
-        Arc::new(EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("queue"));
-    let server = CuratorServer::new(
-        WebID::new(),
-        Arc::new(CuratorDb::from_stores(CuratorStores {
-            escalation_queue: Some(queue.clone()),
-            regulation_store: None,
-            memory: None,
-        })),
-        failing_inference_port(),
-    );
-    let trigger = serde_json::json!({"source":"cybernetics", "metric":"tool_reliability", "value":0.2, "set_point":0.8, "timestamp":chrono::Utc::now()});
-    let trigger: hkask_regulation::Signal =
-        serde_json::from_value(trigger).expect("signal fixture");
-    let id = queue
-        .add(
-            hkask_types::TemplateID::new(),
-            hkask_types::BotID::new(),
-            "reliability".into(),
-            1.0,
-            0,
-            serde_json::json!({"recovery_signal":trigger}).to_string(),
-        )
-        .expect("add")
-        .to_string();
-    for (confirmed, note) in [(false, "repaired"), (true, "  ")] {
-        let error = server
-            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
-                id: id.clone(),
-                operator_confirmed: confirmed,
-                action_note: note.into(),
-            }))
-            .await
-            .expect_err("confirmation required");
-        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
-    }
-    let missing = server
-        .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
-            id: "absent".into(),
-            operator_confirmed: true,
-            action_note: "done".into(),
-        }))
-        .await
-        .expect_err("missing");
-    assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
-    for context in [
-        "{}",
-        "{\"recovery_signal\":{}}",
-        "{\"recovery_signal\":null}",
-    ] {
-        let invalid = queue
-            .add(
-                hkask_types::TemplateID::new(),
-                hkask_types::BotID::new(),
-                "unmeasurable".into(),
-                1.0,
-                0,
-                context.into(),
-            )
-            .expect("add");
-        let error = server
-            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
-                id: invalid.to_string(),
-                operator_confirmed: true,
-                action_note: "done".into(),
-            }))
-            .await
-            .expect_err("unmeasurable");
-        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
-    }
-    let first = parse(
-        &server
-            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
-                id: id.clone(),
-                operator_confirmed: true,
-                action_note: "repaired service".into(),
-            }))
-            .await
-            .expect("apply"),
-    );
-    let acknowledged = queue.get(&id).expect("get").expect("entry").error_context;
-    let again = parse(
-        &server
-            .curator_advice_mark_applied(Parameters(AdviceAppliedRequest {
-                id: id.clone(),
-                operator_confirmed: true,
-                action_note: "repeat".into(),
-            }))
-            .await
-            .expect("idempotent"),
-    );
-    assert_eq!(first, again);
-    assert_eq!(
-        queue.get(&id).expect("get").expect("entry").error_context,
-        acknowledged
-    );
-    assert_eq!(first["review"]["status"], "observation_window");
-    assert_eq!(first["review"]["causal_attribution"], "unverified");
-    let applied: chrono::DateTime<chrono::Utc> =
-        serde_json::from_value(first["applied_at"].clone()).expect("time");
-    let due: chrono::DateTime<chrono::Utc> =
-        serde_json::from_value(first["review_due_at"].clone()).expect("due");
-    assert_eq!(due - applied, chrono::Duration::days(7));
-    assert_eq!(
-        queue
-            .list_pending()
-            .expect("pending")
-            .iter()
-            .filter(|entry| entry.id.to_string() == id)
-            .count(),
-        1
-    );
-    queue.resolve(&id, "test").expect("resolve");
-    let reviews = parse(
-        &server
-            .curator_advice_reviews(Parameters(PingRequest {}))
-            .await
-            .expect("reviews"),
-    );
-    assert_eq!(reviews["reviews"].as_array().expect("array").len(), 1);
-    assert_eq!(reviews["reviews"][0]["status"], "resolved");
-    assert_eq!(
-        reviews["reviews"][0]["application"]["action_note"],
-        "repaired service"
-    );
-    // An advice application is an intervention record, never a skill verdict
-    // (evaluation is separated from execution): neither the response nor the
-    // persisted context names a skill.
-    assert!(first.get("skill_id").is_none(), "response: {first}");
-    assert!(
-        reviews["reviews"][0]["application"]
-            .get("skill_id")
-            .is_none(),
-        "persisted context: {reviews}"
-    );
-}
-
 // ── Liveness ──────────────────────────────────────────────────────────────
 
-/// `curator_ping` returns `status: "ok"` and reports all three stores as live
+/// `curator_ping` returns `status: "ok"` and reports both stores as live
 /// when the DB opened successfully.
 #[tokio::test]
 async fn ping_reports_store_health() {
@@ -342,11 +196,7 @@ async fn ping_reports_store_health() {
     );
 
     assert_eq!(response["status"].as_str(), Some("ok"), "ping must be ok");
-    assert_eq!(
-        response["stores"]["escalation_queue"].as_bool(),
-        Some(true),
-        "escalation queue must be live — got: {response}",
-    );
+    assert!(response["stores"].get("escalation_queue").is_none());
     assert_eq!(
         response["stores"]["regulation_store"].as_bool(),
         Some(true),
@@ -356,210 +206,6 @@ async fn ping_reports_store_health() {
         response["stores"]["memory"].as_bool(),
         Some(true),
         "memory must be live — got: {response}",
-    );
-}
-
-// ── Escalation management ──────────────────────────────────────────────────
-
-/// `curator_escalations` lists pending escalations — an empty queue is the
-/// clean-state happy path.
-#[tokio::test]
-async fn escalations_lists_pending_empty() {
-    let server = make_server();
-    let response = parse(
-        &server
-            .curator_escalations(Parameters(PingRequest {}))
-            .await
-            .expect("tool ok"),
-    );
-
-    assert_eq!(
-        response["count"].as_u64(),
-        Some(0),
-        "a fresh queue has zero pending escalations — got: {response}",
-    );
-    assert!(
-        response["escalations"].is_array(),
-        "escalations must be an array — got: {response}",
-    );
-}
-
-/// Resolving a nonexistent escalation must surface a structured `not_found`
-/// error, not a generic `internal` or a silent success. The `kind` field is
-/// the contract callers route on.
-#[tokio::test]
-async fn resolve_nonexistent_id_returns_not_found() {
-    let server = make_server();
-    let error = server
-        .curator_escalation_resolve(Parameters(EscalationResolveRequest {
-            id: "does-not-exist".to_string(),
-            resolution: "tested".to_string(),
-        }))
-        .await
-        .expect_err("resolving a nonexistent escalation must fail");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
-        "a nonexistent escalation id must classify as not_found, not internal — got: {error:?}",
-    );
-    assert!(
-        error.message.contains("does-not-exist"),
-        "the error message must name the missing id — got: {error:?}",
-    );
-}
-
-/// Dismissing a nonexistent escalation must surface a structured `not_found`
-/// error — same contract as resolve.
-#[tokio::test]
-async fn dismiss_nonexistent_id_returns_not_found() {
-    let server = make_server();
-    let error = server
-        .curator_escalation_dismiss(Parameters(EscalationDismissRequest {
-            id: "does-not-exist".to_string(),
-            reason: "duplicate".to_string(),
-        }))
-        .await
-        .expect_err("dismissing a nonexistent escalation must fail");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
-        "a nonexistent escalation id must classify as not_found — got: {error:?}",
-    );
-}
-
-// ── Pattern-based batch dismiss ─────────────────────────────────────────────
-
-/// `curator_escalation_dismiss_by_pattern` dismisses all pending escalations
-/// matching an exact output string and returns the count. This is the escape
-/// hatch for clearing runaway floods from a single broken feedback loop.
-#[tokio::test]
-async fn dismiss_by_pattern_clears_matching_escalations() {
-    let driver = SqliteDriver::in_memory_driver();
-    let queue =
-        Arc::new(EscalationQueue::from_driver(driver.clone()).expect("escalation queue init"));
-    let regulation_store =
-        Arc::new(RegulationArchive::from_driver(driver.clone()).expect("regulation archive init"));
-    let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
-    let memory = Arc::new(
-        hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store)
-            .expect("memory store init"),
-    );
-
-    let stores = CuratorStores {
-        escalation_queue: Some(queue.clone()),
-        regulation_store: Some(regulation_store),
-        memory: Some(memory),
-    };
-    let database = Arc::new(CuratorDb::from_stores(stores));
-    let server = CuratorServer::new(WebID::new(), database, failing_inference_port());
-
-    let flood_output = "inference circuit remains open after recovery probe";
-    let other_output = "Variety deficit in domain: reasoning";
-
-    // Seed: 5 identical flood escalations + 1 unrelated escalation.
-    for _ in 0..5 {
-        let template_id = hkask_types::TemplateID::new();
-        let bot_id = hkask_types::BotID::new();
-        queue
-            .add(
-                template_id,
-                bot_id,
-                flood_output.to_string(),
-                1.0,
-                0,
-                "{\"domain\":\"efferent:Throttle\"}".to_string(),
-            )
-            .unwrap();
-    }
-    let template_id = hkask_types::TemplateID::new();
-    let bot_id = hkask_types::BotID::new();
-    queue
-        .add(
-            template_id,
-            bot_id,
-            other_output.to_string(),
-            0.5,
-            0,
-            "{\"domain\":\"reasoning\"}".to_string(),
-        )
-        .unwrap();
-
-    // Verify 6 pending before dismissal.
-    let before = parse(
-        &server
-            .curator_escalations(Parameters(PingRequest {}))
-            .await
-            .expect("tool ok"),
-    );
-    assert_eq!(
-        before["count"].as_u64(),
-        Some(6),
-        "must have 6 pending escalations before batch dismiss — got: {before}"
-    );
-
-    // Dismiss all 5 flood escalations by pattern.
-    let response = parse(
-        &server
-            .curator_escalation_dismiss_by_pattern(Parameters(EscalationDismissByPatternRequest {
-                output: flood_output.to_string(),
-                reason: "runaway flood from unwired Throttle action".to_string(),
-            }))
-            .await
-            .expect("tool ok"),
-    );
-
-    assert_eq!(
-        response["dismissed"].as_bool(),
-        Some(true),
-        "batch dismiss must return dismissed: true — got: {response}"
-    );
-    assert_eq!(
-        response["count"].as_u64(),
-        Some(5),
-        "must dismiss exactly 5 matching escalations — got: {response}"
-    );
-
-    // The unrelated escalation must remain pending.
-    let after = parse(
-        &server
-            .curator_escalations(Parameters(PingRequest {}))
-            .await
-            .expect("tool ok"),
-    );
-    assert_eq!(
-        after["count"].as_u64(),
-        Some(1),
-        "only the unrelated escalation must remain — got: {after}"
-    );
-    assert_eq!(
-        after["escalations"][0]["output"].as_str(),
-        Some(other_output),
-        "the remaining escalation must be the unrelated one — got: {after}"
-    );
-}
-
-/// `curator_escalation_dismiss_by_pattern` on an empty queue returns count: 0,
-/// not an error. The no-match boundary.
-#[tokio::test]
-async fn dismiss_by_pattern_no_matches_returns_zero() {
-    let server = make_server();
-    let response = parse(
-        &server
-            .curator_escalation_dismiss_by_pattern(Parameters(EscalationDismissByPatternRequest {
-                output: "nothing matches this".to_string(),
-                reason: "testing no-match boundary".to_string(),
-            }))
-            .await
-            .expect("tool ok"),
-    );
-
-    assert_eq!(
-        response["dismissed"].as_bool(),
-        Some(true),
-        "dismissed must be true even with zero matches — got: {response}"
-    );
-    assert_eq!(
-        response["count"].as_u64(),
-        Some(0),
-        "count must be zero when no escalations match — got: {response}"
     );
 }
 
@@ -1181,7 +827,6 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
     let seed_id = seed.id.to_string();
     memory.store(seed).expect("seed evidence h_mem");
     let stores = CuratorStores {
-        escalation_queue: None,
         regulation_store: None,
         memory: Some(memory),
     };
@@ -1889,7 +1534,6 @@ async fn reg_query_surfaces_unavailable_archive_as_typed_error() {
     let server = CuratorServer::new(
         WebID::new(),
         Arc::new(CuratorDb::from_stores(CuratorStores {
-            escalation_queue: None,
             regulation_store: None,
             memory: None,
         })),
@@ -2164,7 +1808,6 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
         Some("curator experience"),
     )?;
     let stores = CuratorStores {
-        escalation_queue: Some(Arc::new(EscalationQueue::from_driver(driver.clone())?)),
         regulation_store: Some(Arc::new(RegulationArchive::from_driver(driver)?)),
         memory: Some(memory),
     };
@@ -2240,7 +1883,6 @@ async fn federated_search_preserves_healthy_source_during_partial_outage()
         WebID::new(),
         Arc::new(CuratorDb::from_stores_with_federated_manifest(
             CuratorStores {
-                escalation_queue: None,
                 regulation_store: None,
                 memory: Some(memory),
             },
@@ -2299,7 +1941,6 @@ async fn federated_search_reloads_removed_and_restored_manifest()
     )?;
     let db = Arc::new(CuratorDb::from_stores_with_federated_manifest(
         CuratorStores {
-            escalation_queue: None,
             regulation_store: None,
             memory: Some(memory),
         },
