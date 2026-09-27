@@ -305,41 +305,6 @@ mod tests {
     fn board() -> Value {
         json!({ "boards": [{ "board_id": "b", "name": ALGEDONIC_BOARD_NAME }] })
     }
-    fn tasks(status: &str) -> Value {
-        json!({ "tasks": [{
-        "task_id": "t", "status": status,
-        "description": "alert\nalgedonic-condition: degraded\nalgedonic-context: {}",
-    }] })
-    }
-
-    #[tokio::test]
-    async fn repeated_alert_comments_without_creating_a_card() {
-        let recorder = Recorder::with_replies(vec![
-            board(),
-            tasks("backlog"),
-            json!({ "comment_id": "c" }),
-        ]);
-        let sink = BoardAlertEscalationSink::new(recorder.clone());
-        assert_eq!(
-            sink.try_persist_alert("degraded — new reading", 0.5, "{}")
-                .await
-                .expect("repeat"),
-            AlertDeliveryOutcome::Confirmed(None)
-        );
-        assert_eq!(
-            recorder.names(),
-            [
-                "kanban_board_list",
-                "kanban_task_list",
-                "kanban_task_comment"
-            ]
-        );
-        assert!(
-            recorder.calls.lock().expect("calls")[2].1["body"]
-                .as_str()
-                .is_some_and(|s| s.contains("new reading"))
-        );
-    }
 
     #[tokio::test]
     async fn new_alert_creates_a_card_on_the_existing_board() {
@@ -406,58 +371,6 @@ mod tests {
             recorder.calls.lock().expect("calls")[1].1["idempotency_key"],
             "algedonic-review-board"
         );
-    }
-
-    /// expect: "Self-recovery reaches Review with evidence, never Done" [P9]
-    #[tokio::test]
-    async fn recovery_advances_through_standard_columns_to_review_only() {
-        let now = chrono::Utc::now();
-        let trigger: Signal = serde_json::from_value(json!({
-            "source": "cybernetics", "metric": "tool_reliability", "value": 0.4,
-            "set_point": 0.8, "timestamp": now,
-        }))
-        .expect("trigger");
-        let current: Signal = serde_json::from_value(json!({
-            "source": "cybernetics", "metric": "tool_reliability", "value": 0.95,
-            "set_point": 0.8, "timestamp": now,
-        }))
-        .expect("observation");
-        let description = format!(
-            "algedonic-condition: degraded\nalgedonic-context: {}",
-            json!({ "recovery_signal": trigger })
-        );
-        let recorder = Recorder::with_replies(vec![
-            board(),
-            json!({ "tasks": [{ "task_id": "t", "status": "backlog", "description": description }] }),
-            json!({ "comment_id": "c" }),
-            json!({ "new_status": "ready" }),
-            json!({ "new_status": "in_progress" }),
-            json!({ "new_status": "review" }),
-        ]);
-        BoardAlertEscalationSink::new(recorder.clone())
-            .reconcile_at(&[current], now)
-            .await
-            .expect("reconcile");
-        assert_eq!(
-            recorder.names(),
-            [
-                "kanban_board_list",
-                "kanban_task_list",
-                "kanban_task_comment",
-                KANBAN_TASK_MOVE_TOOL,
-                KANBAN_TASK_MOVE_TOOL,
-                KANBAN_TASK_MOVE_TOOL
-            ]
-        );
-        let calls = recorder.calls.lock().expect("calls");
-        assert!(
-            calls[2].1["body"]
-                .as_str()
-                .is_some_and(|text| text.contains("Self-recovered"))
-        );
-        assert_eq!(calls[3].1["target_status"], "ready");
-        assert_eq!(calls[4].1["target_status"], "in_progress");
-        assert_eq!(calls[5].1["target_status"], "review");
     }
 
     #[tokio::test]

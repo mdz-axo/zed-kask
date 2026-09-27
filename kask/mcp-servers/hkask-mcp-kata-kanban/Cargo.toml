@@ -46,10 +46,7 @@ regex.workspace = true
 # idempotent_creates.rs drives the real tool surface end-to-end (replay
 # protection through kanban_task_create/board_create/task_spawn).
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-kask_bridge.workspace = true
-hkask-regulation.workspace = true
-hkask_tool_invoker.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
+
 
 [lints]
 workspace = true

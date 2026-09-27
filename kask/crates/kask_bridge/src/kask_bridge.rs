@@ -108,6 +108,8 @@ mod ocr_health_bridge;
 pub use ocr_health_bridge::BridgeOcrHealthSource;
 
 mod algedonic_board;
+#[cfg(test)]
+mod algedonic_board_real_tests;
 pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 
 mod rollout_event_bridge;

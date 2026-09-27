@@ -859,8 +859,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // comparing string verdicts.
         ("eq", eq_fn),
         // List membership. (member x list) returns true iff x is structurally
-        // equal to an element of `list`. Nil list returns false. Used by the
-        // GORILLA maturity-blocks check (company-research-deep step 10).
+        // equal to an element of `list`. Nil list returns false.
         ("member", member_fn),
     ]
 }

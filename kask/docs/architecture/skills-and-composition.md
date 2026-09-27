@@ -696,41 +696,32 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 
 ### Company research verification handoff
 
-`company-research-deep` runs its stages as dependency waves: independent
-stages (evidence collection and the industry outside-view searches; the early
-gate and LISTEN; IMAGINE and THESIS) run in parallel, and each later stage
-waits only for the outputs it consumes. collect-evidence reads the retained
-originals once into `evidence-digest.json`; synthesis stages read the digest,
-while the verifiers check its records against the full hashed originals.
+`company-research-deep` defaults to one source collection, the full report
+and short summary, one frozen packet build and one narrow independent check of
+the two drafts. It does not run an early candidate gate, LISTEN, the
+GORILLA/Wardley/Simon/IMAGINE chain or a thesis judge by default. Those analyses
+are not prerequisites for the requested background/overview/outlook. The
+optional investment-grade extension is a separate request. A time limit on
+research leads to labelled gaps and delivery, not an invented verification.
 
-`company-research-deep` and `company-research-flash` retain actual source
-responses separately from generated analysis. Both render
-`company-research/verification-handoff` and delegate the retained packet to
-`grounding-verify`; rendering alone performs no verification. At candidate
-commitment both run the SAME handoff before expensive synthesis on a sourced
-factual candidate note, then rerun on materially changed targets, sources,
-forecasts or as-of dates. Deep rechecks the CompanyBoard and final report;
-flash rechecks the complete deliverable after KATA/LENS before publication.
-ENTER's eligibility is provisional. The handoff's original-disclosure check
-and frozen-forecast gate report material omissions and field mutation
-separately from factual grounding. A generated answer is not original content;
-only disclosures bearing on the company's economics or thesis are listed;
-boilerplate is never retrieved, listed or counted, and its absence is not a
-gap. The source check returns coverage and known-omission signals separately.
-The gate reads a material failure, known omission or fact score below 0.60
-first and returns `needs_work` (repair); only then does unmatched or
-unperformed coverage (`not_checked`) return `incomplete`, which blocks a
-verified report but permits a labelled draft. Neither signal is part of
-`fact_score`. The agent-executed
-forms validate supplied bytes, not a read-only capability boundary.
+The deep skill retains complete cited originals and computed tool responses
+separately from generated analysis. `company_research_packet_build` binds the
+exact drafts and cited sources; `company_verification_packet_check` checks the
+same digest mechanically. A separate verifier checks cited key claims in
+context against retained originals and checks material disclosures in the
+actual drafts. A packet match is not an original-download attestation or a
+semantic judgment. Unknown source identity, a false load-bearing figure or an
+unperformed check cannot become a verified report; the frozen full report and
+summary are delivered with an explicit incomplete label instead. Factual
+corrections require a new packet and check. The old early candidate handoff,
+all-stage digest choreography and numerical thesis score are not part of this
+default delivery path.
 
-The skill bodies own collection and the shared three-iteration correction
-budget. A missing/unperformed check, nil score, zero checked claims or
-in-thread self-check cannot approve a report. Material findings override an
-aggregate passing score. Corrected reports and newly composed summaries need
-new checks; prior verification records remain immutable history. The shared
-template defines the source packet and caller-executed source check and `lisp_eval` gate; these
-are agent-executed process constraints, not a Rust publication interceptor.
+`company-research-flash` retains the shared
+`company-research/verification-handoff` and its source-check and forecast
+integrity gates, including the distinction between a material omission and
+unperformed coverage. The template's result remains an agent-executed process
+constraint, not a Rust publication interceptor.
 
 ### Gas Consumption
 

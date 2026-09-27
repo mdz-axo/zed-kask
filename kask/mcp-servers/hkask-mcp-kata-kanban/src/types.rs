@@ -367,7 +367,7 @@ pub(crate) struct TaskAssignResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskVerifyRequest {
+pub struct TaskVerifyRequest {
     pub task_id: String,
     pub evidence: String,
 }
@@ -386,7 +386,7 @@ pub(crate) struct TaskVerifyResponse {
 // ── Comments ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskCommentRequest {
+pub struct TaskCommentRequest {
     pub task_id: String,
     pub body: String,
 }
@@ -404,7 +404,7 @@ pub(crate) struct TaskCommentResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskCommentsSinceRequest {
+pub struct TaskCommentsSinceRequest {
     pub task_id: String,
     /// Return only comments at or after this index (0-based).
     #[serde(default)]

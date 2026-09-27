@@ -59,6 +59,9 @@ tracing.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 hkask-mcp-curator = { path = "../../mcp-servers/hkask-mcp-curator" }
+hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban" }
+hkask-mcp-swarm.workspace = true
+hkask-mcp-server.workspace = true
 rmcp = { workspace = true, features = ["server", "macros"] }
 http_client = { workspace = true, features = ["test-support"] }
 proptest.workspace = true

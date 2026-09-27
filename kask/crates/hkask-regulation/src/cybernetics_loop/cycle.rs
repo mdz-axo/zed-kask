@@ -448,7 +448,7 @@ impl super::CyberneticsLoop {
     }
 
     pub(super) async fn act(&self, actions: &[RegulatoryAction]) {
-        // Without a queue, successful archive fallback is the condition's
+        // Without board delivery, successful archive fallback is the condition's
         // process-local retention authority. Drop latches as soon as their
         // escalation disposition disappears so a recurrence emits again.
         let active_fallback_conditions = actions
@@ -561,10 +561,10 @@ impl super::CyberneticsLoop {
         }
     }
 
-    /// Route a real escalation disposition through the durable queue, live
-    /// Curator channel, archive, and email fallback. Informational dispositions
-    /// remain observations and are not promoted to incidents. Returns true only
-    /// when a pending condition or durable sink confirms the evidence is retained.
+    /// Route an escalation through the review board, live Curator channel,
+    /// archive and email fallback. A repeat comment on an open card suppresses
+    /// duplicate live/archive events. Informational dispositions are not incidents.
+    /// Returns true only when the board or archive confirms retention.
     async fn route_action_as_alert(&self, action: &RegulatoryAction) -> bool {
         if action.action_type == ActionType::Notify {
             tracing::info!(
@@ -1467,10 +1467,8 @@ mod tests {
     /// alert could never fire (the pre-fix defect: the alert was dead
     /// code). Controls: the reset still replenishes; a replenished agent
     /// does not re-alert without new exhaustion; and the reset alone earns
-    /// no advice-progress credit — the exhaustion alert is transient
-    /// (escalated: false, no recovery signal), so it never enters the
-    /// reviewable queue and the auto-resolve machinery has nothing to
-    /// credit the reset with.
+    /// no review-card write — the exhaustion alert is transient
+    /// (`escalated: false`) and does not represent a review condition.
     #[tokio::test]
     async fn cap_exhaustion_is_detected_before_the_reset_replenishes() {
         let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
@@ -1552,12 +1550,11 @@ mod tests {
             "a replenished agent must not re-alert"
         );
 
-        // Control: the reset alone earns no advice-progress credit — the
-        // transient exhaustion alert never enters the reviewable queue
-        // (nothing persisted).
+        // Control: resetting the cap does not create a review card for the
+        // transient alert.
         assert!(
             escalation.persisted.lock().expect("persisted").is_empty(),
-            "the transient exhaustion alert must not enter the reviewable queue"
+            "the transient exhaustion alert must not create a review card"
         );
     }
 
@@ -3148,7 +3145,7 @@ mod tests {
         );
     }
 
-    /// expect: "Queue-unavailable fallback preserves one alert per persistent condition instead of displacing earlier informative events" [P9]
+    /// expect: "Board-unavailable fallback preserves one alert per persistent condition instead of displacing earlier informative events" [P9]
     #[tokio::test(start_paused = true)]
     async fn persistent_fallback_alerts_do_not_displace_prior_informative_events() {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();

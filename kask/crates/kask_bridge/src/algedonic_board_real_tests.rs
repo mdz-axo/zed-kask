@@ -5,6 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::BoardAlertEscalationSink;
 use gpui::BackgroundExecutor;
 use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_swarm::LocalAgentRegistry;
@@ -14,12 +15,11 @@ use hkask_tool_invoker::{InvokeError, ToolInvoker};
 use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_SERVER_NAME};
 use hkask_types::tool_response::parse_tool_response;
 use hkask_types::{InferenceError, WebID, WorktreeSpawnPort};
-use kask_bridge::BoardAlertEscalationSink;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
-use crate::types::*;
-use crate::{KanbanServer, KanbanService};
+use hkask_mcp_kata_kanban::types::*;
+use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 
 struct NoWorktree;
 impl WorktreeSpawnPort for NoWorktree {
@@ -66,6 +66,7 @@ impl ToolInvoker for RealKanbanInvoker {
                     kanban.$method(Parameters(request)).await
                 }};
             }
+
             let result: Result<String, McpToolError> = match tool.as_str() {
                 "kanban_board_list" => forward!(BoardListRequest, kanban_board_list),
                 "kanban_board_create" => forward!(BoardCreateRequest, kanban_board_create),
@@ -95,7 +96,8 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     let driver = SqliteDriver::in_memory_driver();
     let store = HMemStore::from_driver(driver.clone()).expect("kanban store");
     let idempotency = Arc::new(
-        crate::idempotency::IdempotencyStore::with_driver(driver).expect("idempotency store"),
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
+            .expect("idempotency store"),
     );
     let server = Arc::new(KanbanServer::new(
         WebID::new(),
@@ -107,7 +109,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     ));
     let invoker: Arc<dyn ToolInvoker> = Arc::new(RealKanbanInvoker {
         server: server.clone(),
-        executor: cx.background_executor().clone(),
+        executor: cx.background_executor.clone(),
     });
     let sink = BoardAlertEscalationSink::new(invoker);
     let now = chrono::Utc::now();
@@ -164,10 +166,10 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     assert_eq!(sink.awaiting_review_count().await.expect("status count"), 1);
     let comments = tool_content(
         server
-            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
-                task_id: task_id.clone(),
-                since_index: 0,
-            }))
+            .kanban_task_comments_since(Parameters(
+                serde_json::from_value(json!({ "task_id": task_id, "since_index": 0 }))
+                    .expect("comments request"),
+            ))
             .await,
     );
     assert!(
@@ -180,7 +182,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
                 .is_some_and(|body| body.contains("value 30")))
     );
 
-    sink.reconcile_conditions(&[recovered])
+    sink.reconcile_conditions(&[recovered.clone()])
         .await
         .expect("self-recovery");
     let review = tool_content(
@@ -194,10 +196,10 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     assert_eq!(review["tasks"].as_array().expect("review cards").len(), 1);
     let comments = tool_content(
         server
-            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
-                task_id: task_id.clone(),
-                since_index: 0,
-            }))
+            .kanban_task_comments_since(Parameters(
+                serde_json::from_value(json!({ "task_id": task_id, "since_index": 0 }))
+                    .expect("comments request"),
+            ))
             .await,
     );
     assert!(
@@ -209,6 +211,33 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
                 .as_str()
                 .is_some_and(|body| body.contains("Self-recovered")))
     );
+    // A fresh bad observation invalidates an unverified recovery. The
+    // existing card must leave Review, not invite a stale Done verdict.
+    assert_eq!(
+        sink.try_persist_alert("degraded — recurrence after recovery", 0.5, "{}")
+            .await
+            .expect("recurrence"),
+        hkask_regulation::AlertDeliveryOutcome::Confirmed(None)
+    );
+    let in_progress = tool_content(
+        server
+            .kanban_task_list(Parameters(TaskListRequest {
+                board_id: board_id.to_string(),
+                status: Some("in_progress".into()),
+            }))
+            .await,
+    );
+    assert_eq!(
+        in_progress["tasks"]
+            .as_array()
+            .expect("reopened cards")
+            .len(),
+        1,
+        "a fresh degradation must remove the card from Review"
+    );
+    sink.reconcile_conditions(&[recovered])
+        .await
+        .expect("recovered again");
     assert!(
         server
             .kanban_task_move(Parameters(TaskMoveRequest {
@@ -221,10 +250,12 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     );
     let verified = tool_content(
         server
-            .kanban_task_verify(Parameters(TaskVerifyRequest {
-                task_id,
-                evidence: "Reviewer checked the recovered observation".into(),
-            }))
+            .kanban_task_verify(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": task_id, "evidence": "Reviewer checked the recovered observation",
+                }))
+                .expect("verify request"),
+            ))
             .await,
     );
     assert_eq!(verified["new_status"], "done");
