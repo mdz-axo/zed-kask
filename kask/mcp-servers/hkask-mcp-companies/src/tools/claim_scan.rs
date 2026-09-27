@@ -93,8 +93,18 @@ fn figures(text: &str) -> Vec<Figure> {
     let mut out = Vec::new();
     for caps in number.captures_iter(&cleaned) {
         let Some(whole) = caps.get(0) else { continue };
-        let previous = cleaned[..whole.start()].chars().next_back();
-        if previous.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '#' || c == '.') {
+        let prefix = &cleaned[..whole.start()];
+        let previous = prefix.chars().next_back();
+        let us_dollar = whole.as_str().starts_with('$')
+            && prefix.strip_suffix("US").is_some_and(|before| {
+                before
+                    .chars()
+                    .next_back()
+                    .map_or(true, |c| !c.is_ascii_alphanumeric() && c != '_')
+            });
+        if previous.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '#' || c == '.')
+            && !us_dollar
+        {
             continue;
         }
         let integer = caps.get(2).map_or("", |m| m.as_str());
@@ -385,6 +395,24 @@ mod tests {
         );
     }
 
+    /// expect: US-dollar figures are scanned, while digits embedded in words
+    /// remain excluded. The real Viridien draft used US$ for audited amounts;
+    /// rejecting all of them left a falsely clean zero-denominator scan.
+    #[test]
+    fn us_dollar_figures_are_scanned_and_wrong_amounts_flagged() {
+        let sources = HashMap::from([(
+            "urd".to_string(),
+            "Operating revenues 1,070.5 1,211.3; operating income 237.3 143.5".to_string(),
+        )]);
+        let result = scan(
+            "Audited revenue was US$1,070.5m [urd].\nAudited income was US$211.3m [urd].\nA code FY2025 is not an amount [urd].",
+            &sources,
+        );
+        assert_eq!(result["figures_checked"], 2, "{result}");
+        assert_eq!(result["figures_matched"], 1, "{result}");
+        assert_eq!(result["unmatched"][0]["token"], "211.3", "{result}");
+    }
+
     /// expect: a figure embedded in a larger number is not a match — a
     /// provider operating income of 211.3 stated against a source that only
     /// shows revenue 1,211.3 is flagged (live-observed 2026-09-26, VIRI.PA).
@@ -405,43 +433,6 @@ mod tests {
             .map(|a| a.iter().filter_map(|u| u["token"].as_str()).collect())
             .unwrap_or_default();
         assert_eq!(tokens, vec!["211.3"], "{result}");
-    }
-
-    /// Calibration probe over a real frozen report (not run by default):
-    /// `CLAIM_SCAN_PROBE=<run dir> cargo test -p hkask-mcp-companies claim_scan_probe -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn claim_scan_probe() {
-        let Ok(dir) = std::env::var("CLAIM_SCAN_PROBE") else {
-            return;
-        };
-        let dir = std::path::Path::new(&dir);
-        let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap_or_default();
-        let target = format!(
-            "{}\n{}",
-            read("drafts/full-report.md"),
-            read("drafts/summary.md")
-        );
-        let sources = HashMap::from([
-            ("msft-fy26-10k".to_string(), read("msft-fy26-10k.txt")),
-            (
-                "msft-fy26q4-transcript".to_string(),
-                read("msft-fy26q4-transcript.txt"),
-            ),
-            (
-                "msft-fy26q3-transcript".to_string(),
-                read("msft-fy26q3-transcript.txt"),
-            ),
-            (
-                "cma-cloud-final-2025".to_string(),
-                read("cma-cloud-final-2025.txt"),
-            ),
-        ]);
-        let result = scan(&target, &sources);
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        );
     }
 
     /// expect: years, dates, list numbers and figures citing only tool outputs
