@@ -6,7 +6,7 @@ description: "Human-in-the-loop algedonic review and skill gemba walk through th
 
 # Algedonic Review
 
-The **Algedonic review** board in the kanban panel is the shared worklist for the operator and Curator. The regulation loop places new alerts in Backlog and records repeats as comments on the same open condition card. Skill-change proposals also enter this board, not a separate folder. The capped algedonic log is context, not the review backlog; it self-evicts and is never cleared merely to finish a review.
+The **Algedonic review** board in the kanban panel is the shared worklist for the operator and Curator. The regulation loop places new alerts in Backlog and records changed repeat observations or hourly unchanged-condition checkpoints as comments on the same open card; identical ten-second ticks do not each add a comment. Skill-change proposals also enter this board, not a separate folder. The capped algedonic log is context, not the review backlog; it self-evicts and is never cleared merely to finish a review.
 
 ## SENSE — Read the worklist
 

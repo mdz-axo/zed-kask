@@ -20,6 +20,7 @@ struct OpenCard {
     status: TaskStatus,
     condition: String,
     recovery_signal: Option<Signal>,
+    latest_comment: Option<(String, chrono::DateTime<chrono::Utc>)>,
 }
 
 pub struct BoardAlertEscalationSink {
@@ -106,11 +107,23 @@ impl BoardAlertEscalationSink {
                 .and_then(|context| context.get("recovery_signal").cloned())
                 .and_then(|signal| serde_json::from_value::<Signal>(signal).ok())
                 .filter(Signal::is_recovery_trigger);
+            let latest_comment = task.get("activity")
+                .filter(|activity| !activity.is_null() && activity["kind"] == "comment")
+                .and_then(|activity| {
+                    let parsed = activity["text"].as_str().zip(activity["at"].as_str())
+                        .and_then(|(text, at)| chrono::DateTime::parse_from_rfc3339(at).ok()
+                            .map(|time| (text.to_string(), time.with_timezone(&chrono::Utc))));
+                    if parsed.is_none() {
+                        tracing::warn!(target: "reg.alert", task_id, "Board activity timestamp unreadable; retaining repeat comment");
+                    }
+                    parsed
+                });
             cards.push(OpenCard {
                 task_id: task_id.to_string(),
                 status,
                 condition: condition.to_string(),
                 recovery_signal,
+                latest_comment,
             });
         }
         Ok((board_id, cards))
@@ -234,9 +247,20 @@ impl AlertEscalationSink for BoardAlertEscalationSink {
             } else {
                 format!("Repeated: {output}")
             };
-            self.comment(&card.task_id, note)
-                .await
-                .map_err(AlertPersistError::BoardWrite)?;
+            // D63 already emits an hourly steady-state heartbeat. Mirror that
+            // cadence on a card only when its latest comment is an identical
+            // alert; changed observations and re-degradation remain immediate.
+            let record_repeat = was_in_review
+                || card.latest_comment.as_ref().is_none_or(|(body, at)| {
+                    body != &note
+                        || chrono::Utc::now().signed_duration_since(at.to_owned())
+                            >= chrono::Duration::hours(1)
+                });
+            if record_repeat {
+                self.comment(&card.task_id, note)
+                    .await
+                    .map_err(AlertPersistError::BoardWrite)?;
+            }
             if was_in_review {
                 // A fresh bad observation invalidates the unverified recovery.
                 // Review → In Progress is one standard backward transition.
@@ -389,6 +413,37 @@ mod tests {
             recorder.calls.lock().expect("calls")[1].1["idempotency_key"],
             "algedonic-review-board"
         );
+    }
+
+    /// expect: "An unchanged open alert still leaves an hourly board heartbeat" [P9]
+    #[tokio::test]
+    async fn stale_repeat_activity_records_a_new_comment() {
+        for at in ["2000-01-01T00:00:00Z", "not-a-timestamp"] {
+            let recorder = Recorder::with_replies(vec![
+                board(),
+                json!({ "tasks": [{
+                    "task_id": "t", "status": "backlog",
+                    "description": "algedonic-condition: degraded",
+                    "activity": { "kind": "comment", "text": "Repeated: degraded — value 30", "at": at },
+                }] }),
+                json!({ "comment_id": "c" }),
+            ]);
+            assert_eq!(
+                BoardAlertEscalationSink::new(recorder.clone())
+                    .try_persist_alert("degraded — value 30", 0.5, "{}")
+                    .await
+                    .expect("repeat"),
+                AlertDeliveryOutcome::Confirmed(None)
+            );
+            assert_eq!(
+                recorder.names(),
+                [
+                    "kanban_board_list",
+                    "kanban_task_list",
+                    "kanban_task_comment"
+                ]
+            );
+        }
     }
 
     #[tokio::test]

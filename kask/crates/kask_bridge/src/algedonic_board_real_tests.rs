@@ -141,6 +141,18 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             .expect("repeat"),
         hkask_regulation::AlertDeliveryOutcome::Confirmed(None)
     );
+    assert_eq!(
+        sink.try_persist_alert("degraded — value 30", 0.5, "{}")
+            .await
+            .expect("identical tick"),
+        hkask_regulation::AlertDeliveryOutcome::Confirmed(None)
+    );
+    assert_eq!(
+        sink.try_persist_alert("degraded — value 20", 0.5, "{}")
+            .await
+            .expect("changed observation"),
+        hkask_regulation::AlertDeliveryOutcome::Confirmed(None)
+    );
     let boards = tool_content(
         server
             .kanban_board_list(Parameters(BoardListRequest {}))
@@ -190,15 +202,22 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             ))
             .await,
     );
-    assert!(
-        comments["comments"]
-            .as_array()
-            .expect("comments")
-            .iter()
-            .any(|comment| comment["body"]
-                .as_str()
-                .is_some_and(|body| body.contains("value 30")))
+    let repeated = comments["comments"].as_array().expect("comments");
+    assert_eq!(
+        repeated.len(),
+        2,
+        "identical scheduled ticks add no new evidence; changed observations do"
     );
+    assert!(repeated.iter().any(|comment| {
+        comment["body"]
+            .as_str()
+            .is_some_and(|body| body.contains("value 30"))
+    }));
+    assert!(repeated.iter().any(|comment| {
+        comment["body"]
+            .as_str()
+            .is_some_and(|body| body.contains("value 20"))
+    }));
 
     sink.reconcile_conditions(std::slice::from_ref(&recovered))
         .await
