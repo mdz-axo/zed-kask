@@ -1081,7 +1081,6 @@ impl HMemStore {
         )
     }
 
-
     /// Delete by literal prefix and return the count and distinct affected
     /// entities for coupled-reference cleanup. Identities come from DELETE
     /// RETURNING, not a capped or separately scoped discovery query. Payloads
@@ -1485,7 +1484,11 @@ mod tests {
             for memory in [&target, &retained, &lower] {
                 store.insert(memory)?;
             }
-            assert_eq!(store.delete_by_entity_prefix_with_entities(prefix)?.0, 1, "{prefix}");
+            assert_eq!(
+                store.delete_by_entity_prefix_with_entities(prefix)?.0,
+                1,
+                "{prefix}"
+            );
             assert!(store.get_by_id(&target.id)?.is_none());
             assert!(store.get_by_id(&retained.id)?.is_some());
             assert!(store.get_by_id(&lower.id)?.is_some());
