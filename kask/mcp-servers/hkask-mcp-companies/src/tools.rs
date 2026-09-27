@@ -7,7 +7,6 @@ pub(crate) mod financial_data;
 pub(crate) mod notes;
 pub(crate) mod retained_output;
 
-pub(crate) mod artifacts;
-pub(crate) mod claim_scan;
+pub(crate) mod reports;
 pub(crate) mod transcript;
 pub(crate) mod valuation;

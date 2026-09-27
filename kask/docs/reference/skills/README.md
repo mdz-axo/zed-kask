@@ -73,7 +73,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 | Skill | Purpose |
 |-------|---------|
-| `company-research-deep` | Equity research deep pipeline. 16 stages run as dependency waves (independent stages in parallel) over one extract-once evidence digest, converging on the THESIS investment-grade verdict |
+| `company-research-deep` | Equity research deep pipeline. Nine analytical perspectives run as dependency waves over one extract-once evidence digest; every load-bearing claim is checked against retained sources before publication, and the report is never labelled verified or investment grade |
 | `company-research-flash` | Equity research flash pipeline. Sequential 23-step process with early-exit gates converging on LENS verdict consistency |
 | `portfolio-review` | Transaction-ledger portfolio performance review: seed prices from live quotes, TWR/MWR returns, Brinson-style attribution, durable review note |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
@@ -173,7 +173,8 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > removed: `idiomatic-lisp`, `constraint-forces-recast`,
 > `gradient-seeded-recombination`, `capabilities-reasoner`,
 > `principle-constraints`, `goal-analysis` (its judge moved to
-> `company-research/thesis-judge`). Folded 2026-09-26: `adapter-lifecycle` into
+> `company-research/thesis-judge`, removed 2026-09-27 with the deep pipeline's
+> gate machinery). Folded 2026-09-26: `adapter-lifecycle` into
 > `self-improvement` (Fine-tuning run), `calibration-stewardship` into
-> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 56
-> template namespaces holding 286 `.j2` files.
+> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 57
+> template namespaces holding 280 `.j2` and 2 `.jinja` files.

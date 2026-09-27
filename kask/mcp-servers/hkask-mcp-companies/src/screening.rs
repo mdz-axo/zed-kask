@@ -502,7 +502,7 @@ async fn run_screen_job(
     );
     let artifact_name = format!("expectations-gap-{}-{job_id}", definition.as_of);
     let artifact_path =
-        crate::tools::artifacts::save_json_artifact("report", &artifact_name, &result)?;
+        crate::tools::reports::save_json_artifact("report", &artifact_name, &result)?;
     server
         .research
         .finish_screen_job(

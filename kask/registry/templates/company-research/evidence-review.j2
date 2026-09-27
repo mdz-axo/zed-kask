@@ -1,0 +1,44 @@
+{# goal: Author-side evidence review of frozen report drafts in the audit working-paper discipline — assertion-based, bidirectional, materiality-scoped. Implements ISA 500 (assertion orientation, reliability hierarchy, inquiry is not corroboration), ISA 320 (materiality), vouching/tracing direction of testing, ISA 230 (the record is the deliverable). Never produces a "verified" label. #}
+[inference]
+contract:
+  input:
+    report_draft: string
+    summary_draft: string
+    evidence_digest: array
+    as_of_date: string
+  output:
+    assertions: array
+    tracing_findings: array
+    disagreement_coverage: array
+    counts: object
+    limitations: array
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+
+You are performing an author-side evidence review of a frozen company report, in the working-paper discipline of a financial audit review — not an independent audit opinion, and not a quality score. The deliverable is the review record itself: what was checked, how, and what was found (ISA 230). The report under review is written synthesis; your job is to test its claims against retained evidence, never to reward excerpt-style writing.
+
+## Report draft (frozen)
+{{ report_draft }}
+
+## Summary draft (frozen)
+{{ summary_draft }}
+
+## Retained evidence (digest records: output_key, verbatim text, period, unit, provenance_level)
+{{ evidence_digest | tojson }}
+
+## As of date (qualifies all present-tense claims)
+{{ as_of_date }}
+
+In one bounded pass:
+
+1. **Assertion inventory (materiality-scoped).** Extract the load-bearing claims from both drafts: figures, dates, named facts, quotes, and the factual premises under the report's conclusions. A claim is load-bearing if the report's conclusions would change if it were wrong; record why for each (`materiality_basis`). Do not inventory incidental phrasing — the review's cost stays proportional to what matters (ISA 320).
+2. **Vouch each assertion — claim → evidence.** Does retained evidence support this claim as written: right period, right unit, right magnitude, right qualification? Record `supported`, `uncorroborated`, `contradicted` or `not_checkable`, with `vouch_basis` naming the digest record and passage that supports or fails it. Grade each assertion's evidence by the reliability hierarchy — audited > interim > transcript > press > media > web (ISA 500.A31). A load-bearing assertion backed only by a management statement is `uncorroborated`: inquiry is not corroboration. A load-bearing assertion supported by a single low-reliability source records a sufficiency note in `vouch_basis` — quantity and quality of evidence are assessed together (ISA 500.6). A paraphrased claim with faithful period, unit, magnitude and qualification is as good as a quote — do not ask for or reward verbatim excerpting.
+3. **Trace each digest record — evidence → report.** What material facts does this retained evidence disclose that the report's conclusions should engage but do not? Scope to the report's actual scope (background, overview, outlook) and mark each finding `added` (the report already engages it), `gap` (omitted — the report must add it or carry it as a visible gap) or `immaterial`. This is the completeness direction: an omission is a finding even when every present claim is supported.
+4. **Disagreement coverage.** Where the report's perspective sections disagree — one perspective's conclusion contradicts another's — check that the report says so and resolves it: with a stated basis naming the discriminating evidence (the evidence consistent with one position and inconsistent with the other), or its weight, provenance strength, or mechanism; or an explicit deferral naming the evidence that would resolve it. A disagreement smoothed over or silently dropped is a finding. Record what the report did; do not re-adjudicate the disagreement yourself and do not score the judgment.
+5. **Limitations.** List what was NOT checked and why — sources not reviewed, assertion types out of scope, digest records unavailable. An unperformed check is a recorded limitation, never a clean result.
+
+Return JSON only, with exactly the declared output fields. `assertions` entries carry {claim_id, statement, materiality_basis, evidence_refs, vouch_result, vouch_basis, provenance}; `tracing_findings` carry {source, material_fact, status}; `disagreement_coverage` entries carry {topic, in_report, basis}; `counts` totals the results; `limitations` names unperformed checks. This record confers no "verified" status on the report — the report's label states what was reviewed and what was not, and mechanical match counts (recorded separately by the agent) are counts, never verdicts.
