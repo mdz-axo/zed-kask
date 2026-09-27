@@ -16,6 +16,7 @@ use collections::HashMap;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::error::Category;
 use std::pin::Pin;
 
 /// A single decoded Chat Completions stream chunk: either an event or a
@@ -460,19 +461,52 @@ impl ChatCompletionEventMapper {
         })
     }
 
-    /// zed-kask: D36 — the first accumulated call whose arguments are not
-    /// complete JSON, with the tool name, parse error, and accumulated
-    /// argument length: the truncation signature at stream end. Empty
-    /// arguments are not a signature (a genuine no-argument call is
-    /// indistinguishable from a cut before any argument text arrived), so
-    /// they still drain and are the tool boundary's problem, not the
-    /// mapper's.
-    fn first_truncated_tool_call(&self) -> Option<(String, String, usize)> {
+    /// zed-kask: D36 — the first accumulated call whose arguments ended
+    /// mid-JSON, with the tool name, parse error, and accumulated argument
+    /// length: the transport-cut signature at stream end, under any finish
+    /// reason. The discriminator is serde's error category — `Category::Eof`
+    /// means the input ended before the JSON was complete (every signature
+    /// in the 2026-09-27 storm, and all 35 pre-restart log occurrences,
+    /// were "EOF while parsing …"; the storm finished with
+    /// `finish_reason="tool_calls"`, not "stop", so a finish-reason test
+    /// alone cannot catch it). A syntax-classified failure is complete-input
+    /// model fault, not a cut, and drains as the per-call parse-error
+    /// recovery. Empty arguments are not a signature (a genuine no-argument
+    /// call is indistinguishable from a cut before any argument text
+    /// arrived), so they still drain and are the tool boundary's problem,
+    /// not the mapper's.
+    fn first_eof_truncated_tool_call(&self) -> Option<(String, String, usize)> {
         self.tool_calls.calls.iter().find_map(|call| {
             parse_tool_arguments(&call.arguments)
                 .err()
+                .filter(|error| matches!(error.classify(), Category::Eof))
                 .map(|error| (call.name.clone(), error.to_string(), call.arguments.len()))
         })
+    }
+
+    /// zed-kask: D36 — record an EOF-classified mid-JSON cut as the typed
+    /// truncation error: nothing is dispatched, the accumulator is cleared
+    /// so no later event revives the batch, and the caller returns without
+    /// a stop event so the turn cannot end cleanly.
+    fn push_truncation(
+        &mut self,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        found: (String, String, usize),
+    ) {
+        let (tool_name, json_parse_error, raw_input_chars) = found;
+        log::warn!(
+            "tool call '{}' arguments ended mid-JSON (EOF): classifying the stream as \
+             truncated and dispatching nothing ({} chars of arguments received)",
+            tool_name,
+            raw_input_chars,
+        );
+        self.tool_call_accumulation_failed = true;
+        self.tool_calls = ToolCallAccumulator::default();
+        events.push(Err(LanguageModelCompletionError::ToolCallTruncated {
+            tool_name,
+            json_parse_error,
+            raw_input_chars,
+        }));
     }
 
     pub fn map_event(
@@ -560,42 +594,23 @@ impl ChatCompletionEventMapper {
 
         // zed-kask: D36 — some providers finish tool calls with "stop". Reuse
         // the normal drain without reviving calls rejected as ambiguous —
-        // but only when every accumulated call's arguments parse as complete
-        // JSON. A stop with a JSON fragment is a stream that was cut
-        // mid-tool-call: classify it as truncation, dispatch nothing, and
-        // emit no stop event so the turn cannot end cleanly.
+        // but an EOF-classified argument fragment (the input ended
+        // mid-JSON) is a stream cut under ANY finish reason: classify it as
+        // truncation, dispatch nothing, and emit no stop event so the turn
+        // cannot end cleanly.
         let finish_reason = match choice.finish_reason.as_deref() {
             Some("stop")
                 if !self.tool_call_accumulation_failed && !self.tool_calls.calls.is_empty() =>
             {
-                match self.first_truncated_tool_call() {
-                    Some((tool_name, json_parse_error, raw_input_chars)) => {
-                        log::warn!(
-                            "finish_reason=\"stop\" with {} accumulated tool calls, but \
-                             '{}' arguments are incomplete; classifying the stream as \
-                             truncated and dispatching nothing",
-                            self.tool_calls.calls.len(),
-                            tool_name,
-                        );
-                        // The rest of the batch is from the same cut: suppress
-                        // every later tool event for this stream.
-                        self.tool_call_accumulation_failed = true;
-                        self.tool_calls = ToolCallAccumulator::default();
-                        events.push(Err(LanguageModelCompletionError::ToolCallTruncated {
-                            tool_name,
-                            json_parse_error,
-                            raw_input_chars,
-                        }));
-                        return events;
-                    }
-                    None => {
-                        log::warn!(
-                            "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
-                            self.tool_calls.calls.len()
-                        );
-                        Some("tool_calls")
-                    }
+                if let Some(found) = self.first_eof_truncated_tool_call() {
+                    self.push_truncation(&mut events, found);
+                    return events;
                 }
+                log::warn!(
+                    "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
+                    self.tool_calls.calls.len()
+                );
+                Some("tool_calls")
             }
             finish_reason => finish_reason,
         };
@@ -606,6 +621,14 @@ impl ChatCompletionEventMapper {
             }
             Some("tool_calls") => {
                 if !self.tool_call_accumulation_failed {
+                    // zed-kask: D36 — an EOF-classified fragment under a
+                    // genuine tool_calls finish is the same cut (the
+                    // 2026-09-27 storm came through this door): classify as
+                    // truncation, dispatch nothing, emit no stop.
+                    if let Some(found) = self.first_eof_truncated_tool_call() {
+                        self.push_truncation(&mut events, found);
+                        return events;
+                    }
                     events.extend(self.tool_calls.drain().map(
                         |tool_call| match parse_tool_arguments(&tool_call.arguments) {
                             Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
@@ -1057,14 +1080,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_calls_finish_with_invalid_arguments_still_surfaces_parse_error() {
-        // zed-kask: D36 — the genuine-garbage path is unchanged: a
-        // finish_reason="tool_calls" whose arguments do not parse is model
-        // fault, surfaced as a per-call parse error inside a normal
-        // tool-call turn so the model can correct its JSON.
+    fn tool_calls_finish_with_syntax_error_arguments_still_surfaces_parse_error() {
+        // zed-kask: D36 — the model-fault path is unchanged: a
+        // finish_reason="tool_calls" with syntax-error JSON (complete
+        // input, malformed — NOT an EOF fragment) is surfaced as a per-call
+        // parse error inside a normal tool-call turn so the model can
+        // correct its JSON. The EOF-fragment case is transport truncation
+        // and is classified by the tests below.
         let event = serde_json::from_value(json!({"choices": [{
             "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
-                "name": "corpus_query", "arguments": "{\"query\":"
+                "name": "corpus_query", "arguments": "{\"query\" \"test\"}"
             }}]},
             "finish_reason": "tool_calls"
         }]}))
@@ -1073,9 +1098,102 @@ mod tests {
         assert!(matches!(events.as_slice(), [..,
             Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { id, raw_input, .. }),
             Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
-        ] if id.to_string() == "call_1" && raw_input.as_ref() == "{\"query\":"));
+        ] if id.to_string() == "call_1" && raw_input.as_ref() == "{\"query\" \"test\"}"));
         assert!(!events.iter().any(|event| matches!(
             event, Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+        )));
+    }
+
+    #[test]
+    fn tool_calls_finish_with_eof_fragment_is_classified_as_truncated() {
+        // zed-kask: D36 — the 2026-09-27 truncation storm came through
+        // this door (35 EOF parse failures in the pre-restart editor log,
+        // zero stop-remap drain warns): a genuine
+        // finish_reason="tool_calls" whose arguments ended mid-JSON is a
+        // stream cut, not model fault. It must surface as the typed
+        // truncation error, dispatch nothing, and not end as a clean
+        // tool-call turn.
+        let event = serde_json::from_value(json!({"choices": [{
+            "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
+                "name": "terminal", "arguments": "{\"command\":\"git stat"
+            }}]},
+            "finish_reason": "tool_calls"
+        }]}))
+        .expect("valid stream envelope with an EOF fragment");
+        let events = map_completion_results(vec![event]);
+        assert!(matches!(
+            events.last(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                ..
+            })) if tool_name == "terminal"
+                && json_parse_error.contains("EOF while parsing")
+        ));
+        assert!(!events.iter().any(|event| matches!(
+            event, Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Ok(LanguageModelCompletionEvent::Stop(_))))
+        );
+    }
+
+    #[test]
+    fn tool_calls_finish_with_eof_fragment_truncates_the_whole_batch() {
+        // zed-kask: D36 — a cut stream is unreliable as a batch under
+        // either finish reason: when any accumulated call has an EOF
+        // fragment, none of the batch is dispatched as complete input.
+        let chunks = serde_json::from_value(json!([
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "function": {
+                    "name": "grep", "arguments": "{\"regex\":\"D36\",\"include_pattern\":\"*.rs\"}"
+                }},
+                {"index": 1, "id": "call_2", "function": {
+                    "name": "read_file", "arguments": "{\"path\":\"crates/lang"
+                }}
+            ]}}]},
+            {"choices": [{"finish_reason": "tool_calls"}]}
+        ]))
+        .expect("valid mixed batch");
+        let events = map_completion_results(chunks);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated { tool_name, .. }))
+                if tool_name == "read_file"
+        ));
+    }
+
+    #[test]
+    fn stop_with_syntax_error_arguments_drains_as_model_fault_recovery() {
+        // zed-kask: D36 — the EOF discriminator cuts both ways: a
+        // syntax-error parse failure (complete input, malformed) under a
+        // stop-remapped finish is model fault, not a cut, and keeps the
+        // per-call parse-error recovery.
+        let event = serde_json::from_value(json!({"choices": [{
+            "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
+                "name": "corpus_query", "arguments": "{\"query\" \"test\"}"
+            }}]},
+            "finish_reason": "stop"
+        }]}))
+        .expect("valid stream envelope with malformed arguments");
+        let events = map_completion_results(vec![event]);
+        assert!(matches!(events.as_slice(), [..,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { id, .. }),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
+        ] if id.to_string() == "call_1"));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated { .. })
         )));
     }
 

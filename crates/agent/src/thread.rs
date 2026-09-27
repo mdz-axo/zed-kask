@@ -4621,11 +4621,13 @@ impl Thread {
 
         // A parse failure that reaches this handler means the stream
         // reported a completed tool-call turn with malformed JSON — either
-        // model fault (finish_reason "tool_calls" garbage) or a provider
-        // whose mapper has not classified the cut (non-Chat-Completions
-        // APIs). The Chat-Completions mid-JSON cut under
-        // finish_reason="stop" is classified as ToolCallTruncated at the
-        // shared mapper and never reaches this handler (D36). Warn with
+        // model fault (syntax-error JSON under a finish_reason
+        // "tool_calls" or stop-remapped turn) or a provider whose mapper
+        // has not classified the cut (non-Chat-Completions APIs). A
+        // Chat-Completions argument fragment that ended mid-JSON (an
+        // EOF-classified parse error, under any finish reason) is
+        // classified as ToolCallTruncated at the shared mapper and never
+        // reaches this handler (D36). Warn with
         // the raw-input length so the operator can distinguish malformed
         // model output from a large payload the model should split.
         log::warn!(
