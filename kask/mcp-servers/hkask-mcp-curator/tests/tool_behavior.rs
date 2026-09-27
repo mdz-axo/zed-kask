@@ -1322,6 +1322,39 @@ async fn resolve_contradiction_finds_target_by_id() {
     );
 }
 
+/// A knowledge row with no embeddable text is named in the dry run — the
+/// operator can find the memory semantic recall cannot see.
+#[tokio::test]
+async fn backfill_names_unsupported_rows() {
+    let (server, memory) = make_server_with_embeddings();
+    let opaque = hkask_storage::HMem::new(
+        "opaque-entity",
+        "structured_only",
+        serde_json::json!({"count": 3}),
+        WebID::new(),
+    );
+    let id = opaque.id.to_string();
+    memory.store(opaque).expect("seed opaque row");
+
+    let dry = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("dry run ok"),
+    );
+    assert_eq!(dry["unsupported_count"].as_u64(), Some(1));
+    assert_eq!(
+        dry["unsupported"][0]["h_mem_id"].as_str(),
+        Some(id.as_str())
+    );
+    assert_eq!(
+        dry["unsupported"][0]["entity"].as_str(),
+        Some("opaque-entity")
+    );
+}
+
 /// `curator_memory_backfill_embeddings` must embed knowledge-layer h_mems
 /// whose entities have no embedding, while excluding turn-storage entities
 /// — both prefixes, `curator:thread:` (shared) and the retired

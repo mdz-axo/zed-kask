@@ -1828,10 +1828,17 @@ impl CuratorServer {
             // Knowledge-layer candidates are passage-scoped: one successful
             // vector under an entity never hides a failed sibling h_mem.
             let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
-            let mut unsupported_count = 0usize;
+            // Rows with no embeddable text are named, not just counted, so an
+            // operator can see which memories stay invisible to semantic recall.
+            let mut unsupported: Vec<serde_json::Value> = Vec::new();
             for h_mem in active.iter().filter(|h_mem| !is_excluded(&h_mem.entity)) {
                 let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
-                    unsupported_count += 1;
+                    unsupported.push(json!({
+                        "h_mem_id": h_mem.id.to_string(),
+                        "entity": h_mem.entity,
+                        "attribute": h_mem.attribute,
+                        "reason": "value has no string, recall_text or text field",
+                    }));
                     continue;
                 };
                 let already_embedded = memory
@@ -1851,7 +1858,8 @@ impl CuratorServer {
                 return Ok(json!({
                     "dry_run": true,
                     "candidate_count": candidates.len(),
-                    "unsupported_count": unsupported_count,
+                    "unsupported_count": unsupported.len(),
+                    "unsupported": unsupported,
                     "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
                         "h_mem_id": h_mem.id.to_string(),
                         "entity": h_mem.entity,
@@ -1892,7 +1900,8 @@ impl CuratorServer {
                 "candidate_count": candidate_count,
                 "backfilled": embedded_count,
                 "failed": failed_count,
-                "unsupported_count": unsupported_count,
+                "unsupported_count": unsupported.len(),
+                "unsupported": unsupported,
                 "results": results,
                 "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
             }))
