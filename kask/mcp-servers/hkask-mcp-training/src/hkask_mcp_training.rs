@@ -546,7 +546,8 @@ fn default_db_path_follows_standardized_layout() {
 // simplest tool (`training_validate_config` — pure static math-contract
 // gates, no network/host/inference) returns the MCP `{"content": ...}`
 // success envelope. A second test pins the `{"error": ..., "kind": ...}`
-// error envelope through the null-host → `Unavailable` → `unavailable` path.
+// error envelope through the null-host → `NotConfigured` →
+// `permission_denied` path.
 // Mirrors the `hkask-mcp-corpus` `mod smoke` precedent.
 #[cfg(test)]
 mod smoke {
@@ -593,27 +594,30 @@ mod smoke {
         }
     }
 
-    /// Null training host — every call returns `Unavailable`. The validate
+    /// Null training host — every call returns `NotConfigured`. The validate
     /// tool never calls the host; this only satisfies the struct field and
-    /// gives the error-path test a deterministic failure.
+    /// gives the error-path test a deterministic failure. An unconfigured
+    /// host is a configuration/authorization failure, so the double uses
+    /// the variant `map_host_provider_error` classifies as
+    /// `permission_denied` — not transient unavailability.
     struct NullTrainingHost;
 
     #[async_trait::async_trait]
     impl TrainingHost for NullTrainingHost {
         async fn submit(&self, _job: &TrainingJob) -> Result<String, HostProviderError> {
-            Err(HostProviderError::Unavailable(
+            Err(HostProviderError::NotConfigured(
                 "null training host — not configured for smoke tests".into(),
             ))
         }
 
         async fn status(&self, _job_id: &str) -> Result<PodStatus, HostProviderError> {
-            Err(HostProviderError::Unavailable(
+            Err(HostProviderError::NotConfigured(
                 "null training host — not configured for smoke tests".into(),
             ))
         }
 
         async fn cancel(&self, _job_id: &str) -> Result<(), HostProviderError> {
-            Err(HostProviderError::Unavailable(
+            Err(HostProviderError::NotConfigured(
                 "null training host — not configured for smoke tests".into(),
             ))
         }
@@ -1542,13 +1546,15 @@ mod smoke {
             }))
             .await
             .expect_err("training_cancel against the null host must fail");
-        // Null host → Unavailable → McpToolError::unavailable → kind="unavailable".
+        // Null host → NotConfigured → McpToolError::permission_denied →
+        // kind="permission_denied": a missing configuration is an
+        // authorization failure, not transient unavailability.
         assert!(
-            matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
-            "error kind must be 'unavailable' when the host is not configured, got: {error:?}"
+            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
+            "error kind must be 'permission_denied' when the host is not configured, got: {error:?}"
         );
         assert!(
-            !error.message.is_empty(),
+            error.message.contains("null training host"),
             "the error must carry a message naming the unconfigured host, got: {error:?}"
         );
     }

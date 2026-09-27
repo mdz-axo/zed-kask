@@ -503,7 +503,7 @@ async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
             .memory_insert(Parameters(MemoryInsertRequest {
                 entity: "zed-kask".to_string(),
                 attribute: "default_agent_model".to_string(),
-                value: serde_json::json!("qwen3"),
+                value: serde_json::json!("qwen3").into(),
                 evidence_h_mem_id: seed_id,
                 note: None,
             }))
@@ -618,7 +618,7 @@ async fn memory_citation_round_trip_from_tool_surface() {
             .memory_insert(Parameters(MemoryInsertRequest {
                 entity: "zed-kask".to_string(),
                 attribute: "citation_round_trip".to_string(),
-                value: serde_json::json!("pinned"),
+                value: serde_json::json!("pinned").into(),
                 evidence_h_mem_id: recalled_id,
                 note: None,
             }))
@@ -643,7 +643,7 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
         .memory_insert(Parameters(MemoryInsertRequest {
             entity: "zed-kask".to_string(),
             attribute: "default_agent_model".to_string(),
-            value: serde_json::json!("qwen3"),
+            value: serde_json::json!("qwen3").into(),
             evidence_h_mem_id: "00000000-0000-0000-0000-000000000000".to_string(),
             note: None,
         }))
@@ -662,7 +662,7 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
         .memory_insert(Parameters(MemoryInsertRequest {
             entity: "zed-kask".to_string(),
             attribute: "default_agent_model".to_string(),
-            value: serde_json::json!("qwen3"),
+            value: serde_json::json!("qwen3").into(),
             evidence_h_mem_id: "not-a-uuid".to_string(),
             note: None,
         }))
@@ -704,7 +704,7 @@ async fn memory_insert_embeds_value_for_semantic_recall() {
             .memory_insert(Parameters(MemoryInsertRequest {
                 entity: "zed-kask".to_string(),
                 attribute: "default_agent_model".to_string(),
-                value: serde_json::json!("qwen3"),
+                value: serde_json::json!("qwen3").into(),
                 evidence_h_mem_id: seed_id,
                 note: None,
             }))
@@ -841,7 +841,7 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
             .memory_insert(Parameters(MemoryInsertRequest {
                 entity: "zed-kask".to_string(),
                 attribute: "mcp_tool_surface".to_string(),
-                value: serde_json::json!("full surface, no router"),
+                value: serde_json::json!("full surface, no router").into(),
                 evidence_h_mem_id: seed_id,
                 note: None,
             }))
@@ -1294,7 +1294,7 @@ async fn memory_update_finds_target_by_id() {
             .memory_update(Parameters(MemoryUpdateRequest {
                 h_mem_id: seed_id,
                 new_confidence: 0.6,
-                new_value: Some(serde_json::Value::String("new value".to_string())),
+                new_value: Some(serde_json::Value::String("new value".to_string()).into()),
                 reason: Some("test update".to_string()),
             }))
             .await
@@ -1319,6 +1319,76 @@ async fn memory_update_finds_target_by_id() {
         updated[0].confidence.value() > 0.5,
         "the Bayesian combine must move the confidence off the floor — got {}",
         updated[0].confidence.value(),
+    );
+}
+
+// ── Memory edit tool schemas — strict-provider schema pins ────────────────
+//
+// schemars renders `serde_json::Value` as the bare boolean `true` in
+// schema-valued positions. One boolean property schema gets the whole
+// chat-completion rejected by strict-schema-decoding providers (Ollama:
+// `400 cannot unmarshal bool into ... api.ToolProperty`; Gemini's protobuf
+// `Schema` is the same failure class). The arbitrary-JSON params of the
+// memory-edit tools must therefore be `AnyJsonValue`, rendering as the
+// object-typed permissive schema tool-call parsers can bind.
+
+/// `memory_insert`'s `value` param must render as the object-typed
+/// permissive schema — never the bare boolean `true`.
+#[test]
+fn memory_insert_request_value_schema_is_object_typed_not_boolean() {
+    let schema = serde_json::to_value(schemars::schema_for!(MemoryInsertRequest))
+        .expect("schema serializes");
+    let value = &schema["properties"]["value"];
+    assert!(
+        !value.is_boolean(),
+        "value must not render as the bare boolean true (Schema::Bool(true)) — got: {value}",
+    );
+    // Key-level pin (schemars merges the field's doc comment as a
+    // `description` key, so exact equality would over-constrain): the
+    // property must be the object-typed permissive schema — `type: object`
+    // with permissive `properties`/`additionalProperties` — never the
+    // permissive-any form (bare `true` / `{}`) schemars emits for
+    // `serde_json::Value`, which strict providers reject or drop from
+    // tool-call arguments.
+    assert_eq!(
+        value["type"],
+        serde_json::json!("object"),
+        "value must be object-typed — got: {value}",
+    );
+    assert_eq!(value["properties"], serde_json::json!({}));
+    assert_eq!(value["additionalProperties"], serde_json::json!({}));
+    assert!(
+        hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+        "MemoryInsertRequest must carry no bare-boolean schema positions",
+    );
+}
+
+/// `memory_update`'s `new_value` param must render as the null-extended
+/// object-typed permissive schema (`Option<AnyJsonValue>` →
+/// `type: ["object", "null"]`) — never the bare boolean `true`.
+#[test]
+fn memory_update_request_new_value_schema_is_object_typed_not_boolean() {
+    let schema = serde_json::to_value(schemars::schema_for!(MemoryUpdateRequest))
+        .expect("schema serializes");
+    let new_value = &schema["properties"]["new_value"];
+    assert!(
+        !new_value.is_boolean(),
+        "new_value must not render as the bare boolean true (Schema::Bool(true)) — got: {new_value}",
+    );
+    // Key-level pin (the doc-comment `description` merge makes exact
+    // equality over-constrained): `Option<AnyJsonValue>` must render as
+    // the object-typed permissive schema null-extended to
+    // `type: ["object", "null"]` — never the permissive-any form.
+    assert_eq!(
+        new_value["type"],
+        serde_json::json!(["object", "null"]),
+        "new_value must be null-extended object-typed — got: {new_value}",
+    );
+    assert_eq!(new_value["properties"], serde_json::json!({}));
+    assert_eq!(new_value["additionalProperties"], serde_json::json!({}));
+    assert!(
+        hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+        "MemoryUpdateRequest must carry no bare-boolean schema positions",
     );
 }
 

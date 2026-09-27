@@ -560,23 +560,24 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
-            let total = match data.get("total_hire_cost").and_then(|c| c.as_u64()) {
-                Some(_cost) => effective_hire_cost(&data),
-                None => {
-                    // Do not fabricate cost = 0 on a missing field. A missing
-                    // `total_hire_cost` means ABW changed its response shape or
-                    // the agent doesn't exist — either way the cost is unknown,
-                    // not zero. The `.rules` trap: a failed measurement must be
-                    // distinguishable from a measured zero.
+            // Do not fabricate cost = 0 on a missing or unparseable field. A
+            // missing `total_hire_cost` means ABW changed its response shape
+            // or the agent doesn't exist; a present-but-unparseable one is a
+            // failed measurement — either way the cost is unknown, not zero.
+            // The `.rules` trap: a failed measurement must be distinguishable
+            // from a measured zero. `effective_hire_cost` errors on both,
+            // naming the offending value.
+            let total = match effective_hire_cost(&data) {
+                Ok(total) => total,
+                Err(e) => {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         agent = %req.agent_name,
-                        "swarm_hire_cost: ABW response missing total_hire_cost field — cost unknown"
+                        "swarm_hire_cost: ABW hire-cost payload unreadable — cost unknown: {e}"
                     );
-                    return Err(McpToolError::unavailable(
-                        "hire cost unknown — ABW response missing total_hire_cost field"
-                            .to_string(),
-                    ));
+                    return Err(McpToolError::unavailable(format!(
+                        "hire cost unknown — ABW response: {e}"
+                    )));
                 }
             };
 

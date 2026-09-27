@@ -147,20 +147,116 @@ pub const OWNED_ADD_FLAT_FEE: u64 = 2;
 /// The effective hire cost for a re-verified `/agents/{name}/dependencies`
 /// payload. A dependency-less agent quotes `total_hire_cost: 0` but the add
 /// charges `OWNED_ADD_FLAT_FEE` — the gate must never under-quote a spend.
-/// Only call this after the caller has already rejected a MISSING
-/// `total_hire_cost` (missing = unknown, never zero — the `.rules` trap).
-pub fn effective_hire_cost(deps: &serde_json::Value) -> u64 {
-    let total = deps
-        .get("total_hire_cost")
-        .and_then(|c| c.as_u64())
-        .unwrap_or(0);
-    let has_deps = deps
-        .get("has_dependencies")
-        .and_then(|h| h.as_bool())
-        .unwrap_or(false);
-    if has_deps {
+///
+/// `total_hire_cost` MISSING, or present but not a JSON u64 (float/string),
+/// is an error naming the offending value — missing = unknown, never zero,
+/// and an unparseable value is a failed measurement, not a measured zero
+/// (the `.rules` trap). `has_dependencies` present but not a bool errors
+/// the same way: silently defaulting it to `false` would floor the quote
+/// through the wrong branch. An ABSENT `has_dependencies` is the documented
+/// shape of a dependency-less quote and reads as `false`.
+pub fn effective_hire_cost(deps: &serde_json::Value) -> Result<u64, LocalSwarmError> {
+    let total = match deps.get("total_hire_cost") {
+        Some(value) => value.as_u64().ok_or_else(|| {
+            LocalSwarmError::InvalidInput(format!("total_hire_cost present but not a u64: {value}"))
+        })?,
+        None => {
+            return Err(LocalSwarmError::InvalidInput(
+                "total_hire_cost missing — cost unknown, never zero".to_string(),
+            ));
+        }
+    };
+    let has_deps = match deps.get("has_dependencies") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            LocalSwarmError::InvalidInput(format!(
+                "has_dependencies present but not a bool: {value}"
+            ))
+        })?,
+        None => false,
+    };
+    Ok(if has_deps {
         total
     } else {
         std::cmp::max(total, OWNED_ADD_FLAT_FEE)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pre-fix, a present-but-float `total_hire_cost` fell through
+    /// `.as_u64()` to `unwrap_or(0)`, silently pricing the consent/spend
+    /// gate at zero (the `.rules` trap: a failed measurement must be
+    /// distinguishable from a measured zero).
+    #[test]
+    fn float_total_hire_cost_errors_naming_the_value() {
+        let deps = serde_json::json!({"total_hire_cost": 12.5, "has_dependencies": false});
+        let error = effective_hire_cost(&deps)
+            .err()
+            .expect("a float total_hire_cost must error, not price the gate at 0");
+        assert!(
+            error.to_string().contains("12.5"),
+            "the error must name the unparseable value, got: {error}"
+        );
+    }
+
+    #[test]
+    fn string_total_hire_cost_errors_naming_the_value() {
+        let deps = serde_json::json!({"total_hire_cost": "12", "has_dependencies": false});
+        let error = effective_hire_cost(&deps)
+            .err()
+            .expect("a string total_hire_cost must error, not price the gate at 0");
+        assert!(
+            error.to_string().contains("\"12\""),
+            "the error must name the unparseable value, got: {error}"
+        );
+    }
+
+    #[test]
+    fn missing_total_hire_cost_errors_never_zero() {
+        let deps = serde_json::json!({"has_dependencies": true});
+        let error = effective_hire_cost(&deps)
+            .err()
+            .expect("a missing total_hire_cost must error — unknown, never zero");
+        assert!(
+            error.to_string().contains("total_hire_cost missing"),
+            "the error must name the missing field, got: {error}"
+        );
+    }
+
+    #[test]
+    fn non_bool_has_dependencies_errors_naming_the_value() {
+        let deps = serde_json::json!({"total_hire_cost": 5, "has_dependencies": "yes"});
+        let error = effective_hire_cost(&deps)
+            .err()
+            .expect("a string has_dependencies must error, not default to false");
+        assert!(
+            error.to_string().contains("\"yes\""),
+            "the error must name the unparseable value, got: {error}"
+        );
+    }
+
+    #[test]
+    fn dependency_less_quote_floors_at_owned_add_flat_fee() {
+        let deps = serde_json::json!({"total_hire_cost": 0, "has_dependencies": false});
+        assert_eq!(
+            effective_hire_cost(&deps).expect("valid quote"),
+            OWNED_ADD_FLAT_FEE
+        );
+    }
+
+    #[test]
+    fn dependency_quote_returns_the_total_as_is() {
+        let deps = serde_json::json!({"total_hire_cost": 7, "has_dependencies": true});
+        assert_eq!(effective_hire_cost(&deps).expect("valid quote"), 7);
+    }
+
+    /// An absent `has_dependencies` is the documented dependency-less shape
+    /// (the spend-gate fixtures quote `{"total_hire_cost": 10}` alone).
+    #[test]
+    fn absent_has_dependencies_reads_as_dependency_less() {
+        let deps = serde_json::json!({"total_hire_cost": 10});
+        assert_eq!(effective_hire_cost(&deps).expect("valid quote"), 10);
     }
 }

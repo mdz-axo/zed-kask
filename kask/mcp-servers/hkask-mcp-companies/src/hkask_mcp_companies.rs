@@ -459,7 +459,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
-    use crate::types::{ResolveSymbolRequest, SymbolRequest};
+    use crate::types::{
+        CompanyTranscriptRequest, ResolveSymbolRequest, SymbolRequest, TranscriptMode,
+    };
     use hkask_types::WebID;
     use rmcp::handler::server::wrapper::Parameters;
 
@@ -601,6 +603,40 @@ mod tool_behavior_tests {
                 assert!(!error.message.is_empty());
             })
             .await;
+    }
+
+    /// `company_transcript` corpus mode without a SerpAPI key must surface a
+    /// typed `PermissionDenied` error naming `HKASK_SERPAPI_API_KEY`. A
+    /// missing credential is an authorization failure, not a failed
+    /// precondition — the canonical pattern (`hkask-mcp-swarm` `require_auth`,
+    /// `hkask-mcp-media` `youtube_search`) classifies it `permission_denied`
+    /// with the env var named so the operator knows what to set.
+    #[tokio::test]
+    async fn company_transcript_corpus_without_serpapi_key_is_permission_denied() {
+        let (server, _store_dir) = make_server();
+        let error = server
+            .company_transcript(Parameters(CompanyTranscriptRequest {
+                symbol: "MSFT".to_string(),
+                mode: TranscriptMode::Corpus,
+                year: None,
+                quarter: None,
+                quarters_back: 1,
+                query: Some("Satya Nadella keynote".to_string()),
+                channels_allowlist: Vec::new(),
+                max_results: 5,
+            }))
+            .await
+            .expect_err("corpus mode without a SerpAPI key must yield a typed error");
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
+            "missing HKASK_SERPAPI_API_KEY must be PermissionDenied, got: {:?}",
+            error.kind
+        );
+        assert!(
+            error.message.contains("HKASK_SERPAPI_API_KEY"),
+            "the error must name the missing env var, got: {}",
+            error.message
+        );
     }
 
     /// `resolve_symbol` needs at least one of company name / ticker — an

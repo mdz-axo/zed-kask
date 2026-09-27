@@ -1272,8 +1272,10 @@ impl CuratorServer {
                 )));
             }
 
-            // Build the h_mem with confidence floor 0.5.
-            let mut value = req.value;
+            // Build the h_mem with confidence floor 0.5. The AnyJsonValue
+            // tool input converts to an owned Value here — the handler
+            // mutates it (note insertion, recall_text backfill) below.
+            let mut value = serde_json::Value::from(req.value);
             if let Some(note) = &req.note {
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
@@ -1399,7 +1401,10 @@ impl CuratorServer {
             );
 
             // Use the new value if provided, otherwise keep the existing.
-            let value = req.new_value.unwrap_or_else(|| existing_h_mem.value.clone());
+            let value = req
+                .new_value
+                .map(serde_json::Value::from)
+                .unwrap_or_else(|| existing_h_mem.value.clone());
 
             memory
                 .update_confidence(&h_mem_id, value, combined)

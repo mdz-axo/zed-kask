@@ -180,24 +180,25 @@ pub(crate) async fn authorize_hire(
             return Err(SwarmError::into_tool_error(e));
         }
     };
-    // Do not fabricate cost = 0 on a missing field (the `.rules` trap: a failed
-    // measurement must be distinguishable from a measured zero).
-    if deps
-        .get("total_hire_cost")
-        .and_then(|c| c.as_u64())
-        .is_none()
-    {
-        tracing::warn!(
-            target: "hkask.mcp.swarm",
-            agent = %agent_name,
-            "spend_gate::authorize_hire: ABW re-verify response missing total_hire_cost — cost unknown"
-        );
-        release(&pending);
-        return Err(McpToolError::unavailable(
-            "hire cost unknown — ABW re-verify response missing total_hire_cost field".to_string(),
-        ));
-    }
-    let base_cost = effective_hire_cost(&deps);
+    // Do not fabricate cost = 0 on a missing or unparseable field (the
+    // `.rules` trap: a failed measurement must be distinguishable from a
+    // measured zero). `effective_hire_cost` errors on both, naming the
+    // offending value; the refusal is pre-dispatch, so the reservation is
+    // released.
+    let base_cost = match effective_hire_cost(&deps) {
+        Ok(cost) => cost,
+        Err(e) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                agent = %agent_name,
+                "spend_gate::authorize_hire: ABW re-verify hire cost unreadable — refusing: {e}"
+            );
+            release(&pending);
+            return Err(McpToolError::unavailable(format!(
+                "hire cost unknown — ABW re-verify response: {e}"
+            )));
+        }
+    };
     let actual_cost = if include_optional {
         let required = deps
             .get("required_cost")
@@ -887,6 +888,44 @@ mod tests {
             server.requests_served(),
             3,
             "two dependency re-verifies plus exactly one hire POST"
+        );
+    }
+
+    /// A present-but-unparseable `total_hire_cost` (float/string) must fail
+    /// the gate naming the offending value — pre-fix it fell through
+    /// `.as_u64()` to `unwrap_or(0)` inside `effective_hire_cost`, silently
+    /// pricing the consent/spend gate at zero (the `.rules` trap: a failed
+    /// measurement must be distinguishable from a measured zero). The
+    /// refusal is pre-dispatch, so the single-use token is refunded.
+    #[tokio::test]
+    async fn unparseable_hire_cost_refuses_naming_the_value() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let token = store.mint("hire", "agent", 10).expect("mint");
+        let server = FixtureServer::start(vec![Behavior::Respond(
+            200,
+            "{\"total_hire_cost\": 12.5, \"has_dependencies\": false}".to_string(),
+        )]);
+        let client = test_client(&server.base_url());
+        let error = authorize_hire(
+            &client,
+            &store,
+            SpendAuth::SingleUse(&token),
+            "agent",
+            10,
+            None,
+            false,
+        )
+        .await
+        .err()
+        .expect("a float total_hire_cost must not price the gate");
+        assert!(
+            error.message.contains("12.5"),
+            "the refusal must name the unparseable value, got: {error:?}"
+        );
+        assert!(
+            store.consume(&token, "hire", "agent", 10).is_ok(),
+            "the pre-dispatch refusal must refund the single-use token"
         );
     }
 }

@@ -1,5 +1,6 @@
 //! Request types for hkask-mcp-curator MCP tools.
 
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -265,8 +266,14 @@ pub struct MemoryInsertRequest {
     pub entity: String,
     /// The attribute (predicate) of the memory — e.g. "revenue_trend", "calibration_gap".
     pub attribute: String,
-    /// The value (object) of the memory, as a JSON string.
-    pub value: serde_json::Value,
+    /// The value (object) of the memory, as an arbitrary JSON value.
+    ///
+    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
+    /// `serde_json::Value`) so the generated tool input schema is an
+    /// object-typed permissive schema rather than the permissive-any form
+    /// schemars emits for `Value` — which strict-schema-decoding providers
+    /// reject or drop from tool-call arguments.
+    pub value: AnyJsonValue,
     /// The episodic h_mem ID that supports this memory (evidence-grounding
     /// requirement). The tool rejects inserts without a citation.
     pub evidence_h_mem_id: String,
@@ -293,7 +300,12 @@ pub struct MemoryUpdateRequest {
     pub new_confidence: f64,
     /// Optional: a new value to replace the existing one. The old row is
     /// deleted and its replacement inserted in one transaction.
-    pub new_value: Option<serde_json::Value>,
+    ///
+    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
+    /// `serde_json::Value`) so the generated tool input schema is an
+    /// object-typed permissive schema rather than the permissive-any form
+    /// schemars emits for `Value`.
+    pub new_value: Option<AnyJsonValue>,
     /// Optional: reason for the confidence update (e.g. "Brier score 0.12 on
     /// resolved forecast", "contradicted by newer observation").
     pub reason: Option<String>,

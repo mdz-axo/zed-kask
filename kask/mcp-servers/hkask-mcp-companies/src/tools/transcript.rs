@@ -68,7 +68,12 @@ impl CompaniesServer {
                         ));
                     }
                     let Some(serpapi_key) = &self.serpapi_key else {
-                        return Err(McpToolError::failed_precondition(
+                        // A missing credential is an authorization failure, not a
+                        // failed precondition — canonical pattern: `require_auth`
+                        // (hkask-mcp-swarm) and `youtube_search`
+                        // (hkask-mcp-media) classify it permission_denied with
+                        // the env var named so the operator knows what to set.
+                        return Err(McpToolError::permission_denied(
                             "corpus mode requires HKASK_SERPAPI_API_KEY to be set",
                         ));
                     };

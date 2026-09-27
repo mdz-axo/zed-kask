@@ -5,6 +5,7 @@
 //! the hidden internal data dir. Users need to find their reports without
 //! digging through `~/.local/share/zed-kask/`.
 use crate::CompaniesServer;
+use hkask_mcp_server::AnyJsonValue;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir};
 use rmcp::{handler::server::wrapper::Parameters, schemars::JsonSchema, tool, tool_router};
@@ -61,7 +62,13 @@ pub struct ReportSaveRequest {
     /// Artifact name (without extension). Used as the filename stem.
     pub name: String,
     /// JSON payload to persist.
-    pub payload: serde_json::Value,
+    ///
+    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
+    /// `serde_json::Value`) so the generated tool input schema is an
+    /// object-typed permissive schema rather than the bare boolean `true`
+    /// schemars emits for `Value` — which strict-schema-decoding providers
+    /// reject or drop from tool-call arguments.
+    pub payload: AnyJsonValue,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -189,5 +196,45 @@ impl CompaniesServer {
             }))
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `report_save`'s `payload` param accepts arbitrary JSON, so it must be
+    /// `AnyJsonValue` — schemars renders `serde_json::Value` as the bare
+    /// boolean `true`, which strict-schema-decoding providers (Ollama:
+    /// `400 cannot unmarshal bool into ... api.ToolProperty`; Gemini's
+    /// protobuf `Schema` is the same failure class) reject on the whole
+    /// chat-completion. Pin the object-typed permissive schema.
+    #[test]
+    fn report_save_request_payload_schema_is_object_typed_not_boolean() {
+        let schema = serde_json::to_value(schemars::schema_for!(ReportSaveRequest))
+            .expect("schema serializes");
+        let payload = &schema["properties"]["payload"];
+        assert!(
+            !payload.is_boolean(),
+            "payload must not render as the bare boolean true (Schema::Bool(true)) — got: {payload}",
+        );
+        // Key-level pin (schemars merges the field's doc comment as a
+        // `description` key, so exact equality would over-constrain): the
+        // property must be the object-typed permissive schema — `type:
+        // object` with permissive `properties`/`additionalProperties` —
+        // never the permissive-any form (bare `true` / `{}`) schemars
+        // emits for `serde_json::Value`, which strict providers reject or
+        // drop from tool-call arguments.
+        assert_eq!(
+            payload["type"],
+            serde_json::json!("object"),
+            "payload must be object-typed — got: {payload}",
+        );
+        assert_eq!(payload["properties"], serde_json::json!({}));
+        assert_eq!(payload["additionalProperties"], serde_json::json!({}));
+        assert!(
+            hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+            "ReportSaveRequest must carry no bare-boolean schema positions",
+        );
     }
 }
