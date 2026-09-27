@@ -1567,7 +1567,6 @@ mod tests {
                 supported,
                 None,
                 None,
-                false,
                 &OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(chat.prompt_cache_key.as_deref(), expected);
@@ -2390,7 +2389,6 @@ mod tests {
                 true,
                 None,
                 effort,
-                effort == Some(NoReasoning),
                 &OPEN_AI_PROVIDER_ID,
             )?;
             let chat = into_open_ai(
@@ -2598,7 +2596,6 @@ mod tests {
                 false,
                 model_maximum,
                 None,
-                false,
                 &language_model_core::OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(
