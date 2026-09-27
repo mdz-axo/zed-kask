@@ -81,6 +81,10 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `file_list` | List attached files for a company or security. |
 | `file_delete` | Delete an attached file by ID. |
 
+### Retained company-research output
+
+`stock_quote`, `moat_check`, `management_scorecard`, `working_capital_cycle`, `dcf_valuation`, `reverse_dcf`, `scenario_analysis`, `comparable_analysis`, `sensitivity_analysis`, `equity_duration`, `monte_carlo_dcf`, `scenario_impact_valuation`, and `calibrate_forecast` accept optional `run_folder` and `output_key`. With `run_folder`, the exact successful tool response is written once to `companies-mcp/research-runs/{run_folder}/{output_key}.txt`; the key defaults to the tool name. Supply a distinct key for repeated calls in one run. Existing keys fail rather than overwrite, and unsafe names or symlinked destinations are rejected. Without `run_folder`, responses are unchanged and no file is written. Retained texts replace hand-condensed `tool-outputs.json` as the source snapshots for the research packet; the packet still supplies its own references and digests.
+
 See the [Companies MCP Server Reference](../../docs/reference/mcp-servers/companies.md) for the full tool catalog, behavioral boundaries, and the code-anchored tool-routing diagram (DIAG-RF-004). The [Companies User Guide](../../docs/how-to/companies-mcp.md) covers task-oriented procedures for company valuation, forecasting, and research artifacts.
 
 ## Configuration

@@ -4,12 +4,15 @@ use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir
 use std::io::Write;
 use std::path::Path;
 
-fn valid_component(value: &str) -> bool {
+fn valid_component(value: &str, allow_underscore: bool) -> bool {
     !value.is_empty()
         && value.len() <= 80
         && !value.starts_with('-')
         && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || byte == b'-'
+                || (allow_underscore && byte == b'_')
         })
 }
 
@@ -24,15 +27,23 @@ pub(super) fn retain(
     let Some(folder) = run_folder else {
         return result;
     };
-    let text = result?;
-    let key = output_key.unwrap_or(tool);
-    if !valid_component(folder) || !valid_component(key) {
+    let root = resolve_under_artifacts_dir(&mcp_artifacts_subdir("companies", "research-runs"));
+    retain_in(&root, folder, output_key.unwrap_or(tool), result)
+}
+
+fn retain_in(
+    root: &Path,
+    folder: &str,
+    key: &str,
+    result: Result<String, McpToolError>,
+) -> Result<String, McpToolError> {
+    if !valid_component(folder, false) || !valid_component(key, true) {
         return Err(McpToolError::invalid_argument(
             "run_folder and output_key must be 1–80 lowercase ASCII letters, digits, hyphens or underscores, not starting with a hyphen",
         ));
     }
-    let root = resolve_under_artifacts_dir(&mcp_artifacts_subdir("companies", "research-runs"));
-    write_once(&root, folder, key, text.as_bytes())?;
+    let text = result?;
+    write_once(root, folder, key, text.as_bytes())?;
     Ok(text)
 }
 
@@ -56,6 +67,9 @@ fn write_once(root: &Path, folder: &str, key: &str, bytes: &[u8]) -> Result<(), 
                 McpToolError::unavailable(format!("cannot open retained-output directory: {error}"))
             })
     };
+    fs::create_dir_all(root).map_err(|error| {
+        McpToolError::unavailable(format!("cannot create research-run root: {error}"))
+    })?;
     let root_dir = directory(root)?;
     let folder_path = format!("/proc/self/fd/{}/{folder}", root_dir.as_raw_fd());
     match fs::create_dir(&folder_path) {
@@ -105,19 +119,24 @@ mod tests {
         std::fs::create_dir(temp.path().join("research-runs"))?;
         let root = temp.path().join("research-runs");
         let text = b"{\"content\":\"exact \\n text\"}";
-        write_once(&root, "2026-09-26-company", "quote", text)?;
+        let response = String::from_utf8(text.to_vec())?;
+        assert_eq!(
+            retain_in(&root, "2026-09-26-company", "quote", Ok(response.clone()))?,
+            response
+        );
         assert_eq!(
             std::fs::read(root.join("2026-09-26-company/quote.txt"))?,
             text
         );
-        assert!(write_once(&root, "2026-09-26-company", "quote", b"changed").is_err());
+        assert!(retain_in(&root, "2026-09-26-company", "quote", Ok("changed".into())).is_err());
         assert_eq!(
             std::fs::read(root.join("2026-09-26-company/quote.txt"))?,
             text
         );
-        assert!(!valid_component("../outside"));
-        assert!(!valid_component("/tmp"));
-        assert!(!valid_component("packet.json"));
+        assert!(retain_in(&root, "../outside", "quote", Ok("escape".into())).is_err());
+        assert!(retain_in(&root, "safe", "../outside", Ok("escape".into())).is_err());
+        assert!(!root.join("safe").exists());
+        assert!(!valid_component("packet.json", true));
         Ok(())
     }
 

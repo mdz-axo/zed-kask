@@ -163,16 +163,16 @@ The executing session never commits a durable change to a skill, prompt, memory,
 
 1. Call `lisp_eval` on the measured Check result: form `(and (not (member evaluation_method (list "none_available"))) (numberp pass_rate) (numberp baseline_pass_rate) (> pass_rate baseline_pass_rate) (= regressions 0) (= (length safety_violations) 0))` (`member` is the string-equality primitive). `baseline_pass_rate`/`pass_rate` are the `overall_pass_rate` of the recorded before/after `swarm_eval_agent_local` reports on the same task set; `regressions` counts tasks whose after `tasks[].pass_rate` fell below baseline, computed with `lisp_eval` from the two reports' per-task pass rates written as ordered number lists in the form: `(begin (define regs (lambda (b a) (if (is_null b) 0 (+ (if (< (car a) (car b)) 1 0) (regs (cdr b) (cdr a)))))) (regs (list b1 b2 ...) (list a1 a2 ...)))`. A missing report means null values and a false gate. A baseline `overall_pass_rate` of 1 is saturated: no candidate can pass, so the discard carries no information — record `failure_mode: "saturated baseline"` and choose a harder held-out task set before re-planning (observed 2026-09-26, `local_extractor` harness runs `bac52690`/`b950572f`).
 2. Render `self-improvement/si-propose-or-discard` with `evaluation_result`, `gate_result` (the `lisp_eval` boolean), `improvement_plan` and `proposed_artifact`.
-3. `gate_result` true → **propose**: write the proposal (diff, measurements, evaluation method, harness logs, the goal id) via `terminal` to `~/Documents/zk-data/curator/proposals/{skill-or-component}/{date}-{run}.json`. Nothing is applied; the algedonic review's gemba walk decides it with the operator.
+3. `gate_result` true → **propose**: find **Algedonic review** with `kanban_board_list`, creating it with `kanban_board_create` if absent. Call `kanban_task_create` on that board with a title naming the skill/component and change; include the full diff, measurements, evaluation method, goal ID, evidence and verification criteria in its description. Attach existing harness logs using `kanban_task_add_deliverable` when relevant. If the board or card cannot be created, report filing blocked; do not write a proposal file or use another queue. Nothing is applied; the gemba walk decides it with the operator.
 4. `gate_result` false → **discard**: keep the configuration unchanged, record the failure mode (noisy signal, misaligned operator, missing harness) in the Kata obstacle parking lot, and re-plan.
 5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
-6. Respond with `decision` (exactly "propose" or "discard"), `proposal_path` (if proposed), `failure_mode` (if discarded), and `next_step` (exactly "re-enter", "exit", or "refine").
+6. Respond with `decision` ("propose", "discard", or "blocked"), `proposal_card_id` (only after card creation succeeds), `failure_mode` (if discarded or blocked), and `next_step` ("re-enter", "exit", or "refine").
 
 ### Prompt evolution (GEPA) — a scaffolding sub-loop (formerly `gpa-evolution`)
 
 For a prompt artifact with a runnable eval set, when natural-language reflection on real trajectories should drive the change (Agrawal et al., GEPA, arXiv:2507.19457; NSGA-II non-dominated sorting, Deb et al. 2002 — `onto_anchor` → derived `reflective_prompt_evolution`). Prompts only (v1). Reflection and mutation are P, critiqued by recorded eval-set scores; dominance, frontier membership and the convergence form are D.
 
-Executor binding (local prompt artifacts): the eval set is a list of `{task, evaluator: {evaluator, spec}}` entries (contains/not_contains/regex); objectives are `pass_rate` (maximize), `total_tokens` (minimize) and `mean_latency_ms` (minimize). Each candidate prompt runs as a temporary local card whose `agent_id` is the variant id (`swarm_create_local_agent`, copying the target card's other fields); remove every temporary card with `swarm_remove_local` when the session ends and confirm with `swarm_list_local_agents`, and never reconfigure the target card. The session's durable record is the proposal file alone (storage Cleanup rule).
+Executor binding (local prompt artifacts): the eval set is a list of `{task, evaluator: {evaluator, spec}}` entries (contains/not_contains/regex); objectives are `pass_rate` (maximize), `total_tokens` (minimize) and `mean_latency_ms` (minimize). Each candidate prompt runs as a temporary local card whose `agent_id` is the variant id (`swarm_create_local_agent`, copying the target card's other fields); remove every temporary card with `swarm_remove_local` when the session ends and confirm with `swarm_list_local_agents`, and never reconfigure the target card. The proposal card on Algedonic review is the durable review record; remove temporary cards at session end.
 
 Split the eval set before iteration 1 into a **feedback set** (Sample and Reflect read only these tasks) and a disjoint **selection set** (Test scores only these), as GEPA separates D_feedback from D_pareto. Fix both for the session; the proposal records both. A task shown to Reflect or used to write a variant never enters the selection set.
 
@@ -184,7 +184,7 @@ Reflect and Propose are P steps executed by an agent: send the rendered template
 4. **Test** (`self-improvement/gpa-test-variants`) — run every variant's temporary card, and the target itself, through `swarm_eval_agent_local` on the identical selection set and repeats; each report (`agent_name` = variant id, `overall_pass_rate`, `tasks[].pass_rate`, `total_tokens`, `tasks[].mean_latency_ms`) is its `recorded_runs` entry. Aggregate per-objective scores and cost from those reports only. Logs go under `~/Documents/zk-data/skills/self-improvement/gepa/{date}-{run}/`.
 5. **Update frontier** (`self-improvement/gpa-frontier-update`) — pass Test's `tested_variants` array; merge, keep non-dominated members (A dominates B when at least as good on every objective and strictly better on one). Compute dominance with `lisp_eval`; a cost objective (`total_tokens`, `mean_latency_ms`) counts as better only when it is more than 10% lower, otherwise the two are tied on it — paired same-set runs on 2026-09-26 differed by 6–7% in tokens (789/848, 1676/1569), so a smaller gap is noise. Cost comparisons are valid only between runs on the same selection set. Form over `(pass_rate total_tokens)` pairs: `(begin (define better-cost (lambda (a b) (< a (* 0.9 b)))) (define dom (lambda (a b) (and (>= (car a) (car b)) (not (better-cost (nth 1 b) (nth 1 a))) (or (> (car a) (car b)) (better-cost (nth 1 a) (nth 1 b)))))) (dom a b))`; prune by crowding distance past `frontier_size`, record who dominated whom.
 6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
-7. **Act** — never adopt. Write the frontier (content, measured scores, cost, lineage, eval-set identity) to `~/Documents/zk-data/curator/proposals/{target}/{date}-{run}.json`; the operator chooses in `algedonic-review`.
+7. **Act** — never adopt. Find or create **Algedonic review** with `kanban_board_list` / `kanban_board_create`, then call `kanban_task_create` with a title naming the target and a description containing the proposed prompt diff, frontier content, measured scores, cost, lineage, eval-set identity, evidence and verification criteria. Attach existing logs with `kanban_task_add_deliverable` when relevant. Report a blocked filing if the board or card cannot be created; never use a file fallback. The operator chooses on that card in the gemba walk.
 
 ### Fine-tuning run — the θ pathway executor (formerly `adapter-lifecycle`)
 
@@ -322,13 +322,16 @@ surface that blocker. Only an explicit operator choice may override the model.
    cycles per adapter version; a third failure escalates to the operator.
 10. File the measurements for review — the session that trained the
     adapter does not record its acceptance (operator ruling 2026-09-24:
-    evaluation is separated from execution). Write
-    { adapter_id, baseline_pass_rate, pass_rate, evaluation_method,
-    model_routes, evidence_gaps, harness logs } via `terminal` to
-    `~/Documents/zk-data/curator/proposals/{agent-or-skill}/{date}-adapter-{adapter_id}.json`.
-    Use null pass rates when unmeasured. The operator accepts or rejects
-    the adapter in `algedonic-review`'s gemba walk; promotion follows only
-    an accepted proposal.
+    evaluation is separated from execution). Find or create **Algedonic review**
+    with `kanban_board_list` / `kanban_board_create`; call `kanban_task_create`
+    with a title naming the adapter and a description containing the proposed
+    change/diff, adapter_id, baseline_pass_rate, pass_rate, evaluation_method,
+    model_routes, evidence_gaps, verification criteria and evidence. Attach
+    existing harness logs with `kanban_task_add_deliverable` when relevant.
+    Use null pass rates when unmeasured. If board or card creation fails,
+    report filing blocked, never write a file fallback. The operator accepts
+    or rejects the adapter on that card in the gemba walk; promotion follows
+    only an accepted proposal.
 11. Judge the registered goal — call `kanban_goal_judge` against the
     goal's criteria with a verdict and per-criterion results from the
     measured pass rates; mark unmeasured criteria as unresolved rather
@@ -352,14 +355,15 @@ surface that blocker. Only an explicit operator choice may override the model.
   Present the available estimate and obtain operator confirmation before
   each Phase 3 submission.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
-  with skill_name "self-improvement", the tool name, and the error;
-  continue with the best available information.
+  with skill_name "self-improvement", the tool name, step ordinal, failure
+  origin and error. A failed board or card write blocks proposal filing;
+  do not claim success from a planned call.
 - Clean up (storage Cleanup rule). A job the run abandons, or whose
   retrain supersedes it, is stopped with `training_cancel` and confirmed
   with `training_status`; never leave a paid pod running. When the
-  proposal is filed, delete this run's dataset files except the exact
-  dataset the proposal cites, and list any kept file with its reason.
-  A discarded or rejected run keeps nothing but its proposal record.
+  proposal card is filed, delete this run's dataset files except the exact
+  dataset the card cites, and list any kept file with its reason.
+  A discarded run leaves no proposal file or review note.
 
 ## Improvement Measure
 
@@ -416,7 +420,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
-- No durable change is committed by the executing session. A candidate that passes the deterministic gate becomes a proposal under `zk-data/curator/proposals/`; only the operator, in the algedonic review, accepts it.
+- No durable change is committed by the executing session. A candidate that passes the deterministic gate becomes a card on **Algedonic review**; only the operator in the gemba walk accepts it. No proposal files or dated review notes.
 - The configuration in use stays unchanged until the operator accepts a proposal, so no rollback of self-applied changes is needed.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
 - Token budgets are not an implicit improvement gate. A `budget` record may describe explicitly approved experiment/time/compute/spending constraints, never an agent-invented token quota. Observed token use neither authorizes truncation nor a model downgrade.
