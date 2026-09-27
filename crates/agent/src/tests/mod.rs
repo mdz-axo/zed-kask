@@ -5841,7 +5841,7 @@ async fn test_mcp_tool_timeout_does_not_retry(cx: &mut TestAppContext) {
 async fn test_advice_apply_records_no_skill_verdict(cx: &mut TestAppContext) {
     let recorded: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     let sink = Arc::clone(&recorded);
-    let _recorder_override = crate::scoped_operator_feedback_recorder_for_test(Arc::new(
+    let _recorder_override = crate::OPERATOR_FEEDBACK_RECORDER.scoped_for_test(Arc::new(
         move |skill_id, _accepted, _note| {
             sink.lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -10826,7 +10826,7 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
 
     let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = recorded.clone();
-    let _recorder = crate::scoped_skill_tool_failure_recorder_for_test(Arc::new(
+    let _recorder = crate::SKILL_TOOL_FAILURE_RECORDER.scoped_for_test(Arc::new(
         move |skill, invoker, tool, error| {
             if let Ok(mut entries) = captured.lock() {
                 entries.push((

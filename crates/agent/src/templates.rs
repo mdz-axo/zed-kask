@@ -202,9 +202,9 @@ mod tests {
 
     #[test]
     fn test_system_prompt_contains_tool_failure_mode_warnings() {
-        // The tool warnings were moved from `inject_static_context` (runtime
-        // injection) into the template itself. They must render unconditionally
-        // — no guard, no injector dependency.
+        // D26: the built-in tools' failure-mode rules are `## Tool Use`
+        // bullets (folded 2026-09-26 from a separate section); they render
+        // whenever tools are available.
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
@@ -220,21 +220,21 @@ mod tests {
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
+        let tool_use = rendered
+            .split("## Tool Use")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("## Tool Use section");
+        for rule in [
+            "`read_file`: Do not loop on stale per-file diagnostics",
+            "`edit_file`: If an edit fails because `old_text` didn't match",
+            "`terminal`: Never run a command whose effect",
+        ] {
+            assert!(tool_use.contains(rule), "Tool Use must carry: {rule}");
+        }
         assert!(
-            rendered.contains("## Tool failure-mode warnings (kask)"),
-            "tool warnings heading must render unconditionally in the template"
-        );
-        assert!(
-            rendered.contains("read_file"),
-            "read_file failure-mode guidance must be present"
-        );
-        assert!(
-            rendered.contains("edit_file"),
-            "edit_file failure-mode guidance must be present"
-        );
-        assert!(
-            rendered.contains("terminal"),
-            "terminal failure-mode guidance must be present"
+            !rendered.contains("## Tool failure-mode warnings"),
+            "the folded section must not reappear"
         );
     }
 

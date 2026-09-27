@@ -971,35 +971,43 @@ fn main() {
             ));
         }
 
-        // zed-kask: skill outcome recording — the write side of the per-skill
-        // feedback loop. `SkillTool::run` fires `agent::record_skill_outcome`
-        // at its outcome points; this closure stores each outcome as a
-        // `reg.skill.<id>.outcome` span payload in the shared RegulationLedger
-        // (`record_skill_span`), which the metacognition loop's
-        // `sense_feedback_drift` reads for per-skill success-rate decline.
-        // Until this wiring (2026-09-08) the read side shipped with no writer —
-        // the store was permanently empty and drift sensing could never fire.
-        // Same tokio-spawn shape as the MCP outcome recorder above
-        // (`record_skill_span` is a tokio-RwLock future).
+        // zed-kask: D59 — skill outcome recording, the observe stage of the
+        // skill learning loop (DIAG-ARCH-LEARNING-LOOP-001). One recorder for
+        // the whole process: every outcome feeds the RegulationLedger
+        // (`sense_feedback_drift`), and once the curator archive opens in the
+        // deferred task (`skill_outcome_archive` below) each outcome is also
+        // persisted as a durable `reg.skill.<id>.outcome` record that the
+        // algedonic review's gemba walk reads via `reg_query`.
+        let skill_outcome_archive: std::sync::Arc<
+            std::sync::OnceLock<kask_bridge::CuratorRegulationArchive>,
+        > = std::sync::Arc::default();
         {
             let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
             let ledger_for_skill_outcomes = regulation_ledger.clone();
+            let archive_for_outcomes = skill_outcome_archive.clone();
             agent::set_skill_outcome_recorder(std::sync::Arc::new(
                 move |skill_id, invoker, success, error| {
+                    let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
+                    if let Some(error) = error {
+                        payload["error"] = serde_json::json!(error);
+                    }
+                    if let Some(archive) = archive_for_outcomes.get()
+                        && let Err(error) =
+                            kask_bridge::persist_skill_outcome(archive.as_ref(), skill_id, payload.clone())
+                    {
+                        tracing::warn!(
+                            target: "reg.storage",
+                            skill_id,
+                            %error,
+                            "Failed to persist skill outcome; the gemba walk will not see it"
+                        );
+                    }
                     let skill_id = skill_id.to_string();
-                    let error = error.map(str::to_string);
-                    let invoker = invoker.to_string();
-                    // Clone per call — the closure is `Fn` (invoked for every
-                    // skill activation), so it cannot move the captured ledger
-                    // into the spawned future.
                     let ledger = ledger_for_skill_outcomes.clone();
                     tokio_handle.spawn(async move {
-                        let ledger = ledger.read().await;
-                        let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
-                        if let Some(error) = error {
-                            payload["error"] = serde_json::json!(error);
-                        }
                         ledger
+                            .read()
+                            .await
                             .record_skill_span(&skill_id, "outcome", payload)
                             .await;
                     });
@@ -1667,44 +1675,13 @@ fn main() {
                                     }
                                 }
 
-                                // zed-kask: D59 — skill activation outcomes are also
-                                // durable, so the algedonic review's gemba walk (where
-                                // skills are evaluated, separately from the session that
-                                // ran them) can read them via `reg_query` after the
-                                // session ends. Replaces the ledger-only recorder set
-                                // before the archive opened.
-                                {
-                                    let archive_for_outcomes = archive.clone();
-                                    let ledger_for_outcomes = regulation_ledger_for_deferred.clone();
-                                    let outcome_runtime = operator_feedback_runtime.clone();
-                                    agent::set_skill_outcome_recorder(std::sync::Arc::new(
-                                        move |skill_id, invoker, success, error| {
-                                            let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
-                                            if let Some(error) = error {
-                                                payload["error"] = serde_json::json!(error);
-                                            }
-                                            if let Err(error) = kask_bridge::persist_skill_outcome(
-                                                &archive_for_outcomes,
-                                                skill_id,
-                                                payload.clone(),
-                                            ) {
-                                                tracing::warn!(
-                                                    target: "reg.storage",
-                                                    skill_id,
-                                                    %error,
-                                                    "Failed to persist skill outcome; the gemba walk will not see it"
-                                                );
-                                            }
-                                            let skill_id = skill_id.to_string();
-                                            let ledger = ledger_for_outcomes.clone();
-                                            outcome_runtime.spawn(async move {
-                                                let ledger = ledger.read().await;
-                                                ledger
-                                                    .record_skill_span(&skill_id, "outcome", payload)
-                                                    .await;
-                                            });
-                                        },
-                                    ));
+                                // zed-kask: D59 — make skill outcomes durable from here on
+                                // (the single recorder is wired at startup).
+                                if skill_outcome_archive.set(archive.clone()).is_err() {
+                                    tracing::warn!(
+                                        target: "reg.storage",
+                                        "skill outcome archive already set; keeping the first"
+                                    );
                                 }
 
                                 // zed-kask: D59 — always-on mechanical skill-use issue

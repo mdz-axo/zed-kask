@@ -146,7 +146,7 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 | Opening identity + roles (kask) | `:1`–`:3` | **Amended upstream opening** (§5.7, D40 evolution — agent renamed Z-K; roles fixed at the top) |
 | Redeemable-claims bullet (kask) | `:10` | **Amended upstream section** (§5.9 — claims carry their ground) |
 | Feature-justification bullet (kask) | `:84` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
-| Tool failure-mode warnings (kask) | `:293` | **New section** (§5.1) |
+
 | Division of Responsibilities (kask) | `:301` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
 | Ontology anchoring bullet in Tool Use (kask) | `:47` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
 | Session Context | `:359` | **New section** (§5.1) |
@@ -185,8 +185,8 @@ arrived[^hunt-thomas-1999].
 **Refactored 2026-08-25 — `inject_static_context` deleted.** The
 `ContextInjector::inject_static_context` method and `Thread.static_context` /
 `static_context_loaded` fields were removed. Tool-use warnings moved into the
-`system_prompt.hbs` template as an unconditional `## Tool failure-mode warnings
-(kask)` section. Thread-scoped memory recall (`recall_thread` /
+`system_prompt.hbs` template; since 2026-09-26 they are three `## Tool Use`
+bullets (`read_file`, `edit_file`, `terminal`), not a separate section. Thread-scoped memory recall (`recall_thread` /
 `recall_thread_curator`) was folded into the per-turn `inject_context` path so
 memory is fresh at decision time rather than snapshotted once per session. The
 `## Session Context` block now carries only agent overlays (Curator role + Steer

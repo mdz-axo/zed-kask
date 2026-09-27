@@ -990,7 +990,7 @@ mod tests {
 
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        let _recorder_override = crate::scoped_skill_outcome_recorder_for_test(
+        let _recorder_override = crate::SKILL_OUTCOME_RECORDER.scoped_for_test(
             std::sync::Arc::new(move |skill_id, invoker, success, error| {
                 if let Ok(mut entries) = captured.lock() {
                     entries.push((

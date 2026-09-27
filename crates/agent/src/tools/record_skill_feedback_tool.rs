@@ -105,7 +105,7 @@ mod tests {
         let recorded: Arc<Mutex<Vec<(String, bool, Option<String>)>>> =
             Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&recorded);
-        let mut recorder_override = crate::scoped_operator_feedback_recorder_for_test(Arc::new(
+        let mut recorder_override = crate::OPERATOR_FEEDBACK_RECORDER.scoped_for_test(Arc::new(
             move |skill_id, accepted, note| {
                 sink.lock().unwrap_or_else(|e| e.into_inner()).push((
                     skill_id.to_string(),

@@ -214,6 +214,11 @@ each one structurally impossible to repeat:
      from the requirement, red first where feasible — not from the
      implementation. A test written to match the code is the code
      agreeing with itself: internally consistent, anchored in nothing.
+   - **Removal (P5.5)**: name what the change replaces or makes
+     redundant — old paths, duplicate copies of a pattern, tests of
+     removed behavior, settings, doc sections — and delete them in the
+     same change. Report net lines added/removed. A change that only
+     adds is `continue`, never done.
    - **Residue sweep**: grep for what the change orphaned — deleted
      deps (`use <dep>` hits), stale comments describing old behavior,
      probe/test artifacts in production trees, hallucinated ids

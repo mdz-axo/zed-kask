@@ -4719,230 +4719,143 @@ pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
     TEMPLATE_BASE_PATH.get().map(|p| p.as_path())
 }
 
-/// Callback type for agent-path MCP tool outcome recording.
-/// Receives (server_name, tool_name, success, error_kind) — the same tuple
-/// `McpRuntime::invoke` records for the governed dispatch path. The domain
-/// for the reliability sensor is the server name; the tool name is carried
-/// for future per-tool sensing and log attribution.
+/// A re-settable process-global recorder slot with a per-thread test
+/// override. The four regulation recorders below share this one mechanism:
+/// production wires each once from `main.rs`; tests scope a double to their
+/// own thread so parallel tests cannot observe each other's calls.
+/// `get` clones out of the lock, so the callback runs unlocked (wired
+/// closures spawn tokio tasks and must not run under the slot's mutex).
+pub struct RecorderHook<T: Clone + 'static> {
+    slot: ProcessGlobal<T>,
+    #[cfg(test)]
+    test_slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+}
+
+impl<T: Clone + 'static> RecorderHook<T> {
+    pub fn set(&self, recorder: T) {
+        self.slot.set(Some(recorder));
+    }
+
+    fn get(&self) -> Option<T> {
+        #[cfg(test)]
+        if let Some(recorder) = test_override(self.test_slot) {
+            return Some(recorder);
+        }
+        self.slot.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scoped_for_test(&'static self, recorder: T) -> ScopedTestOverride<T> {
+        scoped_test_override(self.test_slot, recorder)
+    }
+}
+
+macro_rules! recorder_hook {
+    ($name:ident, $ty:ty) => {
+        pub static $name: RecorderHook<$ty> = {
+            #[cfg(test)]
+            thread_local! {
+                static TEST_SLOT: std::cell::RefCell<Option<$ty>> =
+                    const { std::cell::RefCell::new(None) };
+            }
+            RecorderHook {
+                slot: ProcessGlobal::new(),
+                #[cfg(test)]
+                test_slot: &TEST_SLOT,
+            }
+        };
+    };
+}
+
+/// Agent-path MCP tool outcome: (server_name, tool_name, success,
+/// error_kind) — the same tuple `McpRuntime::invoke` records for governed
+/// dispatch. Wired in `main.rs` to the app's `RegulationLedger`, which
+/// `ToolReliabilitySensor` reads; closes the gap where zed's context-server
+/// client calls were invisible to regulation.
 pub type McpToolOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+recorder_hook!(MCP_TOOL_OUTCOME_RECORDER, McpToolOutcomeRecorder);
 
-/// Global hook for agent-path MCP tool outcome recording. Wired in
-/// `main.rs` to a closure that forwards to the app's `RegulationLedger`.
-///
-/// Uses a `Mutex` (not `OnceLock`) so the recorder can be replaced — the
-/// same re-settable pattern as `set_memory_port`. This closes the feedback
-/// loop where agent-initiated MCP tool calls (zed's context-server client)
-/// were invisible to the regulation system: the McpRuntime dispatch path
-/// (skills/panel/IPC) records its own outcomes via `with_governance`, but
-/// the agent path had no `record_outcome` call, so the `ToolReliabilitySensor`
-/// and the curator never saw agent-initiated MCP failures.
-static MCP_TOOL_OUTCOME_RECORDER: ProcessGlobal<McpToolOutcomeRecorder> = ProcessGlobal::new();
+/// Skill activation outcome — the observe stage of the skill learning loop
+/// (`DIAG-ARCH-LEARNING-LOOP-001`, `kask/docs/diagrams/architecture.md`):
+/// (skill id, invoker, success, error). `invoker` is the session agent id —
+/// `Curator` or `Zed Agent` — or [`DELEGATED_SKILL_INVOKER`]. Production
+/// persists `reg.skill.<id>.outcome` (read by the algedonic review's gemba
+/// walk via `reg_query`) and feeds `RegulationLedger::record_skill_span` for
+/// `sense_feedback_drift`. Fired by `SkillTool::run` and
+/// `activate_delegated_skill` for skills found and attempted; not-found and
+/// authorization denial are request errors and are not recorded.
+pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+recorder_hook!(SKILL_OUTCOME_RECORDER, SkillOutcomeRecorder);
 
-#[cfg(test)]
-thread_local! {
-    static TEST_MCP_TOOL_OUTCOME_RECORDER: std::cell::RefCell<Option<McpToolOutcomeRecorder>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// Tool failure while a skill is active in a thread: (skill id, invoker,
+/// tool name, error text). The mechanical, always-on half of skill-use issue
+/// capture; `curator_report_skill_use_issue` is the classified half.
+/// Production persists `reg.skill.<id>.tool_failure`, unclassified evidence
+/// for the gemba walk.
+pub type SkillToolFailureRecorder = Arc<dyn Fn(&str, &str, &str, &str) + Send + Sync>;
+recorder_hook!(SKILL_TOOL_FAILURE_RECORDER, SkillToolFailureRecorder);
 
-/// Set the global MCP tool outcome recorder. Re-settable (replaces any
-/// previous recorder) — production wires once at startup; tests replace
-/// freely.
+/// The operator's skill evaluation: (skill id, accepted, note). Evaluation
+/// is separated from execution (Goodhart): the only writer is the
+/// Curator-only `record_skill_feedback` tool used in the algedonic review.
+/// Production persists `reg.skill.<id>.operator_feedback` to the curator's
+/// `RegulationArchive` before acknowledging, then feeds the ledger for
+/// "declining operator acceptance" drift sensing. Unlike the telemetry
+/// hooks, a missing recorder is an error: a verdict must never be dropped.
+pub type OperatorFeedbackRecorder =
+    Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
+recorder_hook!(OPERATOR_FEEDBACK_RECORDER, OperatorFeedbackRecorder);
+
 pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
-    MCP_TOOL_OUTCOME_RECORDER.set(Some(recorder));
+    MCP_TOOL_OUTCOME_RECORDER.set(recorder);
 }
 
-#[cfg(test)]
-pub(crate) fn scoped_mcp_tool_outcome_recorder_for_test(
-    recorder: McpToolOutcomeRecorder,
-) -> ScopedTestOverride<McpToolOutcomeRecorder> {
-    scoped_test_override(&TEST_MCP_TOOL_OUTCOME_RECORDER, recorder)
+pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
+    SKILL_OUTCOME_RECORDER.set(recorder);
 }
 
-/// Record an agent-path MCP tool outcome. Best-effort by design: when no
-/// recorder is wired (tests, non-kask embedders) the outcome is dropped
-/// with a debug log — regulation telemetry must never fail a tool call.
+pub fn set_skill_tool_failure_recorder(recorder: SkillToolFailureRecorder) {
+    SKILL_TOOL_FAILURE_RECORDER.set(recorder);
+}
+
+pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
+    OPERATOR_FEEDBACK_RECORDER.set(recorder);
+}
+
+/// Telemetry recorders are best-effort: an unwired hook (tests, non-kask
+/// embedders) drops the record with a debug log, never failing the tool call.
 pub fn record_mcp_tool_outcome(
     server_name: &str,
     tool_name: &str,
     success: bool,
     error_kind: Option<&str>,
 ) {
-    // `ProcessGlobal::get` clones out of the lock so the callback runs
-    // unlocked — the wired closure spawns a tokio task and must not run
-    // under the hook's own mutex.
-    #[cfg(test)]
-    let recorder =
-        test_override(&TEST_MCP_TOOL_OUTCOME_RECORDER).or_else(|| MCP_TOOL_OUTCOME_RECORDER.get());
-    #[cfg(not(test))]
-    let recorder = MCP_TOOL_OUTCOME_RECORDER.get();
-    match recorder {
+    match MCP_TOOL_OUTCOME_RECORDER.get() {
         Some(record) => record(server_name, tool_name, success, error_kind),
-        None => log::debug!(
-            "record_mcp_tool_outcome: recorder not wired — outcome for \
-             {server_name}/{tool_name} not recorded"
-        ),
+        None => log::debug!("MCP outcome for {server_name}/{tool_name} not recorded: unwired"),
     }
 }
 
-/// Callback type for skill-execution outcome recording — the observe stage
-/// of the skill learning loop (`kask/docs/diagrams/architecture.md`,
-/// `DIAG-ARCH-LEARNING-LOOP-001`). Arguments: skill id, invoker (the session
-/// agent id — `Curator` or `Zed Agent` — or [`DELEGATED_SKILL_INVOKER`]),
-/// success, error. The composition root persists each outcome as a durable
-/// `reg.skill.<id>.outcome` record (read by the algedonic review's gemba walk
-/// via `reg_query`) and feeds `RegulationLedger::record_skill_span`, which
-/// the metacognition loop's `sense_feedback_drift` reads for per-skill
-/// success-rate decline.
-///
-/// Scope: fired by `SkillTool::run` and `activate_delegated_skill` for skills
-/// that were found and attempted (success, missing dependencies, unreadable
-/// body). A skill-not-found is a request error with no skill to attribute; an
-/// authorization denial is the operator's choice, not a skill reliability
-/// signal — neither is recorded.
-pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
-
-/// Global hook for skill outcome recording. Wired in `main.rs` to a closure
-/// that stores each outcome as a `reg.skill.<id>.outcome` span payload in the
-/// shared `RegulationLedger`. Re-settable (`Mutex`, not `OnceLock`) so tests
-/// can replace it freely.
-static SKILL_OUTCOME_RECORDER: ProcessGlobal<SkillOutcomeRecorder> = ProcessGlobal::new();
-
-#[cfg(test)]
-thread_local! {
-    static TEST_SKILL_OUTCOME_RECORDER: std::cell::RefCell<Option<SkillOutcomeRecorder>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Set the global skill outcome recorder. Re-settable (replaces any
-/// previous recorder) — production wires once at startup.
-pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
-    SKILL_OUTCOME_RECORDER.set(Some(recorder));
-}
-
-#[cfg(test)]
-pub(crate) fn scoped_skill_outcome_recorder_for_test(
-    recorder: SkillOutcomeRecorder,
-) -> ScopedTestOverride<SkillOutcomeRecorder> {
-    scoped_test_override(&TEST_SKILL_OUTCOME_RECORDER, recorder)
-}
-
-/// Record a skill execution outcome. Best-effort by design: when no recorder
-/// is wired (tests, non-kask embedders) the outcome is dropped with a debug
-/// log — telemetry must never fail a tool call.
 pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error: Option<&str>) {
-    // Same unlocked-dispatch pattern as `record_mcp_tool_outcome` above.
-    #[cfg(test)]
-    let recorder =
-        test_override(&TEST_SKILL_OUTCOME_RECORDER).or_else(|| SKILL_OUTCOME_RECORDER.get());
-    #[cfg(not(test))]
-    let recorder = SKILL_OUTCOME_RECORDER.get();
-    match recorder {
+    match SKILL_OUTCOME_RECORDER.get() {
         Some(record) => record(skill_id, invoker, success, error),
-        None => log::debug!(
-            "record_skill_outcome: recorder not wired — outcome for \
-             {skill_id} not recorded"
-        ),
+        None => log::debug!("skill outcome for {skill_id} not recorded: unwired"),
     }
-}
-
-/// Records a tool failure that happened while a skill was active in a
-/// thread: skill id, invoker, tool name, error text. This is the mechanical
-/// half of skill-use issue capture in the skill learning loop's observe stage
-/// (always on, no model decision); the model-classified half is
-/// `curator_report_skill_use_issue`. Production persists it as
-/// `reg.skill.<id>.tool_failure`, which the algedonic review's gemba walk
-/// reads as unclassified evidence.
-pub type SkillToolFailureRecorder = Arc<dyn Fn(&str, &str, &str, &str) + Send + Sync>;
-
-static SKILL_TOOL_FAILURE_RECORDER: ProcessGlobal<SkillToolFailureRecorder> = ProcessGlobal::new();
-
-#[cfg(test)]
-thread_local! {
-    static TEST_SKILL_TOOL_FAILURE_RECORDER: std::cell::RefCell<Option<SkillToolFailureRecorder>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-pub fn set_skill_tool_failure_recorder(recorder: SkillToolFailureRecorder) {
-    SKILL_TOOL_FAILURE_RECORDER.set(Some(recorder));
-}
-
-#[cfg(test)]
-pub(crate) fn scoped_skill_tool_failure_recorder_for_test(
-    recorder: SkillToolFailureRecorder,
-) -> ScopedTestOverride<SkillToolFailureRecorder> {
-    scoped_test_override(&TEST_SKILL_TOOL_FAILURE_RECORDER, recorder)
 }
 
 pub fn record_skill_tool_failure(skill_id: &str, invoker: &str, tool_name: &str, error: &str) {
-    #[cfg(test)]
-    let recorder = test_override(&TEST_SKILL_TOOL_FAILURE_RECORDER)
-        .or_else(|| SKILL_TOOL_FAILURE_RECORDER.get());
-    #[cfg(not(test))]
-    let recorder = SKILL_TOOL_FAILURE_RECORDER.get();
-    match recorder {
+    match SKILL_TOOL_FAILURE_RECORDER.get() {
         Some(record) => record(skill_id, invoker, tool_name, error),
-        None => log::debug!(
-            "record_skill_tool_failure: recorder not wired — {tool_name} failure \
-             under {skill_id} not recorded"
-        ),
+        None => log::debug!("{tool_name} failure under {skill_id} not recorded: unwired"),
     }
 }
 
-/// Records the operator's evaluation of a skill's output. Evaluation is
-/// separated from execution (Goodhart): the only writer is the Curator-only
-/// `record_skill_feedback` tool, used by the operator during the algedonic
-/// review. Applying curator advice is an intervention record, not a skill
-/// verdict, and records nothing here. Production persists the spans in the curator's
-/// `RegulationArchive`, then feeds the shared `RegulationLedger` working view
-/// as `reg.skill.<id>.operator_feedback`, which the metacognition loop's drift
-/// sensing trends ("declining operator acceptance" — outputs that
-/// are technically successful but increasingly useless).
-pub type OperatorFeedbackRecorder =
-    Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
-
-/// Global hook for operator skill feedback. Wired in `main.rs` to a closure
-/// that persists each reaction to `RegulationArchive` before updating the
-/// shared `RegulationLedger` working view. Re-settable (`Mutex`, not
-/// `OnceLock`) so the composition root can replace it as context resolves.
-static OPERATOR_FEEDBACK_RECORDER: ProcessGlobal<OperatorFeedbackRecorder> = ProcessGlobal::new();
-
-#[cfg(test)]
-thread_local! {
-    static TEST_OPERATOR_FEEDBACK_RECORDER: std::cell::RefCell<Option<OperatorFeedbackRecorder>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Set the global operator feedback recorder. Re-settable (replaces any
-/// previous recorder) — production wires once at startup.
-pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
-    OPERATOR_FEEDBACK_RECORDER.set(Some(recorder));
-}
-
-#[cfg(test)]
-pub(crate) fn scoped_operator_feedback_recorder_for_test(
-    recorder: OperatorFeedbackRecorder,
-) -> ScopedTestOverride<OperatorFeedbackRecorder> {
-    scoped_test_override(&TEST_OPERATOR_FEEDBACK_RECORDER, recorder)
-}
-
-/// Record the operator's reaction to a skill's output.
-///
-/// A successful receipt means the configured recorder durably accepted the
-/// observation. An unwired or failed recorder is surfaced so the direct
-/// feedback tool cannot claim that restart-safe history exists when it does
-/// not. Callers whose primary action already committed may log this secondary
-/// failure while preserving that action's result.
 pub fn record_operator_feedback(
     skill_id: &str,
     accepted: bool,
     note: Option<&str>,
 ) -> Result<(), String> {
-    #[cfg(test)]
-    let recorder = test_override(&TEST_OPERATOR_FEEDBACK_RECORDER)
-        .or_else(|| OPERATOR_FEEDBACK_RECORDER.get());
-    #[cfg(not(test))]
-    let recorder = OPERATOR_FEEDBACK_RECORDER.get();
-    let recorder = recorder.ok_or_else(|| {
+    let recorder = OPERATOR_FEEDBACK_RECORDER.get().ok_or_else(|| {
         format!("operator feedback persistence is not available for skill {skill_id}")
     })?;
     recorder(skill_id, accepted, note)
@@ -5310,7 +5223,7 @@ mod internal_tests {
         // the re-settable ProcessGlobal composition-root hook.
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        let mut recorder_override = scoped_mcp_tool_outcome_recorder_for_test(std::sync::Arc::new(
+        let mut recorder_override = MCP_TOOL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
             move |server, tool, success, error_kind| {
                 captured.lock().expect("captured lock").push((
                     server.to_string(),
@@ -5375,7 +5288,7 @@ mod internal_tests {
         });
 
         let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _override = scoped_skill_outcome_recorder_for_test(recorder);
+            let _override = SKILL_OUTCOME_RECORDER.scoped_for_test(recorder);
             record_skill_outcome("owner", "Zed Agent", true, None);
             std::thread::spawn(|| record_skill_outcome("concurrent", "Zed Agent", true, None))
                 .join()
@@ -5393,7 +5306,7 @@ mod internal_tests {
     fn skill_outcome_recorder_records_and_is_replaceable() {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        let mut recorder_override = scoped_skill_outcome_recorder_for_test(std::sync::Arc::new(
+        let mut recorder_override = SKILL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
             move |skill_id, invoker, success, error| {
                 if let Ok(mut entries) = captured.lock() {
                     entries.push((
@@ -5466,7 +5379,7 @@ mod internal_tests {
     fn operator_feedback_recorder_records_and_is_replaceable() {
         let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = recorded.clone();
-        let mut recorder_override = scoped_operator_feedback_recorder_for_test(
+        let mut recorder_override = OPERATOR_FEEDBACK_RECORDER.scoped_for_test(
             std::sync::Arc::new(move |skill_id, accepted, note| {
                 if let Ok(mut entries) = captured.lock() {
                     entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));

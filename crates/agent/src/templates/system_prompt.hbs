@@ -51,6 +51,9 @@ Mermaid diagrams are automatically color-coded using the user's theme accent pal
 - You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead.
 - When running commands that may run indefinitely or for a long time, such as builds, tests, servers, or file watchers, specify `timeout_ms` to bound runtime. If a command times out, report that clearly and let the user decide whether to rerun it with a longer timeout.
 - Avoid HTML entity escaping; use plain characters instead.
+- `read_file`: Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns "tool input was not fully received" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
+- `edit_file`: If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
+- `terminal`: Never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
 - Do not waste tokens by re-reading files after calling `write_file`, `edit_file`, or similar. The tool call will fail if it didn't work. The same goes for creating folders, deleting folders, etc.
 - Before a group of related tool calls, send a brief one- to two-sentence preamble explaining what you're about to do, so the user can follow along. Skip the preamble for trivial single reads or when continuing a clearly described step.
 - When hkask-mcp-media tool results contain a `display_hint` field, copy that fenced ```media block verbatim into your reply to display the media inline.
@@ -295,14 +298,6 @@ There are project rules that apply to these root directories:
 {{/if}}
 
 {{/if}}
-
-## Tool failure-mode warnings (kask)
-
-The built-in file/terminal tools have known failure modes. Follow these rules:
-
-- `read_file`: Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns "tool input was not fully received" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
-- `edit_file`: If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
-- `terminal`: Never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
 
 ## Division of Responsibilities (kask)
 

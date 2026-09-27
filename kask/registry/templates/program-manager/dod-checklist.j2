@@ -10,6 +10,7 @@ contract:
     change_summary: string
     validation: array
     residue_sweep: object
+    removal: object
     pins: array
     docs_aligned: array
     scope_check: object
@@ -43,6 +44,11 @@ JSON object with EXACTLY these fields:
     "probe_artifacts": [/* diagnostics left in production trees; path */],
     "hallucinated_ids": [/* grep hits for new hardcoded values beyond the designed site */]
   },
+  "removal": {
+    "replaced_paths_deleted": [/* code, duplicate pattern copies, settings, doc sections this change supersedes — each with the commit or diff that deletes it */],
+    "obsolete_tests_deleted": [/* tests of removed behavior; test name + file */],
+    "net_lines": /* "+added / -removed" for the change */
+  },
   "pins": [
     /* one entry per behavior change: test name + what it pins */
   ],
@@ -58,4 +64,7 @@ Rules:
   report says why.
 - residue_sweep fields list FINDINGS with evidence; empty arrays mean
   "searched and clean", never "didn't look".
+- removal is required (P5.5): a change whose replaced_paths_deleted and
+  obsolete_tests_deleted are both empty must say what it superseded and
+  why nothing was removable; otherwise the change is not done.
 - Residue targets for this change: {{ residue_targets }}

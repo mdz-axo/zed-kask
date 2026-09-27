@@ -2,6 +2,7 @@
 
 * When the requested outcome is a working capability (a skill, pipeline, or process), the goal is the capability functioning — not the completion of the instance task. Hand-completing the instance task while the capability stays broken ("cowboying a solution") is failure even if the artifact ships; the deliverable is the fixed capability, verified by running the task through it (operator correction, 2026-09-09, corpus-pipeline session: "you got the goal and gradient wrong — the goal is the working skill and working pipeline, not the specific completion of the specific task — it is a meta goal").
 * Completion records cite commit hashes, not intentions. A report or memory that says "done, all tests green" before the commit exists has outrun the tree (observed 2026-09-08: the local-swarm-budget teardown was recorded complete in the curator's memory with test counts while the work sat uncommitted). Name the hash, or say the work is uncommitted — a verification claim is only as good as the commit it points at.
+* A coding task that only adds is not done (PRINCIPLES P5.5, operator ruling 2026-09-26). Name what the change replaces and delete it — old paths, copied pattern instances, tests of removed behavior — in the same change, and report net lines. Observed 2026-09-26: a session added a fourth copy of the process-global recorder hook and a second skill-outcome recorder (+~410 lines net) before the removal pass consolidated them.
 
 # Corpus pipeline traps
 

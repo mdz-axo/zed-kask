@@ -36,11 +36,12 @@ pub(crate) fn curator_db_path() -> String {
 ///
 /// Used by `main.rs` to wire the `McpRuntime` and `CyberneticsLoop` event sinks
 /// to durable storage on the curator's curator.db.
-pub fn open_curator_regulation_archive(
-    passphrase: &str,
-) -> Option<Arc<hkask_storage::RegulationArchive>> {
+pub fn open_curator_regulation_archive(passphrase: &str) -> Option<CuratorRegulationArchive> {
     open_regulation_archive(&curator_db_path(), passphrase, "curator")
 }
+
+/// The curator archive handle, shared with recorders wired before it opens.
+pub type CuratorRegulationArchive = Arc<hkask_storage::RegulationArchive>;
 
 /// Persist one operator-feedback observation before its recording surface
 /// reports success. The archive is authoritative; the RegulationLedger is a
