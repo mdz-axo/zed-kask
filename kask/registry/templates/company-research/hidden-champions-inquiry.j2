@@ -34,7 +34,7 @@ You are examining a company through Hermann Simon's Hidden Champions lens, not c
 ## Value chain and claimed markets
 {{ wardley_map | tojson }}
 
-## Short extracts from retained sources
+## Short extracts from sources
 {{ source_evidence | tojson }}
 
 {% if demand_context %}
@@ -49,4 +49,4 @@ In one bounded pass:
 4. Identify both the advantage of specialization and the risk of market saturation or customer concentration. Distinguish growth of the niche, capture of that growth, and profitable reinvestment or adjacent diversification. When demand_context is provided, trace the household category to this specific value-chain position; if the category does not map, say so.
 5. State what observation would change the franchise/scenario conclusion. Cite `source_evidence` by its citation key for every material factual claim; distinguish original filings and third-party market estimates from company promotion. An extract is a lead until checked against the source it was extracted from. Keep missing evidence in `data_gaps`; never invent a share or an Engel elasticity.
 
-Return JSON only, with exactly the declared output fields. `niche_definition` identifies need, substitutes, geography, period and rival definitions; `leadership_evidence` gives claim, status, share inputs or null and source keys; `advantage_mechanism` gives supporting and contrary observations; `concentration_and_growth` gives saturation, customer risk and adjacencies; `exceptions` records Simon-pattern departures without penalty. `implication_for_scenarios` and `implication_for_thesis` state how this inquiry changes the downstream analysis, or "no supported change". `claim_sources` lists cited output keys; `data_gaps` lists missing sources or unresolved definitions. Do not output a Hidden Champion pass/fail verdict.
+Return JSON only, with exactly the declared output fields. `niche_definition` identifies need, substitutes, geography, period and rival definitions; `leadership_evidence` gives claim, status, share inputs or null and source keys; `advantage_mechanism` gives supporting and contrary observations; `concentration_and_growth` gives saturation, customer risk and adjacencies; `exceptions` records Simon-pattern departures without penalty. `implication_for_scenarios` and `implication_for_thesis` state how this inquiry changes the downstream analysis, or "no supported change". `claim_sources` lists cited citation keys; `data_gaps` lists missing sources or unresolved definitions. Do not output a Hidden Champion pass/fail verdict.

@@ -706,7 +706,7 @@ report is the only durable artifact — no run folders, no retained-output
 files, no intermediate evidence files.
 
 Both company pipelines check their work with one author-side evidence review
-over the frozen drafts, modeled on published verification practice (operator
+over the composed report texts, modeled on published verification practice (operator
 rulings 2026-09-27): ISA 500 assertion-orientation (evidence must be relevant
 to the claim being tested — never excerpt-matching), vouching (claim →
 source) and tracing (source → report) so omissions surface, ISA 320 materiality

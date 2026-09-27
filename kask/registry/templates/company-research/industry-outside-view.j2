@@ -33,7 +33,7 @@ You are building the outside view on an industry's business drivers: the framewo
 ## Company self-view (COMPANY board)
 {{ company_board | tojson }}
 
-## Short extracts from retained outside-view sources
+## Short extracts from outside-view sources
 {{ source_evidence | tojson }}
 
 ## Outside-view search log (queries, providers, counts, failures)
@@ -58,4 +58,4 @@ In one bounded pass:
 
 Cite `source_evidence` by its citation key for every driver, body and conflict. An extract is a lead until checked against the source it was extracted from. Record in `excluded_sources` only admissible-looking candidates you rejected (for example an unresolvable DOI or a Substack below the subscriber floor) with the reason; do not list boilerplate or inadmissible source types. Record provider failures, empty tiers and unresolved identities in `data_gaps`. Never invent a driver, a citation or a subscriber count.
 
-Return JSON only with exactly this shape: `{"industry_drivers":[], "self_regulatory_bodies":[], "company_fit":[], "frame_conflicts":[], "implication_for_falstaffian":"...", "implication_for_gorilla":"...", "implication_for_thesis":"...", "claim_sources":[], "excluded_sources":[], "data_gaps":[]}`. Populate `claim_sources` with real retained output keys used by each claim, not new citations; empty arrays and `no supported change` are allowed when sources do not support a judgment.
+Return JSON only with exactly this shape: `{"industry_drivers":[], "self_regulatory_bodies":[], "company_fit":[], "frame_conflicts":[], "implication_for_falstaffian":"...", "implication_for_gorilla":"...", "implication_for_thesis":"...", "claim_sources":[], "excluded_sources":[], "data_gaps":[]}`. Populate `claim_sources` with real citation keys used by each claim, not new citations; empty arrays and `no supported change` are allowed when sources do not support a judgment.
