@@ -110,7 +110,7 @@ impl KaskThreadState {
     /// mid-tool-call (D36 `ToolCallTruncated`). Sets the flag
     /// `flush_pending_message` reads to report pending tool calls as
     /// truncated rather than canceled.
-    pub fn on_max_tokens(&mut self) {
+    pub fn on_completion_truncated(&mut self) {
         self.last_completion_truncated = true;
     }
 
@@ -118,7 +118,7 @@ impl KaskThreadState {
     /// classification: the stream ended (`finish_reason: "stop"`) with a
     /// tool call's arguments still incomplete, so the mapper refused to
     /// dispatch it. Read at the stream-error boundary to set
-    /// [`Self::on_max_tokens`], so pending partial tool input is reported
+    /// [`Self::on_completion_truncated`], so pending partial tool input is reported
     /// as truncated rather than canceled.
     pub fn is_tool_call_truncation(error: &LanguageModelCompletionError) -> bool {
         matches!(

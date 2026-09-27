@@ -3434,7 +3434,11 @@ impl Thread {
                                 // input is reported as truncated when the
                                 // turn is flushed.
                                 if crate::kask_thread_state::KaskThreadState::is_tool_call_truncation(&err) {
-                                    this.kask.on_max_tokens();
+                                    log::warn!(
+                                        target: "agent.thread",
+                                        "tool-call stream truncated mid-JSON: {err}"
+                                    );
+                                    this.kask.on_completion_truncated();
                                 }
                                 batch_error = Some(err.into());
                                 break;
@@ -4104,7 +4108,7 @@ impl Thread {
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => {
-                self.kask.on_max_tokens(); // zed-kask: D25
+                self.kask.on_completion_truncated(); // zed-kask: D25
                 return Err(CompletionError::MaxTokens.into());
             }
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
@@ -12616,7 +12620,7 @@ mod tests {
         // set the flag, then flush_pending_message reads it.
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.kask.on_max_tokens();
+                thread.kask.on_completion_truncated();
 
                 // Set up a pending message with an incomplete ToolUse
                 // (no tool_result) so flush_pending_message inserts the
@@ -12952,7 +12956,7 @@ mod tests {
         // canceled.
         let arm_marker = concat!("Err(err)", " => {");
         let truncation_call = concat!("is_tool_call_trunc", "ation(&err)");
-        let flag_call = concat!("this.kask.on_", "max_tokens()");
+        let flag_call = concat!("this.kask.on_", "completion_truncated()");
         let fail_call = concat!("batch_error = Some(err", ".into());");
         let source = include_str!("thread.rs");
         let arm = source
