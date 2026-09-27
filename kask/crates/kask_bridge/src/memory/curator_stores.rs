@@ -65,6 +65,17 @@ pub fn persist_skill_outcome(
     persist_skill_span(archive, skill_id, "outcome", payload)
 }
 
+/// Persist one tool failure that occurred while a skill was active
+/// (`reg.skill.<id>.tool_failure`): the always-on, mechanical skill-use
+/// issue channel the gemba walk reads alongside outcomes.
+pub fn persist_skill_tool_failure(
+    archive: &hkask_storage::RegulationArchive,
+    skill_id: &str,
+    payload: serde_json::Value,
+) -> Result<(), InfrastructureError> {
+    persist_skill_span(archive, skill_id, "tool_failure", payload)
+}
+
 fn persist_skill_span(
     archive: &hkask_storage::RegulationArchive,
     skill_id: &str,
@@ -426,6 +437,36 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].span.path, "reg.skill.listening.outcome");
         assert_eq!(records[0].observation, serde_json::json!({"success": true}));
+    }
+
+    /// expect: a tool failure captured under an active skill is durable and
+    /// readable by the gemba walk's `reg_query` after restart.
+    #[test]
+    fn skill_tool_failure_survives_archive_restart() {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = hkask_storage::RegulationArchive::from_driver(driver.clone())
+            .expect("regulation archive");
+        let payload = serde_json::json!({
+            "invoker": "Zed Agent",
+            "tool": "web_extract",
+            "error": "[unavailable] provider down",
+        });
+        persist_skill_tool_failure(&archive, "company-research-flash", payload.clone())
+            .expect("tool failure is durable");
+        drop(archive);
+
+        let restarted =
+            hkask_storage::RegulationArchive::from_driver(driver).expect("restarted archive");
+        let since = chrono::Utc::now() - chrono::Duration::hours(1);
+        let records = restarted
+            .query_records(since, Some("reg.skill"), 10)
+            .expect("query failures");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].span.path,
+            "reg.skill.company-research-flash.tool_failure"
+        );
+        assert_eq!(records[0].observation, payload);
     }
 
     #[tokio::test]

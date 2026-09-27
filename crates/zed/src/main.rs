@@ -1707,6 +1707,34 @@ fn main() {
                                     ));
                                 }
 
+                                // zed-kask: D59 — always-on mechanical skill-use issue
+                                // capture: tool failures under an active skill are
+                                // durable `reg.skill.<id>.tool_failure` records.
+                                {
+                                    let archive_for_failures = archive.clone();
+                                    agent::set_skill_tool_failure_recorder(std::sync::Arc::new(
+                                        move |skill_id, invoker, tool, error| {
+                                            let payload = serde_json::json!({
+                                                "invoker": invoker,
+                                                "tool": tool,
+                                                "error": error,
+                                            });
+                                            if let Err(error) = kask_bridge::persist_skill_tool_failure(
+                                                &archive_for_failures,
+                                                skill_id,
+                                                payload,
+                                            ) {
+                                                tracing::warn!(
+                                                    target: "reg.storage",
+                                                    skill_id,
+                                                    %error,
+                                                    "Failed to persist skill tool failure; the gemba walk will not see it"
+                                                );
+                                            }
+                                        },
+                                    ));
+                                }
+
                                 let archive_for_feedback = archive.clone();
                                 let ledger_for_feedback = regulation_ledger_for_deferred.clone();
                                 let feedback_runtime = operator_feedback_runtime.clone();

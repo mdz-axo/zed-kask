@@ -7,5 +7,6 @@ pub(crate) mod financial_data;
 pub(crate) mod notes;
 
 pub(crate) mod artifacts;
+pub(crate) mod claim_scan;
 pub(crate) mod transcript;
 pub(crate) mod valuation;

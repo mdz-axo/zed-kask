@@ -27,6 +27,7 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 - When you need to record a forecast with resolution criteria for later tracking, Brier scoring, and post-mortem analysis.
 - When evaluating generated forecasts through an independent quality gate to assess calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias.
 - When LEAP expert-judgment forecasts are available for the forecasting question or a close reference class, and you want to anchor the outside view on FRI's longitudinal expert panel rather than (or in addition to) market-implied probabilities.
+- When the prediction-market calibration store needs a health check (scan cadence, per-bucket Brier, demotion verification) or a resolution needs recording, or before relying on a market reliability tier (the Market-prior calibration check).
 
 ## When NOT to Use
 
@@ -61,7 +62,7 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 3. When a measured rate or a reliably matched market/expert prior fits the outcome, horizon, and conditioning, choose one source for `starting_probability` and record `anchor_source.kind`, source and rationale; do not average unlike sources. If none qualifies, require `starting_probability: null` and `anchor_source: null`. Stop before stage 3 and report the evidence gap; do not create a 0.5 or other synthetic prior.
 4. Before invoking stage 3, check that `anchor_source` is present and its `kind` is `historical`, `market`, or `expert`, and call `lisp_eval` with `(and (numberp p) (<= 0 p) (<= p 1))` on the selected `starting_probability`. If false, stop; stage 3 requires a number and must never render `null * 100`.
 
-> **MCP tool step (call `market_match` directly — no template):** fetch candidates for the question. A returned market price is an observed market prior, not a historical rate; inspect match confidence, reliability, spread and deadline before using it. An empty result means no matched market, not a 0.5 estimate.
+> **MCP tool step (call `market_match` directly — no template):** fetch candidates for the question. A returned market price is an observed market prior, not a historical rate; inspect match confidence, reliability, spread and deadline before using it. An empty result means no matched market, not a 0.5 estimate. Before selecting a market prior as the anchor, run the "Market-prior calibration check" below on its bucket: a stale bucket means the reliability tier carries no calibration evidence — say so in `anchor_source.rationale`.
 
 ### stage_3_probability_estimate (delegated split — node estimates P, combination D via `scenario_quantify`)
 
@@ -129,6 +130,20 @@ The former single inside-view step is split into three steps. Generation and cou
 - **Do:** re-run only the stage(s) the fix notes name, then every downstream stage.
 - **Check (D):** re-render the gate; pass iff all four scores ≥ 0.60, checked with `lisp_eval` `(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))`.
 - **Act:** stop on pass, or after 2 gate cycles. On a second failure, deliver the forecast with the failing dimensions and their scores recorded as the remaining gap.
+
+### Market-prior calibration check (formerly `calibration-stewardship`)
+
+The prediction-markets server annotates every market record with a reliability tier derived from per-bucket Brier scores (Brier 1950, `onto_anchor` → derived `brier_score`; calibration in Tetlock & Gardner's sense → derived `forecast_calibration`). That tier is only as good as the observations feeding it, and the honest observation is the price a scan FIRST saw, never the post-resolution price. Run this check before a market prior anchors stage 2, or on its own when the operator asks for a calibration health check. Every tool call and the gate are D (the server computes snapshots, Brier and tiers; `lisp_eval` evaluates the gate); the cadence recommendation is P and the operator's decision.
+
+Why it is two-phase: `market_check_resolutions` (1) snapshots every OPEN market's current price as the pre-resolution probability-at-observation (the earliest snapshot per market is kept) and (2) scores newly resolved markets against their snapshot. A market that resolves before its first scan is counted in `resolved_without_snapshot` and skipped — its terminal price is the outcome declaration, and scoring it would give Brier ≈ 0 by construction. Scans must therefore run often enough that open markets are snapshotted before they resolve; a high too-late rate is the primary signal this check manages.
+
+1. **Scan.** Call `market_check_resolutions` (default limit 100; raise toward 500 for a catch-up after a gap; `series` scopes the Kalshi phases only). Read `snapshotted`, `recorded`, `resolved_without_snapshot`, `skipped_ambiguous` (50-50 resolutions, never fabricated), `already_known`, `zero_scan_reason` and `warnings`. The scan is idempotent.
+2. **Read the signal.** Call `market_calibration` for the market prior's bucket (a domain such as "politics" or a series ticker) and any other bucket of interest. `stale: true` means no resolved data — report it as unknown, never as well calibrated. For a non-stale bucket report Brier with its band (excellent < 0.05, good < 0.10, fair < 0.20, poor < 0.33) and the sample size; a small sample is weak evidence.
+3. **Record resolutions honestly.** A `market_subscribe_resolutions` notification carries NO pre-resolution probability. To record one, take the probability-at-observation from the scan's snapshot or the operator's own recorded pre-resolution observation, then call `market_record_resolution` (bucket, probability, outcome). Never pass the terminal price as the probability.
+4. **Verify the demotion rule (when testable).** `reliability_tier` (`hkask-mcp-prediction-markets/src/types.rs`) lowers High to Medium only when the bucket is not stale, has ≥ 5 resolved markets and Brier > 0.25; Medium and Low are unchanged. If a bucket from step 2 meets all three, call `market_lookup` for a market in it with volume ≥ 50,000 and spread ≤ 0.04: it should read Medium, and High is a discrepancy to report. A Medium or Low record is not evidence either way. If no bucket qualifies, report the demotion rule untested this run.
+5. **Gate.** Call `lisp_eval` with form `(and (eq stale_buckets 0) (< without_snapshot_rate 0.2))`, env `{ "stale_buckets": <buckets of interest reporting stale>, "without_snapshot_rate": <resolved_without_snapshot / (recorded + resolved_without_snapshot)> }`. True: calibration evidence is current. False: recommend a more frequent scan cadence to the operator and re-run step 1 once; if the rate is still ≥ 0.2, report the cadence problem instead of re-running. When a bucket stays stale, a market prior from it may still anchor stage 2, but its tier is volume/spread-only and the rationale must say so.
+
+Never record a post-resolution price as the probability-at-observation, and never retry an ambiguous (50-50) resolution hoping for a different result. This check scores market buckets; scoring your own forecasts is the Brier loop below.
 
 Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts.
 
@@ -220,3 +235,4 @@ Template context variables (from each template's [inference] contract):
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
+- If a prediction-markets tool call fails during the Market-prior calibration check, call `curator_report_skill_use_issue` with skill_name "superforecasting", the tool name and the error, and continue with the best available information.

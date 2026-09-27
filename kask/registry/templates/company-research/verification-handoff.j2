@@ -13,6 +13,7 @@ contract:
     disclosure_inventory: array
     original_forecast: object|null
     working_forecast: object|null
+    key_claims: array|null
   output:
     fact_score: number|null
     source_review: object
@@ -29,6 +30,8 @@ contract:
     narrative_leaks: array
     data_gaps: array
     verification_scope_limitations: array
+    tier1_match_rate: number|null
+    promoted_claims: array
 visibility: Public
 ---
 
@@ -40,6 +43,17 @@ mechanical check results: `fact_score`, `fact_score_breakdown`,
 `hallucination_findings`, `source_conflicts`, `rounding_notes`, `error_log`,
 `narrative_leaks`, `data_gaps`, and `verification_scope_limitations`.
 Rendering this handoff does not perform verification.
+
+## Two tiers: quick pass on everything, full pass on key claims
+
+Do not re-derive every fact. Spend full effort only where the report stands on it.
+
+1. **Tier 1 (mechanical, every cited claim).** Call `company_verification_packet_check` on the packet. Read `tier1_claim_scan`: matched and unmatched figures and quotes, with not-checkable counts. Do not re-check matched non-key lines by hand. Report `tier1_match_rate` = (figures_matched + quotes_matched) / (figures_checked + quotes_checked).
+2. **Promote.** Add to the review list every Tier 1 `unmatched` item, and any claim you judge load-bearing that `key_claims` omits (a thesis pillar, score, valuation, forecast or material disclosure resting on it). List these in `promoted_claims` with the reason. An unmatched item that is only a rounding or paraphrase difference is resolved in one line; it is not a finding.
+3. **Tier 2 (full review, key claims plus promotions).** For each item, open the cited source around the quote. Judge support, period and units, context and sign, contrary evidence in the retained sources, and materiality. `tier2_key_claims` confirms only that each quote is verbatim; it is not support. `fact_score` and `claims_checked` count Tier 2 items only.
+4. **Source identity once.** If `historical_findings` holds an earlier receipt with hashes and a download check for a source, re-hash the retained file and compare. Re-download only a source that is new or whose hash changed.
+5. **Coverage by meaning.** Judge each `disclosure_inventory` item's coverage by what the target says. If the mechanical marker check reports an omission but the target covers the disclosure in other words, record it as covered, with the target wording, in `rounding_notes`. Do not return it to the author as a failure.
+6. Name the Tier 2 scope in `verification_scope_limitations`: key claims checked, promotions, and what Tier 1 alone covered.
 
 You are the delegation target: do not spawn another verifier. When the caller
 actually invoked you through `spawn_agent` and supplied a report you did not

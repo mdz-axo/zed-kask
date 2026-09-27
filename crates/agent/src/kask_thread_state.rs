@@ -19,6 +19,7 @@
 //! | `last_completion_truncated` | D25 | Distinguish MaxTokens truncation from user cancel |
 //! | `cached_system_prompt` | — | System prompt digest caching |
 //! | `cached_filtered_context` | — | Filtered context caching |
+//! | `active_skill` | D59 | Attribute tool failures to the running skill |
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -57,6 +58,10 @@ pub(crate) struct KaskThreadState {
 
     // D70 — only populated for an explicitly traced turn.
     tool_trace: Option<ToolTraceCapture>,
+
+    // D59 — the most recently activated skill in this thread; tool failures
+    // while it is set are recorded against it without the model reporting.
+    active_skill: Rc<RefCell<Option<SharedString>>>,
 }
 
 impl KaskThreadState {
@@ -70,7 +75,12 @@ impl KaskThreadState {
             cached_system_prompt: None,
             cached_filtered_context: None,
             tool_trace: None,
+            active_skill: Rc::new(RefCell::new(None)),
         }
+    }
+
+    pub(crate) fn active_skill_handle(&self) -> Rc<RefCell<Option<SharedString>>> {
+        self.active_skill.clone()
     }
 
     pub(crate) fn start_tool_trace(&mut self, session_id: String, first_message_ix: usize) {

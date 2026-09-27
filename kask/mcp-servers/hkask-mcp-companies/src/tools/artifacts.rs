@@ -13,6 +13,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+use super::claim_scan;
+
 /// Resolve the artifact subdirectory for a given kind.
 fn validate_kind(kind: &str) -> Result<&'static str, McpToolError> {
     match kind {
@@ -204,6 +206,80 @@ fn load_referenced_texts(
     Ok(admitted)
 }
 
+const MAX_KEY_CLAIMS: usize = 25;
+
+/// Tier 1: scan every cited figure and quote in the target against its source.
+/// Tier 2 preparation: check each key claim's evidence quote is verbatim in its
+/// cited source, so the independent verifier starts from a mechanically sound
+/// list. Neither attests context, materiality or truth.
+fn tier_checks(fields: &serde_json::Map<String, Value>) -> Result<(Value, Value), McpToolError> {
+    let mut sources = std::collections::HashMap::new();
+    for source in fields["source_outputs"].as_array().into_iter().flatten() {
+        let key = source.get("output_key").and_then(Value::as_str);
+        let output = source.get("output");
+        let text = output
+            .and_then(|o| o.get("text").or_else(|| o.get("content")))
+            .and_then(Value::as_str);
+        if let (Some(key), Some(text)) = (key, text) {
+            sources.insert(key.to_string(), text.to_string());
+        }
+    }
+    let target = fields["target_text"].as_str().unwrap_or_default();
+    let scan = claim_scan::scan(target, &sources);
+    let Some(claims) = fields.get("key_claims") else {
+        return Ok((
+            scan,
+            serde_json::json!({"status": "not_supplied", "note": "packet has no key_claims; Tier 2 cannot be scoped"}),
+        ));
+    };
+    let claims = claims
+        .as_array()
+        .ok_or_else(|| McpToolError::invalid_argument("key_claims must be an array"))?;
+    if claims.is_empty() || claims.len() > MAX_KEY_CLAIMS {
+        return Err(McpToolError::invalid_argument(format!(
+            "key_claims must list 1 to {MAX_KEY_CLAIMS} load-bearing claims"
+        )));
+    }
+    let normalized_target = claim_scan::normalize(target);
+    let mut rows = Vec::new();
+    let mut problems = 0usize;
+    for claim in claims {
+        let get = |k: &str| claim.get(k).and_then(Value::as_str).unwrap_or_default();
+        let (id, text, key, quote) = (get("id"), get("claim"), get("output_key"), get("quote"));
+        if id.is_empty() || text.is_empty() || key.is_empty() || quote.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "each key claim needs id, claim, role, output_key and quote",
+            ));
+        }
+        let in_target = normalized_target.contains(&claim_scan::normalize(text));
+        let quote_found = sources
+            .get(key)
+            .map(|s| claim_scan::normalize(s).contains(&claim_scan::normalize(quote)));
+        let status = match quote_found {
+            Some(true) if in_target => "evidence_found",
+            Some(true) => "claim_not_in_target",
+            Some(false) => "quote_not_in_source",
+            None => "source_not_retained",
+        };
+        if status != "evidence_found" {
+            problems += 1;
+        }
+        rows.push(
+            serde_json::json!({"id": id, "role": get("role"), "output_key": key, "status": status}),
+        );
+    }
+    Ok((
+        scan,
+        serde_json::json!({
+            "status": if problems == 0 { "evidence_found" } else { "problems" },
+            "count": rows.len(),
+            "problems": problems,
+            "claims": rows,
+            "note": "Mechanical pre-check only: each quote is verbatim in its cited source and the claim text appears in the target. The independent verifier still judges support, context and materiality for every key claim.",
+        }),
+    ))
+}
+
 fn evaluate_packet(
     root: &Path,
     run_folder: &str,
@@ -285,6 +361,7 @@ fn evaluate_packet(
     let referenced_bytes = load_referenced_texts(run_dir, fields)?;
     let work_ceiling = (metadata.len() + referenced_bytes) * SOURCE_CHECK_WORK_PER_BYTE
         + MAX_VERIFICATION_PACKET_BYTES * SOURCE_CHECK_WORK_PER_BYTE;
+    let (claim_scan, key_claims) = tier_checks(fields)?;
     let disclosures = fields["disclosure_inventory"].clone();
     fields.insert("disclosures".to_string(), disclosures);
     let form = HANDOFF
@@ -318,6 +395,8 @@ fn evaluate_packet(
         "packet_sha256": digest,
         "referenced_text_bytes": referenced_bytes,
         "mechanical_review": mechanical_review,
+        "tier1_claim_scan": claim_scan,
+        "tier2_key_claims": key_claims,
         "evidence_mode": "packet_mechanical_only",
         "source_review_status": "not_checked",
         "independent_source_review_required": true,

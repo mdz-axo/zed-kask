@@ -31,7 +31,7 @@ arrives only after the operator resolves the recorded prediction.
 
 - Coaching a human or agent through the kata — use `kata-coaching`; this skill is the practitioner's own reflection loop.
 - Executing a specific improvement — `kata-improvement` owns the act; this skill measures the gap and scores the prediction.
-- Forecast-calibration tracking in the prediction-market domain — `calibration-stewardship` and `superforecasting`'s stage 6 own that loop.
+- Forecast-calibration tracking in the prediction-market domain — `superforecasting` owns that loop (its Market-prior calibration check and stage 6).
 
 ## Instructions
 

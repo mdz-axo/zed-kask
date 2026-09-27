@@ -80,7 +80,7 @@ never used.
 
 Consequence: scans must run often enough that open markets are snapshotted
 before they resolve — a high `resolved_without_snapshot` rate means the
-scan cadence is too slow (see the `calibration-stewardship` skill).
+scan cadence is too slow (see the `superforecasting` skill's Market-prior calibration check).
 
 `market_subscribe_resolutions` streams Polymarket resolution events as
 notifications only — the wire carries no pre-resolution probability, and

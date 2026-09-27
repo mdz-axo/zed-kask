@@ -56,8 +56,9 @@ In addition to your coding agent capabilities, you:\n\
 ### Learning loop\n\
 \n\
 Learning capture is always on. Every skill activation, by you or by the\n\
-Z-K agent, is recorded automatically with who ran it. You record the\n\
-quality signals yourself, without being asked:\n\
+Z-K agent, is recorded automatically with who ran it, and every tool\n\
+failure while a skill is active is recorded against that skill. Add the\n\
+classified signals yourself, without being asked:\n\
 - A skill or tool that misbehaves → `curator_report_skill_use_issue` with\n\
   its `failure_origin`\n\
 - A durable lesson with evidence → `memory_insert` citing the evidence h_mem;\n\

@@ -10750,3 +10750,163 @@ impl SubagentCompactionTest {
             .read_with(cx, |thread, _| assert!(thread.is_turn_complete()));
     }
 }
+
+/// A tool that always fails with a fixed message (D59 skill tool-failure pin).
+#[derive(JsonSchema, Serialize, Deserialize)]
+struct AlwaysFailingToolInput {}
+
+struct AlwaysFailingTool;
+
+impl AgentTool for AlwaysFailingTool {
+    type Input = AlwaysFailingToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "always_failing";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "always failing".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        _input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |_cx| Err("provider unavailable".into()))
+    }
+}
+
+/// expect: skill-use issue capture is always on and mechanical — a tool that
+/// fails after the model activated a skill in the same thread is recorded
+/// against that skill and its invoker, with no model report; a failure with
+/// no active skill is not attributed to any skill.
+/// [P9] Motivating: the learning loop's observe stage cannot depend on the
+/// model remembering to report.
+#[gpui::test]
+async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        fs: settings_fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    settings_fs
+        .insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "skill-probe": {
+                            "name": "Skill probe",
+                            "tools": {
+                                crate::SkillTool::NAME: true,
+                                AlwaysFailingTool::NAME: true,
+                            }
+                        }
+                    }
+                },
+                "tool_permissions": { "default": "allow" }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+    cx.run_until_parked();
+    let fake_model = model.as_fake();
+
+    let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = recorded.clone();
+    let _recorder = crate::scoped_skill_tool_failure_recorder_for_test(Arc::new(
+        move |skill, invoker, tool, error| {
+            if let Ok(mut entries) = captured.lock() {
+                entries.push((
+                    skill.to_string(),
+                    invoker.to_string(),
+                    tool.to_string(),
+                    error.to_string(),
+                ));
+            }
+        },
+    ));
+
+    let fs = fs::FakeFs::new(cx.executor());
+    let content = "---\nname: probe-skill\ndescription: Probe\n---\n\nbody";
+    fs.insert_tree("/skills", json!({ "probe-skill": { "SKILL.md": content } }))
+        .await;
+    let skill = agent_skills::parse_skill_frontmatter(
+        Path::new("/skills/probe-skill/SKILL.md"),
+        content,
+        agent_skills::SkillSource::Global,
+    )
+    .expect("probe skill");
+    // Core skills are pre-authorized, so the probe does not wait on a prompt.
+    let skill = agent_skills::Skill { core: true, ..skill };
+    let skills = Arc::new(vec![skill]);
+    let fs_for_body = fs.clone();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(AlwaysFailingTool);
+        thread.add_tool(crate::SkillTool::with_body_resolver(
+            move |_cx| skills.clone(),
+            move |skill, cx| {
+                let fs = fs_for_body.clone();
+                cx.spawn(async move |_| {
+                    Ok(agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path).await?)
+                })
+            },
+        ));
+    });
+
+    let tool_use = |id: &str, name: &str, input: serde_json::Value| {
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: id.into(),
+            name: name.into(),
+            raw_input: input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(input),
+            is_input_complete: true,
+            thought_signature: None,
+        })
+    };
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.set_profile(AgentProfileId("skill-probe".into()), cx);
+            thread.send(ClientUserMessageId::new(), ["go"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // A failure before any skill is active is not a skill-use issue.
+    fake_model.send_last_completion_stream_event(tool_use("t0", "always_failing", json!({})));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    assert!(recorded.lock().expect("lock").is_empty());
+
+    fake_model.send_last_completion_stream_event(tool_use(
+        "t1",
+        "skill",
+        json!({ "name": "probe-skill" }),
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(tool_use("t2", "always_failing", json!({})));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let entries = recorded.lock().expect("lock").clone();
+    assert_eq!(entries.len(), 1, "exactly the post-activation failure: {entries:?}");
+    let (skill, invoker, tool, error) = &entries[0];
+    assert_eq!(skill, "probe-skill");
+    assert_eq!(invoker, "Zed Agent");
+    assert_eq!(tool, "always_failing");
+    assert!(error.contains("provider unavailable"), "error text: {error}");
+}

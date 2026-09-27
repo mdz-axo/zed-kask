@@ -4413,9 +4413,27 @@ impl Thread {
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         let retry_tracker = self.kask.retry_tracker_handle(); // zed-kask: .rules
         let tool_name_for_tracking = tool_name.clone();
+        // zed-kask: D59 — mechanical skill-use issue capture.
+        let active_skill = self.kask.active_skill_handle();
+        let skill_invoker: SharedString = self
+            .kask
+            .agent_id()
+            .map(|id| id.0.clone())
+            .unwrap_or_else(|| crate::ZED_AGENT_ID.0.clone());
+        let activated_skill = (tool_name.as_ref() == crate::SkillTool::NAME)
+            .then(|| {
+                input_for_tracking
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            })
+            .flatten();
         cx.foreground_executor().spawn(async move {
             let (is_error, output) = match tool_result.await {
                 Ok(mut output) => {
+                    if let Some(name) = activated_skill {
+                        *active_skill.borrow_mut() = Some(name.into());
+                    }
                     // Record success — resets the failure counter for this key.
                     retry_tracker
                         .borrow()
@@ -4474,6 +4492,16 @@ impl Thread {
                             &input_for_tracking,
                             owning_message_ix,
                         );
+                        if let Some(skill) = active_skill.borrow().as_ref()
+                            && tool_name_for_tracking.as_ref() != crate::SkillTool::NAME
+                        {
+                            crate::record_skill_tool_failure(
+                                skill,
+                                &skill_invoker,
+                                &tool_name_for_tracking,
+                                &tool_failure_text(&output),
+                            );
+                        }
                     }
                     (true, output)
                 }
@@ -6000,6 +6028,25 @@ fn system_prompt_digest(
 /// `available_tools`. The system prompt renders this count as a visibility
 /// marker so the model knows the visible list is a selection, not the whole
 /// surface. Pinned by `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
+/// First 500 bytes of a failed tool's model-facing text (char-boundary safe),
+/// for the skill tool-failure record.
+fn tool_failure_text(output: &AgentToolOutput) -> String {
+    let text: String = output
+        .llm_output
+        .iter()
+        .filter_map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+            LanguageModelToolResultContent::Image(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut end = text.len().min(500);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
 fn count_hidden_mcp_tools<'a>(
     registered_names: impl Iterator<Item = &'a SharedString>,
     available_tools: &std::collections::HashSet<&str>,

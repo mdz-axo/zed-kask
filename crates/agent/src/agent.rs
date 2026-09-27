@@ -4843,6 +4843,47 @@ pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error:
     }
 }
 
+/// Records a tool failure that happened while a skill was active in a
+/// thread: skill id, invoker, tool name, error text. This is the mechanical
+/// half of skill-use issue capture (always on, no model decision); the
+/// model-classified half is `curator_report_skill_use_issue`. Production
+/// persists it as `reg.skill.<id>.tool_failure` for the gemba walk.
+pub type SkillToolFailureRecorder = Arc<dyn Fn(&str, &str, &str, &str) + Send + Sync>;
+
+static SKILL_TOOL_FAILURE_RECORDER: ProcessGlobal<SkillToolFailureRecorder> = ProcessGlobal::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SKILL_TOOL_FAILURE_RECORDER: std::cell::RefCell<Option<SkillToolFailureRecorder>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub fn set_skill_tool_failure_recorder(recorder: SkillToolFailureRecorder) {
+    SKILL_TOOL_FAILURE_RECORDER.set(Some(recorder));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_skill_tool_failure_recorder_for_test(
+    recorder: SkillToolFailureRecorder,
+) -> ScopedTestOverride<SkillToolFailureRecorder> {
+    scoped_test_override(&TEST_SKILL_TOOL_FAILURE_RECORDER, recorder)
+}
+
+pub fn record_skill_tool_failure(skill_id: &str, invoker: &str, tool_name: &str, error: &str) {
+    #[cfg(test)]
+    let recorder = test_override(&TEST_SKILL_TOOL_FAILURE_RECORDER)
+        .or_else(|| SKILL_TOOL_FAILURE_RECORDER.get());
+    #[cfg(not(test))]
+    let recorder = SKILL_TOOL_FAILURE_RECORDER.get();
+    match recorder {
+        Some(record) => record(skill_id, invoker, tool_name, error),
+        None => log::debug!(
+            "record_skill_tool_failure: recorder not wired — {tool_name} failure \
+             under {skill_id} not recorded"
+        ),
+    }
+}
+
 /// Records the operator's evaluation of a skill's output. Evaluation is
 /// separated from execution (Goodhart): the only writer is the Curator-only
 /// `record_skill_feedback` tool, used by the operator during the algedonic

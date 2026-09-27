@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **286 Jinja2 templates across 56
+> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **286 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,7 +52,7 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
 | Template namespaces (`kask/registry/templates/*/`) | **56** (**286** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
@@ -67,7 +67,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (61)
+## Skills (60)
 
 ### Research, markets and forecasting
 
@@ -80,7 +80,6 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `scenario-planning` | Complete scenario project: Schwartz framing, forces and divergent 2x2 narratives with a quality gate and early-warning indicators, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
 | `eqm` | Explanation Quality Markers: score forecast rationales against 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
 | `cmp-term-structure` | Constant-Maturity Prediction term structures: ladder, context, provenance-carrying indices, event-tree composition, contract-price coherence, equity-duration matching |
-| `calibration-stewardship` | Prediction-market calibration loop maintenance: two-phase resolution scans, snapshot pairing, per-bucket Brier, reliability-tier demotion verification |
 | `listening` | Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process |
 
 ### Media, writing and diagrams
@@ -165,7 +164,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-09-26):** `.agents/skills/` contains 61
+> **Filesystem reality (verified 2026-09-26):** `.agents/skills/` contains 60
 > `SKILL.md` directories. Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
@@ -174,5 +173,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > removed: `idiomatic-lisp`, `constraint-forces-recast`,
 > `gradient-seeded-recombination`, `capabilities-reasoner`,
 > `principle-constraints`, `goal-analysis` (its judge moved to
-> `company-research/thesis-judge`). `kask/registry/templates/` contains 56
+> `company-research/thesis-judge`). Folded 2026-09-26: `adapter-lifecycle` into
+> `self-improvement` (Fine-tuning run), `calibration-stewardship` into
+> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 56
 > template namespaces holding 286 `.j2` files.
