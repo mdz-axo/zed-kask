@@ -1,23 +1,33 @@
 ---
 name: grounding-verify
-description: "Verify that factual claims in a text are grounded in provided source data. Extracts claims, classifies provenance on a strength lattice (tool_verified > platform_derived > model_inference > unavailable), verifies citations and arithmetic via lisp_eval, scans narrative fields for leak rules, detects cross-source conflicts with a precedence hierarchy, grades severity, computes a composite fact_score with nil-propagation, and emits a decoupling field. Standalone or as a pipeline component."
+description: "Verify that factual claims in a text are grounded in provided source data, in the discipline of published verification practice: ISA 500 assertion-orientation and the evidence reliability hierarchy, vouching (claim → source) and tracing (source → text) direction of testing, ISA 320 materiality scoping, ISA 230 working-paper documentation. Extracts load-bearing claims, classifies provenance on a strength lattice (tool_verified > platform_derived > model_inference > unavailable), verifies citations and arithmetic via lisp_eval, traces sources for material omissions, detects cross-source conflicts with a precedence hierarchy, and emits findings with severity — never a verified label. Standalone or as a pipeline component."
 ---
 
 # Grounding Verify
 
 Verify that factual claims in a text are grounded in provided source data.
-Anchored to Fermi's four-contract trust system (grounding_trust, schema_trust,
-rollup_trust, port_trust), the listening skill's retrieve-cite-verify
-process, and the Verification Commons Protocol (Ostrom institutional design:
-bounded provenance, decoupled monitoring, graduated sanctions, conflict
-precedence, nested verification layers). The skill is domain-general — it
-works on any text + source pair — but accepts domain-specific leak rules and
-congruence rules via context.
+Anchored to published verification practice (operator rulings 2026-09-27):
+ISA 500 (*Audit Evidence*) for assertion-orientation, the evidence
+reliability hierarchy and inquiry-is-not-corroboration; vouching
+(claim → source) and tracing (source → text) for direction of testing;
+ISA 320 for materiality-scoped checking; ISA 230 for the working-paper
+record; Heuer's analysis of competing hypotheses for conflict
+adjudication; Caulfield's SIFT for trace-to-original; IEEE 1012 for
+integrity-level proportionality; W3C PROV for provenance shape. Earlier
+anchors retained: Fermi's four-contract trust system (grounding_trust,
+schema_trust, rollup_trust, port_trust), the listening skill's
+retrieve-cite-verify process, and the Verification Commons Protocol
+(Ostrom institutional design: bounded provenance, decoupled monitoring,
+graduated sanctions, conflict precedence, nested verification layers).
+The skill is domain-general — it works on any text + source pair — but
+accepts domain-specific leak rules and congruence rules via context.
 
 ## The provenance lattice
 
 Every factual claim is classified into a provenance tier with a strength
-ordinal. The lattice is the enforcement of the extraction ceiling: a claim
+ordinal — the domain adaptation of the audit evidence reliability hierarchy
+(ISA 500.A31: external over internal, documentary over oral, original over
+copy). The lattice is the enforcement of the extraction ceiling: a claim
 the LLM synthesizes from tool outputs is `model_inference` (strength 1),
 never `tool_verified` (strength 2). Only direct citations — verbatim quotes
 found via mechanical substring match, exact numbers found via `lisp_eval`
@@ -64,14 +74,14 @@ cited.
 ## Initial and target condition
 
 - **Initial condition:** the exact target text, server-observed source outputs and tool log, plus any caller-provided leak/congruence rules. A source that was not called is not an empty source result.
-- **Target condition:** every declarative factual claim is either mechanically checked or explicitly downgraded with its reason; narrative source flags reflect *surviving* verified claims, not provisional assignments. Report a numeric `fact_score` only when factual claims exist; `nil` means unassessed, never a perfect score. The verifier classifies immutable input—it does not rewrite the report to pass.
+- **Target condition:** every load-bearing factual claim is either mechanically checked or explicitly downgraded with its reason; material omissions from the sources are surfaced; narrative source flags reflect *surviving* verified claims, not provisional assignments. The verifier classifies immutable input—it does not rewrite the report to pass, and its output is a working-paper record of what was checked and what was found (ISA 230) — never a verified label.
 
 ## When to Use
 
 - When you need to verify that claims in a report, analysis, or pipeline
   output are grounded in the source data they cite.
-- When you need a `fact_score` metric measuring the grounding quality of a
-  text against its sources.
+- When you need a record of which claims are grounded, with provenance tier
+  and source reference for each.
 - When you are composing a larger pipeline that produces claims against
   source data and need a decoupled verification step that runs as a
   `spawn_agent` call.
@@ -87,13 +97,11 @@ cited.
 
 ## When NOT to Use
 
-- When there are no source outputs to verify against — the fact_score will
-  be nil (measurement meaningless, not zero).
+- When there are no source outputs to verify against — there is nothing
+  to check the claims against.
 - When the text contains no IS-mode declarative claims — OUGHT claims
   (recommendations), subjunctive claims (scenarios), and probabilistic
-  claims (forecasts) are excluded from the fact score.
-- For completeness checking — this skill checks factuality (is the claim
-  real?), not completeness (are all relevant facts cited?).
+  claims (forecasts) are excluded from verification.
 - For reasoning quality checking — this skill checks grounding (does the
   source support the claim?), not logic (are the causal conclusions
   correct?).
@@ -116,6 +124,10 @@ cited.
    - `claim_id`: unique identifier within this verification run
    - `text`: the exact text of the claim
    - `char_offset`: character offset in `target_text`
+   - `materiality`: `load_bearing` or `incidental` — a claim is load-bearing
+     if the text's conclusions would change if it were wrong (ISA 320); this
+     drives finding severity and the tracing scope, not whether the cheap
+     mechanical checks run (they run on everything)
    - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic (per
      pragmatic-semantics classification)
    - `source_reference`: the named source the claim cites (MCP tool name +
@@ -135,7 +147,7 @@ cited.
      only covers lists of a few hundred claims (observed 2026-09-03: a
      134-element assignments list needed ~300 depth frames and the former
      64 default failed both validation calls on first attempt).
-   - If the result is `no_factual_claims`, emit `fact_score = nil` with
+   - If the result is `no_factual_claims`, emit the empty record with
      `data_gap: "no_factual_claims_found"` and stop.
 
 ### Step 2 — Assign provenance tier
@@ -384,119 +396,75 @@ returns.
 5. Emit `narrative_leaks` — a list of (field, block, rule, matched_text)
    tuples for each leak detected.
 
-### Step 5 — Compute fact_score
+### Step 4.5 — Trace sources for material omissions
 
-1. Compute the four sub-metrics from the verified claims:
-   - **SAR** (Source-Anchored Ratio) = source_anchored_claims /
-     total_factual_claims. A claim is source-anchored if its provenance
-     strength is >= 1 (tool_verified, platform_derived, or
-     model_inference).
-   - **CVR** (Citation-Verified Ratio) = verified_citations /
-     total_tool_verified_citations. Only claims provisionally classified
-     as `tool_verified` are in the denominator.
-   - **HFR** (Hallucination-Free Ratio) = surviving_claims /
-     total_factual_claims. Claims reclassified as `rejected` in Step 3
-     are eliminated.
-   - **NLR** (Narrative-Leak Ratio) = clean_narrative_fields /
-     total_narrative_fields. A field is clean if no leak rule fires, or
-     if every fired rule is backed by a sourced block (strength >= 2).
-     When the target text contains no narrative fields, NLR is
-     vacuously clean (1.0) — not nil — and the report must disclose
-     `no narrative fields — NLR vacuous` in
-     `verification_scope_limitations`. The `claims_checked` gate still
-     protects the empty-everything case; a table-only report is not a
-     failed measurement.
+Vouching (Steps 1–4) tests whether the text's claims are supported.
+Tracing runs the other direction of testing: for each source output, what
+material facts does it disclose that the text's conclusions should engage
+but do not? An omission is a finding even when every present claim is
+supported.
 
-   `source_conflicts` and `rounding_notes` do not enter these ratios —
-   a conflict is a data note, not a hallucination, and a rounding note
-   is not a rejection. They surface through the confidence band (Step 6)
-   and the error log (Step 7). Keeping them out of the ratios preserves
-   the fact_score's meaning: it measures grounding, not data hygiene.
+1. For each source output, list its material facts — those bearing on the
+   text's subject and conclusions, not every detail it contains. A source
+   you do not examine is a recorded scope limitation, never a clean result.
+2. Mark each fact `engaged` (the text addresses it), `omitted` (the text's
+   conclusions should engage it but do not), or `immaterial` (outside the
+   text's scope).
+3. An `omitted` material fact is a finding with severity by the same
+   graduated scale — a material omission the conclusions depend on is
+   high severity.
+4. This step is judgment over the sources' actual content; it cannot be
+   mechanical. Record what you examined and what you did not.
 
-2. Call `lisp_eval` to compute the fact_score with nil-propagation:
-   - form: `"(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"`
-   - env: `{ "sar": <SAR value or nil>, "cvr": <CVR value or nil>, "hfr": <HFR value or nil>, "nlr": <NLR value or nil>, "claims_checked": <count> }`
+### Step 5 — Report the counts
 
-3. If any sub-metric is nil or `claims_checked` is 0, `fact_score` is nil
-   — not 0.0. A nil fact_score surfaces as
-   `data_gap: "fact_score_measurement_failed"` with confidence penalty
-   -0.20. This is the nil-propagation invariant: a failed measurement is
-   a broken feedback loop, not a zero score.
+Report the raw counts, not a composite score: claims extracted, claims
+checked, claims at each provenance tier, claims rejected, rounding notes,
+narrative leaks, source conflicts, material omissions found. A composite
+score invites threshold-gaming and implies a precision the measurement
+does not have; the counts and findings are the working-paper record
+(ISA 230). A zero-claim run reports zero claims checked — zero mismatches
+over zero rows is unknown, not clean.
 
-4. Apply the threshold:
-   - `fact_score >= 0.80`: meets bar, no penalty
-   - `0.60 <= fact_score < 0.80`: below bar, confidence penalty -0.10
-   - `fact_score < 0.60`: fails bar, block and re-enter with gaps
-   - `fact_score = nil`: measurement failed, confidence penalty -0.20
+### Step 6 — Report the provenance floor
 
-### Step 6 — Derive confidence band from provenance floor
-
-1. Compute the provenance floor — the minimum strength across all
-   factual claims in the report. This is the Fermi `floor()` pattern:
-   a report is only as strong as its weakest claim.
-
-2. Call `lisp_eval`:
-   - form: `"(define floor-strength (lambda (cs) (if (= (length cs) 1) (assoc \"strength\" (nth 0 cs)) (let ((rest_min (floor-strength (cdr cs)))) (let ((this (assoc \"strength\" (car cs)))) (if (< this rest_min) this rest_min)))))) (floor-strength claims)"`
-   - env: `{ "claims": <verified claims with strength values> }`
-   - The interpreter has no `min`/`mapcar` builtins and JSON objects bind
-     string keys, so the floor is a recursive helper with `assoc "strength"`
-     lookups. A claim record missing `strength` errors the call — a
-     malformed claim must surface, not silently floor.
-
-3. Derive the confidence band from the floor:
-   - Floor = 2 (all claims tool_verified or platform_derived): band = `high`
-   - Floor = 1 (weakest claim is model_inference): band = `medium`
-   - Floor = 0 (weakest claim is unavailable/tool_no_match/rejected): band = `flagged`
-
-4. Cap the band for unresolved source conflicts — graduated, not
-   uniform:
-   - Any unresolved `source_conflicts` finding on a quantity the report
-     cites: cap at `medium`.
-   - A `source_conflict` or `rejected` claim that the report's primary
-     conclusion depends on (load-bearing — flag it with a `why` in the
-     finding): cap at `flagged`.
-
-5. Cap the band for self-assessment. The report carries a `decoupling`
-   field: `spawn_agent` (the verifier ran as a separate agent with no
-   shared conversation history) or `in_thread` (the same agent that
-   produced the text ran this skill in its own conversation). An
-   `in_thread` run by the report's generator is a self-check — the
-   monitoring paradox applies — so its band caps at `medium` even when
-   every claim is strength 2. The party being monitored cannot be the
-   sole monitor; a `high` band requires decoupled execution.
-
-6. The confidence band is derived — from the provenance floor and the
-   caps above — never accepted from the LLM's self-assessed confidence.
-   If the weakest claim is `model_inference`, the band is `medium`
-   regardless of what the report says about its own confidence.
+Compute the provenance floor — the minimum strength across all factual
+claims (the Fermi `floor()` pattern: a report is only as strong as its
+weakest claim) — and report it with the `decoupling` field
+(`spawn_agent` or `in_thread`). An `in_thread` run by the text's generator
+is a self-check — say so; the party being monitored cannot be the sole
+monitor. The floor and the decoupling field are facts for the reader, not
+a verdict on the text; the output never says verified.
 
 ### Step 7 — Emit verification report
 
 1. Emit the verification report with:
-   - `fact_score`: numeric or nil
-   - `fact_score_breakdown`: { sar, cvr, hfr, nlr, claims_checked }
-   - `confidence_band`: high / medium / flagged (from Step 6, after the
-     conflict and decoupling caps)
-   - `confidence_adjustment`: numeric penalty (0 / -0.10 / -0.20)
-   - `decoupling`: spawn_agent | in_thread — mandatory. A consumer must
+   - `counts`: claims extracted, load-bearing claims, claims checked, claims
+     at each provenance tier, claims rejected — the raw counts from Step 5
+   - `provenance_floor`: the minimum claim strength, and `decoupling`:
+     spawn_agent | in_thread — mandatory. A consumer must
      be able to tell a decoupled audit from a self-check.
    - `verified_claims`: append-only registry of all claims with
      provenance tier, source reference, `why`, cross_check result
    - `hallucination_findings`: claims reclassified as `rejected`, with
      source mismatch details, prior and corrected values, severity
+   - `material_omissions`: the Step 4.5 tracing findings — omitted facts
+     with their source, severity, and what the text's conclusions should
+     engage
    - `rounding_notes`: (claim, claimed, computed) entries that passed
      within one unit of the last decimal (class W)
    - `source_conflicts`: cross-source findings with both values, both
      sources/periods, relative difference, precedence disposition,
      severity (class N)
    - `narrative_leaks`: list of (field, block, rule, matched_text)
-   - `data_gaps`: list of failed verifications, missing sources, nil
-     sub-metrics — never empty if anything failed
+   - `data_gaps`: list of failed verifications, missing sources —
+     never empty if anything failed
    - `error_log`: the graduated-sanctions log compiled per item 3
    - `verification_scope_limitations`: honest disclosure of what the
-     fact score does not cover (completeness, reasoning quality,
-     plausible fabrications, selective omission) — plus whether the
-     consistency pass ran (were `congruence_rules` provided?)
+     verification does not cover (reasoning quality, plausible
+     fabrications, selective framing) and which sources the tracing
+     pass did not examine — plus whether the consistency pass ran (were
+     `congruence_rules` provided?)
 
 2. Every finding carries a severity and a recommended disposition —
    graduated sanctions, not uniform punishment:
@@ -531,7 +499,7 @@ The local PDCA operates on the *same immutable text and observed sources*:
 
 1. **Plan:** record the initial condition and target above, including the applicable source and narrative checks.
 2. **Do:** execute Steps 1–7. The verifier does not rewrite the user's claims to obtain a higher score.
-3. **Check:** reject malformed provenance classifications and missing claim-to-block mappings rather than treating them as empty-success. For factual claims, `fact_score >= 0.80` is the numeric pass threshold only when no high/critical finding remains. `0.60 <= fact_score < 0.80` is conditional; `< 0.60` fails. `nil` means no factual claims were assessable, so report `unassessed`, not a numerical failure or pass. Surface a high/critical finding immediately regardless of the aggregate.
+3. **Check:** reject malformed provenance classifications and missing claim-to-block mappings rather than treating them as empty-success. A run with zero claims checked reports zero — unknown, not clean. Surface a high/critical finding immediately regardless of the counts.
 4. **Act (bounded):** one correction of malformed *verification input* may re-enter Step 2, followed by its downstream checks; a second malformed result stops as blocked. A sourced claim falsified by Step 3 stays rejected in this run. Provide specific fact-check gaps to the calling pipeline; only the caller may revise the report or gather new source evidence in a new run. Do not loop locally to improve a model-produced score.
 
 This is a bounded verifier loop, not skill-effectiveness evaluation; the operator judges the quality of this verifier in the algedonic-review gemba.
@@ -562,8 +530,8 @@ architectural role of `essentialist` and `falsifiability`:
   skill as a verification step.
 
 The skill is also usable **standalone** — a user provides a text and its
-source outputs, and the skill produces a fact_score and verified_claims
-registry.
+source outputs, and the skill produces the findings, counts and
+verified_claims registry.
 
 **This skill is one layer of a nested verification stack, not the whole
 stack.** Each layer catches a different error type, and no single layer
@@ -573,11 +541,12 @@ is expected to catch everything:
   deterministic math audit: the derivation is stated once and the
   interpreter evaluates it. No separate math-auditor agent is needed;
   an LLM re-deriving LLM arithmetic is a weaker check than `lisp_eval`.
-- Claim grounding — this skill (fact_score, provenance floor).
+- Claim grounding — this skill (provenance lattice, mechanical checks,
+  tracing, findings).
 - Decoupled re-execution — composing this skill as a `spawn_agent` call
   (no shared conversation history) for publication-grade reports.
-- User review — the operator is the final authority; `fact_score >= 0.80`
-  means "claims are grounded," never "the report is correct."
+- User review — the operator is the final authority; grounded claims mean
+  "the sources support them," never "the report is correct."
 
 **When composing as `spawn_agent`, pass the source outputs in the task.**
 Spawned agents do not reliably reach external MCP tools; a verifier
@@ -641,20 +610,18 @@ single-pass by design and verifies against provided sources only.
 - Each claim entry carries a `why` field (minimum 40 characters). Short
   justifications are rejected by the Step 2 validation call (count > 0
   re-enters Step 2) — an unexplained disposition is how a contract rots.
-- No `unwrap_or(0)` on fact_score sub-metrics. If any sub-metric is nil,
-  fact_score is nil. A nil fact_score surfaces as
-  `data_gap: "fact_score_measurement_failed"` with confidence penalty
-  -0.20.
-- `claims_checked` count accompanies the fact_score. A fact score of 1.0
-  with zero claims checked is nil — zero mismatches over zero rows is
+- No composite score is emitted. The raw counts, findings and provenance
+  floor are the record; a zero-claim run reports zero claims checked —
   unknown, not clean.
 - The `verified_claims` registry is append-only within a verification
   run. Claims do not get re-classified when new sources are added.
-- The confidence band is derived — provenance floor, conflict caps,
-  decoupling cap — never accepted from the LLM's self-assessed
-  confidence.
-- `verification_scope_limitations` must be disclosed in the output. The
-  fact score covers factuality, not completeness or reasoning quality.
+- The provenance floor and the `decoupling` field are reported facts, not
+  a verdict; the output never says verified. An `in_thread` run by the
+  text's generator is reported as a self-check.
+- `verification_scope_limitations` must be disclosed in the output,
+  including which sources the tracing pass did not examine. The
+  verification covers grounding and material omissions, not reasoning
+  quality.
 - When composed as a `spawn_agent` call, the verifier has no shared
   conversation history with the generator (self-improvement §9.1).
 - The empty-env dependency check applies to authored `platform_derived`
@@ -678,9 +645,9 @@ single-pass by design and verifies against provided sources only.
   key or an earlier claim's id. Forward references and unanchored
   loops reclassify as `model_inference`; a rejected claim cascades to
   its dependents.
-- NLR is 1.0 (vacuously clean) when the text has no narrative fields,
-  disclosed in `verification_scope_limitations` — never nil. A
-  table-only report is not a failed measurement.
+- A text with no narrative fields reports zero narrative leaks and
+  discloses `no narrative fields` in `verification_scope_limitations`.
+  A table-only report is not a failed measurement.
 - `source_conflicts` are findings, not provenance values. The closed
   vocabulary is unchanged; a conflict rejects neither claim. Conflicts
   cap the confidence band and enter the error log; they never enter

@@ -699,9 +699,11 @@ The three co-evolution feedback loops are described in the Co-Evolution Loop pri
 `company-research-deep` runs its stages as dependency waves: independent
 stages (evidence collection and the industry outside-view searches; LISTEN;
 IMAGINE and THESIS) run in parallel, and each later stage waits only for the
-outputs it consumes. collect-evidence reads the retained originals once into
-`evidence-digest.json`; synthesis stages read the digest. Every perspective
-runs on every report; none is skipped or bypassed.
+outputs it consumes. collect-evidence reads the sources once and compacts
+them into a working evidence digest; synthesis stages work from the digest.
+Every perspective runs on every report; none is skipped or bypassed. The
+report is the only durable artifact — no run folders, no retained-output
+files, no intermediate evidence files.
 
 Both company pipelines check their work with one author-side evidence review
 over the frozen drafts, modeled on published verification practice (operator
@@ -709,9 +711,10 @@ rulings 2026-09-27): ISA 500 assertion-orientation (evidence must be relevant
 to the claim being tested — never excerpt-matching), vouching (claim →
 source) and tracing (source → report) so omissions surface, ISA 320 materiality
 scoping (only the claims the report's conclusions depend on), and ISA 230
-documentation — the review writes `evidence-review.json`, and without that
-record the report is labelled "no evidence review performed". The review never
-labels a report verified, and its mechanical match counts are never verdicts.
+documentation — the review's summary goes in the report as the review
+note, and a report without one is labelled "no evidence review performed".
+The review never labels a report verified, and its mechanical match counts
+are never verdicts.
 There is no investment-grade verdict in either pipeline: an investment-grade
 judgment is a separate outcome the pipelines never claim. Flash's publication
 decision additionally requires its ENTER gate and adjusted confidence ≥ 0.50,
