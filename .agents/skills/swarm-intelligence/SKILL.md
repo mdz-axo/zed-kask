@@ -38,6 +38,20 @@ hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
 - **W3C SSN/SOSA**: observable properties for swarm-state sensing.
 - **Ashby requisite variety**; **cybernetic 5-property loop assessment**.
 
+## D/P labelling
+
+SENSE, ORIENT and DECIDE judgments (deficit classification, composition moves,
+tuning choices) are P — critiqued by the Go See loop (human observation) and
+by the observed receipts in CHECK. The pinned arithmetic is D: the
+convergence distance and target gate, the receipt-coverage check, and the
+failed-signature comparison run in `lisp_eval` over sensed state and actual
+receipts — the model never supplies the convergence score. ACT renders
+intents, never executed receipts; execution comes only from the live tools
+(consent-gated ABW spend; local no-credit dispatch), and a rendered plan is
+not a swarm state change. A task-success target requires an actual
+deterministic or operator verdict — with no task oracle, report swarm-health
+on target, task unassessed.
+
 ## When to Use
 
 - Compose a new ABW swarm for a task (which agents to hire, what dependencies

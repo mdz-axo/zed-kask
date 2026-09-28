@@ -37,6 +37,19 @@ retained check and representative harmful changes remain detectable.
   evidence and provenance. Project term resolution currently falls back to
   `5w1h_core`; do not invent a private ontology meaning.
 
+## D/P labelling
+
+Typing the verification graph (expectations, falsifiers, oracle kinds,
+signal keys) and proposing reductions are P — judgment over the workflow's
+structure, critiqued by the composed skills (falsifiability's admissibility
+gate, essentialist's deletion test, refactor-architecture's ranking). The
+acceptance evidence is D: the Lean graph-preservation obligations compile or
+fail (the pinned toolchain — Lean proves the finite graph relation only,
+never that a test is a good oracle), and a reduction is accepted only after
+the fixed-oracle before/after experiment shows the retained checks still
+detect the representative harmful changes. A reduction without the
+experiment is a proposal, not an accepted compression.
+
 ## Composed skills
 
 | Skill | Responsibility |

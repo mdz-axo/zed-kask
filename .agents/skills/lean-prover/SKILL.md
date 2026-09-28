@@ -25,6 +25,18 @@ type-checker is the oracle that verifies the proof.** A checked proof establishe
 assumptions and axioms*. A successful `lean` exit alone is insufficient:
 `sorry` is accepted with a warning, and `native_decide` adds an axiom.
 
+## D/P labelling
+
+Proof construction (tactic choice, term-mode terms, the search itself) is P —
+the prover's judgment, critiqued by the type-checker: a proof compiles or it
+doesn't. `lean_check` is D — the pinned toolchain is the oracle, and a
+successful exit is NOT proof acceptance: `sorry` passes with a warning and
+`native_decide` adds an axiom, so the axiom audit (the tool's theorem flag)
+is part of the check, not an optional extra. Counterexample search is P with
+a D verdict — a found counterexample eliminates the conjecture hard. A
+checked proof establishes its exact stated proposition relative to its
+assumptions and axioms; it is never a claim about instances.
+
 ## When to Use
 
 - Constructing machine-checked proofs in Lean 4

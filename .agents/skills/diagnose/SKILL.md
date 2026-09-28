@@ -12,6 +12,19 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 Zeller, *Why Programs Fail: A Guide to Systematic Debugging* (2009) — scientific debugging (observe, hypothesize, predict, experiment, conclude); Agans, *Debugging: The 9 Indispensable Rules* (2002) — make it fail, quit thinking and look, change one thing at a time. Hypothesis elimination delegates to `falsifiability` (`onto_anchor` → derived `falsifiability`). `onto_anchor` → derived `scientific_debugging` (operator ruling 2026-09-25).
 
+## D/P labelling
+
+Hypothesis generation (delegated to `falsifiability`), probe placement, and
+fix design are P — judgment, critiqued by the user's hypothesis review (the
+ranked list is presented before instrumenting) and by the observed loop. The
+feedback loop is D: the reproduction (failing test, CLI invocation, bisect)
+and the regression test (written before the fix, run by `cargo test`) are
+deterministic oracles — a fix is verified by the loop's output, never by the
+diagnoser's confidence. The hypothesis invariant check is D (the pinned
+`lisp_eval` form over count, completeness, diversity, mutual exclusivity —
+instrumentation is gated on it). An unreproduced symptom is not yet an
+admitted target for root-cause elimination.
+
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis

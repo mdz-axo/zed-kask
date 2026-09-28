@@ -20,6 +20,16 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 - Auditing or maintaining installed skills — `skill-maintenance`.
 - Executing the matched skill — invoke it directly; a recommendation is not a dispatch.
 
+## D/P labelling
+
+The three fit dimensions (capability overlap, description alignment, trigger
+alignment), gap classification, and candidate evaluation are P — judgment,
+critiqued by the recomputation below and by the caller's epistemic state. The
+composite, the +0.20 boost, the 0.30 floor and the coverage band are D:
+recompute them from the route output with the `lisp_eval` form in
+skill-discovery-route item 4 before acting on it — a recommendation whose
+arithmetic was not recomputed is unverified routing.
+
 ## Instructions
 
 ### skill-discovery-route

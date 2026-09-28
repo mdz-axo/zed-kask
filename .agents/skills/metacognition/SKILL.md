@@ -20,6 +20,18 @@ arrives only after the operator resolves the recorded prediction.
 - Brier score — Brier (1950); `onto_anchor` → derived `brier_score`.
 - Metacognition — David Dunning (Kruger & Dunning 1999; Dunning 2011); `onto_anchor` → derived `metacognition` (operator ruling 2026-09-25). Dunning's double curse is why this skill never grades its own prediction: the knowledge needed to close the gap is the knowledge needed to see it, so the check comes from outside the self-assessment — the operator's `kanban_goal_score` and its Brier score. Sources: the john-brooks replica corpus ("The Trouble of Not Knowing What You Don't Know") and the Dunning talks in the curator's `dunning-video-catalog`.
 
+## D/P labelling
+
+Grasp-current, establish-target, predict, and the experiment's calibration
+choice are P — the practitioner's judgment, critiqued by the measured gap and
+the operator's score. The gap arithmetic is D: the guarded normalization,
+the hypotenuse, the reduction, and the convergence checks run in `lisp_eval`
+over cited receipts — an uncited model status leaves the after-gap
+unmeasured, not zero. Prediction recording is D (`kanban_goal_create`); the
+Brier score is the operator's alone — this skill never scores its own
+prediction (the Dunning double curse: the knowledge needed to close the gap
+is the knowledge needed to see it).
+
 ## When to Use
 
 - When an agent needs to reflect on its own metacognitive state and identify what it knows and doesn't know.

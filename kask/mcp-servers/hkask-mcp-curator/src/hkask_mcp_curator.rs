@@ -1621,7 +1621,7 @@ impl CuratorServer {
     /// confidence decay (lowers weight, never deletes) and confidence-based
     /// consolidation (deletes low-confidence).
     #[tool(
-        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store. Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
+        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store; set prefixes=[\"...\"] to prune only entities under those prefixes (e.g. the skill_use_issue: incident log). Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
     )]
     pub async fn curator_memory_prune(
         &self,
@@ -1640,10 +1640,34 @@ impl CuratorServer {
             let all_layers = req.all_layers.unwrap_or(false);
             // Fail-closed scope: the default valve touches turn storage
             // only — knowledge-layer rows (rulings, verified status,
-            // lessons) are destroyed only by explicit opt-in.
+            // lessons) are destroyed only by explicit opt-in. A caller-
+            // supplied `prefixes` list narrows the valve to those entity
+            // prefixes (e.g. the skill_use_issue: incident log); empty
+            // and all_layers-conflicting scope requests are rejected
+            // visibly — a silent no-op or a silently-picked scope is a
+            // broken feedback loop.
+            if all_layers && req.prefixes.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "conflicting scopes: all_layers=true and prefixes are both set — name one scope",
+                ));
+            }
             let outcome = if all_layers {
                 memory
                     .prune_by_age(req.max_age_days, req.spare_recalled_within_days)
+                    .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?
+            } else if let Some(prefixes) = req.prefixes.as_deref() {
+                if prefixes.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "prefixes must name at least one entity prefix — an empty list would silently prune nothing",
+                    ));
+                }
+                let scope: Vec<&str> = prefixes.iter().map(String::as_str).collect();
+                memory
+                    .prune_by_age_in_prefixes(
+                        &scope,
+                        req.max_age_days,
+                        req.spare_recalled_within_days,
+                    )
                     .map_err(|e| map_memory_store_error(e, "Age-based prune failed"))?
             } else {
                 memory
@@ -1660,6 +1684,7 @@ impl CuratorServer {
             Ok(json!({
                 "pruned": true,
                 "all_layers": all_layers,
+                "prefixes": req.prefixes,
                 "max_age_days": req.max_age_days,
                 "spare_recalled_within_days": req.spare_recalled_within_days,
                 "candidates": outcome.candidates,

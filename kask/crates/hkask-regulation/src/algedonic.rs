@@ -51,6 +51,18 @@ pub struct RuntimeAlert {
     #[serde(default = "default_datetime")]
     pub timestamp: DateTime<Utc>,
     pub message: String,
+    /// How many cycles this condition has recurred into the same log slot
+    /// (coalesced by domain + severity). 1 = first occurrence. The count
+    /// carries the condition's persistence for review — "active, N
+    /// recurrences, last seen <timestamp>" — without per-cycle duplicates
+    /// flooding the log (operator ruling 2026-09-28: consolidate the alert
+    /// paths).
+    #[serde(default = "default_occurrence_count")]
+    pub occurrence_count: u64,
+}
+
+fn default_occurrence_count() -> u64 {
+    1
 }
 
 /// Sink for sending algedonic alerts via email as a last-resort loop closure
@@ -172,6 +184,7 @@ impl RuntimeAlert {
                 "Variety deficit {} in domain '{}' (threshold: {})",
                 deficit, domain, threshold
             ),
+            occurrence_count: 1,
         };
         debug_assert!(
             (result.severity == AlertSeverity::Critical && deficit > threshold)
@@ -334,6 +347,7 @@ impl AlgedonicManager {
                         "Variety deficit {} in domain '{}' (threshold: {} — fallback, preconditions violated)",
                         deficit, domain, self.threshold.max(1)
                     ),
+                    occurrence_count: 1,
                 }
             });
 
@@ -354,8 +368,7 @@ impl AlgedonicManager {
             );
         }
 
-        self.push_alert(alert);
-        self.alerts.last()
+        Some(self.push_alert(alert))
     }
 
     /// Get the configured default threshold.
@@ -453,6 +466,7 @@ impl AlgedonicManager {
                 total_ops,
                 total_ops.saturating_sub((success_rate * total_ops as f64) as u64),
             ),
+            occurrence_count: 1,
         };
 
         if alert.should_escalate() {
@@ -473,18 +487,42 @@ impl AlgedonicManager {
             );
         }
 
-        self.push_alert(alert);
-        self.alerts.last()
+        Some(self.push_alert(alert))
     }
 
-    /// Push an alert onto the log, evicting the oldest entry if the cap is
-    /// reached. Called by both `check` and `check_outcome` — the single
-    /// chokepoint for log growth.
-    fn push_alert(&mut self, alert: RuntimeAlert) {
+    /// Push an alert onto the log, coalescing by stable condition identity
+    /// (domain + severity). Called by both `check` and `check_outcome` — the
+    /// single chokepoint for log growth. A recurrence of a condition already
+    /// active in the log refreshes the surviving alert in place — occurrence
+    /// count incremented, deficit/threshold/message/timestamp updated to the
+    /// latest observation — instead of pushing a per-cycle duplicate
+    /// (operator ruling 2026-09-28: consolidate the alert paths; prior
+    /// rulings: deduplicate at the source by stable condition identity;
+    /// latch until the underlying condition clears; recurrence after
+    /// recovery emits again). A severity change is a transition, not a
+    /// recurrence — it pushes a new alert. The log still evicts oldest at
+    /// the cap. Returns the surviving alert so callers read the condition's
+    /// current state, not `alerts.last()`.
+    fn push_alert(&mut self, alert: RuntimeAlert) -> &RuntimeAlert {
+        if let Some(existing) =
+            self.alerts.iter_mut().rev().find(|existing| {
+                existing.domain == alert.domain && existing.severity == alert.severity
+            })
+        {
+            existing.occurrence_count = existing.occurrence_count.saturating_add(1);
+            existing.deficit = alert.deficit;
+            existing.threshold = alert.threshold;
+            existing.message = alert.message;
+            existing.timestamp = alert.timestamp;
+            return existing;
+        }
         if self.alerts.len() >= self.max_alerts {
             self.alerts.remove(0);
         }
         self.alerts.push(alert);
+        self.alerts
+            .last()
+            .expect("the just-pushed alert is present")
     }
 
     /// Number of alerts currently in the log.
@@ -644,9 +682,9 @@ mod tests {
             ("idle".to_string(), VarietyTracker::new()),
         ]);
 
-        // Re-check the active domain many times — each check pushes an
-        // alert into the diagnostic log, but the current deficit must not
-        // move.
+        // Re-check the active domain many times — the checks coalesce into
+        // one surviving alert (occurrence count grows) — but the current
+        // deficit must not move.
         for _ in 0..10 {
             mgr.check(&active, "active");
         }
@@ -684,5 +722,73 @@ mod tests {
 
         let health = reg_health_check(&mgr, 0.0, mgr.current_total_deficit(&counters));
         assert_eq!(health.overall_deficit, 9);
+    }
+
+    /// Recurrences of the same condition (domain + severity) coalesce into
+    /// one surviving alert: the occurrence count grows, the latest
+    /// observation's deficit/threshold/message/timestamp refresh in place,
+    /// and the log does not fill with per-cycle duplicates. (operator
+    /// ruling 2026-09-28: consolidate the alert paths — the chronic
+    /// conditions re-alerted every cycle and kept the 200-cap log
+    /// permanently full, which `log_approaching_cap` then read as a
+    /// permanent level deviation.)
+    #[test]
+    fn push_alert_coalesces_recurrences_by_condition_identity() {
+        let mut mgr = manager();
+        mgr.push_alert(RuntimeAlert::new("chronic", 3, 4).expect("warning alert"));
+        for _ in 0..9 {
+            mgr.push_alert(RuntimeAlert::new("chronic", 3, 4).expect("warning recurrence"));
+        }
+        assert_eq!(
+            mgr.alert_count(),
+            1,
+            "recurrences must coalesce into the surviving alert, not duplicate"
+        );
+        let surviving = mgr.alerts().first().expect("surviving alert");
+        assert_eq!(surviving.occurrence_count, 10);
+        assert_eq!(surviving.domain, "chronic");
+    }
+
+    /// A severity change is a transition, not a recurrence: the Critical
+    /// alert is a new entry alongside the surviving Warning entry, so the
+    /// transition history stays visible to review.
+    #[test]
+    fn push_alert_treats_severity_change_as_transition() {
+        let mut mgr = manager();
+        mgr.push_alert(RuntimeAlert::new("chronic", 3, 4).expect("warning"));
+        mgr.push_alert(RuntimeAlert::new("chronic", 5, 4).expect("critical"));
+        assert_eq!(
+            mgr.alert_count(),
+            2,
+            "a severity change must push a new alert, not coalesce over the old severity"
+        );
+    }
+
+    /// At the cap the oldest entry is evicted; a condition whose alert was
+    /// evicted re-alerts as a fresh occurrence — recurrence after recovery
+    /// (or eviction) emits again.
+    #[test]
+    fn push_alert_evicts_oldest_at_cap_and_recurrence_reemits() {
+        let mut mgr = AlgedonicManager::with_max_alerts(3, DEFAULT_EXPECTED_VARIETY, 200);
+        for domain in ["a", "b", "c"] {
+            mgr.push_alert(RuntimeAlert::new(domain, 3, 4).expect("alert"));
+        }
+        assert_eq!(mgr.alert_count(), 3);
+        mgr.push_alert(RuntimeAlert::new("d", 3, 4).expect("alert"));
+        assert_eq!(mgr.alert_count(), 3, "the cap evicts the oldest entry");
+        assert!(
+            mgr.alerts().iter().all(|alert| alert.domain != "a"),
+            "the oldest entry is evicted"
+        );
+        mgr.push_alert(RuntimeAlert::new("a", 3, 4).expect("re-emitted alert"));
+        let re_emitted = mgr
+            .alerts()
+            .iter()
+            .find(|alert| alert.domain == "a")
+            .expect("recurrence after eviction re-emits");
+        assert_eq!(
+            re_emitted.occurrence_count, 1,
+            "recurrence after eviction starts a fresh count"
+        );
     }
 }

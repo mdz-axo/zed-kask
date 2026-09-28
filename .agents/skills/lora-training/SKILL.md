@@ -15,6 +15,18 @@ This skill does not train, load, initialize, merge, or evaluate models.
 - **Initial condition:** declared operator requirements, host, base model/config inputs and dataset-format hint; after operator selection, the concrete training parameters, optional dataset path, and any observed runtime/post-training evidence. An absent dataset validation is not a zero-risk dataset.
 - **Target condition:** a sourced advisory recommendation that preserves operator choices, followed (only for a selected concrete configuration) by a phase-aware audit with every applicable gate accounted for. Readiness is `Pass` only on complete observed coverage with no blocking/conditional findings; missing static evidence never becomes `Pass`, and future runtime/post-training checks remain unmeasured until observed. A first complete pass ends the local loop.
 
+## D/P labelling
+
+The recommendation (method, harness, hyperparameters) is P — advisory judgment
+from declared evidence, critiqued by the operator's accept/override/reject
+decision; the skill recommends, it never selects. The gate accounting is D:
+the all-present gate-coverage form and the readiness precedence form run in
+`lisp_eval` over observed gate results — readiness is computed from complete
+coverage, never judged, and missing static evidence never becomes `Pass`. The
+math-contract audit is D (`training_validate_config` — the server validates
+the configuration against the gates); training submission is operator-gated,
+and the runtime enforces the hard contracts the audit established.
+
 ## When to Use
 
 - Before training, to obtain an evidence-grounded PEFT recommendation while

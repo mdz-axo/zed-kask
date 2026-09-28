@@ -1411,6 +1411,7 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
                 max_age_days: 50,
                 spare_recalled_within_days: None,
                 all_layers: None,
+                prefixes: None,
             }))
             .await
             .expect("scoped prune ok"),
@@ -1433,6 +1434,7 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
                 max_age_days: 50,
                 spare_recalled_within_days: None,
                 all_layers: Some(true),
+                prefixes: None,
             }))
             .await
             .expect("full prune ok"),
@@ -1445,6 +1447,111 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
             .expect("query ruling")
             .is_empty(),
         "all_layers=true must reach knowledge rows — got: {full}",
+    );
+}
+
+/// `prefixes` narrows the prune valve to the named entity prefixes: aged
+/// skill_use_issue rows are deleted while out-of-scope aged turn rows and
+/// knowledge rows survive. Empty and all_layers-conflicting scope requests
+/// are rejected visibly — a silent no-op or a silently-picked scope is a
+/// broken feedback loop. (research card f461b8e5, 2026-09-28.)
+#[tokio::test]
+async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
+    let (server, memory) = make_server_with_embeddings();
+
+    let mut aged_incident = hkask_storage::HMem::new(
+        "skill_use_issue:prune-scope-test",
+        "tool_failure:terminal",
+        serde_json::Value::String("aged incident".to_string()),
+        WebID::new(),
+    );
+    aged_incident.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+    memory.store(aged_incident).expect("seed aged incident");
+
+    let mut aged_turn = hkask_storage::HMem::new(
+        "curator:thread:prune-prefix-test",
+        "turn",
+        serde_json::Value::String("aged turn".to_string()),
+        WebID::new(),
+    );
+    aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+    memory.store(aged_turn).expect("seed aged turn");
+
+    let mut aged_ruling = hkask_storage::HMem::new(
+        "zed-kask/prune-prefix-test-ruling",
+        "operator_ruling",
+        serde_json::Value::String("durable ruling".to_string()),
+        WebID::new(),
+    );
+    aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+    memory.store(aged_ruling).expect("seed aged ruling");
+
+    // Scoped valve: only the named prefix is pruned; the response names
+    // the scope used.
+    let scoped = parse(
+        &server
+            .curator_memory_prune(Parameters(MemoryPruneRequest {
+                max_age_days: 50,
+                spare_recalled_within_days: None,
+                all_layers: None,
+                prefixes: Some(vec!["skill_use_issue:".to_string()]),
+            }))
+            .await
+            .expect("scoped-prefix prune ok"),
+    );
+    assert_eq!(scoped["deleted_count"].as_u64(), Some(1));
+    assert_eq!(
+        scoped["prefixes"].as_array().map(|list| list.len()),
+        Some(1),
+        "the response must name the scope used — got: {scoped}",
+    );
+    assert!(
+        memory
+            .h_mems_by_entity_prefix("skill_use_issue:prune-scope-test")
+            .expect("query incident")
+            .is_empty(),
+        "the aged incident row must be deleted by its prefix scope — got: {scoped}",
+    );
+    assert_eq!(
+        memory
+            .h_mems_by_entity_prefix("curator:thread:prune-prefix-test")
+            .expect("query turn")
+            .len(),
+        1,
+        "an out-of-scope aged turn row must survive a prefixes-scoped prune — got: {scoped}",
+    );
+    assert_eq!(
+        memory
+            .h_mems_by_entity_prefix("zed-kask/prune-prefix-test-ruling")
+            .expect("query ruling")
+            .len(),
+        1,
+        "knowledge rows must survive a prefixes-scoped prune — got: {scoped}",
+    );
+
+    // Empty scope list: rejected visibly, nothing pruned.
+    let empty = server
+        .curator_memory_prune(Parameters(MemoryPruneRequest {
+            max_age_days: 50,
+            spare_recalled_within_days: None,
+            all_layers: None,
+            prefixes: Some(vec![]),
+        }))
+        .await;
+    assert!(empty.is_err(), "an empty prefixes list must be rejected");
+
+    // Conflicting scopes: rejected visibly rather than silently picking one.
+    let conflicting = server
+        .curator_memory_prune(Parameters(MemoryPruneRequest {
+            max_age_days: 50,
+            spare_recalled_within_days: None,
+            all_layers: Some(true),
+            prefixes: Some(vec!["skill_use_issue:".to_string()]),
+        }))
+        .await;
+    assert!(
+        conflicting.is_err(),
+        "all_layers + prefixes must conflict visibly, not silently pick one"
     );
 }
 

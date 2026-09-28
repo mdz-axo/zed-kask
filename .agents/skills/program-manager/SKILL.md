@@ -76,7 +76,7 @@ each one structurally impossible to repeat:
 - **Initial condition:** the Phase 0 outputs — recalled curator memory, the recovered spec (or the operator's statement that none exists), and `git status` / `git log` tree state.
 - **Target condition:** the six Convergence items hold; item 6 is decided by the Phase 5 `lisp_eval` ledger form returning `green`.
 
-## Step types
+## Step types (D/P labelling)
 
 | Phase | Type | Oracle / critique |
 |-------|------|-------------------|

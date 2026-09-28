@@ -42,6 +42,17 @@ methodology instructs.
   stateless `lisp_eval` tool gates (count / completeness / exclusivity invariants).
 - **Ousterhout** — the deep-module deletion test (essentialist G1/G2/G3).
 
+## D/P labelling
+
+Audit findings, per-behavior adjudication, and remediation choice are P —
+critiqued by the file:line citation enforcement (a finding without a location
+is rejected), the essentialist gates, and the operator's ratification. The
+gates are D: Gate A/B/C and the Convergence count run as pinned `lisp_eval`
+forms over the template outputs — the convergence score is passed to
+final-report, never supplied by the model. Layout measurements are D when
+taken from the code (widths, counts); the remedy choice is P, critiqued by
+the adversarial probes. Caller-count sweeps (grep) are D.
+
 ## Instructions
 
 ```

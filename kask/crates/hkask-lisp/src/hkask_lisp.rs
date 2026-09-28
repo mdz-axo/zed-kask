@@ -1352,7 +1352,10 @@ fn concat_fn(
 /// `assoc`/`member` (searched-for first, searched-in second). An empty
 /// needle errors rather than returning true — in citation verification an
 /// empty needle would verify anything, and a check that fires on correct
-/// output is worse than no check.
+/// output is worse than no check. A needle longer than the haystack also
+/// errors naming the probable reversal — a longer needle can never be a
+/// substring, and the silent false of a reversed call hid a 20-quote
+/// verification failure (2026-09-28).
 fn string_contains_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
@@ -1383,6 +1386,13 @@ fn string_contains_fn(
         return Err(LispError::Runtime(
             "string-contains: needle must be a non-empty string".into(),
         ));
+    }
+    if needle.len() > haystack.len() {
+        return Err(LispError::Runtime(format!(
+            "string-contains: needle ({} bytes) is longer than haystack ({} bytes) — arguments probably reversed; signature is (string-contains needle haystack), needle first",
+            needle.len(),
+            haystack.len()
+        )));
     }
     Ok(LispValue::Bool(haystack.contains(needle.as_str())))
 }
@@ -2074,6 +2084,41 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, LispError::TypeError { .. }), "got: {err}");
+    }
+
+    #[test]
+    fn string_contains_longer_needle_errors_naming_reversal() {
+        // The 2026-09-28 incident shape: (string-contains haystack needle)
+        // reversed. A needle longer than the haystack can never be a
+        // substring, so the builtin errors loudly instead of silently
+        // returning false — the silent false hid a 20-quote verification
+        // failure and was first mis-filed as a tool bug.
+        let err = eval_sandboxed(
+            r#"(string-contains "hello world" "world")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        let LispError::Runtime(message) = &err else {
+            panic!("longer needle must be a runtime error, got: {err}");
+        };
+        assert!(
+            message.contains("probably reversed"),
+            "error must name the probable reversal: {message}"
+        );
+        assert!(
+            message.contains("needle first"),
+            "error must state the signature order: {message}"
+        );
+    }
+
+    #[test]
+    fn string_contains_equal_length_different_content_stays_false() {
+        // Equal length is not a reversal signature: different content is a
+        // legitimate false and identical content a legitimate true — the
+        // guard fires only on a strictly longer needle.
+        let result =
+            eval_sandboxed(r#"(string-contains "abc" "xyz")"#, &serde_json::json!({})).unwrap();
+        assert_eq!(result, serde_json::json!(false));
     }
 
     /// expect: "Skill forms clamp and take extrema with `max`/`min` instead of

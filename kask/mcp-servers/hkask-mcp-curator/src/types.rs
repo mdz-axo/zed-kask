@@ -371,6 +371,13 @@ pub struct MemoryPruneRequest {
     /// destroy durable knowledge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_layers: Option<bool>,
+    /// If set, prune ONLY h_mems whose entity starts with one of these
+    /// prefixes (e.g. ["skill_use_issue:"] for the incident log). Opt-in
+    /// scoped valve: the default scope stays turn storage only, and
+    /// all_layers=true stays the explicit full-store opt-in. An empty list
+    /// is rejected — a silent no-op prune is a broken feedback loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefixes: Option<Vec<String>>,
 }
 
 /// Deduplicate h_mems by normalized string value.

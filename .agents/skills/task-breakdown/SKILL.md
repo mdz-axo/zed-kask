@@ -13,6 +13,17 @@ Decompose work into verifiable vertical slices with acceptance criteria and chec
 - **Initial condition:** the user's spec/intent and target outcome, observed project structure and constraints, dependency graph, and any explicit unknowns. An empty or unconfirmed target does not become a plan.
 - **Target condition:** every slice advances the target outcome, has a testable acceptance criterion and verification seam, respects dependencies, and the independently checked seven-criterion gate passes without compensation masking. A failed or unmeasured gate is not a finished plan.
 
+## D/P labelling
+
+Decomposition, dependency mapping, and the raw criterion scores are P — the
+producer's judgment, critiqued by the independently checked quality gate. The
+weighted arithmetic is D: the seven-criterion total and `gate_pass` are
+recomputed in `lisp_eval` from the raw scores, never from the model's stated
+total — the gate re-derives every score from the plan itself, and a
+model-supplied `gate_pass` that disagrees with the deterministic result is a
+finding, not authority. Missing or invalid dimensions stop evaluation instead
+of counting as zero.
+
 ## When to Use
 
 - Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints before any implementation begins.

@@ -13,6 +13,17 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationale → Edge cases → Synthesis) in the manner of Bloom's taxonomy (Bloom et al., 1956). Initial condition: calibrate mode's baseline. Target condition: level-5 completion or round 5, then an assessment built only from actual answers.
 
+## D/P labelling
+
+Question generation and answer grading (Solid/Partial/Gap) are P — the round
+render's judgment, critiqued by the learner's next answer and the operator.
+The Feedback gate is D: the escalation decision (hold/reprobe/escalate/
+complete) and the question-retirement count run as pinned `lisp_eval` forms
+over the recorded grades and attempt counts — the level and direction come
+from the gate, never from the grader's feel. The final assessment is P, built
+only from actual answers; a rating for an unanswered question is a gap
+reported as unassessed.
+
 ## When to Use
 
 - When testing deep understanding of a topic through Socratic interrogation with escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis).
