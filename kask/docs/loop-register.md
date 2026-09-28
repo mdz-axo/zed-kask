@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.18.0"
+version: "0.19.0"
 status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -74,7 +74,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Functional graph (Phase 1, IS-cited per node):** CyberneticsLoop::tick (`cybernetics_loop.rs:780-981`, serialized by `impact_tick` `:781-783`): sense (sensor providers + observations cache) → escalation-sink reconcile (`:793-797`) → compare → compute (advisories) → act (`cycle.rs:450-562`: E04 cap-exhaustion captured BEFORE the per-tick reset `:479-497`, `reset_all_caps`, alert fan-out) → `route_action_as_alert` (`:568+`: board + live channel + archive fallback + email, dedup latches, retention authority `:450-477`) → claim accepted checks (`:800-811`) → `prepare_impact_checks` (`cycle.rs:723`: bounded read retry, ready/retry/exhausted) → worklist reconcile before any awaited effect (`:822-827`) → `escalate_exhausted_checks` (`cycle.rs:781`: board + live channel, no verdict) → `verify_impact` (`cycle.rs:810`, evidence already read) → strategy evaluator → `ledger.record_cycle_outcome` (`:899`) → loop-quality telemetry (fingerprint suppression, hourly heartbeat, `:902-981`). MetacognitionLoop::tick (`metacognition.rs:405-435`): ledger + regulation health + skill-feedback drift sense (`:447+`) → compare (`:535`) → act (`:592`, drains the CyberneticsLoop alert channel at `:659`) → snapshot surfaced via `curator_status`.
 - **Findings (Phase 2, adjudicated):** **F1 IS, no action** — the two-loop split is the minimal shape: two required cadences (10s actuation vs 30s observability) and a one-way channel decoupling failure domains; merging couples them (a slow drift pass would delay cap-exhaustion escalation) — merge REJECTED on behavior grounds (also pinned by D8/F3/F10). **F2 IS, no action** — sensor no-data discipline enforced and documented (`sensor_provider.rs:138`/`:158`, the `unwrap_or(0)` trap named and avoided); the `dampener.rs:319`/`extrapolation.rs:55` hits are computation guards with local invariants, not sensor reads. **F3 IS, verified** — `always_on` has a real enforcement point (`main.rs:1226`). **F4 IS, informational** — the tick loops carry no cancellation tokens; process-lifetime loops owning no child processes (contrast: the MCP runtime's lifecycle latch exists for child-process death, L3). **F5 IS** — harness-monitor degradation surfaced (`Backpressured`/`Err` logged). **Bridge fleet examined:** each bridge implements a distinct hkask-regulation trait across a documented GPUI/tokio boundary; a shared snapshot-cell generic over the two health bridges adds indirection and saves ~20-40 lines — FAILS the admission test, rejected.
 - **Five properties (post-slice):** closed for ordinary alert/ledger resensing and for accepted rollout checks — a store-read error retains the check in the same bounded queue within `MAX_ROLLOUT_READ_ATTEMPTS` (3) (`cybernetics_loop.rs:814-827`; `cycle.rs:751-765`), and a check exhausting those retries escalates to the review board without a verdict (`cycle.rs:760-765`, `:781-804`), keeping the absent-verdict restart rescan as the recovery backstop; timely at the periodic tick with a bounded retry horizon; accurate for surfaced query warnings and exhaustion escalations; actionable for ordinary alerts and for a dropped check (board card `rollout_check_unverifiable:<metric>`). The pre-slice closure gap (recorded below) is fixed and pinned.
-- **Prediction vs prior-pass actual:** predicted 2 defects / 2 impedances / conf 0.55; the earlier minimalism pass counted 0/0, the later error-path reproduction found one behavioral loss — now fixed and pinned by the landed slice. Count finalization and Phase 4 scoring remain with the audit, not the landing stream.
+- **Prediction vs actual (finalized by this audit, 2026-09-27):** predicted 2 defects / 2 impedances / conf 0.55 → actual: 1 reproduced behavioral defect (the accepted-check loss — found by the audit's reproduction, fixed by the landed slice `a2321f0df2`), 0 impedances, 0 surviving consolidation candidates (the two-loop split, the bridge fleet, and the exhaustion path were each examined and resolved on evidence). Brier-scored at Phase 4.
 - **Phase 2 reproduced finding and Phase 3 gate:** IS — a temporarily inserted public `submit_rollout_impact_check` → `tick` test accepted one check, forced `RolloutEventSource::metric_before_and_after` to return a query error, then observed the pending queue length **0 rather than 1** (command `bash kask/scripts/cargo-test-nonzero.sh -p hkask-regulation --lib accepted_impact_check_survives_transient_read_failure`, 1 failed at `cycle.rs:1949` in the temporary test). The diagnostic test/import were removed after the red result so the tree is not left broken. Root path: tick drains with `mem::take` (`cybernetics_loop.rs:777`), verifier warns and skips (`cycle.rs:763-772`); next tick cannot observe that accepted check. Falsifier: a future public-seam regression test sees a retained check after error and one verdict after recovery. The operator selected **bounded automatic retry**. A naive requeue after the await is unsafe: concurrent submissions can fill the 64-slot queue (`cybernetics_loop.rs:555-565`) during verification, so restoring accepted checks would exceed the cap or discard newer accepted checks. Reserving in-flight capacity and retry attempts requires additional state; no behavior-preserving, net-negative replacement has survived the deletion test. **Operator ruling (2026-09-27 checkpoint): the bounded corrective slice was permitted.** An implementation matching the approved design (read-before-removal, bounded `read_attempts`, capacity-safe retention) validated green on a 2026-09-27 worktree snapshot (hkask-regulation --lib 96/96, kask_bridge rollout-filtered 19/19, `./script/clippy -p hkask-regulation`/`-p kask_bridge` clean, `cargo check -p zed` passed) but was **not landed by this audit**: the authoring stream is live on the same files and has extended the design — exhausted checks now escalate to the review board (`cycle.rs:781` `escalate_exhausted_checks`) — with one red test mid-iteration at observation time (`accepted_impact_check_exhausts_bounded_read_retries`). This audit verifies L2 after that stream lands; the stale `metric_before_and_after` comment fix in `hkask-mcp-swarm/src/local_tools.rs` (already in the worktree) must land with that slice. **Landed (2026-09-27, authoring stream):** the permitted design landed with the exhaustion-escalation extension — `prepare_impact_checks` returns ready/retry/exhausted, the tick reconciles the claimed prefix before any awaited effect (`cybernetics_loop.rs:822-827`) and escalates exhausted checks to the board and live channel without a verdict (`cycle.rs:781-804`). The red test observed mid-iteration is green; its root cause was test-environmental — the third tick crossed the inference-wiring grace, so the unwired-model alert also reached the board — fixed by wiring `HealthyResilienceSource` in the test, with no production change. Pins: `accepted_impact_check_retries_a_failed_read_then_verifies_once` (the named falsifier), `accepted_impact_check_exhausts_bounded_read_retries` (queue empty, no verdict, one board escalation), `retained_impact_checks_count_against_the_admission_bound` (retained failures count against the 64 bound, no displacement), `verify_impact_store_error_retries_without_verdict`. Receipts: hkask-regulation --lib 96/96, kask_bridge --lib 251/251, rustfmt --check clean on the four files, `./script/clippy` clean, `cargo check -p zed` passed. The swarm stale-comment fix (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:3526`) lands in the same commit.
 
 ### L3 — MCP client runtime: spawn / health-supervise / request cycle — consolidated; current-tree tests and build passed
@@ -325,7 +325,7 @@ Each row below is a separate, bounded audit task, not a command to start it.
 | L8 | Confirm the already landed scoring consolidation retains outcome readback; close only a newly evidenced gap. | L17 scoring edge; forecast/scenarios tests and existing commit `50cba394fd`. |
 | L14 | Confirm settings and credential changes still restart exactly affected servers. | L3, L5; settings-sync tests + launch-order invariant. |
 | L15 | Trace pending passphrase rotation through every DB to the last keychain write, including recovery on partial failure. | L10, L4; passphrase-rotation tests and keychain-last invariant. |
-| L2 | Ruled and implemented by the live authoring stream; this audit verifies after its landing (see row). | L16 outcomes; regulation-cycle tests. |
+| L2 | Closed 2026-09-27: landed in a2321f0df2, independently verified by this audit (see row). | L16 outcomes; regulation-cycle tests. |
 | L5 | Trace one IPC inference request through response/error to caller. | L3 environment; inference IPC tests. |
 | L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
 | L1 | Closed 2026-09-27 at full scope: single-path loop verified minimal; memory-ingest deferral stands (see row). | L3, L5; agent turn tests. |
@@ -375,6 +375,14 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   entire commit belongs to this audit. The `.agents/skills` and register
   text is excluded from the production-line arithmetic. Do not sum unrelated
   ontology, settings, or passphrase changes into this audit's line delta.
+  The L2 bounded-retry slice landed in `a2321f0df2`: **+57 production
+  lines** (+164/−131 implementation = +33; +48/−24 comment-only = +24)
+  and +105 net test lines (+166/−61), bringing the audit total to
+  **−30 Rust source lines** (−39 implementation, +9 comment-only) and
+  212 test lines — the operator's negative-program-total condition
+  holds. Independently re-verified on the landed state by this audit:
+  the named falsifier plus both bound tests green, hkask-regulation
+  --lib 96/96, kask_bridge rollout-filtered 19/19.
 - **Validation actually observed:** L3 21 library and 16 serialized fixture
   tests passed; L5 54 library tests passed after the JSON-error test first
   failed; L15 6 rotation tests passed. L9's panel pin failed red, passed
@@ -428,6 +436,18 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.19.0 L2 verification closed the row: this audit
+  independently re-ran the gate on the landed state — the named falsifier
+  `accepted_impact_check_retries_a_failed_read_then_verifies_once` green,
+  `accepted_impact_check_exhausts_bounded_read_retries` green (the
+  mid-iteration red was test-environmental, per the landing stream's
+  root cause), `retained_impact_checks_count_against_the_admission_bound`
+  green, hkask-regulation --lib 96/96, kask_bridge rollout-filtered
+  19/19 — and finalized the prediction count (1 reproduced defect,
+  fixed; 0 impedances). Ledger updated: the landed slice is +57
+  production / +105 test; audit total now −30 Rust source lines, 212
+  test lines. Doc-only pass; no production lines changed by this
+  verification.
 - 2026-09-27 — v0.16.1 landed the operator-permitted L2 corrective slice with
   the exhaustion-escalation extension: accepted checks survive store-read
   errors in the same 64-slot queue for up to 3 read attempts, exhausted
