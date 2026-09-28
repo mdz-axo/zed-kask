@@ -108,6 +108,22 @@ operator-approved D2 core-review decision. Pins:
 `ipc_embedding_provider_mismatch_is_invalid_request`; the changed composition
 root is also checked by `cargo check -p zed`.
 
+**D8 embedding model binding (2026-09-28 migration):** commit `57c2bdea7a`
+moves the embedding default to `OpenRouter/qwen/qwen3-embedding-8b` and binds
+the zed-side embedding port through the same chain the MCP children receive:
+`crates/zed/src/main.rs` calls `KaskSettings::effective_embedding_model()`
+(`models.embedding_model` → `corpus.embedding_model` → code default) once at
+startup, replacing the former second chain that read this process's own
+settings/env and diverged from `HKASK_EMBEDDING_MODEL` after a model change.
+The resolver lives in `kask_bridge/src/settings.rs` with the 8B default in
+`KaskCorpusSettings::default()`; precedence and default are pinned by
+`mcp_env_models_embedding_model_overrides_corpus` and
+`effective_embedding_model_falls_back_to_corpus_when_models_empty`. A
+mid-session model change still needs a Zed restart to re-bind the port
+(kask-settings.md, "Embedding model lifecycle"). The 0.6B artifacts were
+purged, not migrated — no backward compatibility; the changed composition
+root is checked by `cargo check -p zed`.
+
 **D3 runtime (Kask-owned implementation):** desired launch generations are
 cancelled on stop/replacement. Startup publication shares a lifecycle lock with
 stop; a drop guard retains failed-start cleanup ownership. Reconnect is polled
