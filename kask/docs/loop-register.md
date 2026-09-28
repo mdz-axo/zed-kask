@@ -2,8 +2,8 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.15.0"
-status: "Phase 1–4 partial: L3 validated; L5 Json error fixed, other loops open"
+version: "0.16.0"
+status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -57,7 +57,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 ### L1 — Agent turn loop
 - **Crate/path:** `crates/agent` (zed-side, D-seamed), participants in `crates/agent/src/`
-- **Entry point:** `crates/agent/src/thread.rs:3178` `run_turn_internal`; spawned via `thread.rs:2984` / `agent.rs:2472` `run_turn`; submissions at `agent.rs:3615`, `:3754`, `:3900`
+- **Entry point:** `crates/agent/src/thread.rs:3176` `run_turn_internal`; spawned via `thread.rs:2984` / `agent.rs:2472` `run_turn`; submissions at `agent.rs:3615`, `:3754`, `:3900`
 - **Participants:** `agent.rs` (10,419 ln), `thread.rs` (12,970 ln), `tools.rs`, `tool_retry_tracker.rs`, `tool_trace.rs`, `tool_permissions.rs`, `sandboxing.rs`, `kask_compaction.rs`, `kask_thread_state.rs`, `templates.rs`; `crates/hkask-conversation-injector`, `crates/hkask-tool-invoker`; condensation via `kask_bridge::condenser_bridge` → `kask/crates/hkask-condenser/src/engine.rs`
 - **Trigger:** user prompt submit from the agent panel; tool-result continuation within a turn
 - **Hands off to:** L3 (tool dispatch), L5 (model streaming), L2 (skill spans/outcomes), L10 (turn-end memory ingest), L7 (thread events → panel), L12 (research-run sources from web tools)
@@ -74,7 +74,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Findings (Phase 2, adjudicated):** **F1 IS, no action** — the two-loop split is the minimal shape: two required cadences (10s actuation vs 30s observability) and a one-way channel decoupling failure domains; merging couples them (a slow drift pass would delay cap-exhaustion escalation) — merge REJECTED on behavior grounds (also pinned by D8/F3/F10). **F2 IS, no action** — sensor no-data discipline enforced and documented (`sensor_provider.rs:138`/`:158`, the `unwrap_or(0)` trap named and avoided); the `dampener.rs:319`/`extrapolation.rs:55` hits are computation guards with local invariants, not sensor reads. **F3 IS, verified** — `always_on` has a real enforcement point (`main.rs:1226`). **F4 IS, informational** — the tick loops carry no cancellation tokens; process-lifetime loops owning no child processes (contrast: the MCP runtime's lifecycle latch exists for child-process death, L3). **F5 IS** — harness-monitor degradation surfaced (`Backpressured`/`Err` logged). **Bridge fleet examined:** each bridge implements a distinct hkask-regulation trait across a documented GPUI/tokio boundary; a shared snapshot-cell generic over the two health bridges adds indirection and saves ~20-40 lines — FAILS the admission test, rejected.
 - **Five properties:** closed for ordinary alert/ledger resensing, but **not closed** for accepted rollout checks after a store-read error (`cybernetics_loop.rs:777-788`; `cycle.rs:763-772`); timely at the periodic tick, but no retry horizon on that failure; accurate for surfaced query warning, incomplete for lost accepted assessments; actionable for ordinary alerts, not for a check whose accepted event was dropped. This qualifies the previous minimalism-pass judgment.
 - **Prediction vs prior-pass actual:** predicted 2 defects / 2 impedances / conf 0.55; the earlier minimalism pass counted 0/0, but the later error-path reproduction found one behavioral loss. Do not finalize the count or score this open row at Phase 4.
-- **Phase 2 reproduced finding and Phase 3 gate:** IS — a temporarily inserted public `submit_rollout_impact_check` → `tick` test accepted one check, forced `RolloutEventSource::metric_before_and_after` to return a query error, then observed the pending queue length **0 rather than 1** (command `bash kask/scripts/cargo-test-nonzero.sh -p hkask-regulation --lib accepted_impact_check_survives_transient_read_failure`, 1 failed at `cycle.rs:1949` in the temporary test). The diagnostic test/import were removed after the red result so the tree is not left broken. Root path: tick drains with `mem::take` (`cybernetics_loop.rs:777`), verifier warns and skips (`cycle.rs:763-772`); next tick cannot observe that accepted check. Falsifier: a future public-seam regression test sees a retained check after error and one verdict after recovery. The operator selected **bounded automatic retry**. A naive requeue after the await is unsafe: concurrent submissions can fill the 64-slot queue (`cybernetics_loop.rs:555-565`) during verification, so restoring accepted checks would exceed the cap or discard newer accepted checks. Reserving in-flight capacity and retry attempts requires additional state; no behavior-preserving, net-negative replacement has survived the deletion test. **Blocked for operator ruling:** permit a bounded net-positive corrective slice (while retaining a negative program total), or explicitly defer automatic retry despite this confirmed closure gap. No L2 production code was changed.
+- **Phase 2 reproduced finding and Phase 3 gate:** IS — a temporarily inserted public `submit_rollout_impact_check` → `tick` test accepted one check, forced `RolloutEventSource::metric_before_and_after` to return a query error, then observed the pending queue length **0 rather than 1** (command `bash kask/scripts/cargo-test-nonzero.sh -p hkask-regulation --lib accepted_impact_check_survives_transient_read_failure`, 1 failed at `cycle.rs:1949` in the temporary test). The diagnostic test/import were removed after the red result so the tree is not left broken. Root path: tick drains with `mem::take` (`cybernetics_loop.rs:777`), verifier warns and skips (`cycle.rs:763-772`); next tick cannot observe that accepted check. Falsifier: a future public-seam regression test sees a retained check after error and one verdict after recovery. The operator selected **bounded automatic retry**. A naive requeue after the await is unsafe: concurrent submissions can fill the 64-slot queue (`cybernetics_loop.rs:555-565`) during verification, so restoring accepted checks would exceed the cap or discard newer accepted checks. Reserving in-flight capacity and retry attempts requires additional state; no behavior-preserving, net-negative replacement has survived the deletion test. **Operator ruling (2026-09-27 checkpoint): the bounded corrective slice was permitted.** An implementation matching the approved design (read-before-removal, bounded `read_attempts`, capacity-safe retention) validated green on a 2026-09-27 worktree snapshot (hkask-regulation --lib 96/96, kask_bridge rollout-filtered 19/19, `./script/clippy -p hkask-regulation`/`-p kask_bridge` clean, `cargo check -p zed` passed) but was **not landed by this audit**: the authoring stream is live on the same files and has extended the design — exhausted checks now escalate to the review board (`cycle.rs:781` `escalate_exhausted_checks`) — with one red test mid-iteration at observation time (`accepted_impact_check_exhausts_bounded_read_retries`). This audit verifies L2 after that stream lands; the stale `metric_before_and_after` comment fix in `hkask-mcp-swarm/src/local_tools.rs` (already in the worktree) must land with that slice.
 
 ### L3 — MCP client runtime: spawn / health-supervise / request cycle — consolidated; current-tree tests and build passed
 - **Crate/path:** `kask/crates/hkask-mcp/src/runtime.rs` (21 library tests + 16 serialized `tests/reconnect_integration.rs` tests observed at `ff3bae88e6`)
@@ -150,7 +150,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 ### L10 — Memory recall/ingest cycle
 - **Crate/path:** `kask/crates/hkask-memory` + `kask/mcp-servers/hkask-mcp-curator`
-- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `consolidation_service.rs:38`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1739` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
+- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `consolidation_service.rs:38`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1833` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
 - **Participants:** `federated_recall.rs`, `recall_dedup.rs`, `salience.rs`, `bayesian.rs`; zed-side injection `kask_bridge/src/memory.rs`, `context_injector.rs`
 - **Trigger:** turn-end extraction; recall queries; prune/decay cycles
 - **Hands off to:** L1 (context injection), L2 (ledger), therapy/consolidation skills
@@ -210,7 +210,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L2 (ledger/alerts), curator memory, skill-maintenance proposals
 - **Prediction:** 2 / 1 / 0.50
 - **Phase 1 scoped graph (IS):** skill activation supplies success/failure to the process recorder (`crates/agent/src/tools/skill_tool.rs:194-308`); the zed host persists it when the deferred curator archive exists and always queues a Regulation ledger span (`crates/zed/src/main.rs:974-1013`); metacognition reads skill-outcome/operator-feedback drift (`hkask-regulation/src/metacognition.rs:447-529`); the operator/Curator decides acceptance in algedonic review and `record_skill_feedback` calls the feedback recorder (`crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`); the host persists that feedback before updating the live ledger (`crates/zed/src/main.rs:1723-1756`), which the next drift sense can observe. Five properties: closed when archive and operator verdict are available, timely conditional on review, accurate for activation reliability but not quality until operator feedback, complete conditional on archive readiness, actionable through review/feedback. No operator verdict was created by this audit.
-- **Phase 1–2 read-only observation (IS + INFERRED impact, diagnosis pending):** `crates/agent/src/kask_thread_state.rs:62-84` retains the most recently activated skill on the thread; the observed write at `crates/agent/src/thread.rs:4448-4450` sets it on activation, and no turn-end reset was found in the `active_skill_handle` reference sweep. INFERRED: a later unrelated tool failure might be attributed to an earlier skill. **Falsifier:** a cross-turn test where the later failure is not recorded under the earlier skill. Do not count as a confirmed defect or consolidate before reproduction and a behavior-preserving contract; the cross-turn test has not run.
+- **Phase 1 graph (IS, citations verified 2026-09-27):** activation — the `skill` tool resolves, authorizes, and renders (`tools/skill_tool.rs:194-238`), `activate_skill` records the outcome (`skill_tool.rs:295-310` → `agent.rs:4853` `record_skill_outcome` → recorder hook → `crates/zed/src/main.rs:995` `persist_skill_outcome` → durable `reg.skill.<id>.outcome`, `curator_stores.rs:63`); failure — `run_tool` captures the thread's shared skill cell at dispatch (`thread.rs:4431`), and a non-`skill` tool error (authorization errors excluded) records under whatever skill the cell holds (`thread.rs:4503-4518` → `agent.rs:4860` → `persist_skill_tool_failure` `curator_stores.rs:74`); readback — algedonic board (D59/D64/D79), `reg_query` (D60), drift sense (`metacognition.rs:447`). The only write to the cell is activation success (`thread.rs:4448-4450`); the full `active_skill` sweep finds no clear site — the cell is thread-lifetime.
+- **Phase 2 adjudication (closed 2026-09-27):** the row's INFERRED misattribution is confirmed as MECHANISM (IS) but refuted as DEFECT: sticky attribution is D59's documented, pinned design — "`KaskThreadState::active_skill` holds the last skill a thread activated successfully" (`DIVERGENCE.md` D59, 2026-09-26; field doc `kask_thread_state.rs:62-63`; pin `test_tool_failure_under_active_skill_is_recorded`, `tests/mod.rs:10672`) — with the recorded mitigation that tool-failure records are unclassified evidence for the operator+curator algedonic review while `curator_report_skill_use_issue` remains the classified channel. The residual trade-off — a long-lived thread attributes much-later unrelated failures to the skill whose body remains in context — is the documented design, not a consolidation candidate; windowed attribution would be a behavior change requiring an operator ruling. The row's proposed cross-turn falsifier is moot: the existing pin documents attribution-after-activation, and cross-turn persistence follows from the thread-lifetime cell by construction.
+- **Five properties:** closed — IS (activation → span → durable outcome → board/`reg_query` readback); timely — IS (durable at write, restart-hydrated per D59); accurate — partial by documented design (sticky attribution; records are unclassified evidence); complete — IS (activation, failure, and operator-feedback phases all recorded); actionable — IS (board cards + `reg_query`). **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects (the one inferred risk refuted as documented design), 0 impedances. Brier-scored at Phase 4.
 
 ### L17 — Scenario quantification/Brier loop
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-scenarios/src`
@@ -318,9 +320,9 @@ Each row below is a separate, bounded audit task, not a command to start it.
 | L8 | Confirm the already landed scoring consolidation retains outcome readback; close only a newly evidenced gap. | L17 scoring edge; forecast/scenarios tests and existing commit `50cba394fd`. |
 | L14 | Confirm settings and credential changes still restart exactly affected servers. | L3, L5; settings-sync tests + launch-order invariant. |
 | L15 | Trace pending passphrase rotation through every DB to the last keychain write, including recovery on partial failure. | L10, L4; passphrase-rotation tests and keychain-last invariant. |
-| L2 | Trace one Regulation tick from sensor to verified effect or surfaced alert. | L16 outcomes; regulation-cycle tests. |
+| L2 | Ruled and implemented by the live authoring stream; this audit verifies after its landing (see row). | L16 outcomes; regulation-cycle tests. |
 | L5 | Trace one IPC inference request through response/error to caller. | L3 environment; inference IPC tests. |
-| L16 | Trace one skill activation and failure to durable outcome and algedonic readback. | L2, L1; skill-outcome tests. |
+| L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
 | L1 | Trace one user turn including tool continuation and memory/panel observation. | L3, L5; agent turn tests. |
 | L7 | Trace a thread event and one widget action through GPUI update to observable UI. | L1, L9; targeted panel/widget tests. |
 | L6 | Trace source conversion to grounded QA ingestion with counts reconciled across stages. | L5, L10; corpus pipeline seam tests. |
@@ -397,9 +399,10 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   runs explicitly closeable). L6's candidate
   projection is tool-seam tested but not source-complete under this audit's
   no-dataset-construction rule; it stays open. L7/L11 panel visibility,
-  L10 recall failure fidelity, L13 scoped memory, L16 cross-turn attribution,
-  L18 training completion fidelity and L23 provider fallback have cited
-  falsifiers in their rows; none is quietly declared fixed. The earlier
+  L10 recall failure fidelity, L13 scoped memory, L18 training completion
+  fidelity and L23 provider fallback have cited falsifiers in their rows;
+  none is quietly declared fixed; L16's cross-turn attribution closed
+  2026-09-27 as documented D59 design (see row). The earlier
   minimalism passes for L4/L8/L14 and this offline L15 rotation path have
   no further surviving removal candidate under the present evidence.
 
@@ -419,6 +422,36 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.16.0 operator approved the register and ruled on L2 (the
+  bounded corrective slice was permitted). The L2 implementation validated
+  green on a worktree snapshot (96/96 regulation lib, 19/19 bridge rollout,
+  scoped clippy, cargo check -p zed) but was NOT landed: the authoring
+  stream is live on the regulation files, mid-iteration on an
+  exhaustion-escalation extension (one red test observed); this audit
+  verifies L2 after that stream lands, and the swarm stale-comment fix
+  waits for that landing. L16 closed: the graph is complete with verified
+  citations, and the inferred cross-turn misattribution is refuted as
+  DEFECT — sticky attribution is D59's documented, pinned design with the
+  unclassified-evidence mitigation; windowed attribution would be a
+  behavior change for the operator, not a consolidation. No production
+  code changed by this pass.
+- 2026-09-27 — v0.15.1 Phase 0 checkpoint re-verification (new session):
+  all 23 rows' primary entry points re-located in the current tree by symbol
+  grep; two citation drifts corrected (L1 `run_turn_internal`
+  thread.rs:3178→:3176, L10 `curator_memory_extract`
+  hkask_mcp_curator.rs:1739→:1833), every other citation verified within
+  ±2 lines. `hkask-services-core` and `hkask-steer-core` confirmed
+  participant libraries (no spawn/interval/loop machinery) — no loop family
+  is missing. Register recovered from an accidental stale-buffer overwrite:
+  the working-tree copy was byte-identical to the v0.9.0 blob (in history at
+  `31bcd62267`) and had clobbered the committed v0.15.0 records; restored
+  from HEAD, stale copy preserved at /tmp/loop-register.stale-wt.md,
+  nothing lost. Concurrent uncommitted L2 retry work observed in the
+  regulation sources (`prepare_impact_checks` refactor) — left untouched;
+  that row's committed state stands until the slice lands. No row content
+  changed beyond the two citation corrections; no production code touched.
+  This register update is uncommitted pending operator approval of the
+  checkpoint.
 - 2026-09-27 — v0.15.0 committed L6/L9 audit files in pathspec-limited
   `1113d8d85d`. A temporary L2 public-seam test reproduced accepted-check
   loss after a store-read error (queue 0 rather than 1 on the next tick);
