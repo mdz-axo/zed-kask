@@ -35,7 +35,19 @@ fn compaction_split_point(messages: &[LanguageModelRequestMessage]) -> Result<Op
     let history = &messages[start..end];
     let sizes = history
         .iter()
-        .map(|message| serde_json::to_vec(message).map(|bytes| bytes.len()))
+        .map(|message| {
+            message.content.iter().try_fold(0usize, |total, part| {
+                // The replay-only `output` may contain a second, uncompressed copy
+                // of the tool result. It is not the text the model summarizes.
+                let size = match part {
+                    MessageContent::ToolResult(result) => {
+                        serde_json::to_vec(&result.content)?.len()
+                    }
+                    _ => serde_json::to_vec(part)?.len(),
+                };
+                Ok::<_, serde_json::Error>(total.saturating_add(size))
+            })
+        })
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let target = sizes.iter().sum::<usize>() / 2;
     let mut outstanding = HashSet::default();
@@ -191,6 +203,30 @@ mod tests {
             cache: false,
             reasoning_details: None,
         }
+    }
+
+    #[test]
+    fn replay_only_raw_output_does_not_distort_split() -> Result<()> {
+        let mut messages = vec![
+            text_message(Role::User, "request 1"),
+            tool_use_message("first"),
+            tool_result_message("first"),
+            text_message(Role::User, "request 2"),
+            text_message(Role::Assistant, "result 2"),
+            text_message(Role::User, "request 3"),
+            text_message(Role::Assistant, "result 3"),
+            text_message(Role::User, COMPACTION_PROMPT),
+        ];
+        let expected = compaction_split_point(&messages)?;
+        let Some(MessageContent::ToolResult(result)) = messages
+            .get_mut(2)
+            .and_then(|message| message.content.first_mut())
+        else {
+            anyhow::bail!("missing tool result fixture");
+        };
+        result.output = Some(serde_json::json!({"raw": "x".repeat(1_000_000)}));
+        assert_eq!(compaction_split_point(&messages)?, expected);
+        Ok(())
     }
 
     #[test]

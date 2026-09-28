@@ -370,3 +370,54 @@ fn degradation_specimen_nth_negative_index_silent_null() {
     let out = run(json!({"form": "(nth -1 (list 1 2 3))", "env": {}}));
     assert_eq!(out, Ok(Value::Null));
 }
+
+// ── L2: boundary determinism pins ──────────────────────────────────────
+
+#[test]
+fn l2_repeated_evaluation_is_byte_identical_at_the_tool_boundary() {
+    // The evaluate_lisp boundary sorts env keys (the env HashMap's iteration
+    // order is process-randomized), so repeated evaluation of the same
+    // input — success or typed error — is byte-identical across calls.
+    let input = json!({
+        "form": "(begin (define total (+ a b c)) (if (> total 5) (assoc \"k\" obj) absent))",
+        "env": {"c": 3, "a": 1, "b": 2, "obj": {"k": "hit", "j": 9}}
+    });
+    let mut seen: Option<String> = None;
+    for _ in 0..20 {
+        let out = run(input.clone());
+        let serialized = match out {
+            Ok(value) => serde_json::to_string(&value).expect("serialize"),
+            Err(err) => format!("error: {err}"),
+        };
+        match &seen {
+            None => seen = Some(serialized),
+            Some(previous) => assert_eq!(&serialized, previous, "repeated evaluation drifted"),
+        }
+    }
+    assert!(seen.is_some());
+}
+
+#[test]
+fn l2_unbound_symbol_error_lists_bindings_sorted_and_stable() {
+    // Error-path determinism: the G3 message names the env bindings in
+    // sorted order and repeats byte-identically — the multi-key companion
+    // to `unbound_symbol_with_empty_env_names_the_empty_binding_list`.
+    let input = json!({"form": "(+ a missing)", "env": {"b": 2, "a": 1, "c": 3}});
+    let mut seen: Option<String> = None;
+    for _ in 0..20 {
+        let out = run(input.clone());
+        let serialized = match out {
+            Err(err) => format!("error: {err}"),
+            Ok(value) => serde_json::to_string(&value).expect("serialize"),
+        };
+        assert!(
+            serialized.contains("env bindings: [\"a\", \"b\", \"c\"]"),
+            "expected sorted bindings, got: {serialized}"
+        );
+        match &seen {
+            None => seen = Some(serialized),
+            Some(previous) => assert_eq!(&serialized, previous, "error message drifted"),
+        }
+    }
+    assert!(seen.is_some());
+}

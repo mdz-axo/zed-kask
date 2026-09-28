@@ -22,7 +22,8 @@
 //!
 //! `assoc` is defensive: a non-list alist argument returns nil instead of
 //! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
-//! and ~50 registry call sites rely on graceful degradation).
+//! and 36 call sites rely on graceful degradation — lisp-repair L0 count:
+//! 21 in `.agents/skills/`, 15 in `kask/`).
 //!
 //! # Infix Operator Notation
 //!
@@ -1325,7 +1326,8 @@ fn listp(
 ///
 /// Defensive-access contract: a NON-LIST `alist` (string, number, boolean)
 /// returns nil rather than erroring. This is deliberate. The manifest fleet
-/// has ~50 lisp.eval call sites that pass `step_N_result` (an LLM step's
+/// has 36 lisp.eval call sites (lisp-repair L0 count: 21 `.agents/skills/`,
+/// 15 `kask/`) that pass `step_N_result` (an LLM step's
 /// output) directly to `assoc`, and LLM steps emit prose / markdown-wrapped
 /// JSON that parses as a JSON string at the env boundary. Erroring with
 /// "type error: expected list, got string" crashed whole cascades (the

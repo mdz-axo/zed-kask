@@ -50,10 +50,11 @@ status: VERIFIED
 
 Manual precompression preserves user and assistant prose, the newest user-led
 exchange, protected tools, failed tool results, valid JSON, and non-text parts.
-It replaces text only when the labelled excerpt is nonempty and smaller than
-the original (`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`). The
-stored thread remains unchanged because preprocessing happens after the native
-request has been copied to the background task
+For eligible older non-JSON tool text, exact adjacent repeated lines collapse
+with an explicit count when this shortens the output; this skips the algorithm
+pass. Otherwise the existing algorithm supplies a nonempty, smaller excerpt.
+The stored thread remains unchanged because preprocessing happens after the
+native request has been copied to the background task
 (`crates/agent/src/thread.rs:3697-3707`).
 
 ## Compression dispatch

@@ -43,6 +43,7 @@ impl BridgeThreadCondenser {
 // this preserves ordering and the exact repetition count without guessing intent.
 fn collapse_repeated_lines(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
+    let mut collapsed = false;
     let mut lines = input.lines().peekable();
     while let Some(line) = lines.next() {
         let mut count = 1usize;
@@ -53,6 +54,7 @@ fn collapse_repeated_lines(input: &str) -> String {
         output.push_str(line);
         output.push('\n');
         if count >= 3 && !line.trim().is_empty() {
+            collapsed = true;
             output.push_str(&format!(
                 "[preceding line repeated {} more times]\n",
                 count - 1
@@ -64,7 +66,7 @@ fn collapse_repeated_lines(input: &str) -> String {
             }
         }
     }
-    if output.len() < input.len() {
+    if collapsed && output.len() < input.len() {
         output
     } else {
         input.to_string()
@@ -140,15 +142,27 @@ impl ThreadCondenser for BridgeThreadCondenser {
                         continue;
                     }
                     let deduplicated = collapse_repeated_lines(text);
-                    let compressed = engine.compress(&result.tool_name, &deduplicated, None);
+                    if deduplicated.len() < text.len() {
+                        let excerpt = format!(
+                            "[Kask exact-repeat excerpt; full tool output remains in the original thread]\n{deduplicated}"
+                        );
+                        *text = if excerpt.len() < text.len() {
+                            excerpt.into()
+                        } else {
+                            deduplicated.into()
+                        };
+                        continue;
+                    }
+                    let compressed = engine.compress(&result.tool_name, text, None);
+                    if compressed.content.trim().is_empty() {
+                        continue;
+                    }
                     let excerpt = format!(
                         "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
                         compressed.algorithm, compressed.content
                     );
-                    if !compressed.content.trim().is_empty() && excerpt.len() < deduplicated.len() {
+                    if excerpt.len() < text.len() {
                         *text = excerpt.into();
-                    } else if deduplicated.len() < text.len() {
-                        *text = deduplicated.into();
                     }
                 }
             }
@@ -163,14 +177,18 @@ mod tests {
 
     #[test]
     fn exact_repeat_pass_preserves_unique_lines_and_counts() {
-        let source =
-            "progress\nprogress\nprogress\nwarning: keep this\nprogress\nprogress\nprogress\n";
-        let compact = collapse_repeated_lines(source);
+        let source = "progress: compiling the same module again\n".repeat(3);
+        let compact = collapse_repeated_lines(&source);
         assert_eq!(
             compact,
-            "progress\n[preceding line repeated 2 more times]\nwarning: keep this\nprogress\n[preceding line repeated 2 more times]\n"
+            "progress: compiling the same module again\n[preceding line repeated 2 more times]\n"
         );
         assert_eq!(collapse_repeated_lines("one\ntwo\n"), "one\ntwo\n");
+        assert_eq!(collapse_repeated_lines("one\ntwo\n\n"), "one\ntwo\n\n");
+        assert_eq!(
+            collapse_repeated_lines("progress\nprogress\nprogress\n"),
+            "progress\nprogress\nprogress\n"
+        );
     }
 
     /// Manual precompression reduces expendable output, not instructions or structure.
@@ -222,13 +240,14 @@ mod tests {
         let condenser = BridgeThreadCondenser::new("normal", false);
         assert_eq!(condenser.compress_tool_result("terminal", &output), output);
         condenser.precompress_history(&mut history, &["read_file"])?;
-        for (index, algorithm) in [(2, "rtk_style"), (3, "word_rank"), (4, "flashrank")] {
+        for index in [2, 3, 4] {
             let changed = history
                 .get(index)
                 .expect("fixture message")
                 .string_contents();
             assert!(changed.len() < output.len());
-            assert!(changed.contains(algorithm));
+            assert!(changed.contains("exact-repeat"));
+            assert!(changed.contains("repeated 299 more times"));
             assert!(changed.contains("full tool output remains in the original thread"));
             let Some(MessageContent::ToolResult(result)) =
                 expected.get_mut(index).and_then(|m| m.content.first_mut())
@@ -240,6 +259,23 @@ mod tests {
         // Includes role/order, call IDs, cache flags, reasoning, debug output,
         // valid JSON, failed results, all prose, and the latest exchange.
         assert_eq!(history, expected);
+
+        // Non-repetitive output still reaches the original algorithm route.
+        let unique = (0..100)
+            .map(|index| format!("build unit {index}: distinct diagnostic details\n"))
+            .collect::<String>();
+        let mut distinct_history = vec![
+            user("old request"),
+            tool("terminal", &unique, false),
+            user("latest request"),
+        ];
+        condenser.precompress_history(&mut distinct_history, &[])?;
+        let distinct = distinct_history
+            .get(1)
+            .expect("tool result")
+            .string_contents();
+        assert!(distinct.contains("rtk_style"));
+        assert!(distinct.len() < unique.len());
         Ok(())
     }
 

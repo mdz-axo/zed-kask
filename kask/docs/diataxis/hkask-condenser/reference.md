@@ -107,9 +107,13 @@ The exact protected source-tool list is at `crates/agent/src/thread.rs:160-185`.
 
 ## Native manual-compaction lifecycle
 
-Manual compaction obtains the global condenser, precompresses a background
-request copy, plans zero or two halves, and then invokes native summary
-collection and merge. Automatic compaction does not obtain the condenser
+Manual compaction obtains the global condenser and precompresses a background
+request copy. For eligible older non-JSON tool text, exact adjacent repeated
+lines are collapsed with their repetition count when that is shorter; this
+skips the slower algorithm pass. Non-repetitive text still uses the existing
+algorithm. The split planner then sizes model-visible content rather than the
+replay-only raw `output`, and invokes native summary collection and merge.
+Automatic compaction does not obtain the condenser
 (`crates/agent/src/thread.rs:3687-3715`). The composition root installs the
 bridge even when incoming-result compression is off
 (`crates/zed/src/main.rs:2299-2309`).
