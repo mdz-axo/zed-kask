@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.3.0"
+version: "0.4.0"
 status: "Phase 0 — operator approval pending"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -73,6 +73,7 @@ spec's minimum list, recorded below rather than narrowed away.
 - **Five properties:** closed — IS (spawn → supervise → reap → reconnect → circuit-break; transitions pinned by the 22 in-file tests and `reconnect_integration.rs`); timely — IS (call timeout, cooldown, interval, breaker all bounded); accurate — IS (three-way delivery classification, unknown-effect never retried, typed-kind ledger breakdown); complete — IS (12 servers; tool-surface membership is event-driven, `:574-585`); actionable — IS (the breaker's error names the operator action `:1167-1175`; `unavailable_error` distinguishes NotFound / never-started / not-connected `:1746-1773`).
 - **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects, 1 impedance deferred with reason (F1). Brier-scored at Phase 4.
 - **Hands off to:** L4 (server side of each call), L2 (record_outcome/record_variety + spans), L14 (zed-side registry and env).
+- **REOPENED for the minimalism pass (operator correction, 2026-09-27):** the runtime's per-server state is one state split across six lock-guarded maps (`servers`, `connections`, `cancellation_tokens`, `launch_specs`, `last_reconnect`, `health_failures` — `runtime.rs:465-487`), with cancellation tokens duplicated between the `cancellation_tokens` map and `LaunchSpec.cancel` (`:410-417`). Target: one `HashMap<String, ServerEntry>` (metadata, `Option<Connection>`, `Option<LaunchSpec>`, `Option<Instant>` last_reconnect, `u32` health_failures); the token map is deleted outright (`spec.cancel` is the token). Wins: 2-4 lock acquisitions per tool call → 1-2 on one map; the cross-map coordination the generation stamps and removal-if-still-closed dance currently manage becomes struct-local; est. −150-250 net production lines. Execution: a dedicated, atomic slice — all 22 in-file tests plus `tests/reconnect_integration.rs` green, or the refactor is reverted (hard constraint 4).
 
 ### L4 — MCP server request cycle (shared framework, 12 servers) — AUDITED & CLOSED 2026-09-27
 - **Crate/path:** `kask/crates/hkask-mcp-server/src/server/` (transport 131, error 163, validation 611, credentials 144, context 163, tool_span 170) + `kask/mcp-servers/*`
@@ -153,12 +154,14 @@ spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L2 (rollout events → regulation sensors), L7 (swarm panel), L10 (agent prefix-scoped memories in `MemoryStore`)
 - **Prediction:** 1 / 1 / 0.45
 
-### L14 — Settings → MCP server sync/restart cycle
-- **Crate/path:** `kask/crates/kask_bridge/src`
-- **Entry point:** `mcp_servers.rs` (runtime load/unload + nudge; surface span `kask_bridge/src/mcp_servers.rs:55-547` per `kask/docs/README.md:13`), `settings.rs` (`KaskSettings`, `crates/zed/src/main.rs:674`), `inference_socket.rs:24`; D45, D51
-- **Trigger:** settings change, credential keychain write, `INFERENCE_SOCKET_PATH` change → server restart with updated env
-- **Hands off to:** L3 (runtime respawns servers), L5 (env injection)
-- **Prediction:** 1 / 2 / 0.50
+### L14 — Settings → MCP server sync/restart cycle — AUDITED & CLOSED 2026-09-27 (minimal by design)
+- **Crate/path:** `kask/crates/kask_bridge/src` + zed-side wiring (`crates/zed/src/main.rs`, `crates/settings_ui/src/pages/kask_page.rs`)
+- **Entry point:** `sync_kask_mcp_runtime_servers` `crates/zed/src/main.rs:3585` (observer wired `main.rs:1455-1461`, D45; baseline + latch established `main.rs:1435-1453`); `nudge_mcp_servers` `kask_page.rs:342`; env assembly `build_mcp_server_env` `kask_bridge/src/mcp_servers.rs:681` (single canonical path; config half = `mcp_env.rs` emit_* translators); socket `inference_socket.rs:24`
+- **Trigger:** settings change (`cx.observe_global::<SettingsStore>`); credential keychain write/delete → `nudge_mcp_servers` → `notify_observers` (`kask_page.rs:280/:307`, funnel doc `:324-341`, D32 interplay `:332-336`); launch pass sets baselines + latch
+- **Functional graph (Phase 1, IS-cited per node):** notify → sync (`main.rs:3585`): load-state resolution, same expression as the launch loop (`:3593-3606`) → per-server env (`kask_server_env` `:3499`) → baseline diff → classify `to_stop` (`:3636`), `to_start` (latch-gated `:3662`), `to_restart` (env changed, changed keys named in log `:3637-3649`) → `Tokio::spawn` stop/start/restart (`:3677-3765`) with baseline bookkeeping (insert-not-expect `:3737-3745`) and retry-on-next-pass failure semantics (`:3716-3727`, `:3747-3761`; failed starts keep their launch spec so tool calls reconnect on demand).
+- **Minimalism verdict (ideal-method pass):** minimal by design — event-driven single funnel (N triggers → 1 notify → 1 sync), env-diff restarts exactly the changed servers, no polling, racing observer passes collapse via runtime idempotency (`:3690-3694`). **Collapse of the launch/sync mirror REJECTED:** the launch pass owns startup ordering and the inference-socket existence window; the latch + empty-baseline semantics are behavior, not structure (`main.rs:1435-1461`, `:3653-3662`). Classification living in `main.rs` (untestable without gpui) is noted; moving it to `kask_bridge` is net-neutral lines, not a consolidation.
+- **Prediction vs actual:** predicted 1 defect / 2 impedances / conf 0.50 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
+- **Hands off to:** L3 (runtime respawns servers), L5 (socket env injection).
 
 ### L15 — Passphrase rotation cycle
 - **Crate/path:** `kask/crates/kask_bridge/src/passphrase_rotation.rs`
@@ -213,8 +216,10 @@ vetoable on functional grounds:
 
 1. **Batch A (early deletion candidates, known duplication signals):** L8
    (closed 2026-09-27 — Brier signal refuted; real finding was the scenarios
-   wrapper, consolidated), L3+L4 (closed 2026-09-27 — audited clean, no
-   deletion candidate survives the test), L14.
+   wrapper, consolidated), L3+L4 (closed 2026-09-27 under the duplication
+   rubric; L3 REOPENED for the minimalism pass — six per-server maps → one),
+   L14 (closed 2026-09-27 — minimal by design). Next: L3-minimalism, then
+   Batch B.
 2. **Batch B (control core, highest connectivity):** L2, L5, L16.
 3. **Batch C (large surfaces):** L1, L7, L6.
 4. **Batch D (bounded server loops):** L9, L10, L11, L12, L13, L17, L18, L19.
@@ -231,9 +236,22 @@ behavior matters most to the operator) overrides this order on request.
 - Operator checkpoints carry only functional, blocking decisions; technical
   decisions arrive as recorded decisions with veto rights; neighboring
   systems' bookkeeping (e.g., docs-tree governance) stays out of the audit.
+- Every slice runs the ideal-method pass (Ousterhout): what is the smallest
+  code that does the job in the common case, disregarding existing structure?
+  Close ideal-vs-actual gaps where behavior is preserved. "No duplication
+  found" is not a complete slice result — the graph must also be the small
+  graph, and the critical path the short path (operator correction,
+  2026-09-27).
 
 ## Change log
 
+- 2026-09-27 — v0.4.0 operator goal correction banked: the slice unit of
+  value is graph consolidation and logical minimalism (smallest code for the
+  common case, faster critical path), not defect detection. Working rules
+  updated; L3 reopened with the six-maps→one design (cancellation tokens
+  exist in both the token map and `LaunchSpec.cancel`); L14 closed minimal by
+  design (launch/sync mirror rejected for collapse — startup ordering is
+  behavior). Doc-only slice; production total remains −13 from `50cba394fd`.
 - 2026-09-27 — v0.3.0 L3+L4 audited and closed clean: the runtime pair is
   already the deep module (single shared framework; generation-stamped keeper
   + supervisor + cooldown; three-way dispatch classification; circuit
