@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.1"
+version: "0.23.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -199,6 +199,28 @@ assesses alignment where anchors exist, and invents none.
 | swarm | 90 | count (`hkask_mcp_swarm.rs:1026-1036`) | yes |
 | training | 9 | count (`hkask_mcp_training.rs:318-326`) | **no** |
 | **total** | **402** | 9 count / 3 name-set | 9/12 |
+
+### Per-server tool-review ledger (S1–S12; the pass-2 per-tool surface review)
+
+Unit per the spec: each TOOL function mapped (syntax: signature/input
+contract/schema/envelope; semantics: behavior, error classification,
+degradation surfacing, credential handling) against the recorded `.rules`
+MCP patterns, plus the S13-extracted credential-declaration check.
+Support-module fns are verified at the seams they serve; deep per-fn map
+is noted where deferred with reason.
+
+| Slice | Server (tools) | Result | Notables |
+| --- | --- | --- | --- |
+| S1 | spreadsheet (2) | **CLEAN — closed 2026-09-28.** 2/2 tools mapped; 6 production fns (+1 macro ctor). Zero `.rules` violations. | `map_spreadsheet_error` is the exemplar per-variant mapper (`Conflict`→`failed_precondition` optimistic concurrency; `PathEscape`→`invalid_argument` pre-filesystem; non_exhaustive arm visible). `operation_get` None → explicit `status: unknown` + do-not-retry note (the §7/L22 contract). Credentials `vec![]` — correct: file-based server, no DB, no keys. Anchor: L22's `logisheets-spreadsheet-capability-plan.md` (per-server doc exists). |
+| S2 | training (9) | **CLEAN — closed 2026-09-28.** 9/9 tools mapped (submit, cancel, status, evaluate, ingest_dataset, ingest_qa, assemble_dataset, validate_config, bridge_rollouts); ~180 support fns seam-verified, deep map deferred to continuation (pinned beneath by the 95-test smoke suite). Zero `.rules` violations. | P2 consent gate first (`permission_denied`, operator-facing); F3 ordering verified (model provenance before effects, pinned by `f3_submit_rejects_invalid_model_before_effects`); G-P1 names the Nebius degradation verbatim at submit (the L18 status contract stays the operator decision); `error_mapping.rs` is the canonical per-variant classifier; the corpus→training `db_path` bridge trap fixed and pinned (`permission_denied "db_path provided but passphrase is empty"` + PassphraseMismatch/KeyDerivation naming `HKASK_DB_PASSPHRASE`); containment on every caller path; degraded store → `permission_denied` naming env vars. Anchor: `lora-training` skill lacks a recorded `## Reference models` section (gap recorded; `lora-training-catalog.md` is the reference doc). |
+| S3–S12 | curator (15), portfolio (18), scenarios (19), corpus (26), research (26), kata-kanban (27), prediction-markets (32), companies (40), swarm (90), media (98) | pending — next slices, smallest-first | — |
+
+**Framework note (S13 addendum):** all 12 servers bootstrap via
+`hkask_mcp_server::run_server` (`hkask_mcp_server.rs:42`), a one-line
+delegate to `run_stdio_server` (`transport.rs:32`) — the framework stays
+single-copy; the L4 row's entry-point citation now names the wrapper
+(the public name every server calls). Swarm's `a2a_http.rs:80` `run_server`
+is an unrelated local tiny_http fn (name collision, not duplication).
 
 ### Pass-2 predictions (calibrated down from pass-1's overestimate: MAE 1.22 defects and 1.22 impedances per loop, ~5×/~15× over)
 
@@ -662,6 +684,23 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   2026-09-27).
 
 ## Change log
+
+- 2026-09-28 — v0.23.2 continued pass 2 (post-rebuild verification + S1/S2).
+  Verified the landed state on the rebuilt tree: `delegate_and_ingest`
+  unchanged since `57c2bdea7a`, register at v0.23.1, working tree clean,
+  swarm --lib re-run **210/210 green**. **S1 spreadsheet CLOSED clean**
+  (2/2 tools, 6 fns, zero violations, credentials correctly empty —
+  file-based server). **S2 training CLOSED clean** (9/9 tools mapped;
+  consent gate, F3 ordering, G-P1 Nebius naming, per-variant mappers,
+  the db_path bridge trap, containment, degraded-store permission_denied
+  all verified; ~180 support fns seam-verified with deep-map deferred to
+  continuation). Framework addendum: `run_server` is a one-line delegate
+  of `run_stdio_server` — single-copy confirmed, L4 citation corrected.
+  No production lines changed by this pass (review-only); zero new
+  findings on either server — both clean against the recorded patterns,
+  consistent with the pass-2 prediction of ~8–15 violations across all
+  402 tools (2/56 tools reviewed so far, 0 violations — running under
+  the predicted rate; prediction scored at Phase 4).
 
 - 2026-09-28 — v0.23.1 pass-2 execution began (operator approved the
   Phase 0 checkpoint and directed work on the queued issues). **S13
