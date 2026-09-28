@@ -39,6 +39,38 @@ impl BridgeThreadCondenser {
     }
 }
 
+// Collapse only adjacent identical nonempty lines: unlike semantic deduplication,
+// this preserves ordering and the exact repetition count without guessing intent.
+fn collapse_repeated_lines(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut lines = input.lines().peekable();
+    while let Some(line) = lines.next() {
+        let mut count = 1usize;
+        while lines.peek() == Some(&line) {
+            lines.next();
+            count += 1;
+        }
+        output.push_str(line);
+        output.push('\n');
+        if count >= 3 && !line.trim().is_empty() {
+            output.push_str(&format!(
+                "[preceding line repeated {} more times]\n",
+                count - 1
+            ));
+        } else {
+            for _ in 1..count {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+    }
+    if output.len() < input.len() {
+        output
+    } else {
+        input.to_string()
+    }
+}
+
 impl ThreadCondenser for BridgeThreadCondenser {
     fn compress_tool_result(&self, tool_name: &str, output: &str) -> String {
         if !self.auto_compress || output.is_empty() {
@@ -107,16 +139,16 @@ impl ThreadCondenser for BridgeThreadCondenser {
                     if serde_json::from_str::<serde_json::Value>(text).is_ok() {
                         continue;
                     }
-                    let compressed = engine.compress(&result.tool_name, text, None);
-                    if compressed.content.trim().is_empty() {
-                        continue;
-                    }
+                    let deduplicated = collapse_repeated_lines(text);
+                    let compressed = engine.compress(&result.tool_name, &deduplicated, None);
                     let excerpt = format!(
                         "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
                         compressed.algorithm, compressed.content
                     );
-                    if excerpt.len() < text.len() {
+                    if !compressed.content.trim().is_empty() && excerpt.len() < deduplicated.len() {
                         *text = excerpt.into();
+                    } else if deduplicated.len() < text.len() {
+                        *text = deduplicated.into();
                     }
                 }
             }
@@ -128,6 +160,18 @@ impl ThreadCondenser for BridgeThreadCondenser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_repeat_pass_preserves_unique_lines_and_counts() {
+        let source =
+            "progress\nprogress\nprogress\nwarning: keep this\nprogress\nprogress\nprogress\n";
+        let compact = collapse_repeated_lines(source);
+        assert_eq!(
+            compact,
+            "progress\n[preceding line repeated 2 more times]\nwarning: keep this\nprogress\n[preceding line repeated 2 more times]\n"
+        );
+        assert_eq!(collapse_repeated_lines("one\ntwo\n"), "one\ntwo\n");
+    }
 
     /// Manual precompression reduces expendable output, not instructions or structure.
     #[test]

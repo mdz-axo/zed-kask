@@ -154,7 +154,7 @@ impl CuratorStores {
 /// mirror of `CuratorStores` in `kask_bridge::memory`.
 ///
 /// When the DB cannot be opened at startup (transient SQLCipher lock from a
-/// previous server instance, late-arriving passphrase), every tool call
+/// previous server instance), every tool call
 /// re-attempts the open via `get()`. A successful heal restores the curator's
 /// full tool surface mid-process — no server restart. Failure is never
 /// silent: construction failure logs `error!`, each failed heal attempt
@@ -197,15 +197,17 @@ impl CuratorDb {
         });
         // Resolve passphrase via the canonical 2-tier chain
         // (ctx.credentials → resolve_credential which does env → keychain).
-        // Falls back to None (in-memory / no-heal mode) on miss; the helper
-        // already emits a `warn!` on miss.
+        // The `required` startup declaration guarantees this resolves for
+        // production launches (transport refuses startup naming the var);
+        // the Err arm is the defensive tail — there is no in-memory store
+        // behind it, so stores stay down until relaunch.
         let passphrase = match resolve_db_passphrase(&ctx.credentials) {
             Ok(passphrase) => Some(passphrase),
             Err(error) => {
                 tracing::warn!(
                     target: "hkask.mcp.curator",
                     %error,
-                    "Falling back to in-memory / no-heal mode. Curator data will not persist across restarts."
+                    "Curator stores stay down — DB-backed tools return permission_denied until relaunch with HKASK_DB_PASSPHRASE resolvable"
                 );
                 None
             }
@@ -656,7 +658,9 @@ impl CuratorServer {
             let limit = req.limit.unwrap_or(10).clamp(1, 50);
             let embedding_model = curator_embedding_model().ok_or_else(|| {
                 McpToolError::permission_denied(
-                    "no embedding model configured — set kask.models.embedding_model",
+                    "no embedding model configured — set kask.models.embedding_model \
+                     (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a \
+                     hidden code constant",
                 )
             })?;
             let batch = self
@@ -2020,9 +2024,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             );
             Ok(CuratorServer::new(ctx.webid, db, inference_port.clone()))
         },
-        vec![hkask_mcp_server::CredentialRequirement::optional(
+        vec![hkask_mcp_server::CredentialRequirement::required(
             "HKASK_DB_PASSPHRASE",
-            "SQLCipher encryption passphrase",
+            "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
         )],
     )
     .await
@@ -2164,19 +2168,30 @@ fn open_curator_stores(
 
 #[cfg(test)]
 mod tests {
-    // NOTE: The startup requirement is pinned by a single in-file `//`
-    // comment, not `///` — the module contains no items that would justify
-    // a doc comment.
-    //
-    // `CuratorDb::from_context` resolves `HKASK_DB_PASSPHRASE` via the
-    // canonical 2-tier chain (ctx.credentials → resolve_credential → env →
-    // keychain) and only falls back to None (in-memory / no-heal) on miss.
-    // The `CredentialRequirement::optional` declaration calls out the same
-    // var so server bootstrap warns loudly rather than silently degrade.
-    // The pin is the shared helper call in `from_context` (`resolve_db_passphrase`)
-    // — same helper used by the other DB-backed MCP servers. This is a
-    // comment-only test module: if the comment drifts from the code, it
-    // compiles stale.
+    /// expect: "The curator server refuses startup without its DB
+    /// passphrase — 14 of 15 tools are DB-backed and there is no
+    /// in-memory store to fall back to, so a limping start would surface
+    /// permission_denied on every memory tool instead of one startup error
+    /// naming HKASK_DB_PASSPHRASE." [P1] Motivating: User Sovereignty.
+    /// [P2] Constraining: Transparent Imperfection — kata-kanban precedent
+    /// (`kanban_startup_requires_durable_storage`).
+    /// pre: the production startup source is compiled
+    /// post: HKASK_DB_PASSPHRASE is declared required, not optional
+    #[test]
+    fn curator_startup_requires_durable_storage() {
+        let source = include_str!("hkask_mcp_curator.rs");
+        let required_passphrase = [
+            "CredentialRequirement::required(",
+            "\n            \"HKASK_DB_PASSPHRASE\"",
+        ]
+        .concat();
+        assert!(
+            source.contains(&required_passphrase),
+            "HKASK_DB_PASSPHRASE must be declared required — the curator has no \
+             in-memory fallback (CuratorStores::empty), so an optional declaration \
+             starts a server whose every DB-backed tool call fails"
+        );
+    }
 
     use super::*;
 

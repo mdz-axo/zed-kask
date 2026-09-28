@@ -12897,9 +12897,9 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
 
 fn prompt_too_large_message(can_compact: bool) -> &'static str {
     if can_compact {
-        "The provider rejected this request because its input and reserved output exceed its context window. Use the Compact context control below to summarize earlier conversation, remove attached files, or start a new thread. Retrying unchanged will fail again."
+        "The provider rejected this request because its input and reserved output exceed its context window. Try Compact context below to summarize earlier conversation. If that fails, remove attached files or start a new thread. Retrying unchanged is unlikely to help."
     } else {
-        "The provider rejected this request because its input and reserved output exceed its context window. Remove attached files or start a new thread. Retrying unchanged will fail again."
+        "The provider rejected this request because its input and reserved output exceed its context window. Remove attached files or start a new thread. Retrying unchanged is unlikely to help."
     }
 }
 
@@ -12956,7 +12956,8 @@ mod tests {
         let with_compact = prompt_too_large_message(true);
         assert!(with_compact.contains("Compact context"));
         assert!(with_compact.contains("summarize earlier conversation"));
-        assert!(with_compact.contains("Retrying unchanged will fail again"));
+        assert!(with_compact.contains("If that fails"));
+        assert!(with_compact.contains("Retrying unchanged is unlikely to help"));
         let without_compact = prompt_too_large_message(false);
         assert!(!without_compact.contains("Compact context"));
         assert!(without_compact.contains("start a new thread"));
