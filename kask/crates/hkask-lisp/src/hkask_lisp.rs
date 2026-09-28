@@ -1204,15 +1204,25 @@ fn list_fn(
 fn length(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("length expects 1 arg".into()));
     }
     match &args[0] {
-        LispValue::List(l) => Ok(LispValue::Int(l.len() as i64)),
+        // Traversal charges (lisp-repair L3): len() walks every node and
+        // chars().count() walks every byte — one step per unit of work,
+        // charged where the traversal happens, never at argument pass.
+        LispValue::List(l) => {
+            let count = l.len();
+            budget.charge(count)?;
+            Ok(LispValue::Int(count as i64))
+        }
         LispValue::Nil => Ok(LispValue::Int(0)),
-        LispValue::String(s) => Ok(LispValue::Int(s.chars().count() as i64)),
+        LispValue::String(s) => {
+            budget.charge(s.len())?;
+            Ok(LispValue::Int(s.chars().count() as i64))
+        }
         _ => Err(LispError::TypeError {
             expected: "list/string".into(),
             actual: type_of(&args[0]),
@@ -1223,7 +1233,7 @@ fn length(
 fn nth(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     if args.len() != 2 {
         return Err(LispError::Arity("nth expects 2 args".into()));
@@ -1237,7 +1247,11 @@ fn nth(
             });
         }
     };
-    let items = as_list(&args[1])?.to_vec();
+    let list = as_list(&args[1])?;
+    // to_vec clones the spine and every string head — charge that walk
+    // before cloning (lisp-repair L3: traversal pays, not argument pass).
+    charge_list_spine(&list, budget)?;
+    let items = list.to_vec();
     Ok(if idx >= items.len() {
         LispValue::Nil
     } else {
@@ -1248,12 +1262,17 @@ fn nth(
 fn reverse(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     if args.len() != 1 {
         return Err(LispError::Arity("reverse expects 1 arg".into()));
     }
-    let mut items = as_list(&args[0])?.to_vec();
+    // to_vec clones the spine and every string head; from_vec allocates a
+    // new cons per element — charge the traversal before doing it
+    // (lisp-repair L3).
+    let list = as_list(&args[0])?;
+    charge_list_spine(&list, budget)?;
+    let mut items = list.to_vec();
     items.reverse();
     Ok(LispValue::List(List::from_vec(items)))
 }
@@ -1381,12 +1400,19 @@ fn assoc_fn(
 fn append_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     let mut combined: Vec<LispValue> = Vec::new();
     for arg in args {
         match arg {
-            LispValue::List(l) => combined.extend(l.to_vec()),
+            // to_vec clones the spine and every string head; from_vec
+            // allocates a new cons per output element — charge per input
+            // before extending (lisp-repair L3: traversal pays, not
+            // argument pass).
+            LispValue::List(l) => {
+                charge_list_spine(l, budget)?;
+                combined.extend(l.to_vec());
+            }
             LispValue::Nil => {}
             _ => {
                 return Err(LispError::TypeError {
@@ -1641,6 +1667,29 @@ fn member_fn(
     Ok(LispValue::Bool(false))
 }
 
+/// Charge the cost of a `to_vec`-style traversal: one tick per spine node
+/// plus the byte cost of string/symbol heads (which own their bytes; nested
+/// lists are Rc-cloned cheaply and are charged by their own traversals).
+/// This is the per-node walk the argument-passing charge used to perform on
+/// every call — lisp-repair L3 moved it from every argument pass to the
+/// builtins that actually traverse (`append`/`nth`/`reverse`). Deep
+/// structural work (`eq`/`assoc`/`member`) keeps the recursive
+/// `charge_value`, which is what those builtins actually do.
+fn charge_list_spine(list: &Rc<List>, budget: &mut EvalBudget) -> Result<(), LispError> {
+    let mut cursor = Some(list.as_ref());
+    while let Some(node) = cursor {
+        if node.is_nil() {
+            break;
+        }
+        budget.tick()?;
+        if let LispValue::String(text) | LispValue::Symbol(text) = &node.head {
+            budget.charge(text.len())?;
+        }
+        cursor = node.tail.as_deref();
+    }
+    Ok(())
+}
+
 // Charge expansion, not just shared Rc nodes: a small DAG can serialize to an
 // exponentially large JSON tree. Validation happens before recursive copying.
 #[stacksafe::stacksafe]
@@ -1690,26 +1739,22 @@ fn charge_json(value: &Value, budget: &mut EvalBudget, depth: u64) -> Result<(),
     Ok(())
 }
 
+/// Charge one tick per argument plus the byte cost of top-level string and
+/// symbol arguments. List nodes are NOT re-charged here: every node is
+/// charged once at creation (parse source bytes, `list`'s per-arg ticks, or
+/// `charge_json` for env values), and the builtins that actually traverse
+/// or clone a list charge it themselves (`assoc`/`member`/`eq` via
+/// `charge_value`; `length`/`nth`/`reverse`/`append` per node). The former
+/// per-node re-charge on EVERY argument pass made O(1) list ops (`is_null`,
+/// `car`, `cdr`) cost O(len) per call — a 600-element walker paid 368,531
+/// steps and exceeded the 100,000 default (lisp-repair L3; pinned by
+/// `walker_step_cost_is_linear_and_fits_default_budget` and
+/// `constant_time_list_ops_do_not_charge_per_node` in the test module).
 fn charge_native_arguments(args: &[LispValue], budget: &mut EvalBudget) -> Result<(), LispError> {
     for value in args {
         budget.tick()?;
-        match value {
-            LispValue::String(text) | LispValue::Symbol(text) => budget.charge(text.len())?,
-            LispValue::List(list) => {
-                let mut cursor = Some(list.as_ref());
-                while let Some(node) = cursor {
-                    if node.is_nil() {
-                        break;
-                    }
-                    budget.tick()?;
-                    // Nested Rc values clone cheaply; strings and symbols own bytes.
-                    if let LispValue::String(text) | LispValue::Symbol(text) = &node.head {
-                        budget.charge(text.len())?;
-                    }
-                    cursor = node.tail.as_deref();
-                }
-            }
-            _ => {}
+        if let LispValue::String(text) | LispValue::Symbol(text) = value {
+            budget.charge(text.len())?;
         }
     }
     Ok(())

@@ -267,25 +267,21 @@ fn budget_string_value_is_refused() {
 }
 
 #[test]
-fn step_cost_anomaly_walker_exceeds_default_steps() {
-    // L3 measurement target, pinned so it cannot be lost: a 600-element
-    // list walker exceeds the DEFAULT 100,000-step budget (observed
-    // StepLimitExceeded(100000) — ≥167 steps/element) even when max_depth
-    // is raised. The dialect doc's own guidance says raise max_depth for
-    // large lists; the step budget, not depth, is the binding constraint
-    // at this scale. L3 benches quantify the per-element step cost; if the
-    // accounting is inflated, this is the reproducing test for the fix.
+fn walker_600_element_list_completes_at_default_budget() {
+    // FIXED (lisp-repair L3): a 600-element list walker completes at the
+    // DEFAULT 100,000-step budget. Before: StepLimitExceeded(100000) —
+    // charge_native_arguments re-charged every list node on each argument
+    // pass, so the O(1) is_null/cdr pair cost O(len) per level: 368,531
+    // steps for 600 elements (quadratic; measured by the engine's
+    // walker_step_cost_is_linear_and_fits_default_budget binary-search
+    // instrument). The per-node charge now lives only in the traversing
+    // builtins (length/nth/reverse/append/assoc/member/eq), so the walker
+    // is linear and fits the default with an order of magnitude of headroom.
     let form =
         "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)";
     let items: Vec<i32> = (0..600).collect();
     let out = run(json!({"form": form, "env": {"items": items}, "max_depth": 8192}));
-    assert_eq!(
-        out,
-        Err(
-            "Lisp work exceeded max_steps (100000) — input, computation, or output is too large"
-                .to_string()
-        )
-    );
+    assert_eq!(out, Ok(json!(600)));
 }
 
 // ── lie-class fixes landed (L2) — these assertions are the FIXED behavior ─
