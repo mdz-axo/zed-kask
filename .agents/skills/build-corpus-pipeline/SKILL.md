@@ -635,7 +635,16 @@ evidence and correction findings, not duplicate corpus versions.
 
 ## Stage 9 — Ground, ingest, assemble and seek training approval
 
-1. Ground the candidates with `corpus_ground_generated_qa(generated_jsonl,
+1. Stage 7's immutable generated JSONL contains QA envelopes **and** terminal
+   `status="skipped"` rows. Stage 9's grounding tool rejects mixed files. After
+   the Stage 7 and Stage 8 gates pass, derive one disjoint, immutable
+   `candidate_jsonl` with `jq -c 'select(.status != "skipped")'` over the
+   complete generated file. Preserve the original for skip auditing; refuse a
+   zero-candidate projection, jq errors, unexpected non-skip rows, or a mismatch
+   between generated physical rows and candidate rows plus reconciled skips.
+   Record both file hashes, paths and counts; do not hand-edit candidate rows,
+   filter other failure states, or submit an unfinished writer's output. Ground
+   the projected file with `corpus_ground_generated_qa(candidate_jsonl,
    source_chunks_jsonl, output_dir)`. Deterministic and zero-inference: it
    verifies every evidence quote byte-exactly against the canonical tagged
    chunks (which must be classified under `published-term-resolution-v2` with
@@ -644,7 +653,7 @@ evidence and correction findings, not duplicate corpus versions.
    mechanical facts only — no verified/authorized/confidence fields exist in
    it, and rows whose answers are not byte-exact inside their own evidence are
    recorded honestly as `model_inference`. It authorizes nothing.
-2. Dry-run `corpus_ingest_qa(generated_jsonl, grounding_manifest,
+2. Dry-run `corpus_ingest_qa(candidate_jsonl, grounding_manifest,
    source_chunks_jsonl, output, db_path, dataset, owner,
    dry_run=true)`. The gate runs before dedup, output, and DB access: it
    re-hashes the bundle, checks row bijection against the candidate file,
@@ -666,7 +675,9 @@ evidence and correction findings, not duplicate corpus versions.
    purge it before replacement. Do not infer/broaden a purge or retain parallel
    datasets. Retained-row indices restart per call; arbitrary partitioned calls
    to the same dataset are not a safe replacement for whole-dataset reconciliation.
-4. Reconcile `total_nonblank_rows = generator_errors + malformed + parsed`,
+4. Reconcile the **candidate-only** file: `total_nonblank_rows = parsed`
+   with zero `generator_errors`/`malformed`; reconcile the original mixed
+   file's skipped count separately against Stage 7. Then require
    `parsed = filter_drops + duplicates + retained`, and non-dry
    `retained = stored + failed`. `stored_h_mems = stored`, `deduped = retained`,
    `filtered = duplicates + retained`. `status=partial_failure` and each

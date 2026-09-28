@@ -35,8 +35,8 @@ an issue in an upstream non-D-seam file, report it with `deferred: true` and
 3. `AnyJsonValue` vs `serde_json::Value` in MCP tool input structs (schemars renders `Value` as bare `true`).
 4. `unwrap_or(0)` on regulation-loop sense inputs.
 5. Inference IPC dispatch — delegated-tool allowlist enforced before dispatch; per-tick call ceiling for unbudgeted agents.
-6. Marketplace signing — Ed25519 verify + expiry window, fail-closed.
-7. `input_mapping` taint propagation before `context.insert`.
+6. Retired skill marketplace (D1/D30) — check for unexpected reintroduction of an install path; absence of marketplace signing is not a defect when no marketplace exists.
+7. Retired taint-propagation check (D3) — verify no live path claims a removed `input_mapping`/`context.insert` enforcement gate; assess active IPC authorization at item 5 instead.
 8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
 9. D28 artifact storage path safety — `THREADS_DB_PATH_OVERRIDE` / `GLOBAL_SKILLS_DIR_OVERRIDE` hooks canonicalize and reject paths resolving inside Zed's app/data/config dirs; `resolve_under_data_dir` enforces the single rooted tree. Verify no MCP server DB path escapes `{kask_data_dir}/mcp/{server_id}/`.
 10. Inference-provider credential consolidation (D29 successor) — one key, one location: a provider's API key lives at its `api_url` keychain slot (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`, `https://api.runpod.io`, `https://api.kilo.ai/api/gateway`), the same slot zed's `ApiKeyState` reads; every consumer (`credential_urls_for_mcp` via `credential_url_for_key`, `resolve_embedding_credentials`, the IPC batch/rerank paths, the settings UI) resolves that one slot. Verify no consumer reads a `kask://credentials/{openrouter,deepinfra,runpod,kilocode}` slot (the 2026-08-31 split-brain: a stale legacy copy fed MCP servers a dead key — DeepInfra 401). `resolve_ocr_model` uses `eq_ignore_ascii_case` to match `RunPod/...` against lowercase `runpod/...`.
@@ -73,8 +73,8 @@ severity). Do not hunt for the phantom's enforcement point.
       { "id": 2, "name": "Per-agent mcp_tools allowlist", "status": "...", "enforcement_point": "..." },
       { "id": 3, "name": "Credential scoping per MCP server", "status": "...", "enforcement_point": "..." },
       { "id": 4, "name": "Schema validation (AnyJsonValue)", "status": "...", "enforcement_point": "..." },
-      { "id": 5, "name": "Signing / expiry (marketplace)", "status": "...", "enforcement_point": "..." },
-      { "id": 6, "name": "Taint propagation / IFC (FIDES)", "status": "...", "enforcement_point": "..." },
+      { "id": 5, "name": "Retired marketplace residue", "status": "not_applicable|unexpected_reintroduction", "enforcement_point": "...", "notes": "Do not assert an absent signing gate is a vulnerability when installation is retired" },
+      { "id": 6, "name": "Retired taint-gate residue", "status": "not_applicable|unexpected_reintroduction", "enforcement_point": "...", "notes": "Do not claim a removed taint check enforces IPC authority" },
       { "id": 7, "name": "Error classification (per-variant)", "status": "...", "enforcement_point": "..." }
     ],
     "verdict": "Pass|Conditional|Fail"

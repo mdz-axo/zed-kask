@@ -1111,7 +1111,7 @@ async fn retrieval_upsert_preserves_unannotated_text() {
     let tags = directory.path().join("tags.jsonl");
     std::fs::write(
         &tags,
-        json!({"entity_ref":"corpus:test:1", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"river.txt", "text":ORIGINAL, "candidate_terms":["character"], "ontology_tags":{"golem":[hkask_bridge_ontology::golem::CHARACTER]}, "concepts":[hkask_bridge_ontology::golem::CHARACTER]}).to_string(),
+        json!({"entity_ref":"corpus:test:1", "classification":{"status":"classified", "ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL}, "source":"river.txt", "text":ORIGINAL, "candidate_terms":[hkask_bridge_ontology::golem::CHARACTER], "ontology_tags":{"golem":[hkask_bridge_ontology::golem::CHARACTER]}, "concepts":[hkask_bridge_ontology::golem::CHARACTER]}).to_string(),
     )
     .expect("tags");
     request.tagged_jsonl = Some(tags.to_string_lossy().into());

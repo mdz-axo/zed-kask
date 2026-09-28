@@ -20,9 +20,10 @@ use ui::SharedString;
 /// term, rung 1; a metric with no FIBO term is a `sumo:Quantity`,
 /// rung 3):
 ///
-/// 1. **Domain supplement** — the domain registries (FIBO, OMC, PKO,
-///    SEPIO, GOLEM, SDMX, ML-Schema, RDF). Never force a term into an
-///    ontology that has no place for it in its graph.
+/// 1. **Domain supplement** — pinned published sources (FIBO Q2 Release,
+///    OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema,
+///    RDF/RDFS), plus local SDMX identifiers (not published RDF IRIs).
+///    Never force a term into an ontology that has no place for it.
 /// 2. **Derived concepts** — recorded compositions over anchored
 ///    constituents, each carrying its identity and its authority
 ///    citation (`derived::DERIVED_CONCEPTS`). This is where operator
@@ -34,10 +35,12 @@ use ui::SharedString;
 ///    concept fits.
 /// 4. **General vocabulary** — the full schema.org release, after SUMO so a
 ///    formal category is preferred.
-/// 5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+/// 5. **State-axis senses** — published Dublin Core/BIBO/CiTO terms after
+///    schema.org, so artifact typing does not outrank formal categories.
+/// 6. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
 ///
-/// A published resolution carries the ontology's own `definition` and its
-/// `source` file. Every other sense found on any rung is listed in
+/// A published resolution carries the ontology's own `definition` when
+/// supplied and its `source` file. Every other sense found on any rung is listed in
 /// `alternatives` — the same word often names different concepts in
 /// different vocabularies, and the choice stays visible.
 ///
@@ -368,7 +371,7 @@ mod tests {
     }
 
     /// expect: [P1] The ladder invariant, walked exhaustively: every
-    /// resolution terminates on a real anchor — tier is one of the five
+    /// resolution terminates on a real anchor — tier is one of the six
     /// rungs and the concept is never empty. Nothing is ever untagged.
     #[test]
     fn the_ladder_always_terminates_on_a_real_anchor() {
@@ -376,6 +379,7 @@ mod tests {
             "corporation",
             "net margin",
             "quantity",
+            "academic article",
             "zephyr coefficient",
             "",
             "  ",
@@ -384,7 +388,12 @@ mod tests {
             assert!(
                 matches!(
                     resolved.tier.as_str(),
-                    "domain_supplement" | "derived" | "upper" | "general_vocabulary" | "core"
+                    "domain_supplement"
+                        | "derived"
+                        | "upper"
+                        | "general_vocabulary"
+                        | "state_axis"
+                        | "core"
                 ),
                 "{term}: unrecognized tier {resolved:?}"
             );

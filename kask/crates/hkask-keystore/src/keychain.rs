@@ -9,10 +9,9 @@
 //! There is exactly one copy of each secret, in `kask://credentials/*`.
 
 use crate::keychain_keys::KEY_DB_PASSPHRASE;
+use crate::passphrase::DEFAULT_PASSPHRASE;
 use hkask_types::NotFound;
 use hkask_types::secret::SecretRef;
-use rand::TryRngCore;
-use std::path::Path;
 use thiserror::Error;
 use tracing::info;
 use zeroize::Zeroizing;
@@ -372,93 +371,30 @@ pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError
     Ok(Zeroizing::new(passphrase.to_string()))
 }
 
-/// Resolve the existing DB key or generate one for a fresh data tree.
-/// An existing managed database with no key is not first-run provisioning:
-/// its contents require the lost key and must be explicitly discarded.
+/// Provision the DB passphrase — the one canonical chain (env → keychain
+/// → first-run default), so no consumer re-implements resolution tiers.
+///
+/// `resolve_db_passphrase_string` covers env → keychain; this adds the
+/// first-run tier: when no entry exists, store the fixed default
+/// (`DEFAULT_PASSPHRASE`) and return it. The bridge's agent provisioning
+/// and the MCP launch path both route through here — one chain keeps the
+/// rotation-ordering invariant (rotate every DB before the keychain
+/// write) anchored to a single resolution path.
 pub fn provision_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError> {
-    provision_db_passphrase_under(&hkask_types::agent_paths::resolve_data_dir())
-}
-
-fn provision_db_passphrase_under(data_dir: &Path) -> Result<Zeroizing<String>, KeychainError> {
     match resolve_db_passphrase_string() {
         Ok(passphrase) => Ok(passphrase),
         Err(KeychainError::NotFound(_)) => {
-            refuse_existing_databases(data_dir)?;
-            let mut bytes = Zeroizing::new([0_u8; 32]);
-            rand::rngs::OsRng
-                .try_fill_bytes(&mut *bytes)
-                .map_err(|error| {
-                    KeychainError::Platform(format!("DB key generation failed: {error}"))
-                })?;
-            const HEX: &[u8; 16] = b"0123456789abcdef";
-            let mut key = Zeroizing::new(String::with_capacity(64));
-            for byte in bytes.iter() {
-                key.push(char::from(HEX[usize::from(byte >> 4)]));
-                key.push(char::from(HEX[usize::from(byte & 15)]));
-            }
-            Keychain.store_by_key(KEY_DB_PASSPHRASE, &key)?;
-            info!("Provisioned a new DB key in the OS keychain");
-            Ok(key)
+            let word = DEFAULT_PASSPHRASE.to_string();
+            Keychain.store_by_key(KEY_DB_PASSPHRASE, &word)?;
+            info!(
+                "Provisioned the DB passphrase with the first-run default and stored it \
+                 in the keychain. Change it via the settings UI (Security page) or the \
+                 HKASK_DB_PASSPHRASE env var."
+            );
+            Ok(Zeroizing::new(word))
         }
-        Err(error) => Err(error),
+        Err(e) => Err(e),
     }
-}
-
-fn refuse_existing_databases(data_dir: &Path) -> Result<(), KeychainError> {
-    // Only managed data roots are inspected; independent user files elsewhere
-    // cannot authorize minting a replacement for an existing managed store.
-    let mut pending = vec![data_dir.join("agents"), data_dir.join("mcp")];
-    let mut visited = 0_usize;
-    while let Some(directory) = pending.pop() {
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(KeychainError::Platform(format!(
-                    "Cannot inspect {} before DB key provisioning: {error}",
-                    directory.display()
-                )));
-            }
-        };
-        for entry in entries {
-            visited += 1;
-            if visited > 100_000 {
-                return Err(KeychainError::Platform(
-                    "DB key provisioning inventory exceeded 100000 entries".into(),
-                ));
-            }
-            let entry = entry.map_err(|error| {
-                KeychainError::Platform(format!(
-                    "Cannot inspect {} before DB key provisioning: {error}",
-                    directory.display()
-                ))
-            })?;
-            let kind = entry.file_type().map_err(|error| {
-                KeychainError::Platform(format!(
-                    "Cannot inspect {} before DB key provisioning: {error}",
-                    entry.path().display()
-                ))
-            })?;
-            if kind.is_symlink() {
-                return Err(KeychainError::Platform(format!(
-                    "DB key provisioning cannot inspect symlink {}",
-                    entry.path().display()
-                )));
-            }
-            if kind.is_dir() {
-                pending.push(entry.path());
-            } else if kind.is_file() && entry.path().extension().is_some_and(|ext| ext == "db") {
-                return Err(KeychainError::NotFound(hkask_types::NotFound {
-                    entity_type: "DB key".into(),
-                    id: format!(
-                        "{} exists but the OS keychain entry is missing; discard the old data explicitly before creating a new store",
-                        entry.path().display()
-                    ),
-                }));
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Resolve a SecretRef to actual secret bytes.
@@ -587,41 +523,24 @@ mod integration_tests {
             .expect("delete temporary passphrase");
     }
 
-    /// expect: "Fresh stores receive one private key, while a lost key never overwrites an existing store" [P1]
+    /// expect: "First-run provisioning is stable without touching another user's key" [P1]
     #[test]
-    fn provisioning_is_random_stable_and_refuses_an_existing_database() -> Result<(), KeychainError>
-    {
-        let root =
-            tempfile::tempdir().map_err(|error| KeychainError::Platform(error.to_string()))?;
-        let first = provision_db_passphrase_under(root.path())?;
-        assert_eq!(first.len(), 64);
-        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        let second = provision_db_passphrase_under(root.path())?;
-        assert_eq!(first.as_str(), second.as_str());
-        Keychain.delete_by_key(KEY_DB_PASSPHRASE)?;
-        let other_root =
-            tempfile::tempdir().map_err(|error| KeychainError::Platform(error.to_string()))?;
-        let different = provision_db_passphrase_under(other_root.path())?;
-        assert_ne!(first.as_str(), different.as_str());
-        Keychain.delete_by_key(KEY_DB_PASSPHRASE)?;
-        let db_dir = root.path().join("agents/curator");
-        std::fs::create_dir_all(&db_dir)
-            .map_err(|error| KeychainError::Platform(error.to_string()))?;
-        std::fs::write(db_dir.join("curator.db"), b"encrypted database")
-            .map_err(|error| KeychainError::Platform(error.to_string()))?;
-        let error = provision_db_passphrase_under(root.path())
-            .expect_err("lost key cannot rekey existing DB");
-        assert!(matches!(error, KeychainError::NotFound(_)));
-        assert!(
-            error
-                .to_string()
-                .contains("discard the old data explicitly")
+    fn provision_stores_default_when_absent_and_is_stable_after() {
+        let first = provision_db_passphrase_string();
+        let second = provision_db_passphrase_string();
+
+        let first = first.expect("provision with no entry must store the default and return it");
+        assert_eq!(
+            first.as_str(),
+            DEFAULT_PASSPHRASE,
+            "first-run provisioning must use the fixed default"
         );
-        assert!(matches!(
-            Keychain.retrieve_by_key(KEY_DB_PASSPHRASE),
-            Err(KeychainError::NotFound(_))
-        ));
-        Ok(())
+        let second = second.expect("second provision must resolve the stored entry");
+        assert_eq!(
+            second.as_str(),
+            DEFAULT_PASSPHRASE,
+            "provisioning must be idempotent — the stored entry wins on the second call"
+        );
     }
 
     #[test]
@@ -662,9 +581,7 @@ mod integration_tests {
                 Keychain.retrieve_by_key(KEY_DB_PASSPHRASE),
                 Err(KeychainError::NotFound(_))
             ));
-            let root =
-                tempfile::tempdir().map_err(|error| KeychainError::Platform(error.to_string()))?;
-            provision_db_passphrase_under(root.path())?;
+            provision_db_passphrase_string()?;
             Keychain.delete_by_key(KEY_DB_PASSPHRASE)?;
             Ok(())
         })

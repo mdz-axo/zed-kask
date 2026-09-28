@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.9.0"
+version: "0.10.0"
 status: "Phase 1–4 partial: L3 validated; L5 Json error fixed, other loops open"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -62,6 +62,8 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Trigger:** user prompt submit from the agent panel; tool-result continuation within a turn
 - **Hands off to:** L3 (tool dispatch), L5 (model streaming), L2 (skill spans/outcomes), L10 (turn-end memory ingest), L7 (thread events → panel), L12 (research-run sources from web tools)
 - **Prediction:** 3 / 2 / 0.50
+- **Phase 1 scoped graph (IS):** pending message/tools sensed in `crates/agent/src/thread.rs:2984-3006` → request/context assembled (`:3280-3334`) → streamed tool/refusal/truncation interpreted (`:4037-4115`) → tool dispatched (`:4371-4426`) → result marked completed/failed for the next round (`:3955-3980`), or the turn ends (`:3541-3595`). L3 takes MCP dispatch via `tools/context_server_registry.rs:705-732`; L7 observes thread events via `crates/agent_ui/src/conversation_view.rs:1475-1477`; L10 turn ingestion follows asynchronously (`thread.rs:3019-3086`). The ordinary model turn calls `stream_completion` directly (`thread.rs:3349-3354`): the L5 IPC handoff listed above is **not** claimed for that particular route. Five properties in this bounded scope: closed for tool-result continuation; timely conditional on retries and detached ingestion; accurate for stored tool status; complete only for the inspected path; actionable for tool errors, while a memory-write failure is log-only.
+- **Phase 2 observation (IS, deferral):** `EndTurn` precedes detached memory ingestion (`thread.rs:3022-3086`), and the panel stop handler has no memory receipt (`conversation_view.rs:1802-1815`). INFERRED: a completed turn does not guarantee later recall. Falsifier: force ingestion failure and observe a distinct memory-success acknowledgement on the completed turn. A synchronous-ingest change would alter turn latency and fails behavior preservation; defer until a functional guarantee is specified. No deletion candidate admitted.
 
 ### L2 — Regulation/curator cybernetic cycle — prior minimalism pass closed; error-path diagnosis open
 - **Crate/path:** `kask/crates/hkask-regulation` (runtime.rs, cybernetics_loop.rs, cybernetics_loop/cycle.rs, metacognition.rs, set_points.rs, energy.rs, dampener.rs, sensor_provider.rs)
@@ -115,6 +117,8 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Trigger:** per-tool requests chained by skills (convert → triage/OCR → chunk → tag → embed → prompts → QA → ground → ingest → assemble)
 - **Hands off to:** L5 (embeddings/rerank), L10 (corpus DB), L18 (assembled training datasets)
 - **Prediction:** 3 / 2 / 0.55
+- **Phase 1 scoped graph (IS):** source extraction/chunking (`tools/document.rs:35-72,355-419`) → model classification (`tools/tagging/ops.rs:263-310`) → embedding (`tools/semantic.rs:228-250`, L5) → prepared prompts (`services/prompt_builder.rs:45-91`) → generation (`services/qa_pipeline.rs:1216-1277`) → grounding (`services/qa_grounding.rs:223-269`) → ingestion (`tools/corpus.rs:174-247`, L10 corpus DB) → explicit corpus-DB selection for training assembly (`hkask-mcp-training/src/tools/dataset.rs:86-129`, L18). The skill drives decisions and reconciles results; this is not one automatic server cycle. Five properties: closed conditional on caller reconciliation/retrieval; timely conditional on bounded waves; accurate only at the mechanical-citation gate; complete only after every source/stage count reconciles; actionable through surfaced failures and stop rules.
+- **Phase 2 seam and process correction (IS):** generation can output `status="skipped"` (`services/qa_pipeline.rs:1252-1277`), while `read_grounding_candidates` rejects any skip-or-error row (`services/qa_grounding.rs:223-269`); the old skill Stage 9 passed the mixed generated file directly. Falsifier: show a mixed file accepted by the grounding gate or a prior candidate-only projection. The existing `build-corpus-pipeline` skill now replaces that handoff with a candidate-only projection filtering **only** reconciled skips, retaining the original file and reconciling counts/hashes before grounding and ingestion; no server contract or additional script was introduced. A synthetic `jq` probe kept candidate and error rows and excluded the skip; **no full end-to-end corpus run or next-stage tool invocation was performed**, so the capability is not verified and L6 remains open. Further addition is deferred until a caller-selected corpus exercises the chain. The candidate-only file is the one whose hash the grounding manifest binds.
 
 ### L7 — Agent panel & kask widget update/render loops
 - **Crate/path:** `crates/agent_ui/src/agent_panel.rs` (14,366 ln) + kask widget/panel crates
@@ -123,6 +127,8 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Trigger:** GPUI entity events from threads/tasks; user interaction
 - **Hands off to:** L1 (prompt submit), L9 (kanban widget ↔ server), L13 (swarm panel ↔ server)
 - **Prediction:** 2 / 2 / 0.45
+- **Phase 1 scoped graph (IS):** `AcpThreadEvent::NewEntry` reaches `conversation_view.rs:1475-1477,1736-1738` → entry/view sync (`:1742-1755`) → active-view change notifies `agent_panel.rs:4662-4677` → render consumes view (`:6641-6648`). For a kanban task move: click stages intent (`crates/hkask-kanban-widget/src/view.rs:662-692`), confirmation dispatches (`:279-289`), `move_controller.rs:194-229` applies optimistic state and invokes L9 tool, then clears/rolls back and notifies (`:230-253`). L1 compose-back is a separate editor prefill (`view.rs:919-931`); no L13 refresh claim follows solely from a swarm badge. Five properties in these two paths: closed conditional on authoritative update; timely unmeasured; accurate conditional on server readback; complete not established for other panels/widgets; actionable via dispatch status/error.
+- **Phase 2 bounded observations:** IS — `set_body` declines an incoming body while a task move is pending/in flight (`view.rs:173-203`); INFERRED — a concurrent authoritative update may remain unseen after completion. Falsifier: prove a fresh authoritative `set_body` is guaranteed after every completion. INFERRED — optimistic mutation without an immediate explicit notify (`move_controller.rs:215-229`) may delay visible feedback; falsifier: a GPUI rendered-frame check showing immediate repaint. No such runtime checks ran; no deletion candidate admitted and no zed-side edits made. Defer pending a measured panel seam test.
 
 ### L8 — Forecast/calibration loop — AUDITED & CLOSED 2026-09-27
 - **Crate/path:** `kask/crates/hkask-forecast` + `kask/mcp-servers/hkask-mcp-{companies,prediction-markets}`
@@ -345,6 +351,14 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.10.0 bounded Phase 1–2 maps added for L1, L6, L7,
+  L9 and L10. The Stage 7→9 corpus QA seam was source-confirmed: skips in
+  generator output fail grounding. The existing `build-corpus-pipeline` skill
+  now projects candidate-only rows, retains and reconciles the mixed original;
+  a synthetic jq check confirmed skip-only filtering but **no live corpus run**
+  verified the repaired capability. No new production source lines for that
+  skill change; L1/L7/L9/L10 findings remain open or deferred with falsifiers.
+  This update is uncommitted, as is the L5 fix; no global completion claimed.
 - 2026-09-27 — v0.9.0 L3 current-tree library/integration tests and full gates passed; the earlier fixture-suite failure was an invalid parallel invocation. L5's JSON-error classification failed at the existing IPC seam, then passed after a −1-production-line change; 25 test lines added and 54/54 library tests passed. The Api error-shape impedance remains deferred. This follow-up is uncommitted; do not cite a completion hash for it.
 - 2026-09-27 — v0.8.0 operator approval recorded; L3 current-tree entry
   points and the actual +38 production-line delta from `16271e3c60` supersede

@@ -3,7 +3,7 @@ name = "hkask-keystore"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "OS keychain integration and database key provisioning for hKask"
+description = "OS keychain integration and passphrase defaults for hKask"
 
 
 [lib]
@@ -12,14 +12,10 @@ path = "src/hkask_keystore.rs"
 [dependencies]
 hkask-types.workspace = true
 oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
-rand.workspace = true
 async-std.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

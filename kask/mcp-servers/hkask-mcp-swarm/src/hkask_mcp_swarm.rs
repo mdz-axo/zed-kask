@@ -202,16 +202,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let (mut config, warning) = SwarmConfig::from_env(api_key);
             // The ONE shared DB passphrase — canonical 2-tier resolution
             // (ctx.credentials → env → keychain), same as every other kask
-            // SQLCipher DB opener. A missing key degrades local memory
-            // visibly instead of substituting a compiled-in secret.
+            // SQLCipher DB opener. Overrides the config's default fallback
+            // when the credential is present.
             match hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials) {
                 Ok(passphrase) => config.memory_passphrase = passphrase,
                 Err(e) => {
                     tracing::warn!(
                         target: "hkask.mcp.swarm",
                         error = %e,
-                        "HKASK_DB_PASSPHRASE not resolved — local swarm memory \
-                         is unavailable; no fallback key will be used"
+                        "HKASK_DB_PASSPHRASE not resolved — the swarm memory DB \
+                         will open with the default fallback passphrase"
                     );
                 }
             }
@@ -223,8 +223,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             }
             // Surface a missing or too-short DB passphrase so the operator
             // distinguishes "not configured" from "configured but broken"
-            // (the .rules startup-failure-signal rule). A missing key
-            // leaves local knowledge unavailable until configured.
+            // (the .rules startup-failure-signal rule). The default is
+            // "allostery" (pre-release) so this should not fire on first run.
             if config.memory_passphrase.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
