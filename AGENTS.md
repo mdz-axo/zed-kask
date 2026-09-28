@@ -20,7 +20,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 ### Skill Locations
 
 - **Project-local skills:** `.agents/skills/<name>/SKILL.md` (in the worktree)
-- **Global skills:** `~/.local/share/zed-kask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing)
+- **Global skills:** `~/.local/share/zed-kask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing; copies of skills retired from the payload are removed at startup — user-added files in a retired-name directory block the removal)
 - **Prompt templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
 - `skill-discovery` matches tasks to installed skills (route) and acquires NEW skills when route emits uncovered capabilities (detect-gap → evaluate).
 

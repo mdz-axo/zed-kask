@@ -899,6 +899,69 @@ pub fn is_shipped_skill(name: &str) -> bool {
         .any(|(shipped, _)| *shipped == name)
 }
 
+/// Skills that shipped in a past payload and were later removed from the
+/// authored tree. Installed binaries seed every shipped name into the
+/// global skills directory, and the seeder visits only shipped names —
+/// without [`remove_retired_skill_copies`] a retired skill's copied
+/// directory lingers loadable forever. The retirement change that removes
+/// a skill from `.agents/skills/` appends its name here in the same
+/// commit. Derived 2026-09-28 from git history: every name whose
+/// `.agents/skills/<name>/SKILL.md` was deleted, existed without
+/// `shipped: false` in at least one revision (so some payload carried it),
+/// and is absent from HEAD.
+const RETIRED_SKILL_NAMES: &[&str] = &[
+    "adapter-lifecycle",
+    "adversarial-red-team",
+    "attack-taxonomy-mapper",
+    "calibration-stewardship",
+    "capabilities-reasoner",
+    "caveman",
+    "codegraph",
+    "coherence-review",
+    "constraint-forces-recast",
+    "constraints-review",
+    "eqm-improvement",
+    "gemba-walk",
+    "goal-analysis",
+    "gpa-evolution",
+    "gpui-test",
+    "gradient-seeded-recombination",
+    "graph-audit",
+    "handoff",
+    "harness-optimize",
+    "idiomatic-lisp",
+    "improve-codebase-architecture",
+    "kali-audit",
+    "kanban-board-builder",
+    "kanban-task-decomposition",
+    "kanban-task-delegation",
+    "kata-coaching",
+    "kata-starter",
+    "lint-creator",
+    "lisp-scaffold-reasoning",
+    "logo-builder",
+    "magna-carta-verifier",
+    "pragmatic-laziness",
+    "principle-constraints",
+    "proptest",
+    "qa-script-builder",
+    "refactor-service-layer",
+    "runtime-posture-monitor",
+    "scenario-builder",
+    "self-critique-revision",
+    "semantic-graph-audit",
+    "sequential-inquiry",
+    "skill-logic-audit",
+    "skill-router",
+    "strangler-fig",
+    "supply-chain-sentinel",
+    "swarm-compose-guide",
+    "swarm-steering",
+    "ui-layout-discipline",
+    "zed-cherry-pick",
+    "zoom-out",
+];
+
 /// Discover shipped skills from the authoring checkout, not a copied global
 /// body. Keep global-only user skills under their existing names.
 pub async fn load_authoritative_global_skills(
@@ -1046,11 +1109,70 @@ pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
     seed_shipped_skills_from_source(fs, skills_dir, dev_source.as_deref()).await;
 }
 
+/// Remove copied global directories for skills retired from the shipped
+/// payload (see [`RETIRED_SKILL_NAMES`]). The seeder visits only shipped
+/// names, so without this sweep a retired skill's stale copy stays
+/// loadable in an installed binary forever — stale methodology whose
+/// templates may no longer even resolve. Refuses anything the seeder did
+/// not plainly write: symlinks, directories with extra files, and
+/// non-directories are left in place with a warning, so a user-adopted
+/// directory is never destroyed.
+async fn remove_retired_skill_copies(fs: &dyn Fs, skills_dir: &Path) {
+    for name in RETIRED_SKILL_NAMES {
+        let skill_dir = skills_dir.join(name);
+        let skill_file = skill_dir.join(SKILL_FILE_NAME);
+        if !fs.path_exists(&skill_dir) {
+            continue;
+        }
+        match fs.metadata(&skill_dir).await {
+            Ok(Some(metadata)) if metadata.is_symlink => {
+                log::warn!("Retired skill '{name}' is a symlink; refusing to remove it");
+                continue;
+            }
+            Ok(Some(metadata)) if metadata.is_dir => {}
+            Ok(_) => {
+                log::warn!(
+                    "Retired skill '{name}' has an unexpected disk entry; refusing to remove it"
+                );
+                continue;
+            }
+            Err(error) => {
+                log::warn!("Cannot inspect retired skill '{name}': {error}");
+                continue;
+            }
+        }
+        let entries = match fs.read_dir(&skill_dir).await {
+            Ok(entries) => entries.collect::<Vec<_>>().await,
+            Err(error) => {
+                log::warn!("Cannot inspect retired skill '{name}': {error}");
+                continue;
+            }
+        };
+        if entries
+            .iter()
+            .any(|entry| !matches!(entry, Ok(path) if path == &skill_file))
+        {
+            log::warn!("Retired skill '{name}' has extra files; refusing to remove the directory");
+            continue;
+        }
+        if fs.is_file(&skill_file).await {
+            if let Err(error) = fs.remove_file(&skill_file, RemoveOptions::default()).await {
+                log::warn!("Cannot remove retired skill '{name}': {error}");
+                continue;
+            }
+        }
+        if let Err(error) = fs.remove_dir(&skill_dir, RemoveOptions::default()).await {
+            log::warn!("Cannot remove retired skill directory '{name}': {error}");
+        }
+    }
+}
+
 async fn seed_shipped_skills_from_source(
     fs: &dyn Fs,
     skills_dir: &Path,
     dev_source: Option<&Path>,
 ) {
+    remove_retired_skill_copies(fs, skills_dir).await;
     let mut names: Vec<(String, String)> = shipped_skill_seed()
         .iter()
         .map(|(name, content)| (name.to_string(), content.to_string()))
@@ -3311,6 +3433,72 @@ description: A skill with no body content
             !after.contains("TAMPERED"),
             "tampered content survived re-seed — core overwrite is broken: {after}"
         );
+    }
+
+    // A retired skill's copied directory must not linger in an installed
+    // binary's skills dir: the seeder visits only shipped names, so
+    // without a sweep the stale copy stays loadable forever (its templates
+    // may not even resolve any more). User skills and retired-name
+    // directories the user has adopted (extra files) are never swept.
+    #[gpui::test]
+    async fn test_seed_shipped_skills_removes_retired_skill_copies(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/skills"),
+            serde_json::json!({
+                "kata-coaching": { "SKILL.md": "stale retired copy" },
+                "swarm-steering": { "SKILL.md": "stale copy", "notes.txt": "user notes" },
+                "my-user-skill": { "SKILL.md": "user body" },
+            }),
+        )
+        .await;
+
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+
+        assert!(
+            !fs.path_exists(Path::new("/skills/kata-coaching")),
+            "a retired skill's copied directory must be removed on re-seed"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/swarm-steering/notes.txt"))
+                .await
+                && fs
+                    .is_file(Path::new("/skills/swarm-steering/SKILL.md"))
+                    .await,
+            "a retired-name directory the user has adopted (extra files) must be refused, not swept"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/my-user-skill/SKILL.md"))
+                .await,
+            "a user skill must never be swept"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/metacognition/SKILL.md"))
+                .await,
+            "shipped skills still seed alongside the retired sweep"
+        );
+    }
+
+    // The retirement record must describe reality: every name on it is
+    // gone from the authored tree and from the shipped payload — a name
+    // in both lists would make the sweep fight the seeder.
+    #[test]
+    fn retired_skill_names_are_absent_from_the_authored_tree() {
+        assert!(
+            !RETIRED_SKILL_NAMES.is_empty(),
+            "the retirement record must carry the retired payload history"
+        );
+        let authored_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+        for name in RETIRED_SKILL_NAMES {
+            assert!(
+                !authored_dir.join(name).join(SKILL_FILE_NAME).is_file(),
+                "'{name}' is listed retired but still exists in .agents/skills"
+            );
+            assert!(
+                !is_shipped_skill(name),
+                "'{name}' is both retired and shipped"
+            );
+        }
     }
 
     #[gpui::test]
