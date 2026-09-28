@@ -9,9 +9,8 @@
 //! Reference: <https://ml-schema.github.io/documentation/ML%20Schema.html>
 //! (namespace `http://www.w3.org/ns/mls#`)
 //!
-//! Every term is verified against the ML-Schema specification —
-//! `fixtures/ml-schema-terms.txt` pins the term list, and
-//! `all_terms_are_official` fails the build if a term drifts from it.
+//! Every term is checked against the complete, checksum-pinned published
+//! ML-Schema 1.0 vocabulary loaded in `published`.
 //! Note: ML-Schema publishes no `wasDerivedFrom` property (that is PROV-O);
 //! derivation is modeled with `mls:hasOutput`.
 //!
@@ -54,8 +53,9 @@ pub const HAS_OUTPUT: MlConcept = "mls:hasOutput";
 /// An Implementation implements an Algorithm.
 pub const IMPLEMENTS: MlConcept = "mls:implements";
 
-/// All ML-Schema concepts, for validation or iteration.
-pub const ALL_CONCEPTS: &[MlConcept] = &[
+/// Bridge constants checked against the full published vocabulary.
+#[cfg(test)]
+const ALL_CONCEPTS: &[MlConcept] = &[
     MODEL,
     RUN,
     DATA,
@@ -72,27 +72,36 @@ pub const ALL_CONCEPTS: &[MlConcept] = &[
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official ML-Schema term list checked in as a fixture.
+    /// Fabrication guard: every bridge constant must occur in the pinned
+    /// published ML-Schema source.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/ml-schema-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_CONCEPTS {
             assert!(
-                official.contains(term),
-                "{term} is not in the official ML-Schema term list ({fixture_path})"
+                crate::published::contains(term),
+                "{term} missing from ML-Schema 1.0"
             );
         }
+        let published = crate::published::terms()
+            .iter()
+            .filter(|term| term.namespace == "ML-Schema")
+            .count();
+        assert!(
+            published > ALL_CONCEPTS.len(),
+            "full ML-Schema vocabulary: {published}"
+        );
+        let run = crate::term_resolution::resolve_term("mls:Run");
+        assert_eq!(run.concept, RUN);
+        assert_eq!(run.namespace, "ML-Schema");
+        assert!(
+            run.definition
+                .as_deref()
+                .is_some_and(|text| text.starts_with("Run is an execution"))
+        );
+        assert!(
+            run.source
+                .as_deref()
+                .is_some_and(|source| source.contains("ML-Schema 1.0"))
+        );
     }
 }

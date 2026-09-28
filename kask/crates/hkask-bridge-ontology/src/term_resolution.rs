@@ -10,7 +10,9 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{derived, fibo, golem, ml_schema, omc, published, rdf, sdmx, sepio};
+#[cfg(test)]
+use crate::sepio;
+use crate::{derived, published};
 
 /// Protocol stamped on records classified through the published term resolver.
 /// v2 (2026-09-27): resolution walks the full published SUMO and schema.org
@@ -99,28 +101,27 @@ pub struct CanonicalTerms {
     pub concepts: Vec<String>,
 }
 
-/// Rung 1 registries, in stable resolution order.
-const NAMED_DOMAIN_REGISTRIES: &[(&str, &[(&str, &str)])] = &[
-    ("SEPIO", sepio::ALL_NAMED_TERMS),
-    ("GOLEM", golem::ALL_NAMED_TERMS),
+/// Full published vocabularies consulted as domain supplements, in stable
+/// resolution order. OMC precedes PKO so media terms keep their published sense.
+const PUBLISHED_DOMAIN: &[&str] = &[
+    "OMC",
+    "PKO",
+    "P-Plan",
+    "PROV",
+    "SEPIO",
+    "GOLEM",
+    "CIDOC-CRM",
+    "LRMoo",
+    "ML-Schema",
 ];
 
-/// Domain vocabularies not yet loaded in full (fragment registries, retired
-/// one by one as their full sources land in `published`).
+/// Remaining local identifier registries; these are not claimed as published
+/// RDF IRIs until their source identities have been established.
 const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
-    ("FIBO", fibo::ALL_TERMS),
-    ("OMC", omc::ALL_CONCEPTS),
-    ("SEPIO", sepio::ALL_TERMS),
-    ("GOLEM", golem::ALL_TERMS),
-    ("SDMX", sdmx::ALL_CONCEPTS),
-    ("ML-Schema", ml_schema::ALL_CONCEPTS),
-    ("RDF", rdf::ALL_TERMS),
+    ("FIBO", crate::fibo::ALL_TERMS),
+    ("SDMX", crate::sdmx::ALL_CONCEPTS),
+    ("RDF", crate::rdf::ALL_TERMS),
 ];
-
-/// Full published vocabularies (`published`) consulted as domain supplements:
-/// the process axis (PKO) and the vocabularies PKO specializes (P-Plan,
-/// PROV).
-const PUBLISHED_DOMAIN: &[&str] = &["PKO", "P-Plan", "PROV"];
 
 /// Full published vocabularies consulted after the domain and derived rungs,
 /// in ladder order: SUMO (formal upper ontology) first, then schema.org (a
@@ -179,14 +180,6 @@ pub fn resolve_term(term: &str) -> TermResolution {
     let trimmed = term.trim();
     let key = normalize(trimmed);
     let mut senses: Vec<Sense> = Vec::new();
-
-    // Some published URI suffixes carry numeric class codes. Their
-    // fixture-backed bridge constant names provide exact descriptive labels.
-    for (namespace, registry) in NAMED_DOMAIN_REGISTRIES {
-        if let Some((_, uri)) = registry.iter().find(|(name, _)| key == normalize(name)) {
-            senses.push(sense("domain_supplement", namespace, uri));
-        }
-    }
 
     for (namespace, registry) in DOMAIN_REGISTRIES {
         let found = registry.iter().find(|uri| {
@@ -441,16 +434,13 @@ mod tests {
 
     #[test]
     fn omc_precedes_pko_within_domain_supplement_resolution() {
-        // Registries are walked before the published domain vocabularies.
-        assert!(
-            DOMAIN_REGISTRIES
-                .iter()
-                .any(|(namespace, _)| *namespace == "OMC")
-        );
-        assert!(
-            PUBLISHED_DOMAIN.contains(&"PKO"),
-            "media terms must try OMC before PKO"
-        );
+        let omc = PUBLISHED_DOMAIN
+            .iter()
+            .position(|namespace| *namespace == "OMC");
+        let pko = PUBLISHED_DOMAIN
+            .iter()
+            .position(|namespace| *namespace == "PKO");
+        assert!(omc.is_some() && pko.is_some() && omc < pko);
     }
 
     #[test]

@@ -4,10 +4,12 @@
 //! Narrative and Fiction), v1.1. GOLEM is an extension of CIDOC-CRM and LRMoo
 //! aligned to DOLCE-Lite-Plus: it defines the `gc:` classes and properties
 //! below and otherwise reuses `crm:` (CIDOC-CRM), `lrmoo:` (LRMoo), and
-//! `dlp:` (DOLCE-Lite-Plus) terms. Every URI in this module is verified
-//! against the official publication — `fixtures/golem-v1.1-terms.txt` pins
-//! the term list, and `all_terms_are_official` fails the build if a term
-//! drifts from it. Do not add a term that is not in that fixture.
+//! `dlp:` (DOLCE-Lite-Plus) terms. GOLEM, CIDOC-CRM and LRMoo are loaded in
+//! full from `sources/` and resolved through `published`; this module names
+//! only the concepts hKask code emits, and `all_terms_are_official` fails the
+//! build unless each is published. DOLCE-Lite-Plus is not vendored (its
+//! modules state no license): the `dlp:` constants are listed in
+//! `DLP_PENDING_SOURCE` and stay unverifiable until it is.
 //!
 //! Reference: Pianzola, Pannach, Cheng, Yang, Scotti (GOLEM Lab, 2024).
 //! <https://ontology.golemlab.eu/> — IRI <https://w3id.org/golem/ontology>,
@@ -26,21 +28,15 @@
 pub type GolemConcept = &'static str;
 
 /// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
-/// so the fixture test covers each constant by construction.
+/// so the publication guard covers each constant by construction.
 macro_rules! golem_terms {
     ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
         $($(#[$doc])* pub const $name: GolemConcept = $uri;)*
 
-        /// Every term in this module. The fixture test asserts each appears
-        /// in the official GOLEM v1.1 term list — a fabricated URI cannot
-        /// pass. New terms must go through this macro.
-        pub const ALL_TERMS: &[GolemConcept] = &[$($name),*];
-
-        /// Published URIs paired with bridge constant names for exact
-        /// descriptive-term resolution when URI suffixes carry numeric codes.
-        pub const ALL_NAMED_TERMS: &[(&str, GolemConcept)] = &[
-            $((stringify!($name), $name)),*
-        ];
+        /// Every term in this module, so the publication guard covers each
+        /// constant by construction. New terms must go through this macro.
+        #[cfg(test)]
+        const ALL_TERMS: &[GolemConcept] = &[$($name),*];
     };
 }
 
@@ -68,7 +64,7 @@ golem_terms! {
     SETTING = "gc:G12_Setting",
 
     /// A social relationship between characters within a narrative.
-    SOCIAL_RELATIONSHIP = "gc:G4_Social_Relationships",
+    SOCIAL_RELATIONSHIP = "gc:G4_Social_Relationship",
 
     /// A narrative sequence — fabula or syuzhet, the ordered events of a
     /// narrative (the GOLEM concept covering plot).
@@ -165,30 +161,30 @@ mod tests {
         assert_eq!(tag_family("fibo"), None);
     }
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official GOLEM v1.1 term list checked in as a fixture (source URL
-    /// and fetch date in the fixture header). A term that is not in the
-    /// published ontology fails here — pin tests on the constants alone
-    /// cannot catch a plausible-looking invented URI.
+    /// The `dlp:` constants: DOLCE-Lite-Plus is not vendored (no stated
+    /// license), so these cannot be verified against a pinned source. Listed
+    /// explicitly so the gap stays visible and no other term can join it.
+    const DLP_PENDING_SOURCE: &[GolemConcept] = &[
+        PARTICIPANT_IN,
+        PARTICIPANT,
+        GENERIC_LOCATION,
+        HAS_SETTING,
+        HAS_STATE,
+    ];
+
+    /// Fabrication guard: every term in this module is published by the
+    /// loaded GOLEM, CIDOC-CRM or LRMoo sources, except the explicit
+    /// DOLCE-Lite-Plus pending list.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/golem-v1.1-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_TERMS {
+            if DLP_PENDING_SOURCE.contains(term) {
+                assert!(term.starts_with("dlp:"), "{term}");
+                continue;
+            }
             assert!(
-                official.contains(term),
-                "{term} is not in the official GOLEM v1.1 term list ({fixture_path}) — \
-                 it must be verified against https://ontology.golemlab.eu/ before use"
+                crate::published::contains(term),
+                "{term} is not published by the loaded GOLEM/CIDOC-CRM/LRMoo sources"
             );
         }
     }

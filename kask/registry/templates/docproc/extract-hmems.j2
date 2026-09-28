@@ -1,7 +1,7 @@
 {# Goal: Extract RDF triples from text with confidence scores. #}
 {# v5: Narrative-aware with GOLEM, SEPIO, FIBO ontologies. #}
-{#     GOLEM predicates are the official v1.1 vocabulary (gc:, crm:, dlp:, #}
-{#     lrmoo: — https://ontology.golemlab.eu/). SEPIO predicates are the #}
+{#     GOLEM predicates use pinned gc:, crm:, lrmoo: vocabularies. #}
+{#     Unlicensed DLP terms are excluded pending source verification. SEPIO predicates are the #}
 {#     official Monarch Initiative terms (SEPIO CURIEs, verified against #}
 {#     the 2023-06-13 OWL release). schema.org predicates are verified #}
 {#     against the official release (v30.0, 2026-08-30) and pinned by the #}
@@ -44,10 +44,7 @@ Determine whether this passage is:
 
 ### For narrative passages — use GOLEM ontology predicates (official v1.1 vocabulary):
 - gc:GP1i_has_Character — a character or person in the work
-- dlp:participant-in — a character or object participates in an event
-- dlp:setting — the setting an entity is in (narrative universe)
-- dlp:generic-location — the location of a character or object
-- dlp:has-state — a psychological state of a character
+
 - gc:GP0_has_feature — a feature of the work or character (theme, tone, style, motif)
 - crm:P67_refers_to — the text or narrative unit refers to an entity (allegory, metaphor, illustration)
 - crm:P130_shows_features_of — a variant shows features of its Stoff (source material)

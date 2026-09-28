@@ -9,9 +9,10 @@
 //! `OMC-RDF/OntologyMediaCreation-OMC/omc.ttl` (v2.8, namespace
 //! `https://movielabs.com/omc/rdf/schema/v2.8#`).
 //!
-//! Every term is verified against that artifact —
-//! `fixtures/omc-v2.8-terms.txt` pins the term list, and
-//! `all_terms_are_official` fails the build if a term drifts from it.
+//! The full OMC v2.8 artifact (with its Creative Works companion) is loaded
+//! from `sources/omc/` and resolved through `published`; this module names
+//! only the concepts hKask code emits, and `all_terms_are_official` fails the
+//! build unless each is published.
 //!
 //! This module holds the OMC concept vocabulary and the shared concept→explain-tool
 //! dispatch function. Server-specific tool-name→concept mapping lives in the media
@@ -91,8 +92,9 @@ pub const CREATED_ON: OmcConcept = "omc:createdOn";
 /// as VersionInfo plus the `hasVersion`/`isVersionOf` properties).
 pub const VERSION_INFO: OmcConcept = "omc:VersionInfo";
 
-/// All OMC concepts, for validation or iteration.
-pub const ALL_CONCEPTS: &[OmcConcept] = &[
+/// Every concept this module names, for the publication guard.
+#[cfg(test)]
+const ALL_CONCEPTS: &[OmcConcept] = &[
     CREATIVE_WORK,
     SCENE,
     SHOT,
@@ -122,27 +124,14 @@ pub const ALL_CONCEPTS: &[OmcConcept] = &[
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official OMC v2.8 term list checked in as a fixture (sourced from
-    /// the official omc.ttl artifact).
+    /// Fabrication guard: every concept in this module is published in the
+    /// loaded OMC v2.8 artifact.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/omc-v2.8-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_CONCEPTS {
             assert!(
-                official.contains(term),
-                "{term} is not in the official OMC v2.8 term list ({fixture_path})"
+                crate::published::contains(term),
+                "{term} is not published in the loaded OMC v2.8 artifact"
             );
         }
     }

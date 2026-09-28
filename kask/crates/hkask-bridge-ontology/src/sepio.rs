@@ -8,10 +8,10 @@
 //!
 //! SEPIO is the Monarch Initiative's ontology for evidence and provenance
 //! (namespace `http://purl.obolibrary.org/obo/SEPIO_`, OBO prefix `SEPIO`).
-//! Every URI in this module is verified against the official release —
-//! `fixtures/sepio-2023-06-13-terms.txt` pins the term list, and
-//! `all_terms_are_official` fails the build if a term drifts from it. Do
-//! not add a term that is not in that fixture.
+//! The full release is loaded from `sources/sepio/` and resolved through
+//! `published` (labels and IAO definitions included); this module names only
+//! the concepts hKask code emits, and `all_terms_are_official` fails the
+//! build unless each is published.
 //!
 //! Reference: https://github.com/monarch-initiative/SEPIO-ontology
 //! (OWL release 2023-06-13). NOTE: the SEPIO project's *current*
@@ -42,22 +42,15 @@
 pub type SepioConcept = &'static str;
 
 /// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
-/// so the fixture test covers each constant by construction.
+/// so the publication guard covers each constant by construction.
 macro_rules! sepio_terms {
     ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
         $($(#[$doc])* pub const $name: SepioConcept = $uri;)*
 
-        /// Every term in this module. The fixture test asserts each appears
-        /// in the official SEPIO term list — a fabricated URI cannot pass.
-        /// New terms must go through this macro.
-        pub const ALL_TERMS: &[SepioConcept] = &[$($name),*];
-
-        /// Published CURIEs paired with their bridge constant names. SEPIO
-        /// CURIEs are numeric, so exact term resolution cannot recover labels
-        /// from the URI suffix as it can for named vocabularies.
-        pub const ALL_NAMED_TERMS: &[(&str, SepioConcept)] = &[
-            $((stringify!($name), $name)),*
-        ];
+        /// Every term in this module, so the publication guard covers each
+        /// constant by construction. New terms must go through this macro.
+        #[cfg(test)]
+        const ALL_TERMS: &[SepioConcept] = &[$($name),*];
     };
 }
 
@@ -97,33 +90,14 @@ sepio_terms! {
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official SEPIO term list checked in as a fixture (source URL and
-    /// fetch date in the fixture header). A term that is not in the
-    /// published ontology fails here — pin tests on the constants alone
-    /// cannot catch a plausible-looking invented URI.
+    /// Fabrication guard: every term in this module is published in the
+    /// loaded SEPIO release.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fixtures/sepio-2023-06-13-terms.txt"
-        );
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(|line| line.split('\t').next().unwrap_or("").trim())
-            .filter(|term| !term.is_empty() && !term.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_TERMS {
             assert!(
-                official.contains(term),
-                "{term} is not in the official SEPIO term list ({fixture_path}) — \
-                 it must be verified against the SEPIO OWL release before use"
+                crate::published::contains(term),
+                "{term} is not published in the loaded SEPIO release"
             );
         }
     }
