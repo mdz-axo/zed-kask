@@ -58,7 +58,7 @@ theorem drain_dispatches_only_complete (complete : String → Bool)
   · next hcomplete =>
       injection h with heq
       subst heq
-      exact ⟨rfl, fun c hc => (allComplete_forall complete _).mp hcomplete c hc⟩
+      exact ⟨rfl, fun c hc => (allComplete_forall complete (l := _)).mp hcomplete c hc⟩
   · next _ => simp at h
 
 /-- Fragment safety: any incomplete argument in the batch forces the
@@ -72,7 +72,7 @@ theorem drain_fragments_dispatch_nothing (complete : String → Bool)
   have hnot : ¬(allComplete complete calls = true) := by
     obtain ⟨c, hc, hfalse⟩ := h
     intro hall
-    have hct := (allComplete_forall complete _).mp hall c hc
+    have hct := (allComplete_forall complete (l := _)).mp hall c hc
     rw [hfalse] at hct
     exact Bool.noConfusion hct
   simp [hnot]

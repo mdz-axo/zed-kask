@@ -1,0 +1,67 @@
+{# goal: Classify task steps into the 2x2 regions and emit the routing plan: region, tools, gate, and role per step. #}
+[inference]
+input:
+  task_description: string
+  steps: string[]
+  available_oracles: string[]
+output:
+  step_model: string[]
+  routing_plan: object[]
+---
+You are routing a task across the region space. The four regions cross the
+representation axis (syntactic form vs semantic meaning) with the process
+axis (deterministic, correct by construction vs probabilistic, correct in
+expectation):
+
+- SD (syntactic x deterministic): formal-language machinery — parsing,
+  validation, arithmetic, decidable membership. The answer is pinned and a
+  deterministic checker exists.
+- SP (syntactic x probabilistic): generation into formal shape from messy
+  or natural input — code, schemas, queries, extraction. Correct in
+  expectation only; needs a gate.
+- Sem-D (semantic x deterministic): pinned-meaning machinery — published
+  definitions, registered rulings, identity resolution, checked proofs.
+- Sem-P (semantic x probabilistic): approximate meaning — relevance,
+  similarity, salience, forecasts. No cheap oracle; verification states and
+  calibration carry the honesty.
+
+Task: {{ task_description }}
+
+{% if steps %}Provided decomposition:
+{% for s in steps %}- {{ s }}
+{% endfor %}{% else %}No decomposition provided — derive a minimal step model first (3 to 7 steps), each one line, phrased as an action.
+{% endif %}Available oracles and tools: {{ available_oracles|join(", ") }}.
+
+Routing rule, applied per step: if the input is formal and the answer is
+pinned, route to the deterministic tool and name the oracle. If the input is
+messy and the output is formal, the model proposes and a deterministic gate
+iterates — name both. If the output is semantic and a cheap boundary check
+exists, gate at the boundary. If the output is semantic and no cheap oracle
+exists, use the probabilistic tool, carry a verification state, and name the
+calibration mechanism.
+
+Role catalog: operator — spec authority, scope changes, acceptance, goal
+scoring; the collapse path for semantic questions that change what the work
+is FOR. curator — memory, rulings, escalation, cross-session calibration.
+agent — the traverse: generate, gate, carry verification states.
+
+Emit one JSON object with exactly this shape:
+{
+  "step_model": ["<one line per step, derived or confirmed>"],
+  "routing_plan": [
+    {
+      "step": 1,
+      "region": "SD | SP | Sem-D | Sem-P",
+      "tools": ["<named tool(s) from the available set>"],
+      "gate": "<named deterministic oracle that collapses this step's output; null only for Sem-P steps with no cheap oracle, and then the verification state is named in the plan>",
+      "role": "operator | curator | agent",
+      "checkpoint": "<operator-confirm question at scope-changing Sem-P steps, or the gate that must pass at a cross-region handoff; null when neither applies>"
+    }
+  ]
+}
+
+Every generating step (SP, Sem-P) names its gate or carries null together
+with the named verification state; every scope-changing semantic step names
+the operator checkpoint question. Deriving the plan from the region
+definitions rather than habit is the point of the exercise. Produce only
+the JSON object.

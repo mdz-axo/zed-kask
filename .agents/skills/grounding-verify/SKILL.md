@@ -11,9 +11,13 @@ ISA 500 (*Audit Evidence*) for assertion-orientation, the evidence
 reliability hierarchy and inquiry-is-not-corroboration; vouching
 (claim → source) and tracing (source → text) for direction of testing;
 ISA 320 for materiality-scoped checking; ISA 230 for the working-paper
-record; Heuer's analysis of competing hypotheses for conflict
-adjudication; Caulfield's SIFT for trace-to-original; IEEE 1012 for
-integrity-level proportionality; W3C PROV for provenance shape. Earlier
+record; W3C PROV for provenance shape (the origins check's derivation
+graph). Conflict adjudication follows the Verification Commons Protocol's
+precedence hierarchy; proportionality follows ISA 320 materiality plus
+the VCP graduated-severity scale — both cited where implemented. (Heuer's
+ACH, Caulfield's SIFT and IEEE 1012 were named here with no operational
+consumer — the roles they claimed were already anchored to the sources
+that implement them — and were removed 2026-09-28.) Earlier
 anchors retained: Fermi's four-contract trust system (grounding_trust,
 schema_trust, rollup_trust, port_trust), the listening skill's
 retrieve-cite-verify process, and the Verification Commons Protocol
@@ -25,9 +29,15 @@ accepts domain-specific leak rules and congruence rules via context.
 ## The provenance lattice
 
 Every factual claim is classified into a provenance tier with a strength
-ordinal — the domain adaptation of the audit evidence reliability hierarchy
-(ISA 500.A31: external over internal, documentary over oral, original over
-copy). The lattice is the enforcement of the extraction ceiling: a claim
+ordinal. The adapted axis is falsifiability-through-execution, not ISA
+500.A31's external-over-internal ordering: both strength-2 tiers carry a
+`cross_check` form the interpreter runs, and checker-independence (ISA
+500's inquiry-is-not-corroboration: an uncited opinion stays
+`model_inference` regardless of who holds it) supplies the reliability
+discipline. The .A31 documentary/oral and original/copy distinctions have
+no counterpart here — all tool output is documentary, and the match runs
+against the retained bytes. The lattice is the enforcement of the extraction
+ceiling: a claim
 the LLM synthesizes from tool outputs is `model_inference` (strength 1),
 never `tool_verified` (strength 2). Only direct citations — verbatim quotes
 found via mechanical substring match, exact numbers found via `lisp_eval`
@@ -108,19 +118,25 @@ cited.
 
 ## D/P labelling
 
-Claim extraction and classification (Step 1), provenance-tier assignment
-(Step 2 — the lattice is fixed, the assignment is judgment), leak-rule
-interpretation (Step 4), omission materiality (Step 4.5), and finding
-severity (Step 7) are P — critiqued by the operator, by the mandatory
-`decoupling` field (an `in_thread` run is flagged as a self-check), and by
-the append-only error log. The mechanical verification is D: every
-`lisp_eval` form (structural invariants, citation substring checks,
-numeric matches, the batch drivers, the provenance floor in Step 6)
-executes in the sandbox — a claim's verification status comes from the
-form's output, never the model's assertion. `render_template` renders are
-D (deterministic render) feeding P (the assignment judgment over the
-rendered output). The output never says verified: the counts and the
-floor are facts for the reader, not a verdict.
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| 1 item 0 (prediction) | P | scored by the Step 7 item 0 reconciliation (D) — the prediction is a calibration claim, not a finding |
+| 1 extract and classify | P | the operator; the mandatory `decoupling` field (an `in_thread` run is flagged as a self-check); the append-only error log |
+| 1 item 4 (structural invariants) | D | `lisp_eval` (the zero-claim guard — pinned) |
+| 2 provenance assignment | P | the lattice is fixed, the assignment is judgment — critiqued by the Step 2 validation calls (D) and the operator |
+| 2 item 5 (validation calls) | D | `lisp_eval` (closed-vocabulary + why-min-40 counts — pinned) |
+| 3 mechanical verification (drivers, grading wrapper, empty-env, origins, consistency) | D | `lisp_eval` — a claim's verification status comes from the form's output, never the model's assertion |
+| 4 narrative scan | D render feeding P | `render_template` (D); leak-rule interpretation P — critiqued by the operator |
+| 4 item 1 (block marking) | D | `lisp_eval` (the any-verified/mark pair — pinned) |
+| 4.5 omission materiality | P | the operator; the record of what was examined and what was not |
+| 5 counts | D | computed from the run's own records — never a composite score |
+| 6 provenance floor + confidence band | D | `lisp_eval` (the floor form — pinned); the band derives from floor + conflicts + decoupling, never from the model |
+| 7 item 0 (reconciliation) | D | `lisp_eval` (the gap form — pinned) |
+| 7 severity + emission | P | the operator; graduated sanctions; high/critical findings surface immediately |
+
+`render_template` renders are D (deterministic render) feeding P (the
+assignment judgment over the rendered output). The output never says
+verified: the counts and the floor are facts for the reader, not a verdict.
 
 ## Instructions
 
@@ -214,7 +230,11 @@ floor are facts for the reader, not a verdict.
    arithmetic). A strength-2 claim with no `cross_check` is a claim
    nobody can falsify. If no cross-check is possible, the claim must be
    classified as `model_inference` with a `why` explaining why it cannot
-   be mechanically verified.
+   be mechanically verified. Record the infeasibility in
+   `cross_check_exemptions` (the disclosure the template emits:
+   `{claim_id, reason}`) — the exemption is a disclosure of why the check
+   could not run, never a strength-2 pass; the claim's tier is still
+   `model_inference`.
 
 4. Each claim entry carries a `why` field (minimum 40 characters)
    explaining its provenance status. Short justifications are rejected. Each
@@ -226,8 +246,14 @@ floor are facts for the reader, not a verdict.
    call re-enters Step 2: fix the flagged assignments before Step 3.
    These two calls are the enforcement line for the closed-vocabulary and
    why-min-40 constraints. Re-enter assignment at most once on a malformed
-   result; a second failed validation is `blocked`, not a usable provenance
-   report.
+   result — the bound counts malformed results, not which check failed
+   (a first-pass vocabulary failure followed by a re-entered why-length
+   failure is one re-entry consumed; the next malformed result blocks).
+   A blocked run emits the partial report with
+   `verification_scope_limitations` naming the blockage — a consumer must
+   be able to distinguish a blocked run from a crashed one, and the
+   degradation rule applies: a failed check degrades visibly, never
+   silently.
    - Closed vocabulary — count assignments whose `provenance` value is
      outside the closed set (a missing `provenance` counts as bad —
      fail-closed):
@@ -336,7 +362,10 @@ returns.
      the cited inputs.
 
 4. Run the origins check on all `platform_derived` claims in ONE call —
-   the anchoring falsifier. Dependency is not anchoring: two forms can
+   the anchoring falsifier. The check builds a W3C PROV-shaped derivation
+   graph: each claim an entity, each input an attribution to a source or an
+   earlier entity, acyclic by the no-forward-references rule (PROV's
+   provenance shape, cited in the frontmatter). Dependency is not anchoring: two forms can
    reference each other's outputs and pass every check above while
    grounded in no source at all (counterexample probed live
    2026-09-08: `x = value_b + 1`, `y = value_a + 1`). Each claim's
@@ -461,6 +490,16 @@ a verdict on the text; the output never says verified.
    - Pass `max_depth` ≥ 8× the claims count (the recursive helper — see
      Step 1 item 4's depth note).
 
+2. Derive and report the confidence band from the floor, the source
+   conflicts, and the decoupling field (the Fermi `hud_contract.rs`
+   `confidence_for` adaptation — derived from the provenance verdict,
+   never accepted from the model): the band caps at `medium` for an
+   `in_thread` run (a self-check, no matter how strong the claims) and at
+   `medium` when unresolved material `source_conflicts` are present; a
+   high or critical finding surfaces immediately regardless of the band.
+   The band is a derived fact for the reader, like the floor — never a
+   verdict.
+
 ### Step 7 — Emit verification report
 
 0. **Reconcile the prediction (D).** Report `predicted_load_bearing` / `found_load_bearing` and `predicted_failures` / `found_failures` from Step 1 item 0, gaps computed by `lisp_eval` `(list (- found_load_bearing predicted_load_bearing) (- found_failures predicted_failures))`. A large gap on the failure count means the verifier's prior about this source mix is miscalibrated — report it; it is not a finding against the text.
@@ -530,6 +569,10 @@ The local PDCA operates on the *same immutable text and observed sources*:
 
 This is a bounded verifier loop, not skill-effectiveness evaluation; the operator judges the quality of this verifier in the algedonic-review gemba.
 
+## Regression case
+
+Renders (declared contexts): `grounding-verify/extract-claims` with `target_text` (a short report citing one verbatim quote and one derived number) and `source_outputs` (two `{tool_name, description, output_key}` objects); `assign-provenance` with the extracted claims, the source outputs, a `pipeline_tool_log`, and one `congruence_rules` entry; `scan-narrative` with `narrative_fields`, post-Step-3 `sourced_blocks`, and `leak_rules` (one `Word` rule from an unsourced block); `compile-error-log` with one finding of each class (E, W, N). Forms: the six SKILL.md-pinned forms are executed by the pin suite (`test_canonical_provenance_floor_form`, `test_canonical_vocabulary_check_form`, `test_canonical_why_length_check_form`, `test_canonical_step1_structural_form`, `test_canonical_narrative_mark_form`, `test_canonical_prediction_reconciliation_form` — the last two added 2026-09-28). Full-run-only behaviors a render cannot check (a case that claims them over-claims): the extraction ceiling's correct operation (a synthesized claim held at strength 1), the append-only registry, and the decoupling field's presence in the emitted report — asserted by the process, not by any render.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -551,7 +594,8 @@ architectural role of `essentialist` and `falsifiability`:
 - **company-research-deep** and **company-research-flash** each run their
   own author-side evidence review (`company-research/evidence-review`) over
   their frozen drafts instead of a decoupled verifier; neither invokes this
-  skill.
+  skill (observed 2026-09-27; if a sibling adopts this skill, update this
+  note in the same change).
 - Any pipeline that produces claims against source data can compose this
   skill as a verification step.
 
