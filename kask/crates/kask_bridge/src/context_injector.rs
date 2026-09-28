@@ -28,7 +28,7 @@
 
 use agent::ContextInjector;
 use hkask_memory::ExternalPassageBatch;
-use hkask_types::{MemoryPort, MemorySnippet};
+use hkask_types::MemorySnippet;
 use language_model::{LanguageModelRequestMessage, Role};
 use language_model_core::MessageContent;
 use std::sync::Arc;
@@ -266,6 +266,19 @@ impl ContextInjector for BridgeContextInjector {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Vec<LanguageModelRequestMessage>> + Send + '_>,
     > {
+        // Recall is curator-scoped (operator ruling 2026-09-28): ordinary
+        // agent threads get no memory injection. The former non-curator path
+        // called the `MemoryPort` trait's recall methods — whose only
+        // production impl returned a hardcoded empty — then filtered, headed,
+        // and absence-signaled that guaranteed-empty result, injecting a
+        // false "No relevant memory found" message into every agent thread
+        // that passed the recall gate. Non-curators return empty here; the
+        // curator path below is unchanged. Wiring zed-agent recall (thread-
+        // scoped or shared-store) is a separate product decision.
+        if !self.curator {
+            return Box::pin(async { Vec::new() });
+        }
+
         let prompt_limit = self.recall_limit as usize;
         let thread_limit = (self.recall_limit * 2) as usize;
         let prompt_min_confidence = self.recall_min_confidence;
@@ -273,21 +286,12 @@ impl ContextInjector for BridgeContextInjector {
         let prompt = user_prompt.to_string();
         let thread_id = thread_id.to_string();
         let memory_port = self.memory_port.clone();
-        let curator = self.curator;
         let federated_source_ids = self.federated_source_ids.clone();
         let federated_auto_inject = self.federated_auto_inject;
         let federated_manifest_path = self.federated_manifest_path.clone();
-        let prompt_header = if curator {
-            "Relevant context from curator memory:"
-        } else {
-            "Relevant context from memory:"
-        };
-        let thread_header = if curator {
-            "Prior curator turns in this thread:"
-        } else {
-            "Prior turns in this thread:"
-        };
-        let log_label = if curator { "curator" } else { "user" };
+        let prompt_header = "Relevant context from curator memory:";
+        let thread_header = "Prior curator turns in this thread:";
+        let log_label = "curator";
 
         // Recall is gated on `auto_inject` — when off, no per-turn memory
         // injection. Tool warnings live in the system prompt template.
@@ -297,13 +301,9 @@ impl ContextInjector for BridgeContextInjector {
 
         Box::pin(async move {
             // Prompt-salient recall: embedding similarity against the user's prompt.
-            let prompt_snippets = if curator {
-                memory_port
-                    .recall_context_curator(&prompt, prompt_limit)
-                    .await
-            } else {
-                memory_port.recall_context(&prompt, prompt_limit).await
-            };
+            let prompt_snippets = memory_port
+                .recall_context_curator(&prompt, prompt_limit)
+                .await;
             let prompt_snippets = match prompt_snippets {
                 Ok(s) => s,
                 Err(e) => {
@@ -323,13 +323,9 @@ impl ContextInjector for BridgeContextInjector {
 
             // Thread-scoped recall: prior turns from this thread by entity match.
             // Fresh every turn — no session-lifetime snapshot.
-            let thread_snippets = if curator {
-                memory_port
-                    .recall_thread_curator(&thread_id, thread_limit)
-                    .await
-            } else {
-                memory_port.recall_thread(&thread_id, thread_limit).await
-            };
+            let thread_snippets = memory_port
+                .recall_thread_curator(&thread_id, thread_limit)
+                .await;
             let thread_snippets = match thread_snippets {
                 Ok(s) => s,
                 Err(e) => {
@@ -350,10 +346,7 @@ impl ContextInjector for BridgeContextInjector {
             // External passages are untrusted evidence, never Curator memories.
             // The setting is off by default, and selected IDs are checked
             // against the live manifest by the memory port on each search.
-            let (external_batches, external_error) = if curator
-                && federated_auto_inject
-                && prompt_limit > 0
-            {
+            let (external_batches, external_error) = if federated_auto_inject && prompt_limit > 0 {
                 let external = match federated_manifest_path.as_deref() {
                     _ if federated_source_ids.len() != 1 => Err(
                         "Federated injection requires exactly one selected registered source"
@@ -476,6 +469,7 @@ impl ContextInjector for BridgeContextInjector {
 mod tests {
     use super::*;
     use crate::memory::tests::{in_memory_port, in_memory_port_with_embed_fn};
+    use hkask_types::MemoryPort;
     use hkask_types::TurnRecord;
     use std::sync::Arc;
 
@@ -686,6 +680,25 @@ mod tests {
         assert!(
             content.contains("No relevant memory found"),
             "absence message should signal the knowledge gap, got: {content}"
+        );
+    }
+
+    /// expect: "Ordinary agent threads get no memory injection — and never the
+    /// false absence message the former no-op recall path emitted." (D6,
+    /// operator ruling 2026-09-28: recall is curator-scoped.)
+    #[tokio::test]
+    async fn non_curator_injector_returns_empty_without_absence_message() {
+        let port = Arc::new(in_memory_port());
+        let injector = BridgeContextInjector::new(port, 10, 0.0, true);
+        // A prompt long enough to pass the should_recall gate — the gate the
+        // old no-op path ran before filtering a guaranteed-empty recall and
+        // injecting "No relevant memory found" into the agent thread.
+        let prompt =
+            "a long enough prompt that would pass the recall gate for an ordinary agent thread";
+        let messages = injector.inject_context("agent-thread", prompt).await;
+        assert!(
+            messages.is_empty(),
+            "non-curator threads get no memory injection — not even an absence message"
         );
     }
 }

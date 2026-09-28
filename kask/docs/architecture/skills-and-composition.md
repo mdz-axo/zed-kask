@@ -186,8 +186,7 @@ arrived[^hunt-thomas-1999].
 `ContextInjector::inject_static_context` method and `Thread.static_context` /
 `static_context_loaded` fields were removed. Tool-use warnings moved into the
 `system_prompt.hbs` template; since 2026-09-26 they are three `## Tool Use`
-bullets (`read_file`, `edit_file`, `terminal`), not a separate section. Thread-scoped memory recall (`recall_thread` /
-`recall_thread_curator`) was folded into the per-turn `inject_context` path so
+bullets (`read_file`, `edit_file`, `terminal`), not a separate section. Thread-scoped memory recall (`recall_thread_curator`; recall is curator-scoped since 2026-09-28) was folded into the per-turn `inject_context` path so
 memory is fresh at decision time rather than snapshotted once per session. The
 `## Session Context` block now carries only agent overlays (Curator role + Steer
 prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.

@@ -536,28 +536,6 @@ impl MemoryPort for RealMemoryPort {
             Ok(())
         })
     }
-
-    fn recall_context<'a>(
-        &'a self,
-        _query: &'a str,
-        _limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
-        // The MemoryPort trait impl is a no-op for the zed agent.
-        // Actual recall is via `recall_context_curator` (inherent method),
-        // called by the curator context injector.
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn recall_thread<'a>(
-        &'a self,
-        _thread_id: &'a str,
-        _limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
-        // The MemoryPort trait impl is a no-op for the zed agent.
-        // Actual recall is via `recall_thread_curator` (inherent method),
-        // called by the curator context injector.
-        Box::pin(async { Ok(Vec::new()) })
-    }
 }
 
 impl RealMemoryPort {

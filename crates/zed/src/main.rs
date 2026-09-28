@@ -1994,11 +1994,15 @@ fn main() {
                                 // If the user logs out and back in as a different user, the
                                 // injector is not re-wired.
                                 //
-                                // zed-kask: D26 — the injector is wired unconditionally
-                                // (not gated on `kask.memory.auto_inject`) so recall is
-                                // always available. `auto_inject` is passed into the
-                                // constructor and gates memory recall only; tool warnings
-                                // live in the system prompt template (`system_prompt.hbs`).
+                                // zed-kask: D26 — the agent injector is wired
+                                // unconditionally for interface stability, but
+                                // recall is curator-scoped (2026-09-28):
+                                // `inject_context` returns empty for non-curator
+                                // threads, so this wiring performs no injection
+                                // for agent threads today. `auto_inject` still
+                                // gates the curator injector's recall; tool
+                                // warnings live in the system prompt template
+                                // (`system_prompt.hbs`).
                                 let auto_inject = kask_settings.memory.auto_inject;
                                 let injector = std::sync::Arc::new(
                                     kask_bridge::BridgeContextInjector::new(

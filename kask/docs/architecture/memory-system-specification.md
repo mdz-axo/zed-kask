@@ -120,10 +120,13 @@ narrative generation loop.
   in `consolidate`, `consolidation_service.rs:34-162`)
 - No query-embedding cache — every recall embeds the query fresh
   (`memory.rs:673-691`)
-- No zed-agent recall — the `MemoryPort` trait impls `recall_context` /
-  `recall_thread` are no-ops returning empty vecs; recall is curator-only
-  via the inherent `recall_context_curator` / `recall_thread_curator`
-  methods (`memory.rs:499-519`, `memory.rs:568-614`)
+- No zed-agent recall — recall is curator-scoped (operator ruling 2026-09-28):
+  `BridgeContextInjector::inject_context` returns empty for non-curator
+  threads, and the curator recalls via the inherent `recall_context_curator` /
+  `recall_thread_curator` methods (`memory.rs:499-519`, `memory.rs:568-614`).
+  The `MemoryPort` trait's `recall_context` / `recall_thread` keep their
+  default no-op implementations as the port contract; `RealMemoryPort` no
+  longer overrides them.
 - External-evidence injection is opt-in for Curator chat and off by default.
   The Memory page uses one `Auto-Inject Memories` master switch and a dropdown:
   Curator memory only, or one named source from the sealed-source manifest.
