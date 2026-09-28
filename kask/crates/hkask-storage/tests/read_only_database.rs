@@ -60,11 +60,11 @@ fn sealed_store_searches_and_refuses_every_write() -> anyhow::Result<()> {
 
     let database = Database::open_read_only(path_str, PASSPHRASE)?;
     let (h_mems, embeddings) = stores(&database, path_str)?;
-    let matches = embeddings.search(&fixture_vector(1.0, 0.0), 1)?;
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].embedding.entity_ref, "corpus:test:1");
+    let matches = embeddings.search(&fixture_vector(1.0, 0.0), 1, "fixture-model", None)?;
+    assert_eq!(matches.results.len(), 1);
+    assert_eq!(matches.results[0].embedding.entity_ref, "corpus:test:1");
     assert_eq!(
-        matches[0].embedding.passage_text.as_deref(),
+        matches.results[0].embedding.passage_text.as_deref(),
         Some("sealed evidence")
     );
     assert!(

@@ -220,6 +220,7 @@ impl crate::CorpusServer {
                 "centroid_missing": result.centroid_missing,
                 "exemplar_count": result.exemplar_count,
                 "method_signals_missing": result.method_signals_missing,
+                "excluded_model_mismatch": result.excluded_model_mismatch,
                 "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                 "style_passed": result.validation.map(|v| v.passed),
             }))
@@ -340,6 +341,7 @@ impl crate::CorpusServer {
                     "author": params.author,
                     "exemplar_count": result.exemplar_count,
                     "method_signals_missing": result.method_signals_missing,
+                    "excluded_model_mismatch": result.excluded_model_mismatch,
                     "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                     "style_passed": result.validation.map(|v| v.passed),
                 }))

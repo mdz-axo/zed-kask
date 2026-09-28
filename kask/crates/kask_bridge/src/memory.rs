@@ -808,24 +808,24 @@ impl RealMemoryPort {
         let embedding_port = self.embedding_port.clone();
         let dimensions = self.curator_store.embedding_dim() as u32;
         let query_owned = query.to_string();
-        let vectors = self
+        let embedded = self
             .tokio_handle
             .spawn(async move {
                 let Some(ref embedding_port) = embedding_port else {
-                    return Ok(Vec::new());
+                    return Ok(None);
                 };
                 embedding_port
                     .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
                     .await
-                    .map(|batch| batch.vectors)
+                    .map(|batch| Some((batch.vectors, batch.requested_model, batch.actual_model)))
             })
             .await;
 
         // A failed embed degrades recall to keyword-only — surface it so
         // the operator can distinguish "no memory found" from "embedding
         // endpoint down".
-        let vectors = match vectors {
-            Ok(Ok(vectors)) => vectors,
+        let embedded = match embedded {
+            Ok(Ok(embedded)) => embedded,
             Ok(Err(e)) => {
                 tracing::warn!(
                     target: "reg.memory",
@@ -833,7 +833,7 @@ impl RealMemoryPort {
                     label = log_label,
                     "Failed to embed recall query — embedding search skipped for this turn"
                 );
-                Vec::new()
+                None
             }
             Err(e) => {
                 tracing::warn!(
@@ -842,13 +842,32 @@ impl RealMemoryPort {
                     label = log_label,
                     "Embedding task panicked — embedding search skipped for this turn"
                 );
-                Vec::new()
+                None
             }
         };
-        if let Some(query_vector) = vectors.into_iter().next() {
-            match store.search_similar(&query_vector, limit) {
-                Ok(results) => {
-                    for result in results {
+        if let Some((vectors, requested_model, actual_model)) = embedded
+            && let Some(query_vector) = vectors.into_iter().next()
+        {
+            match store.search_similar(
+                &query_vector,
+                limit,
+                &requested_model,
+                actual_model.as_deref(),
+            ) {
+                Ok(outcome) => {
+                    // Model-gate degradation must be visible: rows excluded
+                    // because they were embedded under a different model are
+                    // a migration in progress, not an empty memory.
+                    if outcome.excluded_model_mismatch > 0 {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            label = log_label,
+                            excluded = outcome.excluded_model_mismatch,
+                            query_model = %requested_model,
+                            "KNN excluded stored embeddings from a different model — re-embed pending"
+                        );
+                    }
+                    for result in outcome.results {
                         // Retrieve the h_mem associated with this embedding
                         // to get the full text content. Use the untouched
                         // variant — we touch only the injected ones below.
@@ -2717,7 +2736,7 @@ pub(crate) mod tests {
             .all_embeddings_with_text()
             .expect("embeddings query should succeed");
         assert!(
-            embeddings.iter().any(|(entity_ref, _, passage)| {
+            embeddings.iter().any(|(entity_ref, _, passage, _)| {
                 entity_ref == "curator:thread:embedding-round-trip"
                     && passage.as_deref() == Some(chunk_text.as_str())
             }),

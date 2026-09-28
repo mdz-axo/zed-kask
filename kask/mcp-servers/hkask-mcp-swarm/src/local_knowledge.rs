@@ -633,6 +633,16 @@ pub struct RecalledPassage {
     pub distance: f64,
 }
 
+/// Recall result plus the model-gate degradation count:
+/// `excluded_model_mismatch` counts stored rows dropped from the KNN window
+/// because their recorded model matches neither the query's requested nor
+/// its provider-confirmed actual model — surfaced by the recall tool so an
+/// embedding-model migration reads as degradation, never as an empty store.
+pub(crate) struct RecallOutcome {
+    pub passages: Vec<RecalledPassage>,
+    pub excluded_model_mismatch: usize,
+}
+
 /// Recall response passages across all agents, or only one producing agent.
 pub(crate) async fn recall_turns(
     memory: &LazyLocalMemory,
@@ -641,7 +651,7 @@ pub(crate) async fn recall_turns(
     limit: usize,
     agent_filter: Option<&str>,
     embedding_model: Option<&str>,
-) -> Result<Vec<RecalledPassage>, LocalSwarmError> {
+) -> Result<RecallOutcome, LocalSwarmError> {
     let store = memory.get().await?;
     let embedding_model = embedding_model.ok_or_else(|| {
         LocalSwarmError::Unavailable(
@@ -649,7 +659,7 @@ pub(crate) async fn recall_turns(
                 .to_string(),
         )
     })?;
-    let vectors = inference
+    let batch = inference
         .embed_with_dimensions(
             embedding_model,
             &[query.to_string()],
@@ -658,15 +668,14 @@ pub(crate) async fn recall_turns(
         .await
         .map_err(|error| {
             LocalSwarmError::Unavailable(format!("embedding the recall query failed: {error}"))
-        })?
-        .vectors;
-    if vectors.len() != 1 {
+        })?;
+    if batch.vectors.len() != 1 {
         return Err(LocalSwarmError::Unavailable(format!(
             "embedding the recall query returned {} vectors; expected exactly 1",
-            vectors.len()
+            batch.vectors.len()
         )));
     }
-    let query_vector = vectors.into_iter().next().ok_or_else(|| {
+    let query_vector = batch.vectors.into_iter().next().ok_or_else(|| {
         LocalSwarmError::Unavailable(
             "embedding model returned no vector for the recall query".to_string(),
         )
@@ -676,11 +685,25 @@ pub(crate) async fn recall_turns(
     } else {
         limit
     };
-    let results = store
-        .search_similar(&query_vector, knn_limit)
+    let outcome = store
+        .search_similar(
+            &query_vector,
+            knn_limit,
+            embedding_model,
+            batch.actual_model.as_deref(),
+        )
         .map_err(|error| {
             LocalSwarmError::Database(format!("semantic search over swarm memory failed: {error}"))
         })?;
+    if outcome.excluded_model_mismatch > 0 {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            excluded = outcome.excluded_model_mismatch,
+            query_model = embedding_model,
+            "KNN excluded stored swarm embeddings from a different model — re-embed pending"
+        );
+    }
+    let results = outcome.results;
     let scope_prefix = agent_filter.map(|agent_id| format!("{AGENT_PREFIX}{agent_id}:turn:"));
     let mut passages = Vec::with_capacity(results.len());
     for result in results {
@@ -764,7 +787,10 @@ pub(crate) async fn recall_turns(
         });
     }
     passages.truncate(limit);
-    Ok(passages)
+    Ok(RecallOutcome {
+        passages,
+        excluded_model_mismatch: outcome.excluded_model_mismatch,
+    })
 }
 
 ///
@@ -944,7 +970,7 @@ mod tests {
                 .expect("chunk h_mem carries text");
             let embedding = embeddings
                 .iter()
-                .find(|(entity_ref, _, _)| entity_ref == &h_mem.entity)
+                .find(|(entity_ref, _, _, _)| entity_ref == &h_mem.entity)
                 .expect("embedding uses the exact h_mem entity");
             assert_eq!(embedding.2.as_deref(), Some(chunk_text));
             assert_eq!(h_mem.value["agent_id"], "writer");
@@ -981,7 +1007,8 @@ mod tests {
             Some("embedding-model"),
         )
         .await
-        .expect("recall succeeds");
+        .expect("recall succeeds")
+        .passages;
         assert_eq!(passages.len(), 1);
         assert_eq!(passages[0].passage, response);
         assert_eq!(passages[0].agent_id, "planner");
@@ -1030,7 +1057,8 @@ mod tests {
             Some("embedding-model"),
         )
         .await
-        .expect("recall succeeds");
+        .expect("recall succeeds")
+        .passages;
 
         assert_eq!(passages.len(), 2, "fixture must retain a competing passage");
         assert_eq!(passages[0].agent_id, "navigator");
@@ -1072,7 +1100,8 @@ mod tests {
             Some("embedding-model"),
         )
         .await
-        .expect("scoped recall succeeds");
+        .expect("scoped recall succeeds")
+        .passages;
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].agent_id, "alpha");
 
@@ -1085,7 +1114,8 @@ mod tests {
             Some("embedding-model"),
         )
         .await
-        .expect("shared recall succeeds");
+        .expect("shared recall succeeds")
+        .passages;
         assert_eq!(shared.len(), 3);
     }
 

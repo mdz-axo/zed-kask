@@ -474,12 +474,12 @@ impl<'a> ConvertService<'a> {
                     .collect(),
             )
             .map_err(PassageIndexError::Publication)?;
-        let vectors = match self
+        let batch = match self
             .inference_router
             .embed_with_dimensions(&model_name, &texts, Some(crate::embedding_dim() as u32))
             .await
         {
-            Ok(batch) => batch.vectors,
+            Ok(batch) => batch,
             Err(e) => {
                 tracing::warn!(
                     target: "hkask.mcp.docproc.index",
@@ -491,11 +491,18 @@ impl<'a> ConvertService<'a> {
                 return Err(PassageIndexError::Embed { source: e });
             }
         };
+        // Same convention `corpus_embed` stores durably: the provider-confirmed
+        // actual model when echoed, else the requested model — so index rows
+        // and DB rows agree and the retrieve model gate sees one identity.
+        let durable_model = batch
+            .actual_model
+            .clone()
+            .unwrap_or_else(|| model_name.to_string());
 
-        crate::index::validate_vectors(&vectors, passages.len())
+        crate::index::validate_vectors(&batch.vectors, passages.len())
             .map_err(PassageIndexError::Publication)?;
         self.index
-            .publish_ephemeral(&publication, passages, vectors)
+            .publish_ephemeral(&publication, passages, batch.vectors, &durable_model)
             .map_err(PassageIndexError::Publication)
     }
 

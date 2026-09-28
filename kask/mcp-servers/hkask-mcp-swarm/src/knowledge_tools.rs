@@ -97,13 +97,27 @@ impl SwarmServer {
             )
             .await
             {
-                Ok(passages) => Ok(serde_json::json!({
-                    "passages": passages,
-                    "source": "local_response_passage_memory",
-                    "scope": agent_scope.unwrap_or("all_agents"),
-                    "count": passages.len(),
-                    "note": "",
-                })),
+                Ok(outcome) => {
+                    // Model-gate degradation must be visible: excluded rows are
+                    // a migration in progress, not an empty swarm memory.
+                    let note = if outcome.excluded_model_mismatch > 0 {
+                        format!(
+                            "{} stored embeddings were excluded from KNN because they were \
+                             embedded under a different model — re-embed pending",
+                            outcome.excluded_model_mismatch
+                        )
+                    } else {
+                        String::new()
+                    };
+                    Ok(serde_json::json!({
+                        "passages": outcome.passages,
+                        "source": "local_response_passage_memory",
+                        "scope": agent_scope.unwrap_or("all_agents"),
+                        "count": outcome.passages.len(),
+                        "excluded_model_mismatch": outcome.excluded_model_mismatch,
+                        "note": note,
+                    }))
+                }
                 Err(reason) => Ok(serde_json::json!({
                     "passages": [],
                     "source": "local_response_passage_memory",

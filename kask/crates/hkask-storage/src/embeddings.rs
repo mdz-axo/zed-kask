@@ -37,6 +37,26 @@ pub struct SimilarityResult {
     pub embedding: StoredEmbedding,
     pub distance: f64,
 }
+/// KNN search result plus the model-gate degradation count.
+///
+/// `excluded_model_mismatch` counts stored rows dropped from the
+/// over-fetched KNN window because their recorded `model` matches neither
+/// the query's requested model nor the provider-confirmed actual model —
+/// the visible signal that the store holds vectors from another embedding
+/// model (a migration window). Same-width vectors from different models
+/// produce meaningless cosine distances; they are filtered and counted,
+/// never silently ranked. Zero on a model-homogeneous store.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchOutcome {
+    pub results: Vec<SimilarityResult>,
+    pub excluded_model_mismatch: usize,
+}
+/// KNN over-fetch factor for the model gate: each search fetches
+/// `limit × this` candidates so matching-model rows can still fill `limit`
+/// while rows from another embedding model are filtered out. vec0 KNN scans
+/// every row regardless of `k`, so the wider window costs only the decode
+/// of the rows it returns — and only the surviving rows are decoded.
+const MODEL_GATE_OVERFETCH: usize = 8;
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddingError {
     #[error("Embedding not found: {0}")]
@@ -305,22 +325,8 @@ impl EmbeddingStore {
             })),
         }
     }
-    /// KNN search using sqlite-vec MATCH operator.
-    ///
-    /// Returns the `limit` nearest embeddings by cosine distance. vec0 v0.1.x
-    /// does not support WHERE constraints on the distance column for
-    /// threshold-based filtering (sqlite-vec#165). If the caller needs a
-    /// distance threshold (e.g. "all neighbors within cosine 0.3"), over-fetch
-    /// a larger `limit` and post-filter the returned `SimilarityResult` list
-    /// by the `distance` field in Rust.
-    /// Search for similar embeddings by vector distance.
-    ///
-    /// expect: "The system provides durable storage for embedding data"
-    /// \[P3\] Motivating: Generative Space — vector similarity search
-    /// pre:  query_vector matches store dimension, limit > 0
-    /// post: returns `Vec<SimilarityResult>` ordered by ascending distance
-    #[must_use = "result must be used"]
     /// Return whether one entity already has an embedding for exact passage text.
+    #[must_use = "result must be used"]
     pub fn contains_entity_passage(
         &self,
         entity_ref: &str,
@@ -336,13 +342,39 @@ impl EmbeddingStore {
         Ok(!rows.is_empty())
     }
 
+    /// KNN search using sqlite-vec MATCH operator, gated on model identity.
+    ///
+    /// Returns up to `limit` nearest embeddings by cosine distance whose
+    /// recorded `model` matches the query's model identity — the requested
+    /// model, or the provider-confirmed actual model when present (the two
+    /// can differ in echo form, e.g. `OpenRouter/qwen/qwen3-embedding-8b`
+    /// vs `Qwen/Qwen3-Embedding-8B`; durable rows record whichever form the
+    /// writing path stored). Rows from any other model are excluded and
+    /// counted in `excluded_model_mismatch`: same-width vectors from
+    /// different embedding models produce meaningless cosine distances, so
+    /// a model change must degrade loudly (filtered + surfaced), never
+    /// silently poison rankings. vec0 v0.1.x does not support WHERE
+    /// constraints on the distance column for threshold-based filtering
+    /// (sqlite-vec#165); the model gate uses the same documented pattern —
+    /// over-fetch a wider window and post-filter in Rust.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — vector similarity search
+    /// pre: query_vector matches store dimension, limit > 0
+    /// post: returns matching-model `SimilarityResult`s ordered by ascending
+    /// distance, plus the count of mismatched-model rows dropped from the
+    /// fetched window
+    #[must_use = "result must be used"]
     pub fn search(
         &self,
         query_vector: &[f32],
         limit: usize,
-    ) -> Result<Vec<SimilarityResult>, EmbeddingError> {
+        query_model: &str,
+        query_actual_model: Option<&str>,
+    ) -> Result<SearchOutcome, EmbeddingError> {
         self.validate_dim(query_vector)?;
 
+        let fetch_k = limit.saturating_mul(MODEL_GATE_OVERFETCH);
         let query_blob = Self::encode_vector(query_vector);
         let conn = self
             .pool
@@ -358,7 +390,7 @@ impl EmbeddingStore {
              WHERE v.embedding MATCH ?1 AND v.k = ?2
              ORDER BY v.distance",
         )?;
-        let rows = stmt.query_map(rusqlite::params![&query_blob, limit as i64], |row| {
+        let rows = stmt.query_map(rusqlite::params![&query_blob, fetch_k as i64], |row| {
             let id: String = row.get(0)?;
             let distance: f64 = row.get(1)?;
             let entity_ref: String = row.get(2)?;
@@ -367,10 +399,22 @@ impl EmbeddingStore {
             let passage_text: Option<String> = row.get(5)?;
             Ok((id, distance, entity_ref, vector_blob, model, passage_text))
         })?;
-        let mut results = Vec::new();
+        // Partition before decoding: the mismatch count must cover the
+        // whole fetched window, and only the surviving rows pay the decode.
+        let mut matching: Vec<(String, f64, String, Vec<u8>, String, Option<String>)> = Vec::new();
+        let mut excluded_model_mismatch = 0usize;
         for row in rows {
-            let (id, distance, entity_ref, blob, model, passage_text) =
-                row.map_err(EmbeddingError::Storage)?;
+            let candidate = row.map_err(EmbeddingError::Storage)?;
+            let model = &candidate.4;
+            if model != query_model && !query_actual_model.is_some_and(|actual| actual == model) {
+                excluded_model_mismatch += 1;
+                continue;
+            }
+            matching.push(candidate);
+        }
+        matching.truncate(limit);
+        let mut results = Vec::with_capacity(matching.len());
+        for (id, distance, entity_ref, blob, model, passage_text) in matching {
             let vector = Self::decode_vector(&blob, self.dim())?;
             results.push(SimilarityResult {
                 embedding: StoredEmbedding {
@@ -383,7 +427,10 @@ impl EmbeddingStore {
                 distance,
             });
         }
-        Ok(results)
+        Ok(SearchOutcome {
+            results,
+            excluded_model_mismatch,
+        })
     }
     /// Delete one exact embedding from both tables in one transaction.
     ///
@@ -701,30 +748,36 @@ impl EmbeddingStore {
         Ok(found)
     }
 
-    /// Load all embeddings with their passage text for in-memory index hydration.
+    /// Load all embeddings with their passage text and model for in-memory
+    /// index hydration.
     ///
-    /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.
-    /// Used by the corpus server to rebuild the in-memory vector index after a
-    /// restart, so `corpus_query` returns full passage text without requiring
-    /// a re-embed from the source JSONL.
-    pub fn all_with_text(&self) -> Result<Vec<(String, Vec<f32>, Option<String>)>, EmbeddingError> {
+    /// Returns `(entity_ref, vector, passage_text, model)` for every stored
+    /// embedding. Used by the corpus server to rebuild the in-memory vector
+    /// index after a restart, so `corpus_query` returns full passage text
+    /// without requiring a re-embed from the source JSONL — and so the
+    /// index's model gate can see each row's recorded model.
+    pub fn all_with_text(
+        &self,
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>, String)>, EmbeddingError> {
         let dim = self.dim();
         let conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        let mut stmt = conn.prepare("SELECT entity_ref, vector, passage_text FROM embeddings")?;
+        let mut stmt =
+            conn.prepare("SELECT entity_ref, vector, passage_text, model FROM embeddings")?;
         let rows = stmt.query_map([], |row| {
             let entity_ref: String = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;
             let passage_text: Option<String> = row.get(2)?;
-            Ok((entity_ref, blob, passage_text))
+            let model: String = row.get(3)?;
+            Ok((entity_ref, blob, passage_text, model))
         })?;
         let mut results = Vec::new();
         for row in rows {
-            let (entity_ref, blob, passage_text) = row.map_err(EmbeddingError::Storage)?;
+            let (entity_ref, blob, passage_text, model) = row.map_err(EmbeddingError::Storage)?;
             let vector = Self::decode_vector(&blob, dim)?;
-            results.push((entity_ref, vector, passage_text));
+            results.push((entity_ref, vector, passage_text, model));
         }
         Ok(results)
     }
@@ -840,10 +893,127 @@ mod tests {
         store.delete_by_id(&first)?;
 
         assert_eq!(store.count()?, 1);
-        let hits = store.search(&second_vector, 4)?;
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].embedding.id, second);
-        assert_eq!(hits[0].embedding.passage_text.as_deref(), Some("second"));
+        let hits = store.search(&second_vector, 4, "m", None)?;
+        assert_eq!(hits.results.len(), 1);
+        assert_eq!(hits.excluded_model_mismatch, 0);
+        assert_eq!(hits.results[0].embedding.id, second);
+        assert_eq!(
+            hits.results[0].embedding.passage_text.as_deref(),
+            Some("second")
+        );
+        Ok(())
+    }
+
+    /// The model gate: same-width vectors from a different embedding model
+    /// are excluded from KNN and counted, never silently ranked — the
+    /// 0.6B→8B migration class where both models emit 1024-wide vectors.
+    /// The matching row is stored under the provider-confirmed actual form
+    /// (what `corpus_embed` writes) while the query carries the requested
+    /// form — the gate must match either identity.
+    #[test]
+    fn search_filters_mismatched_model_rows_and_surfaces_count() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        store.store(
+            "current:model",
+            &query_vector,
+            "Qwen/Qwen3-Embedding-8B",
+            Some("current"),
+        )?;
+        let legacy_vector = vec![0.25; dim];
+        store.store(
+            "legacy:model",
+            &legacy_vector,
+            "qwen3-embedding:0.6b",
+            Some("legacy"),
+        )?;
+
+        let outcome = store.search(
+            &query_vector,
+            5,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("Qwen/Qwen3-Embedding-8B"),
+        )?;
+
+        assert_eq!(
+            outcome.results.len(),
+            1,
+            "only the current-model row is ranked"
+        );
+        assert_eq!(outcome.results[0].embedding.entity_ref, "current:model");
+        assert_eq!(
+            outcome.excluded_model_mismatch, 1,
+            "the legacy-model row is counted, not silently mixed"
+        );
+        Ok(())
+    }
+
+    /// A fully stale store must read as loud degradation — zero results with
+    /// every fetched row counted as excluded — never as an empty store.
+    #[test]
+    fn search_all_model_mismatch_returns_empty_with_loud_count() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        let legacy_one = vec![0.25; dim];
+        store.store(
+            "legacy:one",
+            &legacy_one,
+            "qwen3-embedding:0.6b",
+            Some("one"),
+        )?;
+        let legacy_two = vec![0.5; dim];
+        store.store(
+            "legacy:two",
+            &legacy_two,
+            "qwen3-embedding:0.6b",
+            Some("two"),
+        )?;
+
+        let outcome = store.search(
+            &query_vector,
+            5,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("Qwen/Qwen3-Embedding-8B"),
+        )?;
+
+        assert!(
+            outcome.results.is_empty(),
+            "no cross-model row may be ranked"
+        );
+        assert_eq!(outcome.excluded_model_mismatch, 2);
+        Ok(())
+    }
+
+    /// Rows stored under the requested-form model string (the memory write
+    /// paths' convention) match a query that carries no provider-confirmed
+    /// actual identity.
+    #[test]
+    fn search_matches_requested_form_without_actual_identity() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        store.store(
+            "requested:form",
+            &query_vector,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("row"),
+        )?;
+
+        let outcome = store.search(&query_vector, 5, "OpenRouter/qwen/qwen3-embedding-8b", None)?;
+
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.excluded_model_mismatch, 0);
         Ok(())
     }
 }

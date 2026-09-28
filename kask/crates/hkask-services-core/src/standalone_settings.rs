@@ -82,13 +82,12 @@ pub struct HkaskSettings {
 pub(crate) const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
-    // Code default (operator direction 2026-09-28): Qwen3-Embedding-8B via
-    // OpenRouter — an MRL model, so embed requests carry
-    // `dimensions = embedding_dim` (default 1024) and width-bound vec0
-    // stores keep receiving fitting vectors. Unlike the former ollama
-    // default this needs OPENROUTER_API_KEY, surfaced visibly when missing.
-    // settings.json / env vars override it.
-    "OpenRouter/qwen/qwen3-embedding-8b".to_string()
+    // The single literal lives in hkask_inference::model_constants
+    // (DEFAULT_EMBEDDING_MODEL) — both settings layers reference it, so a
+    // model update changes one constant. MRL contract: embed requests carry
+    // `dimensions = embedding_dim` (default 1024); the 8B default needs
+    // OPENROUTER_API_KEY, surfaced visibly when missing.
+    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
 fn default_classifier_model() -> String {

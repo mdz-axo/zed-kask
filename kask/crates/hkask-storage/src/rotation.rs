@@ -663,9 +663,12 @@ pub(crate) mod tests {
             ));
         let embeddings =
             crate::EmbeddingStore::from_driver(driver.clone(), 1024).expect("embedding store");
-        let before = embeddings.search(&query, 1).expect("old nearest neighbor");
+        let before = embeddings
+            .search(&query, 1, "test-model", None)
+            .expect("old nearest neighbor");
         assert_eq!(
             before
+                .results
                 .first()
                 .expect("old memory recalled")
                 .embedding
@@ -693,9 +696,12 @@ pub(crate) mod tests {
             .store("new-entity", &other, "test-model", None)
             .expect("new embedding");
         for (vector, entity) in [(&query, "test-entity"), (&other, "new-entity")] {
-            let result = embeddings.search(vector, 1).expect("nearest neighbor");
+            let result = embeddings
+                .search(vector, 1, "test-model", None)
+                .expect("nearest neighbor");
             assert_eq!(
                 result
+                    .results
                     .first()
                     .expect("memory recalled")
                     .embedding

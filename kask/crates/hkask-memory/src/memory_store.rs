@@ -25,7 +25,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use hkask_storage::database::value::DbValue;
-use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SimilarityResult};
+use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SearchOutcome};
 use hkask_types::RegulationSink;
 use hkask_types::WebID;
 use hkask_types::event::{CyclePhase, RegulationRecord, Span};
@@ -602,12 +602,21 @@ impl MemoryStore {
         Ok(self.embedding.delete_by_id(id)?)
     }
 
+    /// KNN search gated on model identity: rows whose recorded model matches
+    /// neither the query's requested model nor its provider-confirmed actual
+    /// model are excluded and counted in the outcome — an embedding-model
+    /// change degrades loudly (filtered + surfaced), never silently poisons
+    /// cosine rankings with cross-model distances.
     pub fn search_similar(
         &self,
         query_vector: &[f32],
         limit: usize,
-    ) -> Result<Vec<SimilarityResult>, MemoryStoreError> {
-        Ok(self.embedding.search(query_vector, limit)?)
+        query_model: &str,
+        query_actual_model: Option<&str>,
+    ) -> Result<SearchOutcome, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .search(query_vector, limit, query_model, query_actual_model)?)
     }
 
     pub fn embedding_count(&self) -> Result<usize, MemoryStoreError> {
@@ -628,11 +637,13 @@ impl MemoryStore {
         Ok(self.embedding.models_for_entity_refs(entity_refs)?)
     }
 
-    /// Load all embeddings with passage text for in-memory index hydration.
-    /// Returns `(entity_ref, vector, passage_text)` for every stored embedding.
+    /// Load all embeddings with passage text and model for in-memory index
+    /// hydration. Returns `(entity_ref, vector, passage_text, model)` for
+    /// every stored embedding — the model rides along so the corpus index's
+    /// model gate can see each row's recorded identity.
     pub fn all_embeddings_with_text(
         &self,
-    ) -> Result<Vec<(String, Vec<f32>, Option<String>)>, MemoryStoreError> {
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>, String)>, MemoryStoreError> {
         Ok(self.embedding.all_with_text()?)
     }
 
@@ -2000,18 +2011,23 @@ mod tests {
         assert_eq!(store.embedding_count().expect("count"), 2);
 
         // The deleted passage is no longer retrievable.
-        let hits = store.search_similar(&beta, 3).expect("search");
+        let hits = store
+            .search_similar(&beta, 3, "test-model", None)
+            .expect("search");
         assert!(
-            hits.iter()
+            hits.results
+                .iter()
                 .all(|hit| hit.embedding.passage_text.as_deref() != Some("beta passage")),
             "the deleted passage must not be retrievable"
         );
 
         // The siblings are the nearest matches for their own vectors.
         for (vector, name) in [(&alpha, "alpha passage"), (&gamma, "gamma passage")] {
-            let hits = store.search_similar(vector, 1).expect("search");
+            let hits = store
+                .search_similar(vector, 1, "test-model", None)
+                .expect("search");
             assert_eq!(
-                hits[0].embedding.passage_text.as_deref(),
+                hits.results[0].embedding.passage_text.as_deref(),
                 Some(name),
                 "the surviving sibling must remain semantically retrievable"
             );
@@ -2074,9 +2090,11 @@ mod tests {
             1
         );
         assert_eq!(store.embedding_count().expect("count"), 1);
-        let hits = store.search_similar(&vector, 1).expect("search");
+        let hits = store
+            .search_similar(&vector, 1, "test-model", None)
+            .expect("search");
         assert_eq!(
-            hits[0].embedding.passage_text, None,
+            hits.results[0].embedding.passage_text, None,
             "the NULL-passage legacy row must survive"
         );
     }
@@ -2358,8 +2376,11 @@ mod tests {
             assert_eq!(store.embedding_count()?, 2);
             assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
             assert_eq!(store.embedding.get("corpus:source")?.vector, source);
-            let nearest = store.search_similar(&original, 1)?;
-            let nearest = nearest.first().expect("old centroid remains indexed");
+            let nearest = store.search_similar(&original, 1, "old", None)?;
+            let nearest = nearest
+                .results
+                .first()
+                .expect("old centroid remains indexed");
             assert_eq!(nearest.embedding.id, original_id);
             assert_eq!(nearest.distance, 0.0);
             let vectors: i64 =
@@ -2414,7 +2435,19 @@ mod tests {
         assert_eq!(store.embedding.get(destination)?.vector, source);
         assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
         assert_eq!(store.embedding.get("corpus:source")?.vector, source);
-        assert_eq!(store.search_similar(&source, 10)?.len(), 2);
+        assert_eq!(
+            store.search_similar(&source, 10, "m", None)?.results.len(),
+            1,
+            "the source row remains indexed under its model"
+        );
+        assert_eq!(
+            store
+                .search_similar(&source, 10, "new", None)?
+                .results
+                .len(),
+            1,
+            "the recomputed centroid remains indexed under its model"
+        );
         Ok(())
     }
 

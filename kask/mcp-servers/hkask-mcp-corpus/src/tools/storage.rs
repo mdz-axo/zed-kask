@@ -72,7 +72,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Search indexed passages by plain natural-language or Lisp query. db_path hydrates stored passage text only when the index is empty; it does not switch DBs on a nonempty index. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text is surfaced; no usable context yields answer_error without generation."
+        description = "Search indexed passages by plain natural-language or Lisp query. db_path hydrates stored passage text only when the index is empty; it does not switch DBs on a nonempty index. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text and model-mismatched rows (stored under a different embedding model than the query) are skipped and surfaced with counts; no usable context yields answer_error without generation."
     )]
     /// Query the in-memory vector index for top-k relevant passages.
     ///
@@ -128,7 +128,7 @@ impl CorpusServer {
 
             self.index.hydrate_if_empty(db_path.as_deref())?;
 
-            let query_embedding = match self
+            let query_batch = match self
                 .inference_router
                 .embed_with_dimensions(
                     &model_name,
@@ -137,7 +137,7 @@ impl CorpusServer {
                 )
                 .await
             {
-                Ok(batch) => batch.vectors.into_iter().next().unwrap_or_default(),
+                Ok(batch) => batch,
                 Err(e) => {
                     return Err(McpToolError::unavailable(format!(
                         "Query embedding failed: {}",
@@ -145,6 +145,11 @@ impl CorpusServer {
                     )));
                 }
             };
+            let query_embedding = query_batch
+                .vectors
+                .into_iter()
+                .next()
+                .unwrap_or_default();
 
             if query_embedding.is_empty() {
                 return Err(McpToolError::unavailable(
@@ -157,7 +162,14 @@ impl CorpusServer {
                 total_indexed,
                 missing_text,
                 dimension_mismatch,
-            } = self.index.retrieve(&query_embedding, k, min_score_val)?;
+                model_mismatch,
+            } = self.index.retrieve(
+                &query_embedding,
+                k,
+                min_score_val,
+                &model_name,
+                query_batch.actual_model.as_deref(),
+            )?;
             let results: Vec<_> = matches.iter().map(|matched| matched.project(include_text_flag)).collect();
 
             let mut result = json!({
@@ -176,6 +188,10 @@ impl CorpusServer {
             if dimension_mismatch > 0 {
                 result["dimension_mismatch"] = json!(dimension_mismatch);
                 result["note"] = json!("Some stored embeddings have a different vector length than the query and were skipped; the configured embedding model (or HKASK_EMBEDDING_DIM) likely changed. Re-embed the corpus to restore retrieval.");
+            }
+            if model_mismatch > 0 {
+                result["model_mismatch"] = json!(model_mismatch);
+                result["note"] = json!("Some stored embeddings were embedded under a different model than the query and were skipped; the configured embedding model changed. Re-embed the corpus to restore retrieval.");
             }
             let context = matches.iter().filter_map(|matched| matched.passage.text.as_deref())
                 .filter(|text| !text.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
@@ -440,6 +456,7 @@ mod tests {
             text: Some(text.to_string()),
             metadata: json!({"entity_ref": "test:chunk:1"}),
             embedding,
+            model: "test-model".to_string(),
         }
     }
 

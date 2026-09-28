@@ -492,8 +492,9 @@ mod tests {
         let mut probe = vec![0.0f32; hkask_storage::embedding_dim()];
         probe[1] = 1.0; // the newer turn's direction
         let passages: Vec<Option<String>> = memory
-            .search_similar(&probe, 10)
+            .search_similar(&probe, 10, "test-model", None)
             .expect("knn")
+            .results
             .into_iter()
             .map(|hit| hit.embedding.passage_text)
             .collect();

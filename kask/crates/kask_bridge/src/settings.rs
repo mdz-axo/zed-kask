@@ -385,14 +385,13 @@ impl Default for KaskCorpusSettings {
 }
 
 fn default_embedding_model() -> String {
-    // Code default (operator direction 2026-09-28): Qwen3-Embedding-8B via
-    // OpenRouter — an MRL model, so every embed request carries
-    // `dimensions = embedding_dim` (default 1024) and width-bound vec0
-    // stores keep receiving fitting vectors. Unlike the former ollama
-    // default this needs OPENROUTER_API_KEY; a missing credential surfaces
-    // at the embedding resolver instead of silently skipping embedding.
+    // The single literal lives in hkask_inference::model_constants
+    // (DEFAULT_EMBEDDING_MODEL) — both settings layers reference it, so a
+    // model update changes one constant. MRL contract: every embed request
+    // carries `dimensions = embedding_dim` (default 1024); the 8B default
+    // needs OPENROUTER_API_KEY, surfaced visibly when missing.
     // `kask.corpus.embedding_model` / `kask.models.embedding_model` override it.
-    "OpenRouter/qwen/qwen3-embedding-8b".to_string()
+    hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
 /// Prediction-markets data-service configuration.
@@ -707,7 +706,11 @@ impl KaskSettings {
     /// (if non-empty — its `Default` carries the code default, operator
     /// ruling 2026-09-04) → empty. Empty is reachable only when the user
     /// explicitly empties both fields — embedding calls then fail visibly
-    /// naming the setting.
+    /// naming the setting. When BOTH fields are set and disagree, the
+    /// resolution warns before applying the precedence — a model update
+    /// that sets only one field silently shadows the other, which is the
+    /// classic way an embedding-model change breaks every consumer while
+    /// each surface still looks configured.
     ///
     /// This is the single source of truth for the `HKASK_EMBEDDING_MODEL`
     /// env emission. Previously two separate `env.insert` blocks in
@@ -717,6 +720,18 @@ impl KaskSettings {
     /// `mcp_env_models_embedding_model_overrides_corpus`.
     #[must_use]
     pub fn effective_embedding_model(&self) -> String {
+        if !self.models.embedding_model.is_empty()
+            && !self.corpus.embedding_model.is_empty()
+            && self.models.embedding_model != self.corpus.embedding_model
+        {
+            tracing::warn!(
+                target: "kask.settings",
+                models_embedding_model = %self.models.embedding_model,
+                corpus_embedding_model = %self.corpus.embedding_model,
+                "kask.models.embedding_model and kask.corpus.embedding_model disagree — \
+                 models wins; set both to the same value"
+            );
+        }
         if !self.models.embedding_model.is_empty() {
             self.models.embedding_model.clone()
         } else if !self.corpus.embedding_model.is_empty() {

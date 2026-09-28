@@ -196,6 +196,11 @@ pub struct ExternalPassageBatch {
     pub source_id: String,
     pub hits: Vec<ExternalPassageHit>,
     pub missing_text: usize,
+    /// Stored rows excluded from the KNN window because their recorded
+    /// model matches neither the query's model nor the source's declared
+    /// actual model — the loud signal of a partially re-embedded sealed
+    /// source. Zero on a model-homogeneous source.
+    pub excluded_model_mismatch: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -552,13 +557,27 @@ impl ReadOnlyPassageSource {
             ));
         }
         ensure_checkpointed(&self.identity.source_id, &self.identity.database_path)?;
-        let results = self
+        // Model gate: the identity check above verified the query's model
+        // against this source's declared identities; this gate covers the
+        // rows themselves — a sealed DB whose rows were written under a
+        // different model than the query's (a partially re-embedded store)
+        // must degrade loudly, never rank cross-model cosine distances. The
+        // source's declared actual model is the second accepted identity:
+        // durable rows record the provider-confirmed form, which can differ
+        // from the requested form the query was embedded with.
+        let outcome = self
             .embeddings
-            .search(query_vector, limit)
+            .search(
+                query_vector,
+                limit,
+                query_model,
+                Some(&self.identity.actual_embedding_model),
+            )
             .map_err(|source| FederatedRecallError::Retrieval {
                 source_id: self.identity.source_id.clone(),
                 source,
             })?;
+        let results = outcome.results;
         let mut hits = Vec::with_capacity(results.len());
         let mut missing_text = 0;
         for (index, result) in results.into_iter().enumerate() {
@@ -599,6 +618,7 @@ impl ReadOnlyPassageSource {
             source_id: self.identity.source_id.clone(),
             hits,
             missing_text,
+            excluded_model_mismatch: outcome.excluded_model_mismatch,
         })
     }
 }

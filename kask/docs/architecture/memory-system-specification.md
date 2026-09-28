@@ -584,7 +584,7 @@ flowchart TD
     Prompt["User prompt<br/>(≥20 chars, ≥3 words)"] --> Gate{"auto_inject<br/>AND should_recall?"}
     Gate -- "No" --> Empty["Return empty"]
     Gate -- "Yes" --> Embed["Embed query via<br/>LanguageModelEmbeddingPort<br/>(tokio spawn → HTTP)"]
-    Embed --> KNN["search_similar(query_vector, limit)<br/>sqlite-vec cosine KNN"]
+    Embed --> KNN["search_similar(query_vector, limit,<br/>query model identities)<br/>sqlite-vec cosine KNN, model-gated:<br/>mismatched-model rows excluded + counted"]
     KNN --> Join["For each KNN neighbor:<br/>inject only the h_mem whose text<br/>equals the vector's passage_text"]
     Join --> SemanticCandidates["Semantic candidates<br/>relevance = 1.0 - distance"]
 

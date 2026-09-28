@@ -139,7 +139,25 @@ impl InferencePort for RecordingPort {
     }
 }
 
+/// The retrieval fixtures embed under the model name `offline`, while the
+/// query path resolves `HKASK_EMBEDDING_MODEL`. Align them once per process
+/// so the model gate sees a homogeneous store — the gate's own behavior is
+/// pinned in `index.rs` and `hkask-storage` tests with deliberately mixed
+/// fixtures. The smoke test isolates its env via `env_clear()` subprocesses
+/// and is unaffected.
+fn ensure_offline_embedding_model_env() {
+    static SET: std::sync::Once = std::sync::Once::new();
+    SET.call_once(|| {
+        if std::env::var("HKASK_EMBEDDING_MODEL").is_err() {
+            // SAFETY: test-only env write, executed once before any test
+            // body relies on it, always to the same value.
+            unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "offline") };
+        }
+    });
+}
+
 fn server<T: InferencePort + 'static>(port: Arc<T>) -> CorpusServer {
+    ensure_offline_embedding_model_env();
     crate::helpers::seed_test_passphrase();
     let port: Arc<dyn InferencePort> = port;
     let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));

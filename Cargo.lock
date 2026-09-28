@@ -9342,6 +9342,7 @@ name = "hkask-services-core"
 version = "0.40.0"
 dependencies = [
  "dirs",
+ "hkask-inference",
  "hkask-types",
  "serde",
  "serde_json",

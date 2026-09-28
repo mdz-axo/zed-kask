@@ -133,6 +133,11 @@ pub(crate) struct ComposeResult {
     pub exemplar_count: usize,
     /// Candidates excluded because no stored method signals were available.
     pub method_signals_missing: usize,
+    /// Exemplar candidates the model gate excluded — stored under a
+    /// different embedding model than the query. Surfaced so a model
+    /// migration reads as degraded exemplar retrieval, never as a
+    /// mysteriously small exemplar set.
+    pub excluded_model_mismatch: usize,
     /// Centroid validation result (None if skipped or the centroid is absent).
     pub validation: Option<CentroidValidation>,
     /// Validation was requested, but its configured centroid does not exist.
@@ -278,27 +283,42 @@ impl ComposeService {
             &request.inference_ctx,
             &gen_model,
         )?;
-        let prompt_vector = inference
+        let prompt_batch = inference
             .embed_with_dimensions(
                 &request.cognition.embedding.model,
                 std::slice::from_ref(&request.prompt),
                 Some(crate::embedding_dim() as u32),
             )
-            .await?
+            .await?;
+        let prompt_vector = prompt_batch
             .vectors
             .into_iter()
             .next()
             .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
 
-        // 3. KNN search for exemplar passages
-        let results = store
-            .search_similar(&prompt_vector, request.cognition.embedding.retrieval.k_max)
+        // 3. KNN search for exemplar passages, gated on model identity
+        let outcome = store
+            .search_similar(
+                &prompt_vector,
+                request.cognition.embedding.retrieval.k_max,
+                &request.cognition.embedding.model,
+                prompt_batch.actual_model.as_deref(),
+            )
             .map_err(|e| ServiceError::Domain {
                 kind: ErrorKind::BadRequest,
                 domain: DomainKind::Memory,
                 source: None,
                 message: e.to_string(),
             })?;
+        if outcome.excluded_model_mismatch > 0 {
+            tracing::warn!(
+                target: "hkask.mcp.corpus.compose",
+                excluded = outcome.excluded_model_mismatch,
+                query_model = %request.cognition.embedding.model,
+                "Exemplar KNN excluded stored embeddings from a different model — re-embed pending"
+            );
+        }
+        let results = outcome.results;
 
         // Debug: log top-5 distances regardless of threshold to diagnose retrieval gaps
         if !results.is_empty() {
@@ -529,6 +549,7 @@ impl ComposeService {
             generated_prose,
             exemplar_count,
             method_signals_missing,
+            excluded_model_mismatch: outcome.excluded_model_mismatch,
             validation,
             centroid_missing,
         })

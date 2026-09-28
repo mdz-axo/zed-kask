@@ -23,6 +23,12 @@ pub(crate) struct IndexedPassage {
     pub text: Option<String>,
     pub metadata: Value,
     pub embedding: Vec<f32>,
+    /// The embedding model that produced this row's vector — the model gate
+    /// in `retrieve` compares it against the query's model identity so a
+    /// model change degrades loudly instead of ranking cross-model cosine
+    /// distances. Durable rows record the provider-confirmed actual form
+    /// when the provider echoes one (matching what `corpus_embed` stores).
+    pub model: String,
 }
 
 pub(crate) enum PublicationScope {
@@ -210,6 +216,7 @@ impl PassageIndex {
                 text: Some(text.into()),
                 metadata: json!({"entity_ref":entity_ref}),
                 embedding: embedding.to_vec(),
+                model: model.to_string(),
             },
         );
         Ok(())
@@ -220,6 +227,7 @@ impl PassageIndex {
         publication: &Publication,
         passages: &[(String, String)],
         vectors: Vec<Vec<f32>>,
+        model: &str,
     ) -> Result<usize, McpToolError> {
         let mut state = self.lock()?;
         Self::check_publication(publication)?;
@@ -236,6 +244,7 @@ impl PassageIndex {
                     text: Some(text.clone()),
                     metadata: json!({"entity_ref":entity_ref,"source":source,"position":position}),
                     embedding,
+                    model: model.to_string(),
                 },
             );
         }
@@ -270,13 +279,14 @@ impl PassageIndex {
         let entries = store
             .all_embeddings_with_text()
             .map_err(|error| map_memory_store_error(error, "DB hydration failed"))?;
-        for (entity_ref, embedding, text) in entries {
+        for (entity_ref, embedding, text, model) in entries {
             state.passages.insert(
                 (origin.clone(), entity_ref.clone()),
                 IndexedPassage {
                     text: text.filter(|text| !text.trim().is_empty()),
                     metadata: json!({"entity_ref":entity_ref}),
                     embedding,
+                    model,
                 },
             );
         }
@@ -288,6 +298,8 @@ impl PassageIndex {
         query: &[f32],
         k: usize,
         min_score: f32,
+        query_model: &str,
+        query_actual_model: Option<&str>,
     ) -> Result<Retrieval, McpToolError> {
         let state = self.lock()?;
         let total_indexed = state.passages.len();
@@ -309,6 +321,29 @@ impl PassageIndex {
                 query.len()
             )));
         }
+        // Model gate, mirroring the dimension gate: same-width vectors from
+        // different embedding models produce meaningless cosine distances.
+        // Dimension-compatible rows whose recorded model matches neither the
+        // query's requested model nor its provider-confirmed actual model
+        // are skipped and counted — a model change degrades loudly, never
+        // silently poisons rankings.
+        let model_mismatch = state
+            .passages
+            .values()
+            .filter(|passage| {
+                passage.embedding.len() == query.len()
+                    && passage.model != query_model
+                    && !query_actual_model.is_some_and(|actual| actual == passage.model)
+            })
+            .count();
+        if total_indexed > 0 && model_mismatch == total_indexed {
+            return Err(McpToolError::unavailable(format!(
+                "Query model '{query_model}' matches none of the {model_mismatch} stored \
+                 embeddings (all recorded under a different embedding model); no stored \
+                 passage can match. The configured embedding model changed — re-embed the \
+                 corpus or clear the index."
+            )));
+        }
         Ok(Retrieval {
             total_indexed,
             missing_text: state
@@ -317,11 +352,16 @@ impl PassageIndex {
                 .filter(|passage| passage.text.is_none())
                 .count(),
             dimension_mismatch,
+            model_mismatch,
             matches: search_passages(
                 state
                     .passages
                     .values()
-                    .filter(|passage| passage.embedding.len() == query.len()),
+                    .filter(|passage| passage.embedding.len() == query.len())
+                    .filter(|passage| {
+                        passage.model == query_model
+                            || query_actual_model.is_some_and(|actual| actual == passage.model)
+                    }),
                 query,
                 k,
                 min_score,
@@ -430,6 +470,12 @@ pub(crate) struct Retrieval {
     /// Stored embeddings whose vector length differs from the query's — they
     /// cannot be scored and are excluded from `matches`.
     pub dimension_mismatch: usize,
+    /// Dimension-compatible stored embeddings whose recorded model matches
+    /// neither the query's requested nor its provider-confirmed actual
+    /// model — excluded from `matches` and counted, so an embedding-model
+    /// change reads as loud degradation, never as silent cross-model
+    /// ranking or as an empty index.
+    pub model_mismatch: usize,
     pub matches: Vec<RetrievedPassage>,
 }
 
@@ -470,6 +516,7 @@ mod tests {
                         text: Some("passage".into()),
                         metadata: json!({"entity_ref": entity_ref}),
                         embedding: embedding.to_vec(),
+                        model: "test-model".to_string(),
                     },
                 );
             }
@@ -484,7 +531,7 @@ mod tests {
         let index = index_with(&[&[0.1, 0.2, 0.3], &[0.4, 0.5, 0.6]]);
 
         let error = index
-            .retrieve(&[1.0, 0.0], 5, 0.0)
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
             .expect_err("a dimension mismatch must be surfaced");
         let message = error.to_string();
         assert!(
@@ -504,13 +551,89 @@ mod tests {
         let index = index_with(&[&[0.1, 0.2, 0.3], &[1.0, 0.0]]);
 
         let retrieval = index
-            .retrieve(&[1.0, 0.0], 5, 0.0)
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
             .expect("a matching-dimension passage exists");
         assert_eq!(retrieval.dimension_mismatch, 1);
         assert_eq!(
             retrieval.matches.len(),
             1,
             "only the matching-dimension passage is scored"
+        );
+    }
+
+    /// The model gate: same-width rows from a different embedding model are
+    /// skipped and counted, never silently ranked — the 0.6B→8B migration
+    /// class where both models emit the same vector width. A row stored
+    /// under the provider-confirmed actual form matches a query carrying
+    /// that actual identity (the requested/actual echo divergence).
+    #[test]
+    fn partial_model_mismatch_is_reported() {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for (position, model) in [
+                (0, "OpenRouter/qwen/qwen3-embedding-8b"),
+                (1, "qwen3-embedding:0.6b"),
+                (2, "Qwen/Qwen3-Embedding-8B"),
+            ] {
+                let entity_ref = format!("chunk:{position}");
+                state.passages.insert(
+                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
+                    IndexedPassage {
+                        text: Some("passage".into()),
+                        metadata: json!({"entity_ref": entity_ref}),
+                        embedding: vec![1.0, 0.0],
+                        model: model.to_string(),
+                    },
+                );
+            }
+        }
+
+        let retrieval = index
+            .retrieve(
+                &[1.0, 0.0],
+                5,
+                0.0,
+                "OpenRouter/qwen/qwen3-embedding-8b",
+                Some("Qwen/Qwen3-Embedding-8B"),
+            )
+            .expect("matching-model passages exist");
+        assert_eq!(retrieval.model_mismatch, 1, "the legacy row is counted");
+        assert_eq!(
+            retrieval.matches.len(),
+            2,
+            "requested-form and actual-form rows both match; the legacy row is skipped"
+        );
+    }
+
+    /// All dimension-compatible rows from another model must fail visibly,
+    /// never return score-0.0 matches that read as irrelevant content.
+    #[test]
+    fn total_model_mismatch_is_surfaced() {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for position in 0..2 {
+                let entity_ref = format!("chunk:{position}");
+                state.passages.insert(
+                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
+                    IndexedPassage {
+                        text: Some("passage".into()),
+                        metadata: json!({"entity_ref": entity_ref}),
+                        embedding: vec![1.0, 0.0],
+                        model: "qwen3-embedding:0.6b".to_string(),
+                    },
+                );
+            }
+        }
+
+        let error = index
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
+            .expect_err("a total model mismatch must be surfaced");
+        let message = error.to_string();
+        assert!(
+            message.contains("different embedding model"),
+            "must name the model-change cause: {message}"
         );
     }
 }

@@ -91,6 +91,11 @@ enum SemanticRecallError {
 struct SemanticRecall {
     fragments: Vec<(hkask_storage::HMem, f64)>,
     resolution_failures: usize,
+    /// KNN hits excluded because their stored model matches neither the
+    /// query's requested nor its provider-confirmed actual model — surfaced
+    /// in tool responses so an embedding-model migration window reads as
+    /// degradation, never as an empty store.
+    excluded_model_mismatch: usize,
 }
 
 /// Note naming the KNN hits that failed h_mem resolution, shared by every
@@ -103,6 +108,13 @@ fn resolution_failure_note(failures: usize, yielded: usize) -> String {
     } else {
         format!("{failures} semantic hits failed h_mem resolution — recall degraded")
     }
+}
+
+fn model_mismatch_note(excluded: usize) -> String {
+    format!(
+        "{excluded} stored embeddings were excluded from KNN because they were embedded \
+         under a different model — re-embed pending, not an empty store"
+    )
 }
 
 /// The curator's stores, backed by the curator's
@@ -449,20 +461,26 @@ impl CuratorServer {
     /// appears twice even when the KNN hits it through several embeddings.
     /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
     /// embedding provider) or the store has no embedding index — callers fall
-    /// back to exact-entity lookup and surface the reason.
+    /// back to exact-entity lookup and surface the reason. The query's model
+    /// identities gate the KNN: rows stored under a different embedding
+    /// model are excluded and counted in `excluded_model_mismatch` (the
+    /// migration-window degradation callers surface).
     fn semantic_recall_fragments_for_vector(
         &self,
         query_vector: &[f32],
         limit: usize,
+        query_model: &str,
+        query_actual_model: Option<&str>,
     ) -> Result<SemanticRecall, SemanticRecallError> {
         let stores = self.db.get();
         let memory = stores
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
         let knn_limit = limit.saturating_mul(MAX_FRAGMENTS_PER_ENTITY).max(limit);
-        let results = memory
-            .search_similar(query_vector, knn_limit)
+        let outcome = memory
+            .search_similar(query_vector, knn_limit, query_model, query_actual_model)
             .map_err(|source| SemanticRecallError::Search { source })?;
+        let results = outcome.results;
         let mut fragments = Vec::with_capacity(results.len());
         let mut resolution_failures = 0usize;
         let mut seen_h_mem_ids: std::collections::HashSet<String> =
@@ -522,6 +540,7 @@ impl CuratorServer {
         Ok(SemanticRecall {
             fragments,
             resolution_failures,
+            excluded_model_mismatch: outcome.excluded_model_mismatch,
         })
     }
 
@@ -546,7 +565,12 @@ impl CuratorServer {
             .into_iter()
             .next()
             .ok_or(SemanticRecallError::NoVector)?;
-        self.semantic_recall_fragments_for_vector(&query_vector, limit)
+        self.semantic_recall_fragments_for_vector(
+            &query_vector,
+            limit,
+            &batch.requested_model,
+            batch.actual_model.as_deref(),
+        )
     }
 
     #[tool(
@@ -586,9 +610,17 @@ impl CuratorServer {
                         "mode": "semantic",
                         "results": serialized,
                     });
+                    let mut notes: Vec<String> = Vec::new();
                     if recall.resolution_failures > 0 {
-                        result["note"] =
-                            json!(resolution_failure_note(recall.resolution_failures, yielded));
+                        notes.push(resolution_failure_note(recall.resolution_failures, yielded));
+                    }
+                    if recall.excluded_model_mismatch > 0 {
+                        result["model_mismatch_excluded"] =
+                            json!(recall.excluded_model_mismatch);
+                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
+                    }
+                    if !notes.is_empty() {
+                        result["note"] = json!(notes.join("; "));
                     }
                     Ok(result)
                 }
@@ -633,9 +665,17 @@ impl CuratorServer {
                         "mode": "semantic",
                         "results": [],
                     });
+                    let mut notes: Vec<String> = Vec::new();
                     if recall.resolution_failures > 0 {
-                        result["note"] =
-                            json!(resolution_failure_note(recall.resolution_failures, 0));
+                        notes.push(resolution_failure_note(recall.resolution_failures, 0));
+                    }
+                    if recall.excluded_model_mismatch > 0 {
+                        result["model_mismatch_excluded"] =
+                            json!(recall.excluded_model_mismatch);
+                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
+                    }
+                    if !notes.is_empty() {
+                        result["note"] = json!(notes.join("; "));
                     }
                     Ok(result)
                 }
@@ -680,7 +720,12 @@ impl CuratorServer {
 
             let mut statuses = Vec::new();
             let mut batches = Vec::new();
-            match self.semantic_recall_fragments_for_vector(&query_vector, limit) {
+            match self.semantic_recall_fragments_for_vector(
+                &query_vector,
+                limit,
+                &batch.requested_model,
+                batch.actual_model.as_deref(),
+            ) {
                 Ok(recall) => {
                     let hits = recall
                         .fragments
@@ -708,13 +753,25 @@ impl CuratorServer {
                         source_id: "curator".to_string(),
                         source_kind: "curator",
                         state: federated::FederatedSourceState::Ready,
-                        // Hits that failed h_mem resolution must not vanish
-                        // behind a clean Ready: the failure count rides the
-                        // reason so Ready + result_count 0 cannot read as
-                        // "the curator store is empty".
-                        reason: (recall.resolution_failures > 0).then(|| {
-                            resolution_failure_note(recall.resolution_failures, hits.len())
-                        }),
+                        // Hits that failed h_mem resolution — or rows the model
+                        // gate excluded — must not vanish behind a clean Ready:
+                        // the counts ride the reason so Ready + result_count 0
+                        // cannot read as "the curator store is empty".
+                        reason: (recall.resolution_failures > 0
+                            || recall.excluded_model_mismatch > 0)
+                            .then(|| {
+                                let mut notes = Vec::new();
+                                if recall.resolution_failures > 0 {
+                                    notes.push(resolution_failure_note(
+                                        recall.resolution_failures,
+                                        hits.len(),
+                                    ));
+                                }
+                                if recall.excluded_model_mismatch > 0 {
+                                    notes.push(model_mismatch_note(recall.excluded_model_mismatch));
+                                }
+                                notes.join("; ")
+                            }),
                         result_count: hits.len(),
                     });
                     batches.push(hkask_memory::RankedSourceBatch {
@@ -741,6 +798,10 @@ impl CuratorServer {
                             .find(|status| status.source_id == batch.source_id)
                         {
                             status.result_count = batch.hits.len();
+                            if batch.excluded_model_mismatch > 0 {
+                                status.reason =
+                                    Some(model_mismatch_note(batch.excluded_model_mismatch));
+                            }
                         }
                         let hits = batch
                             .hits
@@ -1003,14 +1064,24 @@ impl CuratorServer {
                         "h_mems": perspective_scoped,
                     });
 
-                    // Hits that failed h_mem resolution must not vanish:
-                    // name the failure count so partial (or fully failed)
-                    // recall reads as degraded, not as missing memories.
+                    // Hits that failed h_mem resolution — or rows the model
+                    // gate excluded — must not vanish: name the counts so
+                    // partial (or fully failed) recall reads as degraded, not
+                    // as missing memories.
+                    let mut notes: Vec<String> = Vec::new();
                     if recall.resolution_failures > 0 {
-                        let note =
-                            resolution_failure_note(recall.resolution_failures, entity_wide_count);
-                        entity_wide_json["note"] = json!(note);
-                        perspective_json["note"] = json!(note);
+                        notes.push(resolution_failure_note(
+                            recall.resolution_failures,
+                            entity_wide_count,
+                        ));
+                    }
+                    if recall.excluded_model_mismatch > 0 {
+                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
+                    }
+                    if !notes.is_empty() {
+                        let note = json!(notes.join("; "));
+                        entity_wide_json["note"] = note.clone();
+                        perspective_json["note"] = note;
                     }
                     result["entity_wide_fragments"] = entity_wide_json;
                     result["perspective_scoped_fragments"] = perspective_json;

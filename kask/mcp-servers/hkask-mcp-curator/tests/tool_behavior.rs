@@ -106,7 +106,7 @@ fn ensure_embedding_model_env() {
         if std::env::var("HKASK_EMBEDDING_MODEL").is_err() {
             // SAFETY: test-only env write, executed once before any test
             // body relies on it, always to the same value.
-            unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-embedding-model") };
+            unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-model") };
         }
     });
 }
@@ -1274,7 +1274,7 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         .all_embeddings_with_text()
         .expect("embedding inventory")
         .into_iter()
-        .find_map(|(entity, _vector, passage)| {
+        .find_map(|(entity, _vector, passage, _model)| {
             (entity == "server-tool-count").then_some(passage).flatten()
         })
         .expect("mutable lesson passage");
@@ -1373,7 +1373,7 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
             .all_embeddings_with_text()
             .expect("embedding inventory")
             .iter()
-            .all(|(entity, _vector, _passage)| entity != "curator:goal:invalid-publication"),
+            .all(|(entity, _vector, _passage, _model)| entity != "curator:goal:invalid-publication"),
         "backfill must never heal an invalid goal publication"
     );
 }
@@ -2085,7 +2085,7 @@ fn federated_source_fixture(
         store.store_embedding(
             entity_ref,
             &federated_fixture_vector(),
-            "test-embedding-model",
+            "test-model",
             Some("external corpus evidence"),
         )?;
     }
@@ -2125,8 +2125,8 @@ fn federated_source_fixture(
         "accepted_sources_sha256": "b".repeat(64),
         "run_spec_sha256": "c".repeat(64),
         "queries_sha256": "d".repeat(64),
-        "requested_embedding_model": "test-embedding-model",
-        "actual_embedding_model": "test-embedding-model",
+        "requested_embedding_model": "test-model",
+        "actual_embedding_model": "test-model",
         "policies_sha256": "e".repeat(64),
         "retriever_sha256": "f".repeat(64),
         "evaluator_sha256": "0".repeat(64),
@@ -2184,7 +2184,7 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
     memory.store_embedding(
         &local.entity,
         &federated_fixture_vector(),
-        "test-embedding-model",
+        "test-model",
         Some("curator experience"),
     )?;
     let stores = CuratorStores {
@@ -2256,7 +2256,7 @@ async fn federated_search_preserves_healthy_source_during_partial_outage()
     memory.store_embedding(
         &local.entity,
         &federated_fixture_vector(),
-        "test-embedding-model",
+        "test-model",
         Some("local evidence"),
     )?;
     let server = CuratorServer::new(
@@ -2316,7 +2316,7 @@ async fn federated_search_reloads_removed_and_restored_manifest()
     memory.store_embedding(
         &local.entity,
         &federated_fixture_vector(),
-        "test-embedding-model",
+        "test-model",
         Some("local knowledge survives corpus outage"),
     )?;
     let db = Arc::new(CuratorDb::from_stores_with_federated_manifest(
@@ -2421,7 +2421,7 @@ async fn federated_search_surfaces_unconfigured_source_with_curator_results() {
         .store_embedding(
             &local.entity,
             &federated_fixture_vector(),
-            "test-embedding-model",
+            "test-model",
             Some("curator-only evidence"),
         )
         .expect("store local embedding");

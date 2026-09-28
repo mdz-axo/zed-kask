@@ -201,3 +201,17 @@ pub const DEFAULT_MEDIA_VISION_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";
 /// DeepInfra's catalog 2026-09-11: `Qwen/Qwen3-Reranker-8B`, $0.05/1M tokens,
 /// 32K context, instruction-aware (operator ruling 2026-09-11).
 pub const DEFAULT_RERANK_MODEL: &str = "deepinfra/Qwen/Qwen3-Reranker-8B";
+
+/// Default embedding model (env `HKASK_EMBEDDING_MODEL` via
+/// `KaskModelsSettings::embedding_model` / `KaskCorpusSettings::embedding_model`
+/// — the two fields must agree; `effective_embedding_model` warns on
+/// disagreement). Qwen3-Embedding-8B via OpenRouter (operator direction
+/// 2026-09-28): an MRL model — native 4096, every embed request carries
+/// `dimensions = embedding_dim` (default 1024) so width-bound vec0 stores
+/// keep receiving fitting vectors. $0.01/M tokens (OpenRouter catalog,
+/// 2026-09-28). Unlike the former ollama default this needs
+/// OPENROUTER_API_KEY, surfaced visibly when missing. This is the single
+/// literal both settings layers reference — a model update changes this
+/// one constant (plus re-embedding the stores; the search-side model gate
+/// filters and surfaces mismatched rows during the migration window).
+pub const DEFAULT_EMBEDDING_MODEL: &str = "OpenRouter/qwen/qwen3-embedding-8b";
