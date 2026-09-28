@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.2"
+version: "0.23.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -188,7 +188,7 @@ assesses alignment where anchors exist, and invents none.
 | --- | --- | --- | --- |
 | companies | 40 | count (`hkask_mcp_companies.rs:497-501`) | yes |
 | corpus | 26 | count (`hkask_mcp_corpus.rs:280-290`) | yes |
-| curator | 15 | count (`hkask_mcp_curator.rs:2237-2251`) | **no** |
+| curator | 15 | count (`hkask_mcp_curator.rs:2256-2262`) | **no** |
 | kata-kanban | 27 | name-set (build.rs + `tool_names_match_live_router`) | **no** |
 | media | 98 | count (`hkask_mcp_media.rs:449-459`) | yes |
 | portfolio | 18 | name-set (`hkask_mcp_portfolio.rs:65-75`) | yes |
@@ -213,7 +213,8 @@ is noted where deferred with reason.
 | --- | --- | --- | --- |
 | S1 | spreadsheet (2) | **CLEAN — closed 2026-09-28.** 2/2 tools mapped; 6 production fns (+1 macro ctor). Zero `.rules` violations. | `map_spreadsheet_error` is the exemplar per-variant mapper (`Conflict`→`failed_precondition` optimistic concurrency; `PathEscape`→`invalid_argument` pre-filesystem; non_exhaustive arm visible). `operation_get` None → explicit `status: unknown` + do-not-retry note (the §7/L22 contract). Credentials `vec![]` — correct: file-based server, no DB, no keys. Anchor: L22's `logisheets-spreadsheet-capability-plan.md` (per-server doc exists). |
 | S2 | training (9) | **CLEAN — closed 2026-09-28.** 9/9 tools mapped (submit, cancel, status, evaluate, ingest_dataset, ingest_qa, assemble_dataset, validate_config, bridge_rollouts); ~180 support fns seam-verified, deep map deferred to continuation (pinned beneath by the 95-test smoke suite). Zero `.rules` violations. | P2 consent gate first (`permission_denied`, operator-facing); F3 ordering verified (model provenance before effects, pinned by `f3_submit_rejects_invalid_model_before_effects`); G-P1 names the Nebius degradation verbatim at submit (the L18 status contract stays the operator decision); `error_mapping.rs` is the canonical per-variant classifier; the corpus→training `db_path` bridge trap fixed and pinned (`permission_denied "db_path provided but passphrase is empty"` + PassphraseMismatch/KeyDerivation naming `HKASK_DB_PASSPHRASE`); containment on every caller path; degraded store → `permission_denied` naming env vars. Anchor: `lora-training` skill lacks a recorded `## Reference models` section (gap recorded; `lora-training-catalog.md` is the reference doc). |
-| S3–S12 | curator (15), portfolio (18), scenarios (19), corpus (26), research (26), kata-kanban (27), prediction-markets (32), companies (40), swarm (90), media (98) | pending — next slices, smallest-first | — |
+| S3 | curator (15) | **CLOSED 2026-09-28 — 2 findings, both fixed (landed in `2135f1591d`).** 15/15 tools mapped (ping, semantic_search, federated_search, memory_recall, consult, algedonic_log, reg_query, report_skill_use_issue, memory_insert, memory_update, memory_resolve_contradiction, memory_prune, memory_dedup, memory_backfill_embeddings, memory_extract). Coverage ledger: 50/73 non-test fns fully mapped (main 37, federated 10, thread_turns 2, main.rs 1); 23 deferred with reason (distillation 18 + forgetting 5 — background loops with their own register rows and 43 in-file tests; S2-precedent seam deferral). | F-C1 (Guardrail, IS): `HKASK_DB_PASSPHRASE` declared `optional` (`hkask_mcp_curator.rs:2023`) with no in-memory fallback — `open_curator_stores` returns `CuratorStores::empty()` on missing passphrase (`:2081-2084`), 14/15 tools dead, and two log messages claimed an in-memory mode that does not exist (`from_context` warn `:208`; framework optional-branch `info!` `transport.rs:83`). Fixed: `required` per the kata-kanban reference (`kanban_startup_requires_durable_storage`), false wording replaced with the actual consequence, stale late-arriving-passphrase heal motivation dropped, comment-only pin module upgraded to a real source-pin test. F-C2 (Guideline, IS): federated-search embedding-model error named the setting but not the env var (`:657-661`) — aligned with sibling paths' naming (`:79-83`, `:1954-1957`). Exemplars: `federated.rs` per-variant `classify_error` (`:285-301`) + file-stamp identity watching; semantic degradation notes distinguishing degraded-vs-empty (`resolution_failure_note`); `reg_query` scopeless-argument rejection (`:1171-1176`, pinned). Anchors: memory tools cite `kask/docs/architecture/memory-system-specification.md` in-file (§3 entity_ref `:1936`, §7 decay `:2066`); distillation/forgetting cite operator rulings 2026-09-04 in-file; the tool-surface layer has no reference-model record beyond `.rules` (partial — gap stands). Production +11/−7 (net +4 — message/comment honesty, no new path); tests +24/−13 (exempt). Landing receipt: `2135f1591d` (concurrent mixed commit; content verified by hash). |
+| S4–S12 | portfolio (18), scenarios (19), corpus (26), research (26), kata-kanban (27), prediction-markets (32), companies (40), swarm (90), media (98) | pending — next slices, smallest-first | — |
 
 **Framework note (S13 addendum):** all 12 servers bootstrap via
 `hkask_mcp_server::run_server` (`hkask_mcp_server.rs:42`), a one-line
@@ -685,6 +686,24 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-28 — v0.23.3 closed S3 (curator server review). 15/15 tools
+  mapped; coverage 50/73 non-test fns (23 deferred: distillation 18 +
+  forgetting 5, background loops with own rows and 43 in-file tests).
+  Two findings, both fixed: F-C1 (Guardrail, IS) — `HKASK_DB_PASSPHRASE`
+  declared `optional` with no in-memory fallback (`open_curator_stores`
+  returns `CuratorStores::empty()`; 14/15 tools dead; two log messages
+  claimed an in-memory mode that does not exist) → flipped to `required`
+  per the kata-kanban reference, false wording replaced, comment-only pin
+  module upgraded to a real source-pin test; F-C2 (Guideline, IS) —
+  federated-search embedding-model error aligned with sibling env-var
+  naming. The S13 per-server credential item is now resolved for curator
+  (required) and training (optional, honest in-memory fallback); the
+  remaining servers resolve in S4–S12. Validation: 84 tests green,
+  `./script/clippy` green, rustfmt clean. Production +11/−7 (net +4 —
+  message/comment honesty, no new path); tests +24/−13 (exempt).
+  Landed in `2135f1591d` (concurrent mixed commit; content verified by
+  hash — the commit message documents the curator change in its bullet
+  list).
 - 2026-09-28 — v0.23.2 continued pass 2 (post-rebuild verification + S1/S2).
   Verified the landed state on the rebuilt tree: `delegate_and_ingest`
   unchanged since `57c2bdea7a`, register at v0.23.1, working tree clean,
