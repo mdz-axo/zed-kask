@@ -75,6 +75,9 @@ Respond with a JSON object:
   vestigial `steps` frontmatter) is a fail when found in a SKILL.md; the
   `render_template` tool's `template_ref` parameter in call instructions is
   the live contract, not a violation.
-- A body with phases but no Check→Act feedback path fails S13; exempt
-  classes (role guides, documented single-pass skills, doc-style handbooks)
-  carry a one-line exemption marker naming the exemption.
+- A body with phases but no Check→Act feedback path, or with no observable
+  initial/target condition, fails S13; a role guide or one-shot actuator can
+  close after a single passing Check but is not exempt from stating the
+  initial/target condition and what a failed Check does (the former DR-S13a
+  exemption markers were superseded by the operator's 2026-09-25
+  all-skills direction).

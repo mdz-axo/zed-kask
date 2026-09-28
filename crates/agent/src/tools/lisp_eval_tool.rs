@@ -571,6 +571,57 @@ mod tests {
     }
 
     #[test]
+    fn test_skill_maintenance_skill_md_pins_health_score_form() {
+        // skill-maintenance SKILL.md pins the audit health-score form; if it
+        // drifts (or the severity weights change silently), this fails until
+        // skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/skill-maintenance/SKILL.md"
+        ))
+        .expect("skill-maintenance SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains(
+                r#"(max 0 (- 1 (+ (* 0.50 critical) (* 0.15 high) (* 0.10 medium) (* 0.05 low))))"#
+            ),
+            "the audit health-score form must stay pinned in skill-maintenance SKILL.md"
+        );
+
+        let form =
+            r#"(max 0 (- 1 (+ (* 0.50 critical) (* 0.15 high) (* 0.10 medium) (* 0.05 low))))"#;
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"critical": 0, "high": 0, "medium": 0, "low": 0}),
+            100_000,
+            64,
+        )
+        .expect("no-defect score must evaluate");
+        assert_eq!(clean, json!(1.0));
+
+        let one_critical = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"critical": 1, "high": 0, "medium": 0, "low": 0}),
+            100_000,
+            64,
+        )
+        .expect("one-critical score must evaluate");
+        assert_eq!(one_critical, json!(0.5));
+
+        let floored = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"critical": 2, "high": 1, "medium": 1, "low": 1}),
+            100_000,
+            64,
+        )
+        .expect("floor-case score must evaluate");
+        assert_eq!(
+            floored,
+            json!(0),
+            "the max-0 floor must hold — a score below zero reads zero, never negative"
+        );
+    }
+
+    #[test]
     fn test_gradient_hunter_skill_md_pins_convergence_gate() {
         // gradient-hunter SKILL.md pins the Phase 6 stability gate; if it
         // drifts (or the set-comparison vocabulary changes), this fails until

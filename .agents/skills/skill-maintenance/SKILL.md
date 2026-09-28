@@ -31,6 +31,29 @@ template placed in `.agents/skills/<name>/` is unreachable (see check T5).
 The agent reads the SKILL.md, follows its instructions, and calls tools
 (`lisp_eval`, MCP tools, `read_file`, `skill`) as directed.
 
+## Reference models
+
+Fagan, "Design and code inspections to reduce errors in program development," IBM Systems Journal 15(3) (1976) — the audit method's spine: defect detection separated from correction (the audit finds and scores; the score is advisory; deletion and deprecation belong to the operator), severity classification (critical/high/medium/low), and follow-up verification (an accepted proposal is applied by a delegated agent and done only when verified). The inspection is a three-role discipline — author, inspector, follow-up verifier; a decoupled critic (an agent that neither designed nor edits nor judges acceptance) is the inspector role. Goodhart's law (`onto_anchor` → derived `goodharts_law`, operator ruling 2026-09-24) governs the evaluation separation: the session that designed a candidate cannot also be the judge that accepts it. The optimize loop copies Deming's PDCA; the S13 condition vocabulary follows Toyota Kata (Rother). The check set S1–S13/T1–T5, the Algedonic board, the gemba walk, and the proposal-card workflow are project machinery — unanchored, labeled as such.
+
+## Initial and target condition
+
+- **Initial condition:** the target skill's canonical SKILL.md (and, for the template-logic audit, the target `.j2` with its parsed goal), the operator's task/outcome for optimize work, and — for validate — the check set S1–S13/T1–T5 itself. For optimize: the baseline behavior and the fixed, independently judged task set with expected results, specified before any candidate is designed.
+- **Target condition:** validate — every check evaluated with per-check evidence, failures carrying file:line and fix suggestions; audit — every signal verified against the actual tree (or reported `unverified` without penalty) and the health score computed by the pinned `lisp_eval` form; optimize — a measured comparison over the fixed tasks with a proposal card (or the baseline kept with gaps reported), never an applied change; template-logic audit — a comparison-backed proposal or the kept baseline. A failed Check (a candidate that misses a hard contract or regresses) keeps the baseline and reports the gap.
+
+## Step types (D/P labelling)
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Validate — mechanical checks (S1–S11, T1–T5) | D | the sweep scripts, the prescreen, the render_template_tool.rs corpus tests, file reads |
+| Validate — read-triage adjudication (S10 body usages, S13 loop-anatomy recognition) | P | the operator's rulings cited in the check text; the prescreen flags, the auditor adjudicates |
+| Audit — signal verification | D | the actual tree and live tool surface (file:line evidence); the vague-instruction judgment is P, critiqued by the operator |
+| Audit — health score | D | `lisp_eval` (the pinned form; `test_skill_maintenance_skill_md_pins_health_score_form`) |
+| Optimize — candidate design | P | the fixed-case comparison (the evaluator); the operator judges in the gemba walk |
+| Optimize — measurement (Check) | D | the same tasks and evaluator run on every candidate; recorded harness outputs |
+| Template-logic audit — goal loading, reconciliation, hard-gate counts | D | `read_file`, `lisp_eval`, recorded harness outputs |
+| Template-logic audit — critique and candidate design | P | `logic-critique-template` critiqued by the separate `logic-critique-critique` render; candidates by the fixed-case comparison |
+| Proposal card handoff | D | the kanban tool receipts (board ID, card ID); an explicit operator direction may re-target the filing; agent-invented fallbacks forbidden |
+
 ## When to Use
 
 - When you need to validate a skill's SKILL.md structure and template quality.
@@ -62,11 +85,13 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      dispatch-key sweep).
    - **S10**: SKILL.md does not use removed vocabulary (`compute_ref`,
      `action:`, `template_ref` as a manifest dispatch key, `convergence_signal`,
-     `input_mapping`, `on_failure`, `ordinal:`, a `shipped` key or release-state
-     wording for skills and templates) or vestigial `steps` frontmatter with
-     `id`/`tools` dispatch structure (manifest-executor remnant). The
-     `render_template` tool's `template_ref` parameter, named in call
-     instructions, is the live contract — not a violation. Mechanical
+     `input_mapping`, `on_failure`, `ordinal:`, `category:`, a `shipped` key or
+     release-state wording for skills and templates) or vestigial `steps`
+     frontmatter with `id`/`tools` dispatch structure (manifest-executor
+     remnant). The `render_template` tool's `template_ref` parameter, named
+     in call instructions, is the live contract — not a violation. Quoting
+     the removed tokens to define this check (here and in the Constraints)
+     is definitional use, not a violation. Mechanical
      enforcement point: `kask/scripts/audit/skill-corpus-s9-s10-sweep.sh`
      (frontmatter dispatch keys + body key-form sweep of the no-live-contract
      tokens; `template_ref`/`action` body usages adjudicate at read-triage
@@ -152,7 +177,10 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 ### Proposal card handoff (all proposal-producing phases)
 
-Use the single **Algedonic review** board, not a file or a second board. `kanban_board_list` must succeed before treating the board as absent; if it returns exactly one matching board, use its ID. If none exists, call `kanban_board_create` with name `Algedonic review`, default columns, and the shared `idempotency_key: "algedonic-review-board"` so concurrent first-use calls cannot create a second board; if more than one matches, stop and request resolution instead of guessing. For `kanban_task_create`, supply the board ID, a descriptive title, a description with target, full diff, evidence, missing evidence and verification criteria, `criteria` listing the observable checks, `advances: []` unless citing a known goal criterion, and an `idempotency_key` reused on retries. Keep the returned card ID; attach existing output files or URLs using `kanban_task_add_deliverable` when applicable. Failed creation is a blocked filing, never a file fallback.
+Use the single **Algedonic review** board, not a file or a second board. `kanban_board_list` must succeed before treating the board as absent; if it returns exactly one matching board, use its ID. If none exists, call `kanban_board_create` with name `Algedonic review`, default columns, and the shared `idempotency_key: "algedonic-review-board"` so concurrent first-use calls cannot create a second board; if more than one matches, stop and request resolution instead of guessing. For `kanban_task_create`, supply the board ID, a descriptive title, a description with target, full diff, evidence, missing evidence and verification criteria, `criteria` listing the observable checks, `advances: []` unless citing a known goal criterion, and an `idempotency_key` reused on retries. Keep the returned card ID; attach existing output files or URLs using `kanban_task_add_deliverable` when applicable. Failed creation is a blocked filing, never a file fallback. An explicit
+   operator direction may re-target the filing (e.g. a program's gate
+   reports replacing the card for its duration); agent-invented fallbacks
+   remain forbidden.
 
 ### skill-maintenance-optimize — Plan → Do → Check → Act (proposal only)
 
@@ -174,6 +202,10 @@ Audits one `.j2` template's logic against its `{# goal: ... #}` annotation and t
 2. **Do — critique and generate.** Render `skill-maintenance/logic-critique-template` (goal, target, invoking phase, acceptance cases); cite concrete defects against goal and phase; reject style-only concerns. `kask/scripts/audit/skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` give shape leads, not proof. Render `skill-maintenance/logic-critique-critique` to drop unsupported concerns. Generate at most four distinct candidates — unchanged baseline, localized repair, subtraction, a replacement structure — and say why a class is inapplicable rather than forcing it.
 3. **Check — compare.** Render `skill-maintenance/logic-compare-candidates` with the fixed cases, candidates and actual observations; run the same cases on every candidate through the available harness, and check rendering, contract and handoff shape separately. Judge semantic correctness against the predeclared expected behavior or independent human judgment, never the candidate's own critique. Call `lisp_eval` on the recorded case/candidate records for completeness, counts, hard gates and arithmetic; missing observations or a failed hard gate block an improvement claim. Invoke `lean-prover` only for an exact, finite decision rule (e.g. selection never permits an unapproved edit); Lean does not prove a prompt good.
 4. **Act — card or keep.** Name a candidate only if it clears every hard contract, improves the fixed outcome over the baseline, and has no unacceptable regression; otherwise keep the baseline and report the gaps. Re-enter generation at most once for a newly found falsifier on the same held-out cases. For a qualifying candidate, render `skill-maintenance/logic-compose-proposal` (the simplest passing candidate, with its full unified diff), recheck its goal, contract and rendering. Use the Proposal card handoff above with a title naming the target change and a description containing the target, goal, full diff, case evidence, verification criteria and open falsifiers. Attach existing artifacts via `kanban_task_add_deliverable` when relevant; retain its card ID. Do not edit the target; the operator accepts, rejects or counters it on the card in the gemba walk, and an accepted diff is applied only if it still matches the current file.
+
+## Regression case
+
+Validate both directions: render `skill-maintenance/skill-maintenance-validate` with `target` naming a known-good skill (e.g. `listening`) and a known-bad fixture (a SKILL.md missing When to Use and Constraints) — the good target passes S5/S8, the bad target fails them with file:line evidence. Audit: render `skill-maintenance/skill-maintenance-audit` with `skill_name` and `workspace_context`, then run the health-score form three ways via `lisp_eval` — `{0,0,0,0}` → 1.0, one critical → 0.5, `{2 critical, 1 high, 1 medium, 1 low}` → 0 (the floor). Template-logic chain: render `logic-load-goal` with a `target_path` and `target_content` carrying a `{# goal: ... #}` block (goal found) and one without (goal missing); render `logic-critique-template` then `logic-critique-critique` over the critique (the decoupled second pass). Optimize: render `skill-maintenance-optimize` with `skill_name`, `objective`, `baseline`, `tasks`, `candidates`, `observations`. The health form is pinned by `test_skill_maintenance_skill_md_pins_health_score_form` in `lisp_eval_tool.rs`.
 
 ## Registry Templates
 
@@ -197,6 +229,8 @@ Template context variables (from each template's [inference] contract):
 - `logic-critique-template.j2`: `goal`,`target_path`,`target_content`,`template_type`,`invoking_phase`,`acceptance_cases`
 - `logic-compare-candidates.j2`: `goal`,`invoking_phase`,`acceptance_cases`,`candidates`,`observations`
 - `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`winning_content`,`user_counter_proposal`
+- `skill-maintenance-validate.j2`: `target`,`skill_name`
+- `logic-critique-critique.j2`: `goal`,`prior_critique`
 
 
 ## Constraints
@@ -209,10 +243,10 @@ Template context variables (from each template's [inference] contract):
 - The interpreter supports prefix `(+ a b)` and infix `a + b` operator
   notation. Use infix for simple scoring, prefix for complex nested logic.
 - No `visibility` field in frontmatter.
-- SKILL.md must not use removed vocabulary: `compute_ref`, `action:`,
-  `template_ref` as a manifest dispatch key (the `render_template` parameter
-  of the same name is the live contract), `convergence_signal`,
-  `input_mapping`, `on_failure`, `ordinal:`, `category:`, `shipped`.
+- SKILL.md must not use removed vocabulary — the S10 check list is
+  authoritative (including `category:` and the vestigial `steps`
+  frontmatter); quoting the tokens to define the check is definitional
+  use, not a violation.
 - Skills and templates are evolving drafts with no release state (operator
   ruling 2026-09-26): never describe a skill or template as shipped,
   unshipped, released or done. "Shipped" survives only as Rust identifiers,
