@@ -136,3 +136,72 @@ pub(crate) fn render_one_shot(
     tmpl.render(ctx)
         .map_err(|e| template_error("render", name, e))
 }
+
+#[cfg(test)]
+mod tests {
+    //! The docproc convention: the corpus server renders these templates
+    //! RAW (see `render_docproc_template` — no header stripping), so they
+    //! are deliberately headerless. A docproc template that later grows an
+    //! `[inference]` contract header (the dominant convention elsewhere in
+    //! the registry) would leak verbatim into corpus inference prompts
+    //! with no error anywhere. This guard pins the convention at the
+    //! registry source the host seeds from.
+
+    #[test]
+    fn docproc_templates_stay_headerless() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../registry/templates/docproc");
+        let entries = std::fs::read_dir(&base)
+            .unwrap_or_else(|e| panic!("docproc registry dir unreadable: {e}"));
+
+        let mut checked = 0usize;
+        let mut violations = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|ext| ext == "j2") {
+                continue;
+            }
+            checked += 1;
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{} unreadable: {e}", path.display()));
+
+            // First content line: skip blanks and Jinja comments the same
+            // way the registry loader does (a `{#` comment may span lines
+            // until its closing `#}`).
+            let mut rest = content.trim_start();
+            loop {
+                let first = rest.lines().next().unwrap_or("").trim_start();
+                if first.starts_with("{#") {
+                    match rest.find("#}") {
+                        Some(close) => rest = rest[close + 2..].trim_start(),
+                        None => break, // unterminated comment: nothing follows
+                    }
+                } else if first.is_empty() {
+                    match rest.find('\n') {
+                        Some(nl) => rest = rest[nl + 1..].trim_start(),
+                        None => break,
+                    }
+                } else {
+                    break;
+                }
+            }
+            let first = rest.lines().next().unwrap_or("").trim();
+            if first == "[inference]" || first == "---" {
+                violations.push(format!(
+                    "{}: first content line `{first}` — docproc templates are rendered raw and must stay headerless",
+                    path.display()
+                ));
+            }
+        }
+        assert!(
+            checked > 0,
+            "docproc registry scan found no templates — scan path broken"
+        );
+        assert!(
+            violations.is_empty(),
+            "{} docproc template(s) carry a header the raw renderer would leak:\n{}",
+            violations.len(),
+            violations.join("\n")
+        );
+    }
+}

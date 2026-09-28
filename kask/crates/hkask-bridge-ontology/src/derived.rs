@@ -360,9 +360,9 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         term: "deep_module",
         aliases: &["deep module", "deep modules"],
         identity: "a module whose interface is small relative to the functionality it hides",
-        definition: "John Ousterhout, A Philosophy of Software Design (2018): the benefit of a module is its functionality, its cost is its interface; deep modules maximize the ratio. In zed-kask it is the target of deep-module and refactor-architecture's deletion test.",
+        definition: "John Ousterhout, A Philosophy of Software Design (2018), Ch. 4 'Modules Should Be Deep': deep modules are those whose interfaces are much simpler than their implementations; small modules tend to be shallow because the benefit they provide is negated by the cost of learning and using their interfaces. Ch. 7.1 names the shallow extreme — the pass-through method, which does little except invoke another method whose signature is similar or identical to the callee's, fixed by exposing the lower level directly or merging. In zed-kask it is the target of deep-module and refactor-architecture's deletion test.",
         constituents: &["interface", "implementation"],
-        authority: "operator ruling 2026-09-26; Ousterhout, A Philosophy of Software Design (2018)",
+        authority: "operator ruling 2026-09-26; Ousterhout, A Philosophy of Software Design (2018), Ch. 4 'Modules Should Be Deep' and Ch. 7.1 'Pass-through methods'",
     },
     DerivedConcept {
         term: "owasp_llm_top_10",
@@ -671,6 +671,50 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         definition: "The repeated (iterated) game of game theory: the same stage game played over rounds, each round's outcome conditioning the next. Reputation, reciprocity and cooperation emerge from repetition — the folk-theorem ground. Its questions are about maintained conditions across rounds, not one-shot resolution.",
         constituents: &["stage game", "history", "strategy", "reputation"],
         authority: "operator ruling 2026-09-27; Fudenberg & Tirole (1991), Game Theory",
+    },
+    DerivedConcept {
+        term: "procedural_knowledge_ontology",
+        aliases: &["PKO", "Procedural Knowledge Ontology"],
+        identity: "procedures and their executions: a procedure is a plan for how something is done; executing it instantiates the plan's steps and can be assessed against it",
+        definition: "The Procedural Knowledge Ontology (PKO): Carriero, Scrocca, Baroni, Azzini and Celino, 'Procedural Knowledge Ontology (PKO)', ESWC 2025 (doi:10.1007/978-3-031-94578-6_19; arXiv:2503.20634; https://w3id.org/pko) — explicit modeling of procedures, their executions and related resources, reusing and extending P-Plan, PROV-O and Dublin Core. Bridged in kask/crates/hkask-bridge-ontology/src/pko.rs, which loads the full v2.0.0 ontology from sources/.",
+        constituents: &["procedure", "step", "step execution"],
+        authority: "operator ruling 2026-09-28 (reference-set integration directive); Carriero et al., 'Procedural Knowledge Ontology (PKO)', ESWC 2025, doi:10.1007/978-3-031-94578-6_19",
+    },
+    DerivedConcept {
+        term: "golem_narrative_ontology",
+        aliases: &[
+            "GOLEM",
+            "GOLEM ontology",
+            "Golem Ontology for Narrative and Fiction",
+        ],
+        identity: "narrative and fiction as interconnected systems — events, characters, social relationships, settings, narrative inference — modeled independently of any single domain",
+        definition: "The GOLEM Ontology for Narrative and Fiction: Pianzola, Pannach, Cheng, Yang and Scotti (GOLEM Lab), ontology v1.1 (https://w3id.org/golem/ontology, doi:10.5281/zenodo.14911396, CC BY 4.0), an extension of CIDOC-CRM and LRMoo; the paper is Pianzola, Cheng, Pannach, Yang and Scotti, 'The GOLEM Ontology for Narrative and Fiction', Humanities 14(10):193 (MDPI, 2025). Bridged in kask/crates/hkask-bridge-ontology/src/golem.rs.",
+        constituents: &["narrative event", "character", "setting"],
+        authority: "operator ruling 2026-09-28 (reference-set integration directive); Pianzola et al., GOLEM Ontology v1.1, doi:10.5281/zenodo.14911396; Pianzola et al., Humanities 14(10):193 (2025)",
+    },
+    DerivedConcept {
+        term: "media_creation_ontology",
+        aliases: &[
+            "MovieLabs OMC",
+            "OMC",
+            "Ontology for Media Creation",
+            "MovieLabs Ontology for Media Creation",
+        ],
+        identity: "media production workflows — creative works, assets, and the capture to post to distribution pipeline — as named entities and relations for interoperable production software",
+        definition: "The MovieLabs Ontology for Media Creation (OMC), MovieLabs (https://movielabs.com/ontology-for-media-creation/; official RDF artifact github.com/MovieLabs/OMC, omc.ttl v2.8, namespace https://movielabs.com/omc/rdf/schema/v2.8#): a published multi-part specification of the concepts and relations of media creation workflows. Bridged in kask/crates/hkask-bridge-ontology/src/omc.rs.",
+        constituents: &["creative work", "asset", "production workflow"],
+        authority: "operator ruling 2026-09-28 (reference-set integration directive); MovieLabs, Ontology for Media Creation, https://movielabs.com/ontology-for-media-creation/",
+    },
+    DerivedConcept {
+        term: "scientific_evidence_ontology",
+        aliases: &[
+            "SEPIO",
+            "Scientific Evidence and Provenance Information Ontology",
+        ],
+        identity: "scientific claims, the evidence lines that support or dispute them, and the methods, tools and agents that produced the evidence",
+        definition: "The Scientific Evidence and Provenance Information Ontology (SEPIO): Brush, Shefchek and Haendel, 'SEPIO: A Semantic Model for the Integration and Analysis of Scientific Evidence', ICBO 2016 (https://ceur-ws.org/Vol-1747/IT605_ICBO2016.pdf), Monarch Initiative, OBO namespace purl.obolibrary.org/obo/SEPIO_ (OWL release 2023-06-13; the project's current linkML model at https://w3id.org/sepio-model is the open migration choice noted in the bridge). Bridged in kask/crates/hkask-bridge-ontology/src/sepio.rs.",
+        constituents: &["assertion", "evidence line", "provenance"],
+        authority: "operator ruling 2026-09-28 (reference-set integration directive); Brush, Shefchek and Haendel, ICBO 2016; Monarch Initiative SEPIO-ontology (OWL release 2023-06-13)",
     },
 ];
 
