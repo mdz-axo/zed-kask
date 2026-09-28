@@ -214,9 +214,11 @@ build_hkask() {
     fi
 
     # CPU/RSS trace — the build observes itself (D46). Every install leaves
-    # a quantified record of what it did to the machine; a burn shows up as
-    # a peak_cpu_pct number, not a user report. Override the trace location
-    # with HKASK_BUILD_TRACE.
+    # a quantified record of what it did to the machine: a per-sample CSV
+    # (compile-proc count, CPU%, RSS, busiest proc) — a burn shows up as
+    # sustained high rows in the trace, not a user report. The sampler is
+    # stopped with SIGTERM below, so the trace covers exactly the build.
+    # Override the trace location with HKASK_BUILD_TRACE.
     local trace_file="${HKASK_BUILD_TRACE:-$workspace_root/target/build-cpu-trace.log}"
     mkdir -p "$(dirname "$trace_file")"
     bash "$(dirname "${BASH_SOURCE[0]}")/build-monitor.sh" "$trace_file" &
