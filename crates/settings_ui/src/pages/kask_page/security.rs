@@ -78,7 +78,7 @@ pub(crate) fn render_security_page(
     let pending = pending_display_cached();
     let mut content = v_flex().gap_3().min_w_0()
         .child(SettingsSectionHeader::new("Database Passphrase Maintenance"))
-        .child(Label::new("One shared passphrase encrypts every kask memory database. It starts as the default \"allostery\" and can be changed below; the change re-encrypts every database in the confirmed inventory the next time the editor restarts, so no database is ever rotated while it is open.").size(LabelSize::Small));
+        .child(Label::new("One shared key encrypts Kask databases. Fresh stores receive a random key in the OS keychain; if the keychain is lost, those databases cannot be recovered and must be explicitly discarded. The change below re-encrypts every database in the confirmed inventory at the next restart, before any database opens.").size(LabelSize::Small));
     // ── Scheduled-change state or the change form ──
     match pending {
         PendingDisplayLoad::NotLoaded => {

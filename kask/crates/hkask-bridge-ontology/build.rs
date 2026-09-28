@@ -140,6 +140,7 @@ fn index_fibo(
 ) -> Result<Vec<published_sources::IndexedTerm>, String> {
     use published_sources::{RdfObject, RdfVocabulary};
     const BASE: &str = "https://spec.edmcouncil.org/fibo/ontology/";
+    const SOURCE_REV: &str = "f59157fe156e3d91b1c045222d0a7dc06b7d78a2";
     const MATURITY: &str = "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/hasMaturityLevel";
     const RELEASE: &str =
         "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/Release";
@@ -187,6 +188,21 @@ fn index_fibo(
     for path in ["fibo/LICENSE", "fibo/AboutFIBOProd.rdf"] {
         if !pins.iter().any(|pin| pin.path == path) {
             return Err(format!("{path} must be pinned"));
+        }
+    }
+    for pin in pins.iter().filter(|pin| pin.path.starts_with("fibo/")) {
+        let path = pin
+            .path
+            .strip_prefix("fibo/")
+            .ok_or("invalid FIBO pin path")?;
+        let expected_url =
+            format!("https://raw.githubusercontent.com/EDMCouncil/FIBO/{SOURCE_REV}/{path}");
+        let expected_version = format!("EDMCouncil/FIBO@{SOURCE_REV} (Q2 Release)");
+        if pin.url != expected_url || pin.version != expected_version {
+            return Err(format!(
+                "{}: FIBO source must be pinned to the Q2 tag",
+                pin.path
+            ));
         }
     }
     let license = read(&sources.join("fibo/LICENSE"))?;
@@ -250,12 +266,6 @@ fn index_fibo(
             .iter()
             .find(|pin| pin.path == pin_path)
             .ok_or_else(|| format!("missing {pin_path}"))?;
-        let expected_url = format!(
-            "https://raw.githubusercontent.com/EDMCouncil/FIBO/f59157fe156e3d91b1c045222d0a7dc06b7d78a2/{path}"
-        );
-        if pin.url != expected_url || pin.version != version {
-            return Err(format!("{path}: FIBO source must be pinned to the Q2 tag"));
-        }
         let xml = read(&sources.join(&pin.path))?;
         if !xml.contains(&format!("xmlns:{prefix}=\"{iri}\"")) {
             return Err(format!(

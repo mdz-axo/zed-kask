@@ -23,6 +23,18 @@ The source set need not be literary, single-author or related to a previous run.
 For a question over an existing corpus, use `corpus_query`. Training execution
 belongs to `lora-training` after its separate model/configuration approval.
 
+## D/P labelling
+
+Intake, source acceptance and parameter binding are P (operator-gated).
+The corpus tools are D: conversion, chunking, embedding, classification
+and generation run as server tools whose measured counts and digests are
+the record — a stage's claimed output is never substituted for its
+measured output. Model passes inside the tools (tagging, QA generation)
+are P, critiqued by each stage's validated layer stats and rejection
+rates. Stage 10 verification is D (`lisp_eval` over measured stage
+equalities and the separately evidenced semantic-gate boolean — never
+fixed totals, file sizes, or a model's success claim).
+
 ## Anchors and contract
 
 - **PKO** separates a procedure from its execution: record each stage's inputs,

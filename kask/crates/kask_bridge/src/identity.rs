@@ -18,8 +18,7 @@
 //! `provision_agent` handles first-run setup as a set of lookups and
 //! directory creation — no interactive onboarding:
 //! 1. Create the agent directory structure (`ensure_agent_dirs`)
-//! 2. Ensure a DB passphrase exists in the keychain (default `"allostery"`
-//!    on first run — the user can change it later)
+//! 2. Resolve an existing shared DB key or generate one for a fresh store
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
 use hkask_types::{WebID, agent_paths::sanitize_name};
@@ -70,9 +69,8 @@ pub struct ProvisionedAgent {
 ///
 /// 1. Derive the agent name from the username (sanitize for filesystem).
 /// 2. Create the agent directory structure on disk (idempotent).
-/// 3. Resolve the DB passphrase from the keychain; if none exists, use the
-///    default `"allostery"` and store it. The user can change it later via
-///    the keychain or `HKASK_DB_PASSPHRASE` env var.
+/// 3. Resolve the shared DB key from env/keychain or generate it for a fresh
+///    store. An existing managed DB with a missing key cannot be reopened.
 /// 4. Compute the absolute memory DB path under the hKask data directory.
 ///
 /// Returns the path, passphrase, and WebID needed to construct a
@@ -103,8 +101,8 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 
     let db_path = agent_root.join("memory.db").to_string_lossy().to_string();
 
-    // 2. Ensure a DB passphrase exists (env → keychain → first-run
-    //    default) via the one canonical chain in hkask-keystore.
+    // 2. Resolve an existing key or generate one for a fresh data tree
+    //    via the one canonical chain in hkask-keystore.
     let passphrase = hkask_keystore::provision_db_passphrase_string()
         .map(|passphrase| passphrase.to_string())
         .map_err(|e| ProvisionError::KeychainRead(e.to_string()))?;
@@ -121,14 +119,12 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 /// Username-independent DB passphrase provisioning for MCP server launch
 /// time.
 ///
-/// `provision_agent` (and thus the "allostery" first-run default) runs in
-/// zed's deferred task, but MCP servers resolve their launch env
-/// before the deferred task runs — on a machine that never signs in, the default
-/// never landed and every DB-backed server failed with `permission_denied`.
+/// `provision_agent` runs in zed's deferred task, but MCP servers need the
+/// shared DB key before the deferred task — including before sign-in.
 /// This wrapper exposes the username-independent passphrase half so the
 /// canonical env path (`build_mcp_server_env`) can provision it at launch
 /// time, login or not. Idempotent: env override → existing keychain entry →
-/// default "allostery" stored on first run.
+/// generated key stored only for a fresh data tree.
 pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
     hkask_keystore::provision_db_passphrase_string()
         .map(|passphrase| passphrase.to_string())
@@ -239,11 +235,10 @@ mod tests {
 
     // The requirement that drives this module:
     //
-    // 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
-    //    kata-kanan, training) opens with the fixed default `"allostery"`
-    //    on first run. The default and the whole provisioning chain
-    //    (env → keychain → first-run default, empty env treated as unset)
-    //    live in `hkask-keystore` (`provision_db_passphrase_string`);
+    // 1. **Shared key** — every SQLCipher DB (curator, swarm memory, corpus,
+    //    RSS, kata-kanban, training) opens with the same resolved key.
+    //    The chain (env → keychain → fresh-tree generation; empty env is
+    //    unset) lives in `hkask-keystore` (`provision_db_passphrase_string`);
     //    identity.rs routes through that one chain and holds no
     //    passphrase logic of its own.
     // 2. **Startup** — at MCP launch time the chain resolves the
@@ -254,7 +249,7 @@ mod tests {
     //    the new passphrase is persisted. The two rotate functions below
     //    are the bridge callers that the UI hits.
     //
-    // The chain's own behavior (empty-env guard, first-run default) is
+    // The chain's own behavior (empty-env guard, fresh-tree key) is
     // pinned by hkask-keystore's tests; the tests here pin the rotation
     // path.
 

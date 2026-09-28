@@ -648,6 +648,30 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["probability assignment", "resolved outcome", "brier score"],
         authority: "operator ruling 2026-09-27; Tetlock & Gardner (2015), Superforecasting; Brier (1950), Verification of forecasts expressed in terms of probability",
     },
+    DerivedConcept {
+        term: "bayesian_inference",
+        aliases: &["bayes rule", "bayesian updating", "posterior update"],
+        identity: "posterior odds = prior odds x likelihood ratio",
+        definition: "Updating a prior probability into a posterior as evidence arrives, per Bayes's theorem. The explicit-probabilistic collapse path: the posterior is the best characterizable distribution, and each observation re-weights it. The reference discipline for evidence-weighted belief revision.",
+        constituents: &["prior probability", "likelihood", "posterior probability"],
+        authority: "operator ruling 2026-09-27; Bayes (1763), An Essay towards solving a Problem in the Doctrine of Chances; Laplace (1812), Theorie analytique des probabilites",
+    },
+    DerivedConcept {
+        term: "finite_game",
+        aliases: &["carse finite game"],
+        identity: "play to end the game: fixed rules, known players, a horizon at which it ends and a winner is declared",
+        definition: "Carse's finite game: played for the purpose of winning, with fixed rules, identifiable players, and an agreed horizon at which it ends. Its questions are resolvable — they terminate on an oracle or a resolved outcome, not a maintained position.",
+        constituents: &["rules", "players", "horizon", "winning"],
+        authority: "operator ruling 2026-09-27; Carse (1986), Finite and Infinite Games",
+    },
+    DerivedConcept {
+        term: "repeated_game",
+        aliases: &["iterated game", "repeated interaction"],
+        identity: "a stage game played over multiple rounds, where history conditions future play",
+        definition: "The repeated (iterated) game of game theory: the same stage game played over rounds, each round's outcome conditioning the next. Reputation, reciprocity and cooperation emerge from repetition — the folk-theorem ground. Its questions are about maintained conditions across rounds, not one-shot resolution.",
+        constituents: &["stage game", "history", "strategy", "reputation"],
+        authority: "operator ruling 2026-09-27; Fudenberg & Tirole (1991), Game Theory",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -844,6 +868,9 @@ mod tests {
             ("plussing", "Catmull"),
             ("yes and", "Johnstone"),
             ("improvisation", "Johnstone"),
+            ("Bayesian inference", "Bayes"),
+            ("finite game", "Carse"),
+            ("repeated game", "Fudenberg"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
             assert!(

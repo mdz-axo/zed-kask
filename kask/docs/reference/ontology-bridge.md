@@ -2,7 +2,7 @@
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-27
-version: "0.41.0"
+version: "0.42.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -23,14 +23,14 @@ Ontology anchoring is a scope-broadening walk, never a single pick. When a
 concept has no fit in the narrowest applicable ontology, the anchor falls
 to progressively broader scopes until one fits:
 
-1. **Domain supplement** — an exact term in a domain vocabulary (FIBO, OMC, PKO, SEPIO, GOLEM, SDMX, ML-Schema, RDF).
-2. **Derived concept** — a recorded composition with identity and authority; this rung applies to term resolution and is where operator rulings become durable (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
-3. **Universal axes** — Dublin Core/BIBO state and PKO process identities for artifact anchoring. `select_ontology_anchor` uses these axes; term resolution does not force a term into them.
-4. **Upper ontology** — an exact concept of the full SUMO distribution when no domain or derived term matches (tier `upper`).
-5. **General vocabulary** — an exact concept of the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
+1. **Domain supplement** — exact terms from pinned published sources (FIBO Q2 Release, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS); SDMX is a separate local class-name identifier registry, not an official published RDF/OWL URI vocabulary.
+2. **Derived concept** — a recorded composition with identity and authority; operator rulings become durable here (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
+3. **Upper ontology** — the full pinned SUMO distribution (tier `upper`).
+4. **General vocabulary** — the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
+5. **State-axis published senses** — Dublin Core, BIBO and CiTO (tier `state_axis`), after the general vocabulary so artifact-typing terms do not outrank formal categories.
 6. **Interrogative ground** — `5w1h_core`, the guaranteed real but coarse term anchor.
 
-`term_resolution::resolve_term` implements the term ladder as domain → derived → full SUMO → full schema.org → core and never performs fuzzy matching (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs`). The first sense in ladder order is the resolution; every other sense found is returned in `alternatives`. `axis::select_ontology_anchor` is the separate artifact/domain-hint selector (`kask/crates/hkask-bridge-ontology/src/axis.rs`).
+`term_resolution::resolve_term` walks domain → derived → SUMO → schema.org → state axis → core without fuzzy matching (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:104-135,173-215`). The first matching sense is primary; the rest appear in `alternatives` with source and definition when the published source supplies one. `axis::select_ontology_anchor` is the separate artifact/domain-hint selector (`kask/crates/hkask-bridge-ontology/src/axis.rs`).
 
 The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist
 precisely so the ladder always terminates on a real anchor. Skipping rungs
@@ -45,7 +45,9 @@ Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `a
 
 ### `published` — full vocabularies compiled from pinned sources
 
-The complete SUMO distribution (every ontology file of the pinned commit, `tiny*` test subsets excluded) and the complete schema.org release (every layer) live under `kask/crates/hkask-bridge-ontology/sources/`, pinned file-by-file in `sources/SOURCES.lock` (upstream URL, version, sha256, license). `build.rs` verifies every pin, rejects unlisted or missing files, and compiles an embedded index: each term's concept id, kind, labels, direct parents, inverse properties, published definition and source file. `published::lookup(namespace, term)` returns every exact sense (concept id, local name or published label, case/separator-insensitive); `published::get` and `published::contains` look up a concept id.
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, and definition when supplied). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema and RDF/RDFS. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. The FIBO fixture supplies Release module/namespace bindings checked against the pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`build.rs:136-316,319-403`, `src/published_sources.rs:452-567`).
+
+**Not fully published-source-backed:** SDMX's seven `sdmx:` identifiers map fixture-checked Information Model class names (SDMX publishes UML/XML, not an official RDF/OWL `sdmx:` namespace); the five GOLEM-adjacent `dlp:` constants remain pending a pinned DOLCE-Lite-Plus source with a stated license. Neither has a guaranteed source definition. The full FIBO Provisional set is not in this Release index. Do not equate the local constants or the excluded set with indexed coverage.
 
 ### `ontology_graph` — bounded sourced concept traversal
 
@@ -119,9 +121,10 @@ Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
 ### `fibo` — Financial Industry Business Ontology (financial domain)
 
-Canonical URIs from the official FIBO (EDM Council / OMG,
-<https://spec.edmcouncil.org/fibo/>), each mechanically verified against the
-FIBO master ontology and pinned by `fixtures/fibo-verified-terms.txt`:
+Named URIs from the pinned EDM Council FIBO Q2 Release maturity selection
+(<https://spec.edmcouncil.org/fibo/>), indexed from 157 source modules
+(6,443 terms). `fixtures/fibo-verified-terms.txt` selects the Release
+modules and namespace bindings; the named constants below are a consumer menu:
 `CORPORATION` (`fibo-be-le-cb:Corporation`), `TICKER_SYMBOL`
 (`fibo-sec-sec-id:TickerSymbol`), `PORTFOLIO` (`fibo-sec-sec-ast:Portfolio`),
 `MARKET_CAPITALIZATION` (`fibo-ind-mkt-bas:MarketCapitalization`),
@@ -144,15 +147,16 @@ Full list: `kask/crates/hkask-bridge-ontology/src/fibo.rs`
 
 ### `sepio` — SEPIO (scientific evidence and provenance domain)
 
-Canonical URIs for epistemic and evidential reasoning, from the
-Monarch Initiative's SEPIO (namespace `http://purl.obolibrary.org/obo/SEPIO_`):
+Named URIs for epistemic and evidential reasoning, from the pinned
+Monarch Initiative SEPIO source (namespace `http://purl.obolibrary.org/obo/SEPIO_`):
 `ASSERTION` (`SEPIO:0000001` — the state-axis type for extracted assertion
 h_mems), `ASSERTS_PROPOSITION` (`SEPIO:0000030`), `WAS_SPECIFIED_BY` (`SEPIO:0000041`),
 `HAS_DISPUTING_EVIDENCE_LINE` (`SEPIO:0000008`), `CONTRADICTS` (`SEPIO:0000101`),
 `HAS_CONFIDENCE_LEVEL` (`SEPIO:0000167`), `HAS_EVIDENCE` (`SEPIO:0000189`),
 `HAS_SUPPORTING_EVIDENCE` (`SEPIO:0000440`), `HAS_DISPUTING_EVIDENCE`
-(`SEPIO:0000441`). Every term is pinned by
-`fixtures/sepio-2023-06-13-terms.txt` (official OWL release 2023-06-13).
+(`SEPIO:0000441`). These are named constants, not the extent of the pinned
+SEPIO published-source index. The removed SEPIO fragment fixture no longer
+participates in validation or resolution.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/sepio.rs`
 
@@ -170,10 +174,11 @@ CIDOC-CRM and LRMoo and reuses their terms, so the module also carries
 `crm:`, `dlp:` (DOLCE-Lite-Plus), and `lrmoo:` URIs: `WORK`
 (`lrmoo:F1_Work`), `CHARACTER` (`gc:G1_Character`), `HAS_CHARACTER`
 (`gc:GP1i_has_Character`), `HAS_SETTING` (`dlp:setting`), `REFERS_TO`
-(`crm:P67_refers_to`). Every term is pinned against the checked-in
-official term list `kask/crates/hkask-bridge-ontology/fixtures/golem-v1.1-terms.txt`
-by the `all_terms_are_official` test — a URI not in the published ontology
-fails the build.
+(`crm:P67_refers_to`). GOLEM, CIDOC-CRM and LRMoo resolve from pinned full
+published sources; `all_terms_are_official` checks their named constants against
+the index. The five `dlp:` constants are an explicit exception: the DOLCE-Lite-Plus
+modules state no license, so they are not vendored and are excluded from this
+source-backed check (`src/golem.rs:164-189`).
 
 Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 
@@ -237,10 +242,10 @@ Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs:29-53`
 
 ### `rdf` — RDF 1.1 core vocabulary (pipeline)
 
-The `rdf:` namespace terms used by the corpus assertion pipeline. RDF 1.1
-publishes a small closed vocabulary (22 terms); the complete official list
-is pinned by `fixtures/rdf-11-terms.txt`, and `all_terms_are_official`
-fails the build if a term drifts. The pipeline uses exactly one term:
+The RDF/RDFS published-source index covers the pinned RDF 1.1 vocabulary;
+`rdf.rs` names only the RDF term used by the corpus assertion pipeline.
+`all_terms_are_official` checks the named term against the pinned index. The
+pipeline uses exactly one term:
 `TYPE` (`rdf:type`, `kask/crates/hkask-bridge-ontology/src/rdf.rs:25`). Notably, RDF 1.1 publishes **no creator
 property** — the former `rdf:creator` literal in the corpus dimension mapping
 was fabricated; the real term is `dcterms:creator`.
@@ -305,7 +310,7 @@ Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`
 
 `derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on published and derived resolutions, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, source }`).
 
-`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution walks the full published SUMO and schema.org vocabularies; v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
+`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution consults full pinned published vocabularies, with the SDMX local-identifier exception; v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
 
 ## Domain → ontology mapping
 
@@ -416,8 +421,8 @@ trait, no struct, no runtime state:
 use hkask_bridge_ontology::{fibo, sdmx, sepio, golem, ml_schema, sumo, omc};
 
 let mcap = fibo::MARKET_CAPITALIZATION;  // "fibo-ind-mkt-bas:MarketCapitalization"
-let series = sdmx::TIME_SERIES;           // "sdmx:SeriesKey"
-let ev = sepio::HAS_EVIDENCE;             // "SEPIO:0000189" (fixture-pinned)
+let series = sdmx::TIME_SERIES;           // "sdmx:SeriesKey" (local SDMX IM rendering, not an official URI)
+let ev = sepio::HAS_EVIDENCE;             // "SEPIO:0000189" (published-source-backed)
 let run = ml_schema::RUN;                 // "mls:Run" (module is ml_schema, not mlschema)
 ```
 

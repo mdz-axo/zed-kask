@@ -1,6 +1,6 @@
 ---
 name: onto-anchor
-description: Anchor domain terms on published ontology concepts by walking the canonical fallback ladder (P8.3) — domain supplement, derived concepts, full SUMO upper, full schema.org, 5W1H core — via the onto_anchor tool, which returns each ontology's own definition and every published sense. Nothing is ever untagged. Use before naming, categorizing, or computing any domain concept.
+description: Anchor domain terms via the onto_anchor tool and the P8.3 ladder — pinned domain sources (with SDMX local identifiers), derived, full SUMO, full schema.org, published DC/BIBO/CiTO state-axis senses, 5W1H core. Returns source definitions when supplied and alternative senses; nothing is ever untagged.
 ---
 
 # Onto-Anchor
@@ -13,7 +13,7 @@ mechanical step.
 ## Initial and target condition
 
 - **Initial condition:** the term as it will appear in the output, and whether the claim depends on a relation to another term.
-- **Target condition (per term):** the term carries a non-core anchor (rung 1–3) cited in the output, or its core anchor plus a filed ruling request; a relational claim cites the returned directed edge path, or states `no_supported_path` within the bound.
+- **Target condition (per term):** the term carries a non-core anchor (rungs 1–5) cited in the output, or its core anchor plus a filed ruling request; a relational claim cites the returned directed edge path, or states `no_supported_path` within the bound.
 - **PDCA exemption:** a resolution is one deterministic tool call, so there is no in-session loop. The improvement loop is the operator ruling → `derived.rs` entry → crate test → rebuild, after which the term resolves at rung 2.
 
 ## Step types
@@ -46,18 +46,24 @@ mechanical step.
 ## The canonical pattern
 
 The bridge crate is the single source of truth for ontology vocabulary
-(`kask/crates/hkask-bridge-ontology/README.md`): every concept is a
-fixture-pinned constant verified against its published standard, and
-`all_terms_are_official` fails the build if a term drifts. No ontology
-vocabulary lives inside an MCP server; no fabricated URIs; no private
-definitions.
+(`kask/crates/hkask-bridge-ontology/README.md`). Its published index is
+compiled from SHA-256-pinned sources; named constants are only a consumer
+selection. Current coverage includes SUMO, schema.org, DCMI/BIBO/CiTO,
+PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS
+and FIBO's Q2 **Release** set (157 modules, 6,443 terms), not Provisional.
+SDMX's local `sdmx:` identifiers are fixture-checked Information Model class
+names, not official RDF/OWL URIs; five `dlp:` constants are pending a licensed
+DOLCE-Lite-Plus source and have no published-source verification. Do not
+invent their definitions or claim these exceptions are fully loaded. No
+ontology vocabulary lives inside an MCP server.
 
 Anchoring is a **scope-broadening walk, never a single pick** — the fallback
 ladder (P8.3, `axis.rs` and the bridge root docs):
 
-1. **Domain supplement** — the domain's published ontology (FIBO, PKO, SEPIO,
-   GOLEM, SDMX, ML-Schema, OMC, RDF). Never force a term into an
-   ontology that has no place for it in its graph.
+1. **Domain supplement** — exact terms in pinned sources (FIBO Q2 Release,
+   OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema,
+   RDF/RDFS); SDMX's local class-name registry is an explicit exception.
+   Never force a term into an ontology that has no place for it.
 2. **Derived concepts** — recorded compositions over anchored constituents,
    each carrying its identity and its authority citation
    (`derived::DERIVED_CONCEPTS`). This is where operator rulings become
@@ -67,13 +73,16 @@ ladder (P8.3, `axis.rs` and the bridge root docs):
    term is a `sumo:Quantity`.
 4. **General vocabulary** — the full schema.org release, after SUMO so a
    formal category is preferred.
-5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+5. **State-axis senses** — published Dublin Core, BIBO and CiTO after
+   schema.org; artifact-axis selection is separate from this term walk.
+6. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
 
-A published resolution returns the ontology's own `definition` and `source`
-file. When several vocabularies publish the same word, every other sense is
-listed in `alternatives` (schema.org's `Game` is a creative work; SUMO's is a
-contest) — read them before relying on the chosen sense, and use the
-published definition rather than a paraphrase.
+`published-term-resolution-v2` marks the current canonicalization; older
+records require re-tagging. A published resolution carries the source file
+and its own `definition` **if supplied** (absence is not permission to make
+one up). When several vocabularies publish the same word, every other sense
+is listed in `alternatives` (schema.org's `Game` is a creative work; SUMO's
+is a contest) — read them before relying on the chosen sense.
 
 **The invariant: nothing is ever untagged.** The walk always terminates on a
 real anchor. There is no "unanchored" verdict — a term that lands on the core
@@ -143,8 +152,10 @@ ruling (recorded in the derived registry) improves it.
 - `no_supported_path` is not proof a relation is false; `coarse_anchor`
   cannot be traversed; `max_hops` is 1–4 for a path and exactly 1 for
     neighbors (`ontology_graph.rs` returns `InvalidQuery` otherwise).
-- Vocabulary changes land only through the derived registry with its tests
-  (`all_terms_are_official` fails the build on drift).
+- Operator-ruling compositions land in the derived registry with tests;
+  published-source changes require new pinned files and build verification.
+  `all_terms_are_official` checks named constants in the crate's test suite,
+  with the explicit SDMX fixture and five pending DLP exceptions.
 
 ## Verification
 

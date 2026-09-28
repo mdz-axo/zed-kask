@@ -362,10 +362,13 @@ anchoring pattern (D54). The former `## Ontology-anchored reasoning
 required-tool-of-analysis bullet inside `## Tool Use` (beside "gather
 enough context before acting" — resolve domain terms with the
 **`onto_anchor` tool**, which walks the canonical fallback ladder over the
-source-pinned `hkask-bridge-ontology` vocabularies — domain supplements →
-derived concepts → full SUMO upper → full schema.org → 5W1H core — and always terminates on a
-real anchor: nothing is ever untagged; a coarse core-rung anchor carries
-the ruling path), and the identity clause in the opening ("no
+pinned `hkask-bridge-ontology` sources and the explicit SDMX local
+identifier exception — domain supplements → derived concepts → full SUMO
+upper → full schema.org → published Dublin Core/BIBO/CiTO state-axis senses
+→ 5W1H core — and always terminates on a real anchor: nothing is ever
+untagged; published definitions are returned when supplied, FIBO is Q2
+Release-only (not Provisional), the five `dlp:` constants remain pending a
+licensed source, and a coarse core-rung anchor carries the ruling path), and the identity clause in the opening ("no
 professional works in a private language"). Pinned by the rewritten
 `test_system_prompt_contains_ontology_anchored_reasoning`, which asserts
 the new locations, the ladder invariant phrase, AND the ABSENCE of the

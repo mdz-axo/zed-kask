@@ -161,9 +161,8 @@ impl Default for SwarmConfig {
             allowed_tool_servers: None,
             // Single-source the default passphrase (same const as provisioning).
             // The `SwarmConfig::default()` doc comment says to keep this in
-            // sync with `KaskSwarmSettings::default()` — the const makes the
-            // value identical across the bridge/servers boundary.
-            memory_passphrase: hkask_keystore::passphrase::DEFAULT_PASSPHRASE.to_string(),
+            // Supplied only by the canonical credential resolver at server startup.
+            memory_passphrase: String::new(),
             memory_db_path: "mcp/swarm/memory.db".to_string(),
             embedding_dim: 1024,
         }
@@ -211,10 +210,6 @@ pub fn resolve_local_swarms_dir(local_swarms_dir: &str) -> String {
 /// (this crate has `#![forbid(unsafe_code)]`, so `std::env::set_var` is
 /// unavailable in tests). Preserves `from_env`'s resolution chain:
 /// `env-var → keychain → default`.
-fn non_empty_or_env(input: Option<String>, default: String) -> String {
-    input.filter(|s| !s.trim().is_empty()).unwrap_or(default)
-}
-
 use hkask_mcp_server::parse_env_warn;
 
 impl SwarmConfig {
@@ -258,10 +253,7 @@ impl SwarmConfig {
                     .map(str::to_string)
                     .collect::<Vec<_>>()
             });
-        let memory_passphrase = non_empty_or_env(
-            std::env::var("HKASK_DB_PASSPHRASE").ok(),
-            default.memory_passphrase,
-        );
+        let memory_passphrase = default.memory_passphrase;
         let memory_db_raw = std::env::var("HKASK_SWARM_MEMORY_DB")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -333,39 +325,8 @@ impl SwarmConfig {
 mod tests {
     use super::*;
 
-    /// The startup requirement: `SwarmConfig::default()` resolves the
-    /// passphrase via the shared `hkask-keystore::passphrase::DEFAULT_PASSPHRASE`
-    /// const, so a fresh process defaults to the known value `env → keychain →`
-    /// chain also resolves (never blank).
     #[test]
-    fn default_passphrase_is_hkask_keystore_const() {
-        assert_eq!(
-            SwarmConfig::default().memory_passphrase,
-            hkask_keystore::passphrase::DEFAULT_PASSPHRASE,
-            "SwarmConfig default must resolve via the shared const"
-        );
-    }
-
-    /// `non_empty_or_env` treats empty/whitespace env vars the same as
-    /// absent — falls through to `default`. The from-env chain in
-    /// `from_env` calls this helper; the test pins the fall-through without
-    /// mutating the process env (crate has `#![forbid(unsafe_code)]`).
-    #[test]
-    fn env_fallback_helper_treats_empty_as_unset() {
-        assert_eq!(
-            non_empty_or_env(Some(String::new()), "fallback".to_string()),
-            "fallback".to_string(),
-            "empty env var must fall through"
-        );
-        assert_eq!(
-            non_empty_or_env(Some("  ".to_string()), "fallback".to_string()),
-            "fallback".to_string(),
-            "whitespace-only env var must fall through"
-        );
-        assert_eq!(
-            non_empty_or_env(Some("real".to_string()), "fallback".to_string()),
-            "real".to_string(),
-            "non-empty env var must win"
-        );
+    fn swarm_has_no_compiled_in_database_key() {
+        assert!(SwarmConfig::default().memory_passphrase.is_empty());
     }
 }

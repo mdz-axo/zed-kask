@@ -13,6 +13,10 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang/andrej-karpathy-skills), derived from Andrej Karpathy's public observations on LLM coding failure modes — the wording is forrestchang's, the diagnosis Karpathy's.
 
+## D/P labelling
+
+The assessment (step 1), the constrained plan (step 2) and the audit's four principle scores with their violations report (step 3) are P — judgment, critiqued by the operator and by the correction loop. The overall score and the gate are D (`lisp_eval`: the arithmetic mean `(/ (+ s1 s2 s3 s4) 4)` and the critical-violations/overall gate in step 4); a score the model states but does not supply to the form is not the mean — the form's env is the record.
+
 ## When to Use
 
 - Before implementing a coding task, when you need to surface hidden assumptions, simplicity risks, and scope creep warnings

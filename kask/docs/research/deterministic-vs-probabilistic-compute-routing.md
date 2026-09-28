@@ -21,7 +21,7 @@ mds_categories: [composition, trust]
 3. The game axis split into a recurrence dimension and a world-closure dimension.
 4. A second breakdown of the entropy analogy, sourced from Bennett and Shenker in the corpus.
 
-**Ontology anchors.** `entropy`, `deterministic computation`, `Bayesian inference`, `finite game`, and `repeated game` all resolved only to the coarse 5W1H core rung (`onto_anchor`, 2026-09-27). Published definitions are used instead: Shannon 1948; Gibbs, and Jaynes 1957; Bayes–Laplace; Carse, *Finite and Infinite Games* (1986); the repeated game as in Fudenberg & Tirole, *Game Theory* (1991). Pinning these terms requires an operator ruling in the derived registry.
+**Ontology anchors.** At first probe (`onto_anchor`, 2026-09-27) `entropy`, `deterministic computation`, `Bayesian inference`, `finite game`, and `repeated game` all resolved only to the coarse 5W1H core rung. Since then the operator has ruled the vocabulary into the derived registry: the five routing terms (`entropy`, `deterministic_computation`, `probabilistic_computation`, `verification_oracle`, `calibrated_forecast`) resolve on the derived rung (verified live 2026-09-27), and the three game-axis terms (`bayesian_inference`, `finite_game`, `repeated_game`) are ruled in the same registry, with live resolution following the next editor rebuild. Published definitions remain the grounding: Shannon 1948; Gibbs, and Jaynes 1957; Bayes–Laplace; Carse, *Finite and Infinite Games* (1986); the repeated game as in Fudenberg & Tirole, *Game Theory* (1991).
 
 ## 1. Routing claim
 

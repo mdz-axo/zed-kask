@@ -21,6 +21,10 @@ compose passes the per-turn gate below before sending.
 - As a substitute for a process skill — this skill shapes output; it does not govern the work
 - To delete content an active process skill requires — shape arranges content, never deletes it (override 5 below)
 
+## D/P labelling
+
+Draft composition and the mode's shape rules are P (model output, critiqued by the per-turn gate and the operator). The pre-send gate is D: Form G (list cap and field checks) and Form C (content obligations) run in `lisp_eval` over fields extracted by the `pre-send-gate.j2` render — extraction is P (the model reads its own draft), the verdict is D over the extracted fields. Caveman compression is P (model rewrite), re-checked by the same gate. On `render_template` or `lisp_eval` failure the prose self-check fallback is P and is surfaced as a degraded gate, never reported as a passed gate.
+
 ## Instructions
 
 ### Mode convention

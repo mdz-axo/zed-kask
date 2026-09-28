@@ -27,6 +27,10 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 - Reviewing a change against its stated spec — use `code-review`.
 - Proving the absence of bugs — an expedition reports what it found with honest coverage estimates; a clean expedition is a coverage statement, not a proof.
 
+## D/P labelling
+
+Charter design, crate-model description, probe strategy, oracle classification (Weinberg quality, IS/OUGHT, epistemic mode, provenance), Beizer taxonomy and severity are P — judgment, critiqued by the operator and by the reproducibility axis (a high-confidence low-reproducibility finding stays POTENTIAL_BUG, not OBSERVATION). Tool outputs are D: `cargo test --no-run` and missing-tests detection, BugStalker runtime probes, and the file:line no-fiction check (a finding without a location is rejected). The convergence computation is D (`lisp_eval`: new locations vs the prior expedition by file:line, plus the tier/location defect count — the form in Convergence).
+
 ## Instructions
 
 ### bug-hunt-charter

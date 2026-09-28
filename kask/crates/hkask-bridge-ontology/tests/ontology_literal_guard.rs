@@ -1,10 +1,9 @@
 //! Ontology literal guard — closes the string-literal side door.
 //!
-//! **The threat this guard exists for:** the bridge crate's fixture tests
-//! (`all_terms_are_official` in every vocabulary module) verify that each
-//! *constant* is a real term in a published ontology. But server code that
-//! writes an ontology URI as a *string literal* bypasses those fixtures
-//! entirely — five fabricated URIs (`dcterms:Assertion`,
+//! **The threat this guard exists for:** bridge constants are checked against
+//! pinned published sources (except explicitly pending local vocabularies).
+//! But server code that writes an ontology URI as a *string literal* bypasses
+//! those checks entirely — five fabricated URIs (`dcterms:Assertion`,
 //! `pko:StepExecution.output`, `pko:stepVerification`,
 //! `pko:referencesResource`, `pko:Goal`) survived the entire module
 //! remediation through that door, and the corpus pipeline shipped five more
@@ -17,21 +16,19 @@
 //! explicit, reviewed entry in `ALLOWED_LITERALS` below. The honest way to
 //! use an ontology term in code is a reference to a bridge constant (which
 //! leaves no literal for this scan to find); a literal is the side door and
-//! must be justified. This test cannot verify that a URI is *real* — that is
-//! the fixtures' job. An allowlist entry asserts its term is
-//! fixture-verified; the fixture tests remain the validity gate.
+//! must be justified. This test cannot verify that a URI is *real* — the
+//! publisher-owned source index is the validity gate.
 //!
 //! **Scanned trees** (production + tests, both workspaces):
 //! `kask/mcp-servers/*/src`, `kask/crates/*/src`, `crates/hkask-*/src` —
-//! excluding the bridge crate itself, whose constants are the fixture-guarded
-//! home for these literals. Comments are skipped: only string literals are
+//! excluding the bridge crate itself, whose constants are checked against
+//! published sources where available. Comments are skipped: only string literals are
 //! extracted (a hand-rolled scanner tracks line/block comments, string
 //! escapes, raw strings, and char-vs-lifetime quotes).
 //!
 //! **Templates** (`.j2` under `kask/registry/templates/`) cannot reference
 //! Rust constants, so they get a stronger rule: every ontology-shaped term
-//! in a template must appear in one of the bridge crate's fixture term
-//! lists — templates may only speak fixture-verified terms. This is
+//! in a template must appear in the bridge's pinned published-source index. This is
 //! mechanical drift prevention between the registry templates and the
 //! vocabulary modules.
 
@@ -46,21 +43,14 @@ const ONTOLOGY_TERM_PATTERN: &str = r"(?i)(pko|pplan|prov|fibo|golem|gc|crm|dlp|
 
 /// Explicit, reviewed allowlist: (path from repo root, ontology term).
 ///
-/// Every entry is a TEST FIXTURE pinning a wire contract — the literal is the
-/// point: it independently asserts the exact URI the corresponding MCP
-/// server emits on its payload, so a constant change on the server side
-/// fails the widget test instead of moving silently with it. Each term is
-/// fixture-verified in `kask/crates/hkask-bridge-ontology/fixtures/`:
-/// - `dcterms:Dataset`, `fibo:Portfolio` — dublincore-bibo-cito-terms.txt,
-///   fibo-verified-terms.txt
-/// - `pko:Step`, `pko:Procedure` — pko-2.0.0-terms.txt
-/// - `omc:CreativeWork`, `omc:Scene`, `omc:Asset`, `omc:Sequence` —
-///   omc-v2.8-terms.txt
-/// - `fibo:Corporation` — fibo-verified-terms.txt
+/// Every entry pins a test's wire contract: the literal independently asserts
+/// what its corresponding server emits. This allowlist enforces routing,
+/// not validity: some historical test wire values (for example
+/// `fibo:Portfolio`) are not published FIBO concept IDs.
 ///
 /// Production code may NOT add entries here — reference a bridge constant
-/// instead. New entries require a justification comment naming the verified
-/// source, per the PR-review rule.
+/// instead. New entries require a justification naming either a pinned
+/// published concept or the specific historical wire contract being tested.
 const ALLOWED_LITERALS: &[(&str, &str)] = &[
     // ── Widget/crate test fixtures pinning server-emitted ontology tags ──
     ("crates/hkask-graph-widget/src/block.rs", "dcterms:Dataset"),
@@ -356,37 +346,15 @@ fn ontology_terms_in_literals(src: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// The set of verified terms: every concept of the full published
-/// vocabularies loaded from `sources/`, plus every bridge fixture's terms
-/// (first whitespace-separated token of each non-comment line).
-fn fixture_terms() -> HashSet<String> {
-    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
-    let mut terms: HashSet<String> = hkask_bridge_ontology::published::terms()
+/// The only terms templates may propose: publisher-owned concepts from
+/// checksum-pinned sources. Local SDMX and unlicensed DLP identifiers are
+/// deliberately not added to this set.
+fn published_terms() -> HashSet<String> {
+    let terms: HashSet<String> = hkask_bridge_ontology::published::terms()
         .iter()
         .map(|term| term.concept.to_string())
         .collect();
-    let Ok(entries) = std::fs::read_dir(&fixtures_dir) else {
-        panic!("fixtures dir not found: {}", fixtures_dir.display());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "txt") {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            panic!("failed to read fixture {}", path.display());
-        };
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            if let Some(term) = trimmed.split_whitespace().next() {
-                terms.insert(term.to_string());
-            }
-        }
-    }
-    assert!(!terms.is_empty(), "no fixture terms loaded");
+    assert!(!terms.is_empty(), "no published terms loaded");
     terms
 }
 
@@ -450,9 +418,9 @@ fn ontology_literals_route_through_constants_or_allowlist() {
 }
 
 #[test]
-fn template_terms_are_fixture_verified() {
+fn template_terms_are_published_source_verified() {
     let root = repo_root();
-    let fixtures = fixture_terms();
+    let published = published_terms();
     let templates_dir = root.join("kask/registry/templates");
     let mut files = Vec::new();
     collect_j2_files(&templates_dir, &mut files);
@@ -474,7 +442,7 @@ fn template_terms_are_fixture_verified() {
             .replace('\\', "/");
         for term in ontology_terms_in_text(&content) {
             let canonical = canonical_term(&term);
-            if !fixtures.contains(&canonical) {
+            if !published.contains(&canonical) {
                 violations.push(format!("{relative}: {term}"));
             }
         }
@@ -482,13 +450,12 @@ fn template_terms_are_fixture_verified() {
 
     assert!(
         violations.is_empty(),
-        "ontology terms in registry templates that are not in any bridge fixture:\n  {}\n\
+        "ontology terms in registry templates that are not in pinned published sources:\n  {}\n\
          \n\
          Templates cannot reference Rust constants, so every ontology term in\n\
-         a template must appear in a bridge fixture term list\n\
-         (kask/crates/hkask-bridge-ontology/fixtures/*.txt) — the verified\n\
-         term sets. A term that is not in a published ontology must not be\n\
-         offered to the LLM, even in a comment.",
+         a template must be in the pinned published-source index. An\n\
+         unverified local identifier must not be offered to the LLM,\n\
+         even in a comment.",
         violations.join("\n  ")
     );
 }

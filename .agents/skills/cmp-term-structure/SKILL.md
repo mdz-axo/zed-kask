@@ -14,9 +14,18 @@ matching compares against 1m/3m/6m (`hkask_forecast::CMP_TENORS_YEARS`).
 
 **Reference model.** The U.S. Treasury constant-maturity yield curve
 (interpolation to fixed tenors) applied to prediction-market contracts,
-with log-odds interpolation. Every tool step is D (the servers build
-indices, trees, coherence and duration); the economic context is P and
-the operator's decision; dependency conditionals are P and caller-authored.
+with log-odds interpolation.
+
+## D/P labelling
+
+Every tool step is D (the servers build indices, trees, coherence and
+duration — `market_ladder`, `market_cmp_indices`,
+`scenario_from_cmp_indices`, `contract_price_coherence`; the agent
+supplies their values, never a sign it inferred). The economic context is
+P and the operator's decision; dependency conditionals are P and
+caller-authored. The convergence gate is D (`lisp_eval` over
+withheld_unexplained, slope and the accepted direction — the form in
+Convergence).
 
 - **Initial condition:** the series ladder (`market_ladder`) and the
   operator-accepted context.

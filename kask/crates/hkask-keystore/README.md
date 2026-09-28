@@ -6,7 +6,7 @@ OS keychain access for hKask credentials and the shared SQLCipher database passp
 
 - **OS keychain** — stores secrets in the OS-native keystore (Linux: D-Bus Secret Service), using Zed's `url` and `username` item attributes.
 - **Async URL access** — editor callers await async-std-backed `oo7` operations without blocking GPUI workers; synchronous key operations remain available for pre-app rotation and standalone callers.
-- **Default passphrase** — uses `"allostery"` only on first run; a scheduled change is applied at startup before the main keychain slot is updated.
+- **First-run DB key** — generates a new random shared key into the OS keychain only for a fresh data tree; an existing managed database without its key stays unavailable until explicitly discarded. Loss of the keychain makes its encrypted stores unrecoverable. A scheduled change is applied at startup before the main keychain slot is updated.
 
 ## Configuration
 

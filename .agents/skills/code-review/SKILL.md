@@ -10,7 +10,11 @@ Convergent code review of a change against its stated spec. Grounded in Fagan fo
 
 ## Reference models
 
-Fagan (1976) formal inspection and Ousterhout (2018) — `onto_anchor` → derived `fagan_inspection` (operator ruling 2026-09-25). Findings are P (detection and adjudication judgments), critiqued by the grill-me self-challenge and each finding's falsifier; severity order, the Blocker-set stop rule and counts are D.
+Fagan (1976) formal inspection and Ousterhout (2018) — `onto_anchor` → derived `fagan_inspection` (operator ruling 2026-09-25).
+
+## D/P labelling
+
+Findings are P (detection and adjudication judgments), critiqued by the grill-me self-challenge and each finding's falsifier. Severity derivation is D (`lisp_eval` over the classified finding — the fixed base → confidence-downgrade → provenance-ceiling → taste-ceiling order in code-review-adjudicate step 4); the Blocker-set stop rule, severity order and counts are D. The file:line no-fiction rule is D (a finding without a cited location is rejected); the constraint-force classification feeding the severity form is P.
 
 ## When to Use
 

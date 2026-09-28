@@ -18,10 +18,8 @@
 pub mod error;
 pub mod keychain;
 pub mod keychain_keys;
-pub mod passphrase;
 
 pub use error::KeystoreError;
 pub use keychain::{
     Keychain, KeychainError, provision_db_passphrase_string, resolve, resolve_db_passphrase_string,
 };
-pub use passphrase::DEFAULT_PASSPHRASE;
