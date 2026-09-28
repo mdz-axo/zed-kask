@@ -64,30 +64,24 @@ pub enum RolloutEventError {
 /// regulation loop's impact verdict is a `regulation_impact`-sourced
 /// verdict event, distinct from `deterministic_evaluator` (the harness's
 /// check) and `operator` (a human stamp).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RolloutMetricObservation {
+    pub before: f64,
+    pub after: f64,
+    pub sample_sizes: Option<(u64, u64)>,
+}
+
 pub trait RolloutEventSource: Send + Sync {
     /// The value of `metric` for `rollout_id` at the event position
     /// `before_position` (the last event before the action) and at the
     /// rollout's end. `None` when the rollout has no event for that metric
     /// — absence, not zero (a fabricated 0 would read as a real measurement).
-    fn metric_before_and_after(
+    fn metric_observation(
         &self,
         rollout_id: &str,
         metric: &str,
         before_position: i64,
-    ) -> Result<Option<(f64, f64)>, RolloutEventError>;
-
-    /// Sample sizes (attempts) behind the before and after values of a
-    /// proportion metric, selected exactly as `metric_before_and_after`
-    /// selects its values. `None` when the store does not record them —
-    /// the impact check then treats the sample as unverifiable, not large.
-    fn metric_sample_sizes(
-        &self,
-        _rollout_id: &str,
-        _metric: &str,
-        _before_position: i64,
-    ) -> Result<Option<(u64, u64)>, RolloutEventError> {
-        Ok(None)
-    }
+    ) -> Result<Option<RolloutMetricObservation>, RolloutEventError>;
 
     /// Write the regulation loop's impact verdict back to the event store
     /// as a `verdict` event with `source: regulation_impact`. Closes the
@@ -140,6 +134,7 @@ struct CalibratedThresholds {
 }
 
 const MAX_SUBMITTED_ROLLOUT_CHECKS: usize = 64;
+const MAX_ROLLOUT_READ_ATTEMPTS: u8 = 3;
 
 /// Admission result for a rollout impact check.
 ///
@@ -157,6 +152,25 @@ struct RolloutImpactCheck {
     rollout_id: String,
     before_position: i64,
     metric: String,
+    read_attempts: u8,
+}
+
+struct PreparedImpactCheck {
+    check: RolloutImpactCheck,
+    metric: crate::loops::SignalMetric,
+    observation: RolloutMetricObservation,
+}
+
+/// One tick's read of the accepted-check worklist. `ready` carries the
+/// checks whose evidence was read for verdict classification, `retry` the
+/// checks a store-read error retained for a later tick, and `exhausted`
+/// the checks dropped after `MAX_ROLLOUT_READ_ATTEMPTS` failed reads —
+/// the lost assessments the tick must escalate before they leave the
+/// worklist unverified.
+struct ImpactPreparation {
+    ready: Vec<PreparedImpactCheck>,
+    retry: Vec<RolloutImpactCheck>,
+    exhausted: Vec<RolloutImpactCheck>,
 }
 
 #[derive(Default)]
@@ -215,12 +229,17 @@ pub struct CyberneticsLoop {
     /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
     /// Direct curator directive channel: Curation → Cybernetics.
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
-    /// Externally-submitted rollout impact checks, drained by the next
-    /// `tick`'s `verify_impact`. Producers (the rollout harness, the
-    /// Curator) submit a `RolloutImpactCheck` when they want the loop to
+    /// Externally-submitted rollout impact checks, claimed by the next
+    /// `tick` and answered by `verify_impact` once their evidence is read;
+    /// a store-read error retains a check in this queue for a later tick
+    /// within `MAX_ROLLOUT_READ_ATTEMPTS`. Producers (the rollout harness,
+    /// the Curator) submit a `RolloutImpactCheck` when they want the loop to
     /// verify a rollout's metric movement across an action — this is the
     /// producer side of the event-substrate phase 6 seam.
     submitted_rollout_checks: tokio::sync::Mutex<Vec<RolloutImpactCheck>>,
+    /// Serializes ticks so only one claims accepted checks at a time;
+    /// a cancelled tick releases it with unprepared checks still queued.
+    impact_tick: tokio::sync::Mutex<()>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
     /// Coalesces only semantically identical persistent signal telemetry.
@@ -316,6 +335,7 @@ impl CyberneticsLoop {
             alert_email_sink: None,
             curator_directive_rx: None,
             submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
+            impact_tick: tokio::sync::Mutex::new(()),
             loop_quality: RwLock::new(LoopMetrics::default()),
             loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
             fallback_alert_conditions: Mutex::new(HashSet::new()),
@@ -535,12 +555,14 @@ impl CyberneticsLoop {
     /// caller that observed a metric-relevant event on a rollout (e.g. the
     /// harness observing a pass-rate regression after a card change) asks
     /// the loop to verify the before/after movement from the rollout event
-    /// store. An accepted check is queued and answered on the next tick — the
-    /// submitter never blocks on assessment. A full queue returns typed
-    /// backpressure without replacing an earlier accepted check.
+    /// store. An accepted check is queued and answered on the next tick —
+    /// or on a later tick while a store-read error is retried within
+    /// `MAX_ROLLOUT_READ_ATTEMPTS` — and the submitter never blocks on
+    /// assessment. A full queue returns typed backpressure without
+    /// replacing an earlier accepted check.
     ///
     /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
-    /// post: returns whether the check was retained for the next tick's verify_impact
+    /// post: returns whether the check was retained for a later tick's verify_impact
     pub async fn submit_rollout_impact_check(
         &self,
         rollout_id: String,
@@ -551,11 +573,13 @@ impl CyberneticsLoop {
             rollout_id,
             before_position,
             metric,
+            read_attempts: 0,
         };
         let mut queue = self.submitted_rollout_checks.lock().await;
         // Bound the queue without invalidating an earlier acceptance. When the
         // queue is full, the producer retains its event cursor and retries
-        // after the next tick drains accepted checks.
+        // after the next tick frees capacity — retained read failures still
+        // count against the bound until they verify or exhaust retries.
         if queue.len() >= MAX_SUBMITTED_ROLLOUT_CHECKS {
             return RolloutImpactSubmission::QueueFull {
                 capacity: MAX_SUBMITTED_ROLLOUT_CHECKS,
@@ -754,6 +778,9 @@ impl CyberneticsLoop {
     /// Computed advisories are routed for operator action; only externally
     /// submitted checks with before/after evidence enter `verify_impact`.
     pub async fn tick(&self) {
+        // Only one tick claims accepted checks at a time; cancellation drops
+        // this guard while unprepared checks remain in the bounded worklist.
+        let _impact_tick = self.impact_tick.lock().await;
         let start = std::time::Instant::now();
         self.tick_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -770,22 +797,41 @@ impl CyberneticsLoop {
         }
         let deviations = self.compare(&signals).await;
         let actions = self.compute(&deviations).await;
-        // Drain externally submitted checks separately from computed advice.
+        // Claim externally submitted checks separately from computed advice.
         // Computed actions are routed to the operator and have no causal
         // impact to verify until an intervention is confirmed. Rollout checks
         // already carry an evidence-bearing before/after query contract.
-        let impact_checks = std::mem::take(&mut *self.submitted_rollout_checks.lock().await);
+        let impact_checks = self.submitted_rollout_checks.lock().await.clone();
         if !impact_checks.is_empty() {
             tracing::debug!(
                 target: "reg.cybernetics",
                 count = impact_checks.len(),
-                "drained submitted rollout impact checks into verify_impact"
+                "claimed submitted rollout impact checks for this tick"
             );
         }
         self.act(&actions).await;
 
-        // Fermi impact-gate: verify only evidence-bearing submitted checks.
-        let impact_reports = self.verify_impact(&impact_checks).await;
+        // Read fallible evidence before removing accepted work. Its entries
+        // occupy their queue slots until retry/terminal/ready is decided, so
+        // concurrent producers cannot overfill the queue or evict a check.
+        let ImpactPreparation {
+            ready,
+            mut retry,
+            exhausted,
+        } = self.prepare_impact_checks(&impact_checks);
+        {
+            let mut queue = self.submitted_rollout_checks.lock().await;
+            queue.drain(..impact_checks.len());
+            retry.extend(queue.drain(..));
+            *queue = retry;
+        }
+        // A check dropped after bounded read retries is an accepted
+        // assessment lost in normal operation — escalate the loss to the
+        // reviewable board before the tick continues. No verdict is written
+        // for it, so the absent-verdict restart rescan of accepted history
+        // remains its recovery backstop.
+        self.escalate_exhausted_checks(&exhausted).await;
+        let impact_reports = self.verify_impact(&ready).await;
 
         // Feed per-metric rollout outcomes into strategy evaluator.
         // Collect promoted metrics in a locked scope; emit spans outside

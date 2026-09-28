@@ -23,10 +23,11 @@ pub(crate) mod strategy_evaluator;
 
 pub(crate) mod runtime;
 pub use algedonic::{
-    AlertEmailSink, AlertEscalationSink, AlertPersistError, AlertDeliveryOutcome, RuntimeAlert,
+    AlertDeliveryOutcome, AlertEmailSink, AlertEscalationSink, AlertPersistError, RuntimeAlert,
 };
 pub use cybernetics_loop::{
     CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
+    RolloutMetricObservation,
 };
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use inference_resilience::{

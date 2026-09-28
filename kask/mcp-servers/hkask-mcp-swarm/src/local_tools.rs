@@ -3523,7 +3523,7 @@ impl SwarmServer {
                 // monitor can compare pass rates across runs for the same
                 // agent. The rollout_id is the agent name — this groups all
                 // harness_summary events for one agent under a single
-                // queryable key, so `metric_before_and_after` can find the
+                // queryable key, so `metric_observation` can find the
                 // before/after values across runs. A write failure is counted
                 // in `events_dropped` — never silent (the failure-signal rule:
                 // a missing summary means the regression monitor is blind,

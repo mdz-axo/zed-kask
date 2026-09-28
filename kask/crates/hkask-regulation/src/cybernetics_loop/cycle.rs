@@ -714,64 +714,109 @@ impl super::CyberneticsLoop {
         board_confirmed || archive_persisted
     }
 
-    /// Verify evidence-bearing rollout impact checks (Fermi impact-gate pattern).
-    ///
-    /// The typed input excludes central Notify/Escalate dispositions: neither
-    /// is a measured rollout intervention. Each check is answered by the rollout event source with
-    /// comparable before/after observations, then classified using relative
-    /// worsening thresholds.
-    pub(super) async fn verify_impact(
+    /// Read rollout evidence before removing an accepted check from the bounded
+    /// worklist. Only store-read errors retry, within
+    /// `MAX_ROLLOUT_READ_ATTEMPTS`; absent evidence and unknown metrics are
+    /// terminal, never interpreted as zero. A check whose reads exhaust the
+    /// retry bound is returned as `exhausted` so the tick escalates the lost
+    /// assessment instead of dropping it with a log line.
+    pub(super) fn prepare_impact_checks(
         &self,
-        impact_checks: &[super::RolloutImpactCheck],
-    ) -> Vec<ImpactReport> {
-        let mut reports = Vec::new();
-
-        for check in impact_checks {
+        checks: &[super::RolloutImpactCheck],
+    ) -> super::ImpactPreparation {
+        let mut ready = Vec::new();
+        let mut retry = Vec::new();
+        let mut exhausted = Vec::new();
+        for check in checks {
             let Some(source) = &self.rollout_events else {
-                tracing::warn!(
-                    target: "reg.cybernetics",
-                    rollout = %check.rollout_id,
-                    metric = %check.metric,
-                    "rollout impact check has no event source — verdict not computed"
-                );
+                tracing::warn!(target: "reg.cybernetics", rollout = %check.rollout_id,
+                    "impact check has no event source — cannot verify");
                 continue;
             };
             let Some(metric) = SignalMetric::from_str_name(&check.metric) else {
-                tracing::warn!(
-                    target: "reg.cybernetics",
-                    rollout = %check.rollout_id,
-                    metric = %check.metric,
-                    "rollout impact check named an unknown metric — verdict not computed"
-                );
+                tracing::warn!(target: "reg.cybernetics", metric = %check.metric,
+                    "impact check named an unknown metric — cannot verify");
                 continue;
             };
-            let (before_val, after_val) = match source.metric_before_and_after(
-                &check.rollout_id,
-                &check.metric,
-                check.before_position,
-            ) {
-                Ok(Some(values)) => values,
-                Ok(None) => {
-                    tracing::warn!(
-                        target: "reg.cybernetics",
-                        rollout = %check.rollout_id,
-                        metric = %check.metric,
-                        "rollout impact check found no events for this metric — no baseline to verify against"
-                    );
-                    continue;
-                }
+            match source.metric_observation(&check.rollout_id, &check.metric, check.before_position)
+            {
+                Ok(Some(observation)) => ready.push(super::PreparedImpactCheck {
+                    check: check.clone(),
+                    metric,
+                    observation,
+                }),
+                Ok(None) => tracing::warn!(target: "reg.cybernetics",
+                    rollout = %check.rollout_id, metric = %check.metric,
+                    "impact check found no comparable events — cannot verify"),
                 Err(error) => {
-                    tracing::warn!(
-                        target: "reg.cybernetics",
-                        rollout = %check.rollout_id,
-                        metric = %check.metric,
-                        error = %error,
-                        "rollout impact check store query failed — verdict not computed"
-                    );
-                    continue;
+                    let attempts = check.read_attempts + 1;
+                    if attempts < super::MAX_ROLLOUT_READ_ATTEMPTS {
+                        let mut pending = check.clone();
+                        pending.read_attempts = attempts;
+                        retry.push(pending);
+                        tracing::warn!(target: "reg.cybernetics", rollout = %check.rollout_id,
+                            metric = %check.metric, %error, attempts,
+                            "impact read failed — check retained for next tick");
+                    } else {
+                        exhausted.push(check.clone());
+                        tracing::error!(target: "reg.cybernetics", rollout = %check.rollout_id,
+                            metric = %check.metric, %error, attempts,
+                            "impact read failed after bounded retries — check not verified; operator intervention required");
+                    }
                 }
-            };
+            }
+        }
+        super::ImpactPreparation {
+            ready,
+            retry,
+            exhausted,
+        }
+    }
 
+    /// Escalate checks dropped after `MAX_ROLLOUT_READ_ATTEMPTS` failed reads
+    /// to the reviewable board: an accepted assessment lost in normal
+    /// operation is operator-actionable, not a log line. No verdict is
+    /// written for an exhausted check — the absent verdict keeps the
+    /// restart rescan of accepted history as its recovery backstop.
+    pub(super) async fn escalate_exhausted_checks(&self, exhausted: &[super::RolloutImpactCheck]) {
+        for check in exhausted {
+            let alert = RuntimeAlert {
+                domain: format!("rollout_check_unverifiable:{}", check.metric),
+                deficit: 1,
+                threshold: 1,
+                severity: AlertSeverity::Warning,
+                escalated: true,
+                timestamp: chrono::Utc::now(),
+                message: format!(
+                    "Rollout impact check for {} on {} exhausted {} read attempts without evidence — accepted check dropped unverified; operator intervention required",
+                    check.rollout_id,
+                    check.metric,
+                    super::MAX_ROLLOUT_READ_ATTEMPTS,
+                ),
+            };
+            self.deliver_alert_to_board(&alert, None).await;
+            if let Some(ref tx) = self.alerts_tx
+                && tx.send(CurationInput::Alert(alert)).is_err()
+            {
+                tracing::warn!(target: "reg.alert", "Unverifiable-check alert send failed — channel closed");
+            }
+        }
+    }
+
+    /// Classify evidence already read by `prepare_impact_checks`. The tick
+    /// has already removed these checks from the worklist, so no awaited
+    /// alert, span or verdict side effect can be blindly replayed by a
+    /// later tick.
+    pub(super) async fn verify_impact(
+        &self,
+        impact_checks: &[super::PreparedImpactCheck],
+    ) -> Vec<ImpactReport> {
+        let mut reports = Vec::new();
+        for prepared in impact_checks {
+            let check = &prepared.check;
+            let metric = prepared.metric;
+            let observation = &prepared.observation;
+            let (before_val, after_val) = (observation.before, observation.after);
             let delta = after_val - before_val;
             let Some(higher_is_better) = metric.impact_direction() else {
                 tracing::warn!(
@@ -815,25 +860,11 @@ impl super::CyberneticsLoop {
             // separate a real drop from chance; otherwise it is reviewed as
             // Stage with the reason named, never silently accepted.
             if decision == ActionDecision::Block && metric == SignalMetric::PassRate {
-                let sizes = match source.metric_sample_sizes(
-                    &check.rollout_id,
-                    &check.metric,
-                    check.before_position,
+                if let Some(reason) = regulation_policy::insufficient_block_sample(
+                    before_val,
+                    after_val,
+                    observation.sample_sizes,
                 ) {
-                    Ok(sizes) => sizes,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "reg.cybernetics",
-                            rollout = %check.rollout_id,
-                            error = %error,
-                            "rollout impact check sample-size query failed — treating sample as unverifiable"
-                        );
-                        None
-                    }
-                };
-                if let Some(reason) =
-                    regulation_policy::insufficient_block_sample(before_val, after_val, sizes)
-                {
                     tracing::warn!(
                         target: "reg.cybernetics",
                         rollout = %check.rollout_id,
@@ -953,20 +984,19 @@ impl super::CyberneticsLoop {
             )
             .await;
 
-            if let Err(error) = source.append_impact_verdict(
-                &check.rollout_id,
-                &check.metric,
-                before_val,
-                after_val,
-                improved,
-                &format!("{:?}", decision),
-            ) {
-                tracing::warn!(
-                    target: "reg.cybernetics",
-                    rollout = %check.rollout_id,
-                    error = %error,
-                    "impact verdict write-back failed — the loop's judgment is not persisted to the store"
-                );
+            if let Some(source) = &self.rollout_events
+                && let Err(error) = source.append_impact_verdict(
+                    &check.rollout_id,
+                    &check.metric,
+                    before_val,
+                    after_val,
+                    improved,
+                    &format!("{:?}", decision),
+                )
+            {
+                tracing::warn!(target: "reg.cybernetics", rollout = %check.rollout_id,
+                        error = %error,
+                        "impact verdict write-back failed — the loop's judgment is not persisted to the store");
             }
 
             reports.push(ImpactReport::new(
@@ -1103,7 +1133,7 @@ mod tests {
     };
     use crate::regulation_policy::RegulationPolicy;
     use crate::runtime::RegulationLedger;
-    use crate::{RolloutEventError, RolloutEventSource};
+    use crate::{RolloutEventError, RolloutEventSource, RolloutMetricObservation};
     use hkask_types::WebID;
     use std::sync::{Arc, Mutex};
     use tokio::sync::RwLock;
@@ -1204,10 +1234,10 @@ mod tests {
     }
 
     /// A test double for `RolloutEventSource` that returns a configured
-    /// `metric_before_and_after` result and records `append_impact_verdict`
+    /// `metric_observation` result and records `append_impact_verdict`
     /// calls so the test can assert exactly what the loop persisted.
     ///
-    /// `metric_before_and_after` is configurable (Ok(Some) / Ok(None) / Err)
+    /// `metric_observation` is configurable (Ok(Some) / Ok(None) / Err)
     /// to exercise the three event-substrate outcomes. The no-data and error
     /// branches must not record a verdict.
     struct MockRolloutEventSource {
@@ -1251,25 +1281,24 @@ mod tests {
     }
 
     impl RolloutEventSource for MockRolloutEventSource {
-        fn metric_before_and_after(
+        fn metric_observation(
             &self,
             _rollout_id: &str,
             _metric: &str,
             _before_position: i64,
-        ) -> Result<Option<(f64, f64)>, RolloutEventError> {
+        ) -> Result<Option<RolloutMetricObservation>, RolloutEventError> {
             self.before_after
                 .lock()
                 .expect("before_after lock")
                 .clone()
+                .map(|values| {
+                    values.map(|(before, after)| RolloutMetricObservation {
+                        before,
+                        after,
+                        sample_sizes: *self.sample_sizes.lock().expect("sample_sizes lock"),
+                    })
+                })
                 .map_err(|detail| RolloutEventError::Query { detail })
-        }
-        fn metric_sample_sizes(
-            &self,
-            _rollout_id: &str,
-            _metric: &str,
-            _before_position: i64,
-        ) -> Result<Option<(u64, u64)>, RolloutEventError> {
-            Ok(*self.sample_sizes.lock().expect("sample_sizes lock"))
         }
         fn append_impact_verdict(
             &self,
@@ -1624,7 +1653,24 @@ mod tests {
             rollout_id: rollout_id.to_string(),
             before_position: 1,
             metric: metric.to_string(),
+            read_attempts: 0,
         }
+    }
+
+    async fn verify_checks(
+        regulation: &CyberneticsLoop,
+        checks: &[RolloutImpactCheck],
+    ) -> Vec<super::ImpactReport> {
+        let preparation = regulation.prepare_impact_checks(checks);
+        assert!(
+            preparation.retry.is_empty(),
+            "direct verification must not silently retry"
+        );
+        assert!(
+            preparation.exhausted.is_empty(),
+            "direct verification must not silently drop exhausted checks"
+        );
+        regulation.verify_impact(&preparation.ready).await
     }
 
     /// While a plateau card is open, re-detections comment on that card
@@ -1647,9 +1693,7 @@ mod tests {
             .stagnation_detector
             .threshold_for_metric("tool_reliability");
         for _ in 0..stagnation_threshold {
-            regulation
-                .verify_impact(std::slice::from_ref(&action))
-                .await;
+            verify_checks(&regulation, std::slice::from_ref(&action)).await;
         }
         let plateau_spans = || {
             archive
@@ -1671,9 +1715,7 @@ mod tests {
         // its comment path, not the span or live alert.
         escalation.set_pending(true);
         for _ in 0..3 {
-            regulation
-                .verify_impact(std::slice::from_ref(&action))
-                .await;
+            verify_checks(&regulation, std::slice::from_ref(&action)).await;
         }
         assert_eq!(
             escalation.persisted.lock().expect("persisted").len(),
@@ -1786,9 +1828,7 @@ mod tests {
         let action = rollout_impact_check("trace", "tool_reliability");
         for (index, after) in [0.2, 0.199, 0.2, 0.2].into_iter().enumerate() {
             *source.before_after.lock().expect("source") = Ok(Some((0.2, after)));
-            let reports = regulation
-                .verify_impact(std::slice::from_ref(&action))
-                .await;
+            let reports = verify_checks(&regulation, std::slice::from_ref(&action)).await;
             let report = reports.first().expect("verified");
             assert_eq!(report.decision, ActionDecision::Accept);
             assert!(!report.improved);
@@ -1805,9 +1845,7 @@ mod tests {
             );
         }
         *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.3)));
-        let reports = regulation
-            .verify_impact(std::slice::from_ref(&action))
-            .await;
+        let reports = verify_checks(&regulation, std::slice::from_ref(&action)).await;
         assert!(reports.first().expect("report").improved);
         assert_eq!(
             regulation
@@ -1829,9 +1867,11 @@ mod tests {
         let mut regulation = loop_with_source(source);
         regulation.set_alert_escalation_sink(Some(escalation.clone()));
 
-        let reports = regulation
-            .verify_impact(&[rollout_impact_check("relative", "pass_rate")])
-            .await;
+        let reports = verify_checks(
+            &regulation,
+            &[rollout_impact_check("relative", "pass_rate")],
+        )
+        .await;
 
         assert_eq!(
             reports.first().expect("impact report").decision,
@@ -1859,9 +1899,8 @@ mod tests {
             let mut regulation = loop_with_source(Arc::new(source));
             regulation.set_alert_escalation_sink(Some(escalation.clone()));
 
-            let reports = regulation
-                .verify_impact(&[rollout_impact_check("small", "pass_rate")])
-                .await;
+            let reports =
+                verify_checks(&regulation, &[rollout_impact_check("small", "pass_rate")]).await;
 
             assert_eq!(
                 reports.first().expect("impact report").decision,
@@ -1890,9 +1929,11 @@ mod tests {
         runtime.block_on(async {
             let source = Arc::new(MockRolloutEventSource::answering(0.8, 0.5));
             let regulation_loop = loop_with_source(Arc::clone(&source));
-            let reports = regulation_loop
-                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
-                .await;
+            let reports = verify_checks(
+                &regulation_loop,
+                &[rollout_impact_check("alpha", "pass_rate")],
+            )
+            .await;
             assert_eq!(
                 reports.len(),
                 1,
@@ -1924,9 +1965,11 @@ mod tests {
         runtime.block_on(async {
             let source = Arc::new(MockRolloutEventSource::empty());
             let regulation_loop = loop_with_source(Arc::clone(&source));
-            let reports = regulation_loop
-                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
-                .await;
+            let reports = verify_checks(
+                &regulation_loop,
+                &[rollout_impact_check("alpha", "pass_rate")],
+            )
+            .await;
             assert!(reports.is_empty(), "no report when the store has no data");
             assert!(
                 source.recorded().is_empty(),
@@ -1935,24 +1978,114 @@ mod tests {
         });
     }
 
-    /// B1 (error): a store error must be surfaced (warned) and skip the action,
-    /// not be silently discarded by the `if let Ok(Some(..))` swallowing the
-    /// `Err`. Before the fix the error was dropped with no warn and no report.
+    /// A store read error retains the accepted check without fabricating a verdict.
     #[test]
-    fn verify_impact_store_error_skips_without_verdict() {
+    fn verify_impact_store_error_retries_without_verdict() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         runtime.block_on(async {
             let source = Arc::new(MockRolloutEventSource::failing("store down"));
             let regulation_loop = loop_with_source(Arc::clone(&source));
-            let reports = regulation_loop
-                .verify_impact(&[rollout_impact_check("alpha", "pass_rate")])
-                .await;
+            let preparation = regulation_loop
+                .prepare_impact_checks(&[rollout_impact_check("alpha", "pass_rate")]);
+            let reports = regulation_loop.verify_impact(&preparation.ready).await;
+            assert_eq!(preparation.retry.len(), 1, "the accepted check is retained");
             assert!(reports.is_empty(), "no report when the store errors");
             assert!(
                 source.recorded().is_empty(),
                 "no verdict written back on a store error"
             );
         });
+    }
+
+    #[tokio::test]
+    async fn accepted_impact_check_retries_a_failed_read_then_verifies_once() {
+        let source = Arc::new(MockRolloutEventSource::failing("store down"));
+        let regulation = loop_with_source(Arc::clone(&source));
+        assert_eq!(
+            regulation
+                .submit_rollout_impact_check("alpha".into(), 1, "pass_rate".into())
+                .await,
+            crate::RolloutImpactSubmission::Accepted,
+        );
+        regulation.tick().await;
+        assert_eq!(regulation.submitted_rollout_checks.lock().await.len(), 1);
+        *source.before_after.lock().expect("source") = Ok(Some((0.8, 0.5)));
+        regulation.tick().await;
+        assert!(regulation.submitted_rollout_checks.lock().await.is_empty());
+        assert_eq!(source.recorded().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn accepted_impact_check_exhausts_bounded_read_retries() {
+        let source = Arc::new(MockRolloutEventSource::failing("store down"));
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation = loop_with_source(Arc::clone(&source));
+        // Wire a healthy inference source so the third tick does not also
+        // fire the unwired-model grace alert — this test's board traffic is
+        // the exhaustion escalation alone.
+        regulation.set_inference_resilience_source(Arc::new(HealthyResilienceSource));
+        regulation.set_alert_escalation_sink(Some(escalation.clone()));
+        assert_eq!(
+            regulation
+                .submit_rollout_impact_check("alpha".into(), 1, "pass_rate".into())
+                .await,
+            crate::RolloutImpactSubmission::Accepted,
+        );
+        for _ in 0..2 {
+            regulation.tick().await;
+            assert_eq!(regulation.submitted_rollout_checks.lock().await.len(), 1);
+        }
+        regulation.tick().await;
+        assert!(regulation.submitted_rollout_checks.lock().await.is_empty());
+        assert!(
+            source.recorded().is_empty(),
+            "no false verdict on exhausted reads"
+        );
+        let messages = escalation.persisted.lock().expect("persisted lock");
+        assert_eq!(
+            messages.len(),
+            1,
+            "the exhausted check escalates to the review board"
+        );
+        assert!(
+            messages[0].contains("alpha"),
+            "the escalation names the unverified rollout: {}",
+            messages[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_impact_checks_count_against_the_admission_bound() {
+        let source = Arc::new(MockRolloutEventSource::failing("store down"));
+        let regulation = loop_with_source(source);
+        assert_eq!(
+            regulation
+                .submit_rollout_impact_check("first".into(), 1, "pass_rate".into())
+                .await,
+            crate::RolloutImpactSubmission::Accepted,
+        );
+        regulation.tick().await;
+        for index in 0..63 {
+            assert_eq!(
+                regulation
+                    .submit_rollout_impact_check(format!("next-{index}"), 1, "pass_rate".into())
+                    .await,
+                crate::RolloutImpactSubmission::Accepted,
+            );
+        }
+        assert_eq!(
+            regulation
+                .submit_rollout_impact_check("blocked".into(), 1, "pass_rate".into())
+                .await,
+            crate::RolloutImpactSubmission::QueueFull { capacity: 64 },
+        );
+        regulation.tick().await;
+        let queue = regulation.submitted_rollout_checks.lock().await;
+        assert_eq!(queue.len(), 64);
+        assert_eq!(
+            queue[0].rollout_id, "first",
+            "older accepted work is never displaced"
+        );
     }
 
     /// Pins Fix 2: every RegulationReason that has a policy rule must produce

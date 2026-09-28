@@ -434,8 +434,9 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   environmental root cause, fixed in the test). The swarm stale-comment fix
   rides in the same commit. Receipts: hkask-regulation --lib 96/96,
   kask_bridge --lib 251/251, rustfmt --check clean, `./script/clippy` clean,
-  `cargo check -p zed` passed. The code, the swarm comment fix, and this
-  register update land together in one pathspec-limited commit.
+  `cargo check -p zed` passed. This register update landed with the
+  concurrent L1-row pass in `6d1e441a43`; the code and the swarm comment
+  fix land in the slice's own pathspec-limited commit.
 - 2026-09-27 — v0.17.0 L1 closed at full scope: the three submission
   routes are thin closures over one run_turn entry, the loop tail is a
   single path, and the ideal-method verdict is that the graph is already

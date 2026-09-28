@@ -24,6 +24,7 @@
 use hkask_event_store::{EventFilter, EventStore};
 use hkask_regulation::{
     CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
+    RolloutMetricObservation,
 };
 use hkask_storage::database::driver::DatabaseDriver;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ pub struct BridgeRolloutEventSource {
 #[derive(Debug, Clone, PartialEq)]
 struct HarnessRegression {
     /// The agent whose pass rate regressed. Used as the `rollout_id` for the
-    /// impact check so `metric_before_and_after` queries the agent's
+    /// impact check so `metric_observation` queries the agent's
     /// `harness_summary` event group.
     agent_name: String,
     /// The event position of the previous (better) harness run. Passed as
@@ -176,12 +177,12 @@ impl BridgeRolloutEventSource {
 }
 
 impl RolloutEventSource for BridgeRolloutEventSource {
-    fn metric_before_and_after(
+    fn metric_observation(
         &self,
         rollout_id: &str,
         metric: &str,
         before_position: i64,
-    ) -> Result<Option<(f64, f64)>, RolloutEventError> {
+    ) -> Result<Option<RolloutMetricObservation>, RolloutEventError> {
         let events = self
             .store
             .query(&hkask_event_store::EventFilter {
@@ -219,58 +220,37 @@ impl RolloutEventSource for BridgeRolloutEventSource {
         // degraded), and "after" is the latest measurement since (a
         // trailing non-metric event — e.g. a verdict — must not suppress
         // the comparison to None).
+        let valued = |event: &hkask_event_store::EventRecord| {
+            value_of(&event.payload).map(|value| {
+                (
+                    value,
+                    event.payload.get("total_rollouts").and_then(|v| v.as_u64()),
+                )
+            })
+        };
         let before = events
             .iter()
             .filter(|event| event.position <= before_position)
-            .filter_map(|event| value_of(&event.payload))
+            .filter_map(valued)
             .next_back();
         let after = events
             .iter()
             .filter(|event| event.position > before_position)
-            .filter_map(|event| value_of(&event.payload))
+            .filter_map(valued)
             .next_back();
-        match (before, after) {
-            (Some(before), Some(after)) => Ok(Some((before, after))),
-            _ => Ok(None),
-        }
-    }
-
-    fn metric_sample_sizes(
-        &self,
-        rollout_id: &str,
-        metric: &str,
-        before_position: i64,
-    ) -> Result<Option<(u64, u64)>, RolloutEventError> {
-        // Only pass_rate is a proportion; its attempts are the harness
-        // summary's `total_rollouts`, taken from the same events (latest
-        // pass-rate-valued event on each side) that supplied the values.
-        if metric != "pass_rate" {
-            return Ok(None);
-        }
-        let events = self
-            .store
-            .query(&hkask_event_store::EventFilter {
-                rollout: Some(rollout_id.to_string()),
-                ..hkask_event_store::EventFilter::default()
-            })
-            .map_err(|e| RolloutEventError::Query {
-                detail: e.to_string(),
-            })?;
-        let valued = |event: &hkask_event_store::EventRecord| {
-            event.payload.get("overall_pass_rate").is_some()
-        };
-        let size_of = |event: &hkask_event_store::EventRecord| {
-            event.payload.get("total_rollouts").and_then(|v| v.as_u64())
-        };
-        let before = events
-            .iter()
-            .rfind(|event| event.position <= before_position && valued(event))
-            .and_then(size_of);
-        let after = events
-            .iter()
-            .rfind(|event| event.position > before_position && valued(event))
-            .and_then(size_of);
-        Ok(before.zip(after))
+        Ok(before
+            .zip(after)
+            .map(
+                |((before, before_size), (after, after_size))| RolloutMetricObservation {
+                    before,
+                    after,
+                    sample_sizes: if metric == "pass_rate" {
+                        before_size.zip(after_size)
+                    } else {
+                        None
+                    },
+                },
+            ))
     }
 
     fn append_impact_verdict(
@@ -507,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn metric_before_and_after_returns_pass_rate_from_harness_summaries() {
+    fn metric_observation_returns_pass_rate_from_harness_summaries() {
         let store = memory_store();
         // Two harness runs for agent "alpha": 0.8 then 0.5.
         let first = write_summary(&store, "alpha", 0.8);
@@ -516,13 +496,13 @@ mod tests {
         // before_position = first event: "before" = first run's rate,
         // "after" = last event after before_position = second run's rate.
         let result = bridge
-            .metric_before_and_after("alpha", "pass_rate", first)
+            .metric_observation("alpha", "pass_rate", first)
             .unwrap();
-        assert_eq!(result, Some((0.8, 0.5)));
+        assert_eq!(result.map(|v| (v.before, v.after)), Some((0.8, 0.5)));
         // second is the last event, so querying at second position: before =
         // second, after = None (no event after).
         let result = bridge
-            .metric_before_and_after("alpha", "pass_rate", second)
+            .metric_observation("alpha", "pass_rate", second)
             .unwrap();
         assert_eq!(result, None, "no event after the last — absence, not zero");
     }
@@ -530,21 +510,23 @@ mod tests {
     /// Sample sizes come from the same summaries as the pass-rate values,
     /// and are absent (not invented) for metrics without attempt counts.
     #[test]
-    fn metric_sample_sizes_reads_total_rollouts_for_pass_rate() {
+    fn metric_observation_reads_total_rollouts_for_pass_rate() {
         let store = memory_store();
         let first = write_summary(&store, "alpha", 0.8);
         write_summary(&store, "alpha", 0.5);
         let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
         assert_eq!(
             bridge
-                .metric_sample_sizes("alpha", "pass_rate", first)
-                .unwrap(),
+                .metric_observation("alpha", "pass_rate", first)
+                .unwrap()
+                .and_then(|v| v.sample_sizes),
             Some((10, 10))
         );
         assert_eq!(
             bridge
-                .metric_sample_sizes("alpha", "connector_latency", first)
-                .unwrap(),
+                .metric_observation("alpha", "connector_latency", first)
+                .unwrap()
+                .and_then(|v| v.sample_sizes),
             None
         );
     }
@@ -560,7 +542,7 @@ mod tests {
     /// improved where the real 0.9→0.6 pair degraded) and a trailing
     /// verdict made "after" None, suppressing the evidence entirely.
     #[test]
-    fn metric_before_and_after_preserves_the_detection_pair() {
+    fn metric_observation_preserves_the_detection_pair() {
         let store = memory_store();
         // History: 0.4 → 0.9 (detector fires here) → verdict → 0.6 → verdict.
         write_summary(&store, "alpha", 0.4);
@@ -583,10 +565,10 @@ mod tests {
         let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
 
         let result = bridge
-            .metric_before_and_after("alpha", "pass_rate", detection)
+            .metric_observation("alpha", "pass_rate", detection)
             .unwrap();
         assert_eq!(
-            result,
+            result.map(|v| (v.before, v.after)),
             Some((0.9, 0.6)),
             "the exact detection→verification pair, unsuppressed by verdict events"
         );
@@ -596,7 +578,7 @@ mod tests {
     /// DIFFERENT metric's value is never picked up as this metric's
     /// before/after.
     #[test]
-    fn metric_before_and_after_skips_other_metric_events() {
+    fn metric_observation_skips_other_metric_events() {
         let store = memory_store();
         let detection = write_summary(&store, "alpha", 0.9);
         // A latency event after the detection — no pass_rate value.
@@ -611,22 +593,22 @@ mod tests {
         let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
 
         let result = bridge
-            .metric_before_and_after("alpha", "pass_rate", detection)
+            .metric_observation("alpha", "pass_rate", detection)
             .unwrap();
         assert_eq!(
-            result,
+            result.map(|v| (v.before, v.after)),
             Some((0.9, 0.6)),
             "the latency event must not be picked up as (or suppress) the pass_rate pair"
         );
     }
 
     #[test]
-    fn metric_before_and_after_returns_none_for_unknown_metric() {
+    fn metric_observation_returns_none_for_unknown_metric() {
         let store = memory_store();
         write_summary(&store, "alpha", 0.8);
         let bridge = BridgeRolloutEventSource::from_store(Arc::new(store));
         let result = bridge
-            .metric_before_and_after("alpha", "nonexistent_metric", 0)
+            .metric_observation("alpha", "nonexistent_metric", 0)
             .unwrap();
         assert_eq!(result, None);
     }
