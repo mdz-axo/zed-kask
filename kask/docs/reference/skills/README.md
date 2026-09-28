@@ -154,7 +154,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | Skill | Purpose |
 |-------|---------|
 | `create-skill` | Author or translate a skill: ontology research, PDCA derivation, scaffold under the artifact contract, prescreen, validate |
-| `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites; compare designs and file proposals for the algedonic review |
+| `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites and the prescreen's body-side D/P labelling presence check (P8.4); compare designs and file proposals for the algedonic review |
 | `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
 | `skill-bundler` | Compose multiple skills into a cohesive bundle |
 | `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ), including the GEPA prompt-evolution sub-loop |

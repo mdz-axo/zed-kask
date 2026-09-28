@@ -511,6 +511,8 @@ A skill body may describe a PDCA (Plan-Do-Check-Act) loop with convergence crite
 
 This is the "model-coordinated PDCA" pattern: the skill body is the process specification, the model is the executor, `lisp_eval` is the deterministic oracle, and `render_template` is the scaffolding tool.
 
+This split is the **D/P labelling convention** (P8.4, [`core/PRINCIPLES.md`](core/PRINCIPLES.md)): every computation-prescribing SKILL.md carries a labelling section naming each step's regime — **D** with its oracle, or **P** with its collapse path (propose-verify gate, probabilistic server, or calibrated forecast) and critique. The presence floor is enforced mechanically by the skill-corpus prescreen (`kask/scripts/audit/skill-corpus-prescreen.sh`, check 5); the routing correctness of any label is judgment, critiqued in review.
+
 ---
 
 ## Listing and Checking Skills

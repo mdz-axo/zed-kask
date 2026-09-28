@@ -14,6 +14,13 @@
 #      {# ... #} blocks parses as only its first line (mid-phrase).
 #      Flags first-block goals lacking terminal punctuation for
 #      read-triage (a complete unpunctuated goal is a benign flag).
+#   5. D/P labelling presence (body-side, P8.4) — every
+#      computation-prescribing SKILL.md (it names an oracle: lisp_eval,
+#      lean_check, cargo, scenario_* tool calls) carries a D/P labelling
+#      section. Presence is the audit floor; the routing correctness of
+#      any label is judgment (P), critiqued in review. Codified here
+#      2026-09-28 after the filesystem walk ran repeatedly as a re-typed
+#      one-liner across the convergence batches (12 → 55 of 55).
 #
 # Advisory instrument: findings are proposals for read-triage, not edits.
 # Usage: ./skill-corpus-prescreen.sh [overlap_floor]   (default 0.25)
@@ -125,4 +132,27 @@ for file in "$REG"/*/*.j2; do
         fi
     fi
 done
+
+# ── Body-side: D/P labelling presence (P8.4) ────────────────────────────
+# Separate counters from the template checks above: the template baseline
+# and its accepted-flags ledger govern templates only. Grep reads each
+# SKILL.md directly (no pipe — grep -q's early exit is safe on a file).
+SKILLS_DIR="$SCRIPT_DIR/../../../.agents/skills"
+dp_total=0
+dp_labeled=0
+dp_flagged=0
+for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
+    [ -f "$skill_md" ] || continue
+    if grep -qE 'lisp_eval|lean_check|`cargo`|cargo (test|check|clippy)|scenario_[a-z_]+\(' "$skill_md"; then
+        dp_total=$((dp_total + 1))
+        if grep -qE '\*\*D/P|^#+ D/P|D/P labell?ing' "$skill_md"; then
+            dp_labeled=$((dp_labeled + 1))
+        else
+            dp_flagged=$((dp_flagged + 1))
+            echo "  ${skill_md#"$SKILLS_DIR"/}: computation-prescribing SKILL.md carries no D/P labelling section (P8.4)"
+        fi
+    fi
+done
+echo "checked $dp_total computation-prescribing SKILL.mds; $dp_labeled carry D/P labelling; $dp_flagged flagged"
+
 echo "checked $checked templates; $flagged flagged; $accepted accepted (baseline)"
