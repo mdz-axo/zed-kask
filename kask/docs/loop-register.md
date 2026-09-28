@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.1.0"
+version: "0.2.0"
 status: "Phase 0 — operator approval pending"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -102,12 +102,14 @@ spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L1 (prompt submit), L9 (kanban widget ↔ server), L13 (swarm panel ↔ server)
 - **Prediction:** 2 / 2 / 0.45
 
-### L8 — Forecast/calibration loop
+### L8 — Forecast/calibration loop — AUDITED & CLOSED 2026-09-27
 - **Crate/path:** `kask/crates/hkask-forecast` + `kask/mcp-servers/hkask-mcp-{companies,prediction-markets}`
-- **Entry point:** `kask/crates/hkask-forecast/src/hkask_forecast.rs:190` `brier_score`, `:244` `wilson_bounds`, `:279` `apply_calibration_adjustment`, `:308` `isotonic_fit`; market leg: `hkask-mcp-prediction-markets/src/calibration.rs:134` `brier`, `hkask_mcp_prediction_markets.rs:211` `market_record_resolution`, `:524` `market_check_resolutions`; equity leg: `hkask-mcp-companies` `forecast_persist`/`forecast_record`/`calibrate_forecast` (surface header `hkask_mcp_companies.rs:18`)
+- **Entry point:** `kask/crates/hkask-forecast/src/hkask_forecast.rs:190` `brier_score`, `:196` `brier_score_multi`, `:244` `wilson_bounds`, `:279` `apply_calibration_adjustment`, `:308` `isotonic_fit`; market leg: `hkask-mcp-prediction-markets/src/calibration.rs:134` `brier` (delegates to the lib, `:13`/`:141`), `hkask_mcp_prediction_markets.rs:211` `market_record_resolution`, `:524` `market_check_resolutions`; equity leg: `hkask-mcp-companies` `forecast_persist`/`forecast_record` (`tools/valuation.rs:1101`/`:1219`, model `src/forecast.rs`), `calibrate_forecast` (`tools/valuation.rs:874`)
 - **Trigger:** forecast creation → outcome recording → calibration readback
-- **Consolidation signal (Phase 3 candidate):** two Brier implementations — `hkask_forecast.rs:190` and `prediction-markets/src/calibration.rs:134`
-- **Prediction:** 1 / 1 / 0.50
+- **Functional graph (Phase 1, IS-cited per node):** snapshot arm (`market_check_resolutions` `hkask_mcp_prediction_markets.rs:524` → `CalibrationStore::record_pending` `calibration.rs:172`, earliest snapshot kept, test `:527`) → resolution arm (`market_record_resolution` `:211` → `record` `calibration.rs:125`; subscribe leg `:264-298` logs notifications, never fabricates observations) → scoring (`brier` `calibration.rs:134` → shared `hkask_forecast::brier_score_multi` `hkask_forecast.rs:196`) → readback (`market_calibration` `:187` → `read_calibration` `calibration.rs:313`; missing/empty bucket → `stale: true`, `brier: None`, never a synthetic 0, tests `:410-419`) → act (`reliability_tier` demotion on annotated lookups, `types.rs:251` wired `:433`→`:463`). Equity leg: `dcf_valuation`/`calibrate_forecast` → `forecast_persist` → `forecast_record` (Brier + decomposition at record); feedback application on the equity leg is agent-mediated (OUGHT — no automatic path applies equity calibration history to future priors; INFERRED from absence).
+- **Findings (Phase 2, adjudicated):** **F1 REFUTED** — the Phase 0 "two Brier implementations" signal: `calibration.rs:13`/`:141` delegates to the shared lib and `companies/superforecast.rs:3-9` documents the no-pass-through layering; signal withdrawn. **F2 informational, kept as IS** — `calibration.rs:141` `map_err(|_| ())` collapses only unreachable `ForecastError` variants into the designed `stale: true` semantic (empty bucket pre-checked `:136-137`; length mismatch impossible — both vectors built from one iterator). **F3 verified** — the tier-demotion claim is enforced (`types.rs:251`/`:433`/`:463`): the market loop is CLOSED. **F4 CONSOLIDATED** — `scenarios/superforecast/math.rs:35` `brier_score_multi` was a pure `ForecastError`→`ScenarioError` wrapper while the same module re-exports `brier_score` directly from the lib (`superforecast.rs:16`); the wrapper was deleted and the lib function re-exported (`ScenarioError` carries `#[from] ForecastError`, `types.rs:45`), keeping the `superforecast::brier_score_multi` path stable for callers.
+- **Five properties:** closed — IS (market leg), agent-mediated OUGHT (equity leg); timely — IS (staleness surfaced; scan cadence operator-driven, `zero_scan_reason` on empty scans); accurate — IS (earliest-snapshot discipline `calibration.rs:168-177`, identity-based dedup `:144-162`, no-fabrication contracts, tested); complete — IS with stated boundary (equity and market observations use separate stores by reference class); actionable — IS (tier demotion changes lookup annotations, `matcher.rs:7`).
+- **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 0 defects, 1 module-convention inconsistency consolidated (F4, net −12 lines), 1 Phase 0 signal refuted (F1). Brier-scored at Phase 4.
 
 ### L9 — Kanban/goal loop
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-kata-kanban/src`
@@ -196,38 +198,49 @@ spec's minimum list, recorded below rather than narrowed away.
 - Spreadsheet revision append cycle — request-driven; no persistent cycle identified at Phase 0; revisit if Phase 1 disagrees.
 - Market health/`web_ping` style probes — legs inside L3/L4.
 
-## Phase 0 predictions summary
-
-Recorded per row above; totals: expected defects ≈ 32, expected impedances ≈
-26, mean confidence ≈ 0.49. Scored against actual findings in Phase 4.
-
 ## Decomposition into audit slices (INVEST)
 
 One slice = one register row through Phase 1 → 4 (map → detect → consolidate →
-verify), sized so each slice lands or defers independently. Proposed batching:
+verify), sized so each slice lands or defers independently. Slice order is a
+technical decision (program manager's per the Division of Responsibilities),
+vetoable on functional grounds:
 
 1. **Batch A (early deletion candidates, known duplication signals):** L8
-   (two Brier implementations), L3+L4 (client/server runtime pair), L14.
+   (closed 2026-09-27 — Brier signal refuted; real finding was the scenarios
+   wrapper, consolidated), L3+L4 (client/server runtime pair), L14.
 2. **Batch B (control core, highest connectivity):** L2, L5, L16.
 3. **Batch C (large surfaces):** L1, L7, L6.
 4. **Batch D (bounded server loops):** L9, L10, L11, L12, L13, L17, L18, L19.
 
-Ordering rationale: bank consolidation wins on small, duplicated surfaces
-first; audit the high-connectivity control core before the largest surfaces,
-so impedances found there inform the big-surface audits.
+Rationale: bank consolidation wins on small, duplicated surfaces first; audit
+the high-connectivity control core before the largest surfaces, so impedances
+found there inform the big-surface audits. A functional priority (a loop whose
+behavior matters most to the operator) overrides this order on request.
 
-## Open items for the operator (checkpoint)
+## Working rules
 
-1. **Docs-tree cap:** `find kask/docs -name '*.md' | wc -l` = 71 before this
-   register (README's verification gate already records 72 as above the
-   fewer-than-70 cap, and the README's 2026-09-24 corpus note says 69 — count
-   drift is itself a doc-hygiene finding). This register is +1,
-   operator-mandated. Decide: accept +1, or name a doc to fold so Phase 3/4
-   restores the count.
-2. **Slice order:** Batch A→D above is the default; reorder on functional
-   priority if you want specific loops audited first.
+- Graphs and findings live in register rows and the final report — no
+  per-loop documents are created in any phase.
+- Operator checkpoints carry only functional, blocking decisions; technical
+  decisions arrive as recorded decisions with veto rights; neighboring
+  systems' bookkeeping (e.g., docs-tree governance) stays out of the audit.
 
 ## Change log
 
+- 2026-09-27 — v0.2.0 L8 audited and closed: Phase 0 Brier-duplication signal
+  refuted (delegation, not duplication); tier-demotion act arm verified
+  (`types.rs:251`/`:433`/`:463`); scenarios' pure `brier_score_multi` wrapper
+  deleted and re-exported from `hkask-forecast` (net −12 lines); 25 scenarios
+  tests green via `cargo-test-nonzero`, `./script/clippy -p hkask-mcp-scenarios`
+  green, machete clean, 12/12 `brier_score_multi` sweep references legitimate.
+  The consolidation and this register update land in one pathspec-limited
+  commit; the hash is cited in the audit session report and at Phase 4.
+- 2026-09-27 — v0.1.1 checkpoint correction after operator review: removed
+  the docs-count and slice-order operator questions (docs are out of audit
+  scope; slice order decided and recorded), removed the redundant
+  predictions-summary section, added the working rules. Correction: this
+  edit was reported to the operator but not actually applied at that time —
+  commit `3f7175bb26` carries the uncorrected register; it lands here, in the
+  same commit as the L8 closure.
 - 2026-09-27 — v0.1.0 Phase 0 inventory, 19 rows, all spec families verified
   present, predictions recorded. Operator approval pending before Phase 1.

@@ -27,18 +27,6 @@ pub fn calibrate_from_fermi(sub_questions: &[SubQuestion]) -> Result<f64, Scenar
     Ok(forecast::calibrate_from_fermi(&fqs)?)
 }
 
-// ── Brier scoring (multi) ──────────────────────────────────────────────────
-
-/// Average Brier score across multiple events. Delegates to the shared engine;
-/// ForecastError converts to ScenarioError via #[from].
-#[must_use = "multi-score should be used or recorded"]
-pub(crate) fn brier_score_multi(
-    probabilities: &[f64],
-    outcomes: &[bool],
-) -> Result<f64, ScenarioError> {
-    Ok(forecast::brier_score_multi(probabilities, outcomes)?)
-}
-
 // ── Event tree computation ─────────────────────────────────────────────────
 
 /// Compute marginal probabilities for all events in a dependency tree
@@ -391,7 +379,7 @@ pub(crate) fn score_forecast(
         }
     }
 
-    let (bs, interpretation) = match brier_score_multi(&probs, &outs) {
+    let (bs, interpretation) = match forecast::brier_score_multi(&probs, &outs) {
         Ok(bs) => (Some(bs), forecast::brier_interpretation(bs).to_string()),
         Err(error) => {
             tracing::warn!(
