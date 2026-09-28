@@ -14,7 +14,7 @@ This is a resumable **worklist**, not an assertion that every row below was audi
 | D7 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D8 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D9 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
-| D12 | partial / audit owner (memory + live lookup) | upstreaming-candidate (retain; advisory); row aligned | `9cfd3a219f`; `api_compatible.rs:25-50`; named pin reran 1 passed; no live-fire proof; see D12 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | `1456547b46` (audit), `6c55dd50e9` (citation), alignment commit pending |
+| D12 | partial / audit owner (memory + live lookup) | upstreaming-candidate (retain; advisory); row aligned | `9cfd3a219f`; `api_compatible.rs:25-50`; named pin reran 1 passed; no live-fire proof; see D12 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | `1456547b46` (audit), `6c55dd50e9` (citation), `bb0f9acbbb` (alignment) |
 | D14 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D16 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D18 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
