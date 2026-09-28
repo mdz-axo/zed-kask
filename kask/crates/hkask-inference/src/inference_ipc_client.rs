@@ -483,6 +483,18 @@ impl InferenceIpcClient {
             InferenceOutcome::Error { error } => Err(match error.code.as_str() {
                 "InvalidRequest" => EmbeddingGenerationError::InvalidRequest(error.message),
                 "Json" => EmbeddingGenerationError::Json(error.message),
+                // The server carries the provider's original status
+                // structurally; reconstructing it keeps retry policy
+                // status-accurate (a 401 is not retryable, a 429 is).
+                // Status-less Api-coded payloads (EmptyResponse,
+                // DimensionMismatch) fall back to Connection — absence,
+                // never a fabricated status.
+                "Api" => match error.status {
+                    Some(status) => EmbeddingGenerationError::Api(status, error.message),
+                    None => {
+                        EmbeddingGenerationError::Connection(error.code + ": " + &error.message)
+                    }
+                },
                 _ => EmbeddingGenerationError::Connection(error.code + ": " + &error.message),
             }),
             InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
@@ -1075,6 +1087,7 @@ mod tests {
                     error: hkask_types::inference_ipc::InferenceErrorPayload {
                         code: "Json".into(),
                         message: "malformed embedding payload".into(),
+                        status: None,
                     },
                 },
                 1,
@@ -1090,6 +1103,40 @@ mod tests {
             error,
             EmbeddingGenerationError::Json(message) if message == "malformed embedding payload"
         ));
+    }
+
+    /// The provider's original HTTP status must survive the IPC boundary:
+    /// the server carries it in the payload's structured `status` field,
+    /// and the client reconstructs `EmbeddingGenerationError::Api(status, _)`
+    /// so retry policy stays status-accurate (a 401 is not retryable).
+    #[tokio::test]
+    async fn embedding_ipc_preserves_api_error_status() {
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::Error {
+                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                        code: "Api".into(),
+                        message: "rate limited".into(),
+                        status: Some(429),
+                    },
+                },
+                1,
+            )
+            .into_bytes(),
+        );
+        let error = bridge
+            .client()
+            .embed("provider/model", &["text".to_string()])
+            .await
+            .expect_err("embedding error");
+        assert!(
+            matches!(
+                &error,
+                EmbeddingGenerationError::Api(status, message)
+                    if *status == 429 && message == "rate limited"
+            ),
+            "the provider's original status must survive the IPC boundary: {error:?}"
+        );
     }
 
     #[test]

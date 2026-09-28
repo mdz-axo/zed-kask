@@ -84,10 +84,12 @@ impl WorktreeSpawnRequest {
             .map_err(|message| InferenceErrorPayload {
                 code: "WorktreeSpawn".into(),
                 message,
+                status: None,
             }),
             None => Err(InferenceErrorPayload {
                 code: "Auth".into(),
                 message: "Parent worktree grant was revoked before execution".into(),
+                status: None,
             }),
         };
         if self.reply.send(result).is_err() {
@@ -734,6 +736,38 @@ fn ipc_error(code: &str, message: impl Into<String>) -> InferenceOutcome {
         error: InferenceErrorPayload {
             code: code.to_string(),
             message: message.into(),
+            status: None,
+        },
+    }
+}
+
+/// Classify an embedding failure into the IPC error outcome. The `Api`
+/// status travels in the payload's structured `status` field so the client
+/// reconstructs `EmbeddingGenerationError::Api(status, _)` instead of
+/// re-parsing the message string; `EmptyResponse` and `DimensionMismatch`
+/// carry no HTTP status and stay status-less `Api`-coded payloads.
+fn embed_error_outcome(error: hkask_types::EmbeddingGenerationError) -> InferenceOutcome {
+    let (code, message, status) = match error {
+        hkask_types::EmbeddingGenerationError::InvalidRequest(m) => ("InvalidRequest", m, None),
+        hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m, None),
+        hkask_types::EmbeddingGenerationError::Api(status, m) => ("Api", m, Some(status)),
+        hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m, None),
+        hkask_types::EmbeddingGenerationError::EmptyResponse => (
+            "Api",
+            "empty response from embedding model".to_string(),
+            None,
+        ),
+        hkask_types::EmbeddingGenerationError::DimensionMismatch { expected, actual } => (
+            "Api",
+            format!("dimension mismatch: expected {expected}, got {actual}"),
+            None,
+        ),
+    };
+    InferenceOutcome::Error {
+        error: InferenceErrorPayload {
+            code: code.to_string(),
+            message,
+            status,
         },
     }
 }
@@ -769,29 +803,7 @@ async fn dispatch(
                 requested_model: batch.requested_model,
                 actual_model: batch.actual_model,
             },
-            Err(e) => {
-                let (code, message) = match e {
-                    hkask_types::EmbeddingGenerationError::InvalidRequest(m) => {
-                        ("InvalidRequest", m)
-                    }
-                    hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
-                    hkask_types::EmbeddingGenerationError::Api(status, m) => {
-                        ("Api", format!("status {status}: {m}"))
-                    }
-                    hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m),
-                    hkask_types::EmbeddingGenerationError::EmptyResponse => {
-                        ("Api", "empty response from embedding model".to_string())
-                    }
-                    hkask_types::EmbeddingGenerationError::DimensionMismatch {
-                        expected,
-                        actual,
-                    } => (
-                        "Api",
-                        format!("dimension mismatch: expected {expected}, got {actual}"),
-                    ),
-                };
-                ipc_error(code, message)
-            }
+            Err(e) => embed_error_outcome(e),
         };
     }
 
@@ -2507,29 +2519,30 @@ mod tests {
     // ── Embedding error classification test ────────────────────────────
     //
     // Pins the fix for the review finding that all embedding errors were
-    // labeled "Connection". The dispatch must now classify
-    // EmbeddingGenerationError variants into meaningful error codes.
+    // labeled "Connection": `embed_error_outcome` (the dispatch Embed
+    // arm's classifier) maps each `EmbeddingGenerationError` variant to a
+    // distinct error code, and the `Api` status travels structurally so
+    // the client reconstructs the exact variant instead of re-parsing the
+    // message string.
 
     #[test]
-    fn embed_error_classifies_json_as_json_not_connection() {
-        // The classification logic in `dispatch` maps each
-        // EmbeddingGenerationError variant to a distinct error code.
-        // Previously all variants were labeled "Connection", misleading
-        // operators into diagnosing network issues for parse errors.
-        let err = hkask_types::EmbeddingGenerationError::Json("test".to_string());
-        let (code, message) = match err {
-            hkask_types::EmbeddingGenerationError::InvalidRequest(m) => ("InvalidRequest", m),
-            hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m),
-            hkask_types::EmbeddingGenerationError::Api(s, m) => ("Api", format!("status {s}: {m}")),
-            hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m),
-            hkask_types::EmbeddingGenerationError::EmptyResponse => {
-                ("Api", "empty response".to_string())
-            }
-            hkask_types::EmbeddingGenerationError::DimensionMismatch { expected, actual } => {
-                ("Api", format!("dim mismatch: {expected} vs {actual}"))
-            }
+    fn embed_error_outcome_classifies_variants_and_preserves_api_status() {
+        let InferenceOutcome::Error { error } = embed_error_outcome(
+            hkask_types::EmbeddingGenerationError::Json("test".to_string()),
+        ) else {
+            panic!("an embedding failure must map to the Error outcome");
         };
-        assert_eq!(code, "Json");
-        assert_eq!(message, "test");
+        assert_eq!(error.code, "Json");
+        assert_eq!(error.message, "test");
+        assert_eq!(error.status, None);
+
+        let InferenceOutcome::Error { error } = embed_error_outcome(
+            hkask_types::EmbeddingGenerationError::Api(429, "rate limited".to_string()),
+        ) else {
+            panic!("an embedding failure must map to the Error outcome");
+        };
+        assert_eq!(error.code, "Api");
+        assert_eq!(error.message, "rate limited");
+        assert_eq!(error.status, Some(429));
     }
 }

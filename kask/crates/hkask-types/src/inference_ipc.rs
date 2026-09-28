@@ -287,6 +287,14 @@ pub struct InferenceErrorPayload {
     pub code: String,
     /// Human-readable error message.
     pub message: String,
+    /// The provider's original HTTP status for `Api` errors, carried
+    /// structurally so the client reconstructs
+    /// `EmbeddingGenerationError::Api(status, _)` instead of re-parsing the
+    /// message string. `None` for every other error kind and for status-less
+    /// `Api`-coded payloads (`EmptyResponse`, `DimensionMismatch`) —
+    /// absence, never a fabricated status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
 }
 
 impl From<InferenceError> for InferenceErrorPayload {
@@ -306,6 +314,7 @@ impl From<InferenceError> for InferenceErrorPayload {
         Self {
             code: code.to_string(),
             message,
+            status: None,
         }
     }
 }
@@ -325,5 +334,42 @@ impl From<InferenceErrorPayload> for InferenceError {
             "Auth" => InferenceError::Auth(e.message),
             _ => InferenceError::Generation(e.message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InferenceErrorPayload;
+
+    /// The `status` field is wire-optional: a payload from before the field
+    /// existed still parses (absent → `None`), and `None` serializes without
+    /// the field, so the old wire shape is preserved for non-Api errors.
+    #[test]
+    fn error_payload_status_is_wire_optional() {
+        let legacy = serde_json::from_str::<InferenceErrorPayload>(
+            r#"{"code":"Api","message":"rate limited"}"#,
+        )
+        .expect("legacy payload without status parses");
+        assert_eq!(legacy.status, None);
+        assert_eq!(legacy.code, "Api");
+
+        let wire = serde_json::to_string(&InferenceErrorPayload {
+            code: "Api".to_string(),
+            message: "rate limited".to_string(),
+            status: Some(429),
+        })
+        .expect("serializes");
+        assert_eq!(
+            wire,
+            r#"{"code":"Api","message":"rate limited","status":429}"#
+        );
+
+        let wire = serde_json::to_string(&InferenceErrorPayload {
+            code: "Json".to_string(),
+            message: "malformed".to_string(),
+            status: None,
+        })
+        .expect("serializes");
+        assert_eq!(wire, r#"{"code":"Json","message":"malformed"}"#);
     }
 }
