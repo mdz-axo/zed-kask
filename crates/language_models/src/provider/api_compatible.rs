@@ -14,14 +14,14 @@ pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
 }
 
 /// zed-kask (D12): compute the API-key env var name for an OpenAI/Anthropic-compatible
-/// provider ID. The kask contract is `<ID uppercased, non-alphanumeric stripped>_API_KEY`
-/// (e.g. `OpenRouter` → `OPENROUTER_API_KEY`, `fal.ai` → `FALAI_API_KEY`).
+/// provider ID. The kask credential env-name contract is
+/// `<ID uppercased, non-alphanumeric stripped>_API_KEY` (e.g. `OpenRouter` →
+/// `OPENROUTER_API_KEY`; `fal.ai` is a historical punctuation control).
 /// Upstream uses `convert_case::Case::UpperSnake`,
 /// which splits multi-word IDs on case boundaries (e.g. `SomeProvider` →
 /// `SOME_PROVIDER_API_KEY`) and leaves `fal.ai` as
-/// an invalid env var name. The entire kask ecosystem (MCP servers,
-/// keystore, UI text, docs) uses the concatenated form, so the upstream computation
-/// never matches the env vars kask users set. See DIVERGENCE.md D12.
+/// an invalid env var name. Kask's registered credential env names use the
+/// concatenated form, so the upstream computation can miss a configured key. See DIVERGENCE.md D12.
 pub fn api_key_env_var_name_for(id: &str) -> String {
     format!(
         "{}_API_KEY",
@@ -312,13 +312,12 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
 mod tests {
     use super::api_key_env_var_name_for;
 
-    /// D12: the env var name must match the kask `.env` contract (concatenated
-    /// alphanumeric uppercase), not upstream's `convert_case::UpperSnake` output.
+    /// D12: the env var name must match the kask credential env-name contract
+    /// (concatenated alphanumeric uppercase), not upstream's UpperSnake output.
     #[test]
     fn test_api_key_env_var_name_kask_contract() {
-        // Cases from settings.json `openai_compatible` / `anthropic_compatible`.
-        // The expected names match every `std::env::var("OPENROUTER_API_KEY")`
-        // call in the kask MCP servers.
+        // OpenRouter is a configured-provider control; fal.ai is a historical
+        // punctuation control, not a claim that it remains in current settings.
         assert_eq!(api_key_env_var_name_for("OpenRouter"), "OPENROUTER_API_KEY");
         assert_eq!(api_key_env_var_name_for("fal.ai"), "FALAI_API_KEY");
         // Lowercase IDs (used by some kask docs) must also resolve correctly.
