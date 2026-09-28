@@ -281,8 +281,9 @@ fn unexpected_outcome_msg(method: &InferenceMethod, variant: &'static str) -> St
 
 /// Strip the provider prefix (the first `/`-segment) from a model id.
 ///
-/// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`; `"ollama/qwen3-embedding:0.6b"`
-/// → `"qwen3-embedding:0.6b"`; `"no-slash"` → `"no-slash"`. Used by `list_models`
+/// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`;
+/// `"OpenRouter/qwen/qwen3-embedding-8b"` → `"qwen/qwen3-embedding-8b"`;
+/// `"no-slash"` → `"no-slash"`. Used by `list_models`
 /// to produce the `ModelEntry.model` ("raw model name without prefix") from
 /// the bridge's `ModelListEntry.name` ("full name with provider prefix").
 ///
@@ -1059,8 +1060,8 @@ mod tests {
             "z-ai/glm-5.2"
         );
         assert_eq!(
-            strip_provider_prefix("ollama/qwen3-embedding:0.6b"),
-            "qwen3-embedding:0.6b"
+            strip_provider_prefix("OpenRouter/qwen/qwen3-embedding-8b"),
+            "qwen/qwen3-embedding-8b"
         );
         assert_eq!(strip_provider_prefix("no-slash"), "no-slash");
         assert_eq!(strip_provider_prefix("/leading-slash"), "leading-slash");

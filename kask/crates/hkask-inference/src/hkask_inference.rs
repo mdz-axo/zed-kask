@@ -22,9 +22,12 @@
 //! # Model Naming
 //!
 //! Model ids are provider-prefixed (e.g. `OpenRouter/z-ai/glm-5.2`,
-//! `DEFAULT_EMBEDDING_MODEL`, `RunPod/kask-ocr`). The prefix selects the
-//! provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
-//! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`).
+//! `OpenRouter/qwen/qwen3-embedding-8b`, `RunPod/kask-ocr`). The prefix selects
+//! the provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
+//! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`). The
+//! embedding default is carried by the settings chain
+//! (`KaskSettings::effective_embedding_model` → `HkaskSettings::default`),
+//! not a code constant in this crate.
 
 pub mod config;
 pub mod inference_ipc_client;

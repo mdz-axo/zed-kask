@@ -1,6 +1,6 @@
 author: david-dunning
 embedding:
-  model: DI/Qwen/Qwen3-Embedding-0.6B
+  model: OpenRouter/qwen/qwen3-embedding-8b
   dim: 1024
   batch_size: 64
 works: []

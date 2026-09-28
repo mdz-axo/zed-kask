@@ -102,7 +102,14 @@ impl r2d2::ManageConnection for SqliteConnectionManager {
     }
 }
 
-/// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
+/// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM).
+///
+/// This is the MRL truncation width embed requests ask for via the
+/// `dimensions` parameter — NOT the embedding model's native width. Since the
+/// 2026-09-28 migration to Qwen3-Embedding-8B (native 4096), the width stays
+/// 1024 so width-bound vec0 tables keep receiving fitting vectors; a store
+/// built before the migration keeps its schema and only its embedding ROWS
+/// changed model space (stale rows are purged, not reinterpreted).
 pub(crate) const DEFAULT_EMBEDDING_DIM: usize = 1024;
 pub fn embedding_dim() -> usize {
     match std::env::var("HKASK_EMBEDDING_DIM") {

@@ -98,7 +98,7 @@ jinja2_template: |
   {{ prompt }}
 
 embedding:
-  model: "ollama/qwen3-embedding:0.6b"
+  model: "OpenRouter/qwen/qwen3-embedding-8b"
   dim: 1024
   centroid_entity_ref: "style:agatha-eliot:centroid"
   retrieval:

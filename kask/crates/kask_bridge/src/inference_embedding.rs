@@ -5,7 +5,7 @@
 //! `/embeddings` POSTs through the app's `HttpClient`. No GPUI access is
 //! needed at request time — credentials are resolved once at construction.
 //!
-//! The model string (e.g. `OpenRouter/qwen/qwen3-embedding`) is stripped
+//! The model string (e.g. `OpenRouter/qwen/qwen3-embedding-8b`) is stripped
 //! of its provider prefix before being sent to the API — the provider expects
 //! the bare model id, not the prefixed form.
 
@@ -19,7 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 
 /// Request sent to the tokio-side embedding executor.
 struct EmbedRequest {
-    /// The provider-prefixed model string (e.g. `OpenRouter/qwen/qwen3-embedding`).
+    /// The provider-prefixed model string (e.g.
+    /// `OpenRouter/qwen/qwen3-embedding-8b`).
     /// The prefix is stripped before the API call.
     model: String,
     /// Texts to embed.

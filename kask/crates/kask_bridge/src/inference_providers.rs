@@ -656,8 +656,8 @@ mod tests {
         // (case-insensitive prefix, matching `resolve_model_names`).
         for model in [
             "DeepInfra/BAAI/bge-m3",
-            "OpenRouter/qwen/qwen3-embedding",
-            "ollama/qwen3-embedding:0.6b",
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            "ollama/qwen3-embedding:8b",
             "deepinfra/BAAI/bge-m3",
         ] {
             assert!(

@@ -154,7 +154,7 @@ validation:
 
 embedding:
   corpus_config: "registry/styles/woolf/corpus.yaml"
-  model: "ollama/qwen3-embedding:0.6b"
+  model: "OpenRouter/qwen/qwen3-embedding-8b"
   dim: 1024
   centroid_entity_ref: "style:woolf:centroid"
   retrieval:
@@ -231,8 +231,9 @@ curator_notes: |
   - Hemingway graph: linear traversal with distributed meaning
   - Woolf graph: depth-first traversal with concentrated meaning at leaf nodes
 
-  The same Qwen/Qwen3-Embedding-0.6B embedding model works for both authors
-  because style differentiation comes from CORPUS CONTENT, not model architecture.
+  The same Qwen3-Embedding-8B embedding model (MRL width 1024) works for both
+  authors because style differentiation comes from CORPUS CONTENT, not model
+  architecture.
   Hemingway passages cluster in one region of embedding space, Woolf passages
   in another. The centroids will be distinct.
 

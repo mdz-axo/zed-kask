@@ -139,7 +139,7 @@ sources:
 # that supplements the specification layer (rules, syntax, lexicon).
 #
 # Corpus source: registry/styles/hemingway/corpus.yaml
-# Embedding model: Qwen/Qwen3-Embedding-0.6B (1024 dimensions)
+# Embedding model: Qwen3-Embedding-8B via OpenRouter (MRL width 1024 of native 4096)
 # Storage: hKask sqlite-vec via EmbeddingStore
 #
 # Three operations:
@@ -158,7 +158,7 @@ validation:
 
 embedding:
   corpus_config: "registry/styles/hemingway/corpus.yaml"
-  model: "ollama/qwen3-embedding:0.6b"
+  model: "OpenRouter/qwen/qwen3-embedding-8b"
   dim: 1024
   centroid_entity_ref: "style:hemingway:centroid"
   retrieval:

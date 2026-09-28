@@ -1611,8 +1611,19 @@ fn main() {
                 // namespace (same as zed's CredentialsProvider) — one keychain,
                 // one namespace. No mirror step needed.
                 let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
-                let embedding_model = std::env::var("HKASK_EMBEDDING_MODEL")
-                    .unwrap_or_else(|_| kask_settings.corpus.embedding_model.clone());
+                // The port binds the provider named by the SAME effective chain
+                // the MCP children receive (`effective_embedding_model`:
+                // models.embedding_model → corpus.embedding_model → code
+                // default). The former read — this process's own
+                // HKASK_EMBEDDING_MODEL env, else corpus.embedding_model — was a
+                // second resolution chain: after the 2026-09-28 migration to
+                // OpenRouter/qwen/qwen3-embedding-8b the children requested the
+                // new model while the port stayed bound to the old provider,
+                // and every embed failed with "cannot use the embedding port
+                // bound to …". One chain, one binding. The binding resolves
+                // once at startup — a mid-session embedding-provider change
+                // still requires a restart (documented in kask-settings.md).
+                let embedding_model = kask_settings.effective_embedding_model();
                 let embedding_dim = kask_settings.corpus.embedding_dim as usize;
                 let username_for_provision = username.clone();
 

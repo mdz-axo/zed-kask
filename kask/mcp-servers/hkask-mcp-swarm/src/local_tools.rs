@@ -179,6 +179,22 @@ async fn attach_narrative_memory(
     );
 }
 
+/// Unscoped delegation plus narrative ingestion — the shared-recall opt-in
+/// for callers whose delegations do not commit to a durable thread.
+/// (Scoped thread turns deliberately do NOT write semantic memory — pinned
+/// in `thread_tests`; the encrypted thread is their record.) Degradation
+/// rides on the result, never the call.
+async fn delegate_and_ingest(
+    memory: &crate::local_knowledge::LazyLocalMemory,
+    runtime: &crate::local_runtime::LocalSwarmRuntime,
+    agent: &crate::local_registry::LocalAgentCard,
+    task: &str,
+) -> Result<LocalDelegateResult, crate::error::LocalSwarmError> {
+    let mut result = runtime.delegate(agent, task).await?;
+    attach_narrative_memory(memory, &runtime.inference(), task, &mut result).await;
+    Ok(result)
+}
+
 /// Fingerprint of a harness task set: the ordered tasks, evaluators, specs
 /// and repeat count. Two runs are comparable only when this matches — the
 /// regression monitor reads it from `harness_summary.task_set_digest` so a
@@ -340,6 +356,12 @@ impl SwarmServer {
             .append(swarm_id, agent_name, task, &result.response)
             .await
             .map_err(map_local_swarm_error)?;
+        // Deliberately no narrative-memory ingestion here: thread turns must
+        // not write semantic memory (pinned by
+        // `thread_tests::scoped_thread_is_structured_durable_isolated_and_archived`).
+        // The encrypted durable thread IS the record for scoped dispatch;
+        // the shared cross-agent memory is an opt-in that composition callers
+        // take via `delegate_and_ingest` / their own post-dispatch attach.
         Ok((result, turn))
     }
 }
@@ -486,10 +508,10 @@ impl SwarmServer {
             // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Execute via the local runtime.
-            let mut result = runtime
-                .delegate(&agent, &req.task)
-                .await
-                .map_err(map_local_swarm_error)?;
+            let mut result =
+                delegate_and_ingest(&self.local_memory, &runtime, &agent, &req.task)
+                    .await
+                    .map_err(map_local_swarm_error)?;
             // Evaluator contract (phase 4): a card-declared evaluator is the
             // agent's own oracle. Run each; the verdict passes only if ALL
             // declared evaluators pass (they are conjunctive expectations
@@ -529,24 +551,14 @@ impl SwarmServer {
             // memory. The SENSE phase can read these via
             // `swarm_search_knowledge_local` to assess agent fitness across
             // cascade invocations. Failures are logged (non-fatal) — the
-            // delegation result is returned regardless.
+            // delegation result is returned regardless. The narrative-passage
+            // ingestion rode in `delegate_and_ingest` above.
             local_knowledge::record_delegation(
                 &self.local_memory,
                 &req.agent_name,
                 result.latency_ms,
                 result.task_success.as_ref().map(|t| t.pass),
                 &result.response,
-            )
-            .await;
-            // Narrative memory: persist bounded response passages with exact
-            // text embeddings and producer/task/model provenance. Any tagging,
-            // storage, or embedding degradation is attached to the successful
-            // delegation result rather than failing the delegation.
-            attach_narrative_memory(
-                &self.local_memory,
-                &runtime.inference(),
-                &req.task,
-                &mut result,
             )
             .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
@@ -720,27 +732,21 @@ impl SwarmServer {
                     ));
                     continue;
                 };
-                match runtime.delegate(&agent, &entry.task).await {
-                    Ok(mut r) => {
+                match delegate_and_ingest(&self.local_memory, &runtime, &agent, &entry.task)
+                    .await
+                {
+                    Ok(r) => {
                         self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                         // Stigmergy (ACO pheromone trail) — mirrors
                         // swarm_delegate_local so fan-out delegations
-                        // record performance annotations. Non-fatal.
+                        // record performance annotations. Non-fatal; the
+                        // narrative passages rode in with the delegation.
                         local_knowledge::record_delegation(
                             &self.local_memory,
                             &entry.agent_name,
                             r.latency_ms,
                             r.task_success.as_ref().map(|t| t.pass),
                             &r.response,
-                        )
-                        .await;
-                        // Narrative response passages build shared recall;
-                        // degradation is attached to the successful result.
-                        attach_narrative_memory(
-                            &self.local_memory,
-                            &runtime.inference(),
-                            &entry.task,
-                            &mut r,
                         )
                         .await;
                         total_tokens += r.tokens_used;
@@ -3193,7 +3199,9 @@ impl SwarmServer {
                         }));
                         continue;
                     };
-                    match runtime.delegate(&agent, &entry.task).await {
+                    match delegate_and_ingest(&self.local_memory, &runtime, &agent, &entry.task)
+                        .await
+                    {
                         Ok(mut r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             case_tokens += r.tokens_used;
@@ -3215,23 +3223,16 @@ impl SwarmServer {
                                     case_pass = false;
                                 }
                             }
-                            // Stigmergy + KB ingestion — mirrors
-                            // swarm_execute_plan_local so eval delegations
-                            // build the shared KB and pheromone trails.
-                            // Non-fatal.
+                            // Stigmergy — mirrors swarm_execute_plan_local so
+                            // eval delegations build the pheromone trail; the
+                            // narrative-passage ingestion rode in
+                            // `delegate_and_ingest`. Non-fatal.
                             local_knowledge::record_delegation(
                                 &self.local_memory,
                                 &entry.agent_name,
                                 r.latency_ms,
                                 r.task_success.as_ref().map(|t| t.pass),
                                 &r.response,
-                            )
-                            .await;
-                            attach_narrative_memory(
-                                &self.local_memory,
-                                &runtime.inference(),
-                                &entry.task,
-                                &mut r,
                             )
                             .await;
                             // Record on the task board when a swarm_id is set.

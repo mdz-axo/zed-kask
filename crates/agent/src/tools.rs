@@ -18,6 +18,8 @@ mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
 mod lean_check_tool;
+#[cfg(test)]
+mod lisp_eval_emission_matrix;
 mod lisp_eval_tool;
 mod list_agents_and_models_tool;
 mod list_directory_tool;

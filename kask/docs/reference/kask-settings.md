@@ -282,6 +282,37 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 
 These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:362-393`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
 
+### Embedding model lifecycle (2026-09-28 migration)
+
+The embedding model migrated from `Qwen/Qwen3-Embedding-0.6B` to
+`OpenRouter/qwen/qwen3-embedding-8B` (operator decision 2026-09-28). The
+width did NOT change: 1024 is the MRL truncation width requested via the
+OpenAI-compatible `dimensions` parameter, so width-bound vec0 tables keep
+their schema — only the embedding space changed, and vectors from the two
+models are not comparable (stale rows poison KNN rather than erroring, so
+they were purged, not kept).
+
+Resolution is one chain everywhere — `KaskSettings::effective_embedding_model()`
+(`models.embedding_model` → `corpus.embedding_model` → code default). The
+zed-side embedding port binds the provider named by that same chain once at
+startup (`crates/zed/src/main.rs`); MCP children receive the same value as
+`HKASK_EMBEDDING_MODEL`. A mid-session change to the embedding model (or its
+provider) therefore needs a Zed restart to re-bind the port — until then,
+embeds fail with `cannot use the embedding port bound to …`, surfaced on
+every semantic-recall path. This was the 2026-09-28 incomplete-migration
+failure: the port had been bound from a second, divergent chain
+(`corpus.embedding_model` only, or the zed process's own env), so after the
+model change the children requested the new model against a port still
+bound to the old provider.
+
+Artifacts built for the 0.6B model were deleted 2026-09-28: the sealed
+calibration corpus (`zk-data/corpus-mcp/calibration/john-brooks-*`), the
+`gentle-lovelace` style DB (rebuilt from
+`zk-data/corpus-mcp/styles/gentle-rebuild/chunks.jsonl` with the new model),
+and every stale embedding row in the curator and swarm memory DBs
+(≈11,923 + 58; the h_mems were kept — `curator_memory_backfill_embeddings`
+re-embeds them with the new model after the restart).
+
 ## Scenarios (`KaskScenariosSettings`)
 
 No fields — the scenarios data dir is derived from the global `data_dir` as `mcp/scenarios/` by `mcp_env()`. The server reads it via `HKASK_SCENARIOS_DATA`.
