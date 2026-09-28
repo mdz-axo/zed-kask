@@ -129,7 +129,11 @@ pub struct Model {
     pub id: String,
     pub display_name: String,
     pub max_input_tokens: u64,
-    pub max_output_tokens: u64,
+    /// zed-kask: D83 — the model's output cap as discovered/configured.
+    /// `None` means unknown — never a fabricated default; the mandatory
+    /// wire parameter is resolved by `into_anthropic`'s documented
+    /// fallback (`UNCONFIGURED_MAX_OUTPUT_TOKENS`).
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: f32,
     pub mode: AnthropicModelMode,
     pub supports_thinking: bool,
@@ -232,7 +236,7 @@ impl Model {
             display_name: entry.display_name,
             id: entry.id,
             max_input_tokens: entry.max_input_tokens,
-            max_output_tokens: entry.max_tokens,
+            max_output_tokens: Some(entry.max_tokens),
             default_temperature: 1.0,
             mode,
             supports_thinking,

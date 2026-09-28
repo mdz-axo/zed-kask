@@ -281,11 +281,21 @@ fn to_anthropic_content(
     }
 }
 
+/// zed-kask: D83 — the value sent as `max_tokens` when neither the request
+/// nor the model metadata configures an output cap. Exists only because
+/// the Anthropic Messages API requires the parameter. Deliberately large
+/// (the largest documented Anthropic-class output cap) so it practically
+/// never binds: a provider either accepts it, clamps to its own limit, or
+/// rejects visibly — never the silent mid-tool-call cut the former
+/// per-provider `unwrap_or(4_096)` fabrications produced (the D42/D83
+/// hidden output-limit class).
+pub(crate) const UNCONFIGURED_MAX_OUTPUT_TOKENS: u64 = 65_536;
+
 pub fn into_anthropic(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     mode: AnthropicModelMode,
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
@@ -296,9 +306,12 @@ pub fn into_anthropic(
     } else {
         mode
     };
+    // zed-kask: D83 — the model cap is metadata: None means unconfigured,
+    // never a fabricated default. The request-level cap intersects it as
+    // before; only the mandatory-wire fallback differs from upstream.
     let max_output_tokens = request
-        .max_output_tokens
-        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
+        .effective_max_output_tokens(max_output_tokens)
+        .unwrap_or(UNCONFIGURED_MAX_OUTPUT_TOKENS);
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -943,7 +956,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1057,7 +1070,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Legacy,
             &ANTHROPIC_PROVIDER_ID,
@@ -1123,7 +1136,7 @@ mod tests {
             request,
             "claude-opus-4-8".to_string(),
             1.0,
-            128_000,
+            Some(128_000),
             AnthropicModelMode::AdaptiveThinking,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1177,7 +1190,7 @@ mod tests {
                 request,
                 model.to_string(),
                 1.0,
-                128_000,
+                Some(128_000),
                 AnthropicModelMode::AdaptiveThinking,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
@@ -1249,7 +1262,7 @@ mod tests {
                 request,
                 model.to_string(),
                 1.0,
-                128_000,
+                Some(128_000),
                 AnthropicModelMode::AdaptiveThinking,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
@@ -1323,7 +1336,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1374,7 +1387,7 @@ mod tests {
             request,
             "claude-sonnet-4-5".to_string(),
             1.0,
-            16000,
+            Some(16000),
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
@@ -1477,7 +1490,7 @@ mod tests {
             request,
             "claude-sonnet-4-5".to_string(),
             1.0,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Disabled,
             &ANTHROPIC_PROVIDER_ID,
@@ -1984,6 +1997,93 @@ mod tests {
                 output_tokens: 1_239,
                 ..Default::default()
             }
+        );
+    }
+
+    #[test]
+    fn unconfigured_output_cap_falls_back_to_the_documented_wire_value() {
+        // zed-kask: D83 — Anthropic's wire parameter is mandatory, so "no
+        // cap at all" is not expressible on this protocol. When neither the
+        // request nor the model metadata configures one, into_anthropic
+        // sends the single documented fallback instead of a small
+        // fabricated cap (the former `unwrap_or(4_096)` at every provider
+        // mapping — the D42/D83 hidden output-limit class that cut agent
+        // streams mid-tool-call).
+        let request = || LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let unconfigured = into_anthropic(
+            request(),
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            None,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Disabled,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        assert_eq!(unconfigured.max_tokens, UNCONFIGURED_MAX_OUTPUT_TOKENS);
+        assert_eq!(
+            serde_json::to_value(&unconfigured).unwrap()["max_tokens"],
+            serde_json::json!(UNCONFIGURED_MAX_OUTPUT_TOKENS),
+            "the mandatory wire parameter must still be serialized"
+        );
+
+        let mut request_capped = request();
+        request_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_anthropic(
+                request_capped,
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                None,
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            1024
+        );
+
+        assert_eq!(
+            into_anthropic(
+                request(),
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                Some(8_192),
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            8_192
+        );
+
+        let mut both_capped = request();
+        both_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_anthropic(
+                both_capped,
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                Some(8_192),
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            1024,
+            "the request-level cap still intersects the model cap"
         );
     }
 }

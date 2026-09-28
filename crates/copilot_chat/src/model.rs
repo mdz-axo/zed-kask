@@ -186,7 +186,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     request,
                     model.id().to_string(),
                     0.0,
-                    max_output_tokens,
+                    Some(max_output_tokens),
                     if model.supports_adaptive_thinking() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,

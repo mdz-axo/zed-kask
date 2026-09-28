@@ -927,7 +927,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
+        self.model.max_output_tokens()
     }
 
     fn stream_completion(
@@ -1891,7 +1891,7 @@ impl LanguageModel for BedrockMantleModel {
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
+        self.model.max_output_tokens()
     }
 
     fn stream_completion(
@@ -1918,7 +1918,7 @@ impl LanguageModel for BedrockMantleModel {
         }
 
         let model_id = self.model.request_id().to_string();
-        let max_output_tokens = Some(self.model.max_output_tokens());
+        let max_output_tokens = self.model.max_output_tokens();
 
         match self.model.protocol() {
             MantleProtocol::Responses => {
@@ -1996,16 +1996,17 @@ pub fn into_bedrock(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
-    let max_output_tokens = request
-        .max_output_tokens
-        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
+    // zed-kask: D83 — the model cap is metadata: None means unconfigured,
+    // never a fabricated default; the Converse request then omits
+    // `maxTokens` and Bedrock's own model default binds.
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
     }
@@ -2967,7 +2968,7 @@ mod tests {
                 },
                 model.to_string(),
                 1.0,
-                128_000,
+                Some(128_000),
                 BedrockModelMode::AdaptiveThinking {
                     effort: bedrock::BedrockAdaptiveReasoningEffort::High,
                 },
@@ -2978,7 +2979,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(request.max_tokens, expected_output);
+            assert_eq!(request.max_tokens, Some(expected_output));
             if expects_explicit_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
@@ -3710,6 +3711,99 @@ mod tests {
     }
 
     #[test]
+    fn into_bedrock_without_any_configured_cap_omits_max_tokens() {
+        // zed-kask: D83 — the model's output cap is metadata, not a
+        // client-side default: when neither the request nor the model
+        // carries one, the Converse request omits `maxTokens` entirely and
+        // Bedrock's own model default binds — the same shape as the
+        // OpenRouter `max_tokens` seam. The former `unwrap_or(4_096)` on
+        // custom models fabricated a hidden cap that cut agent streams
+        // mid-tool-call (the D42/D83 hidden output-limit class).
+        let request = || LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let mode = BedrockModelMode::AdaptiveThinking {
+            effort: bedrock::BedrockAdaptiveReasoningEffort::High,
+        };
+
+        let uncapped = into_bedrock(
+            request(),
+            "custom-model".to_string(),
+            1.0,
+            None,
+            mode,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(uncapped.max_tokens, None);
+
+        let mut request_capped = request();
+        request_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_bedrock(
+                request_capped,
+                "custom-model".to_string(),
+                1.0,
+                None,
+                mode,
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(1024)
+        );
+
+        assert_eq!(
+            into_bedrock(
+                request(),
+                "custom-model".to_string(),
+                1.0,
+                Some(50_000),
+                mode,
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(50_000)
+        );
+
+        let mut both_capped = request();
+        both_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_bedrock(
+                both_capped,
+                "custom-model".to_string(),
+                1.0,
+                Some(50_000),
+                mode,
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(1024),
+            "the request-level cap still intersects the model cap"
+        );
+    }
+
+    #[test]
     fn test_custom_mantle_model_can_disable_thinking() {
         let model = MantleModel::Custom {
             name: "custom-mantle-model".to_string(),
@@ -3747,7 +3841,7 @@ mod tests {
             MantleModel::Grok4_3.request_id(),
             true,
             false,
-            Some(MantleModel::Grok4_3.max_output_tokens()),
+            MantleModel::Grok4_3.max_output_tokens(),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
             &PROVIDER_ID,
         )

@@ -56,7 +56,7 @@ pub async fn stream_completion(
     }
 
     let inference_config = InferenceConfiguration::builder()
-        .max_tokens(request.max_tokens as i32)
+        .set_max_tokens(request.max_tokens.map(|tokens| tokens as i32))
         .set_temperature(request.temperature)
         .set_top_p(request.top_p)
         .build();
@@ -260,7 +260,10 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u64,
+    /// zed-kask: D83 — None omits `maxTokens` from the inference config so
+    /// Bedrock's own model default binds; it is never a fabricated
+    /// client-side cap.
+    pub max_tokens: Option<u64>,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,

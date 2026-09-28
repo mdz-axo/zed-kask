@@ -270,7 +270,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             request,
             self.model.id.to_string(),
             1.0,
-            self.model.max_output_tokens as u64,
+            Some(self.model.max_output_tokens as u64),
             if enable_thinking && effort.is_some() {
                 AnthropicModelMode::AdaptiveThinking
             } else if enable_thinking {
@@ -318,7 +318,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
             request,
             self.model.id.to_string(),
             1.0,
-            self.model.max_output_tokens as u64,
+            Some(self.model.max_output_tokens as u64),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
