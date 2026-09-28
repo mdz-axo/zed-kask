@@ -15,6 +15,15 @@ classifies them by horizon, and emits per-section verdicts with evidence.
 - Unverified summarization — the process enforces verbatim-evidence quotes; a summary without the retrieve-cite-verify loop is a different (weaker) artifact.
 - Live capture — use `transcript-reel` for record/transcribe; this skill consumes an existing transcript.
 
+## D/P labelling
+
+Question synthesis, evidence search, and the verdict interpretation are P —
+critiqued by the verification step and the operator. The verification is D:
+every cited quote is checked with `lisp_eval` `string-contains` (needle
+first) against its own passage, and the counts are computed, never estimated —
+the model cannot fabricate a citation that survives this check. A quote that
+twice fails verification is dropped, not reinterpreted.
+
 ## Instructions
 
 The no-fabrication invariant is enforced by the process, not by the prompt:

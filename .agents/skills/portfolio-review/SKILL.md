@@ -16,6 +16,7 @@ from live quotes and interpreting the results honestly.
 Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIPS standards); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985) when a benchmark portfolio exists. Every step is D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The only P elements are the review window and the benchmark choice (the operator's) and the narrative note.
 
 - **Initial condition:** the ledger (`ledger_read`) and the seeded prices for every symbol held at `from` and `to`.
+- **D/P labelling:** every phase's tool call and its receipt (`ledger_read`, `stock_quote`/`historical_price`, `portfolio_seed_price`, `portfolio_returns`, `portfolio_contribution`, `portfolio_attribution`, `note_add`) is D — the tool is the oracle. The narrative interpretation of what moved the portfolio is P, critiqued by the operator reading the recorded note against the tool figures.
 - **Target condition:** `portfolio_returns` and `portfolio_contribution` both succeed for the window, and the note is recorded.
 
 ## When to Use
@@ -32,6 +33,17 @@ Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIP
   returns are not computable from prices that do not exist.
 - The operator only wants current holdings — `portfolio_snapshot` alone
   answers that.
+
+## D/P labelling
+
+Seeding prices from live quotes and reading the attribution tables are P over
+D inputs — the valuation/return tools (`portfolio_returns`,
+`portfolio_contribution`, `portfolio_attribution`, TWR/MWR) are server
+oracles whose outputs the model threads, never recomputes. The convergence
+gate is D (`lisp_eval` over the review's completion conditions). A review
+claim without its tool-backed table is narrative, not analysis. The
+attribution-review discipline is P reasoning over D arithmetic — the
+Brinson-Fachler decomposition is computed by the server.
 
 ## Instructions
 

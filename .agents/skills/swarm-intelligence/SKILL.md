@@ -303,8 +303,6 @@ Full per-property evidence and the VSM/Ashby analysis are in the audit.
 
 ## Registry
 
-This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
-
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
 - Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml` (Rendering template — PSO/ACO/Reynolds/Onto4MAT tuning palette; not sent to the LLM)
 - Live process: read the selected ABW or local roster → SENSE → ORIENT → DECIDE → check proposed moves against observed failed signatures and actual consent/permissions → ACT emits intents → execute only in explicitly selected steering mode → CHECK re-reads state and receipts → compute receipt coverage, distance and target gate with `lisp_eval` → carry observed iteration history into a bounded next cycle. A rendered phase alone does not call an MCP tool.

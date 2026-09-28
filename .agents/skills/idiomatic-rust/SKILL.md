@@ -33,6 +33,16 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 - Panic path → Principle 7 (errors as values)
 - Unsafe block → Principle 8 (unsafe as contract)
 
+## D/P labelling
+
+Design proposals (type-driven solutions, LSP-informed code actions) and the
+adversarial review's verdicts are P — judgment, critiqued by the compiler and
+clippy as the extrinsic oracles. The verification is D: diagnostics errors on
+the proposed code, new `./script/clippy` warnings versus the baseline, and
+compiler-confirmed findings, counted from the actual tool output and computed
+with `lisp_eval` — a proposal the compiler has not seen is unreviewed, and a
+critique the compiler contradicts is overruled.
+
 ## When to Use
 
 - Assessing a Rust design problem against Graydon Hoare's principles to identify invariants, invalid states, ownership graphs, and error domains.

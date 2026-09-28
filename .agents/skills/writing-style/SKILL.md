@@ -134,7 +134,7 @@ report), not just the tone.
   and analysis against their centroids. Do not improvise a "style
   config" for them.
 
-## Initial condition and step types
+## Initial condition and step types (D/P labelling)
 
 - **Initial condition:** the named style, its catalog `config_path`, and (Mode 3) the source document.
 

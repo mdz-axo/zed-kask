@@ -20,6 +20,16 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 - Operating the regulation loops — `algedonic-review` (alert triage and its gemba walk) runs them; this skill diagnoses their design.
 - Implementing control systems — it is an analysis lens (VSM, Ashby, loop properties), not a builder.
 
+## D/P labelling
+
+VSM mapping, loop-property assessment, and variety-engineering proposals are
+P — judgment, critiqued by the Good Regulator check (can this model of the
+system actually regulate it?) and the operator. The gates are D: the loop
+assessments and Good Regulator conditions run as pinned `lisp_eval` forms
+over the observed loop evidence — a loop with no observable feedback path is
+an open loop no matter how well it is described, and spec drift is measured
+against the recorded spec, not judged.
+
 ## Instructions
 
 ### cybernetics-analyze-loop

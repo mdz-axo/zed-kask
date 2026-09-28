@@ -13,7 +13,7 @@ Grounded in Parisi's spin glass theory (Parisi 1979; Sherrington-Kirkpatrick 197
 
 A "desert" is therefore not necessarily an absence — it is often a **metastable valley** the system has relaxed into and cannot leave without crossing an energy barrier. The system stores information *by being trapped*. A gradient between two metastable states is a gradient between two memories.
 
-The seven surface ontologies (below, in `gradient-shapes.yaml`) describe the *shape* of gradients at boundaries. The spin glass substrate explains *why there are boundaries at all*. Before classifying a gradient's shape, consider whether the desert is a valley the system is trapped in — if so, "add the missing artifact" will not work; the system will relax back. The intervention must inject enough energy to cross the barrier (a deferred task, a startup signal, a reconfiguration that reshapes the landscape itself).
+The seven surface ontologies (the shape table in `gradient-detect.j2` Step 2) describe the *shape* of gradients at boundaries. The spin glass substrate explains *why there are boundaries at all*. Before classifying a gradient's shape, consider whether the desert is a valley the system is trapped in — if so, "add the missing artifact" will not work; the system will relax back. The intervention must inject enough energy to cross the barrier (a deferred task, a startup signal, a reconfiguration that reshapes the landscape itself).
 
 ## When to Use
 
@@ -38,6 +38,17 @@ Do NOT use for:
 
 - Absent features someone should simply build — the gradient is the *reason* for an absence, not a backlog; a known missing feature needs a plan, not an investigation.
 - Performance profiling — use `diagnose`; a slow path is a measurement question, not an information-field question.
+
+## D/P labelling
+
+Stating the expectation, choosing the discriminating probe, and interpreting
+the measured gradient are P — judgment, critiqued by the
+observation-versus-expectation comparison and by the user (a surprise alone
+does not justify a detour). The measurements are D: probe outputs, counts,
+and the gradient-map stability gate (`lisp_eval` — no new gradient shapes
+versus the prior map and the top-K unchanged). An expectation with no stated
+falsifier is not a prediction; a gradient with no measured difference is not
+a finding.
 
 ## Instructions
 
@@ -66,7 +77,7 @@ Start this route at intake for a substantive uncertain inquiry by selecting a qu
 
 ## Improvement Measure
 
-**Gate (D)**: the Phase 6 set-based check — `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` over the measured gradient maps, with shapes named from the closed vocabulary in `gradient-shapes.yaml` so they compare as sets. **Bound**: the first map plus at most 2 prior refinements (3 maps in all). This governs the field-mapping route only; the expectation-led route above has its own bound (at most two probes per question).
+**Gate (D)**: the Phase 6 set-based check — `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` over the measured gradient maps, with shapes named from the closed vocabulary of the `gradient-detect.j2` Step 2 shape table so they compare as sets. **Bound**: the first map plus at most 2 prior refinements (3 maps in all). This governs the field-mapping route only; the expectation-led route above has its own bound (at most two probes per question).
 
 **Reported estimate (P, not a gate)**: the composite below is a labelled judgment for the report. No tool computes it; `field_coverage_estimate` can be read from `gradient-map`'s per-element coverage. It never decides convergence. **Threshold**: 0.25.
 
@@ -103,7 +114,7 @@ Composite of two sub-metrics (weighted 0.5/0.5):
 
 ## Shape and Reason Taxonomy
 
-The eight gradient shapes (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) and the seven reason classes (intentional boundary / MCAR, explainable gap / MAR, forgotten wire / MNAR, stale refactor / MNAR drift, scope creep / MNAR missing abstraction, metastable trap / spin glass, broken allosteric coupling / allostery) are defined authoritatively in `gradient-shapes.yaml` in the registry crate, including ontology anchors, fractal recurrence across scales/domains, and priority ordering.
+The eight gradient shapes (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) and the seven reason classes (intentional boundary / MCAR, explainable gap / MAR, forgotten wire / MNAR, stale refactor / MNAR drift, scope creep / MNAR missing abstraction, metastable trap / spin glass, broken allosteric coupling / allostery) are defined in the `gradient-detect.j2` Step 2 shape table (shapes, ontology anchors) and the reason-class list in `gradient-hypothesize.j2` — the closed vocabulary the Phase 6 gate compares as sets.
 
 Key non-obvious rules the taxonomy encodes:
 
@@ -120,10 +131,9 @@ Key non-obvious rules the taxonomy encodes:
 | `expectation-inquiry.j2` | Require an explicit user goal, then gate a sourced expectation mismatch before selecting a discriminating next probe; on re-render reconcile actual evidence or stop on operator-declared irrelevance. No gradient shape is inferred from one observation. |
 | `gradient-prior.j2` | Build a prior model of the expected field. Without a prior, you can only detect absences, not gradients. The prior comes from one of three sources in order of preference: sibling prior (a populated region structurally similar to the target), convention prior (a documented convention like a .rules trap), or principle prior (a design principle). Records source, scope, and confidence. Delegates to pragmatic-cybernetics for variety engineering when no sibling or convention prior is available. |
 | `gradient-map.j2` | Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to grep + manual code analysis for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). |
-| `gradient-detect.j2` | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence (does this shape appear at other scales or in other domains?), populated side, desert side, magnitude. The fractal recurrence check is mandatory — a shape that recurs at multiple scales/domains is the system's characteristic pattern. References gradient-shapes.yaml for the shape taxonomy. |
+| `gradient-detect.j2` | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence (does this shape appear at other scales or in other domains?), populated side, desert side, magnitude. The fractal recurrence check is mandatory — a shape that recurs at multiple scales/domains is the system's characteristic pattern. References its Step 2 table for the shape taxonomy. |
 | `gradient-hypothesize.j2` | For each gradient, generate multiple hypotheses for why it exists. Use the seven-class reason taxonomy: intentional boundary (MCAR), explainable gap (MAR), forgotten wire (MNAR), stale refactor (MNAR drift), scope creep (MNAR missing abstraction), metastable trap (spin glass non-ergodic), broken allosteric coupling (ensemble redistribution). Delegates to falsifiability for counterfactual hypothesis discrimination ("if this desert were intentional, what else would be true?") and to metacognition for prior perspective rotation (different priors surface different gradients). |
 | `gradient-report.j2` | Compile detected gradients into a structured report. Each gradient entry includes location, shape, ontology anchor, scale, domain, fractal recurrence, prior, populated side, desert side, magnitude, reason hypotheses, recommended reason, and action. Prioritizes by reason class (broken allosteric coupling > metastable trap > MNAR > MAR > MCAR), then fractal recurrence, then magnitude, then populated-side criticality. Emits lessons_learned and pattern_signatures for the next iteration's prior (feedback loop closure). |
-| `gradient-shapes.yaml` | Reference: eight gradient shapes drawn from seven academic domains (image processing, spatial statistics, causal inference, computational topology, software engineering, statistical physics, biochemistry/ biophysics). Each shape includes ontology, anchor concept, meaning, reason family, and fractal recurrence across scales. Includes the seven-class reason taxonomy (Rubin MCAR/MAR/MNAR + spin glass metastable trap + allostery broken coupling) and priority ordering. Substrate ontology (spin glass) explains why gradients exist at all. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-hunter/gradient-prior`) and a context object with the required variables.
 

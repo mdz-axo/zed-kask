@@ -31,6 +31,16 @@ The skill builds on these established resources. Cite them in the output descrip
 - **Initial condition:** the user's stated nodes, edges, weights, units, and source (or explicit absence), plus the inferred domain and conservation mode. A unitless `value=1` placeholder is not a measured count.
 - **Target condition:** the rendered Mermaid edges match the sourced edge list one-to-one, no nodes or weights are invented, and the conservation status is `observed_balanced`, `discrepancy`, `unverified`, or `skipped` according to the domain and available measurements. A passing first Check requires no extra inference.
 
+## D/P labelling
+
+Adapting the canonical structure and drafting node/link labels are P —
+judgment, critiqued by the CHECK step. The conservation check is D: the
+balance form runs in `lisp_eval` over the reconciled measured edges, per
+node — `discrepancy` carries the node-level values, `observed_balanced`
+requires nonempty checked rows (an empty set is `unverified`, never
+vacuously balanced), and `skipped` is never reported as verified. This skill
+never fabricates weights — an unquantified flow carries no number.
+
 ## When to Use
 
 - The user describes a system, process, budget, pipeline, funnel, or allocation and wants to **see the flow** as a Sankey diagram.

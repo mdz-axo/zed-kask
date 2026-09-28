@@ -52,6 +52,16 @@ to make every documented claim verifiable against the current tree.
 3. `kask/docs/README.md` — the portal and the **document lifecycle ledger**:
    every fold/delete must be recorded there with its successor.
 
+## D/P labelling
+
+Triage (the role-based keep/condense/delete decisions), recomposition, and
+source selection are P — judgment, critiqued by the file:line citation gates
+and the operator. The mechanical gates are D: link and citation resolution
+against the current tree, the document-count reconciliation against the cap,
+and the convergence check (`lisp_eval` over the gate results — a gate that did
+not run is reported, never counted as passed). A recomposed doc whose
+citations were not re-checked is unverified recomposition.
+
 ## Instructions
 
 ### Phase 0 — Condensation triage (before any recomposition)
@@ -146,6 +156,12 @@ to make every documented claim verifiable against the current tree.
 4. Sweep for links to deleted artifacts and repoint them to successors.
 
 ### Phase 6 — Verify (the gates)
+
+**D/P labelling.** Phases 0–3 (triage, grounding, comparison, recomposition)
+and Phase 4's diagram content are P — judgment over the tree, critiqued by
+these gates and by the operator's review of the recomposed docs. Phase 5's
+counts and the Phase 6 gates are D (`find`/`wc`, link sweep, `file:line`
+spot-check against `read_file`, frontmatter grep).
 
 Run every gate; all must pass before the pass is done:
 

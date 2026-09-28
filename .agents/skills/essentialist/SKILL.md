@@ -9,7 +9,7 @@ description: "General-purpose recursive eliminative interrogation. Enforces 'alw
 
 General-purpose recursive eliminative interrogation. Enforces "always take away, never add" through a 3-gate challenge loop (Exist → Surface → Contract) that every artifact must survive before being committed. Delegates G1 to deep-module deletion test, G2 to deep-module surface assessment, and G3 to coding-guidelines abstraction audit.
 
-## Reference model and labels
+## Reference model and labels (D/P labelling)
 
 Ousterhout, *A Philosophy of Software Design* (2018) — deep modules and the deletion test (`onto_anchor` → derived `fagan_inspection` carries the Ousterhout citation). Gate verdicts (delete / merge / keep) are P, critiqued by the human in advisory mode and by the constraint-force rule in autonomous mode; the gate order, retry bound, zero-delta check and score are D.
 

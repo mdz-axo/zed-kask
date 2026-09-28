@@ -119,5 +119,4 @@ After the operator accepts the deliverables, delete the run's rejected outputs �
 - All pipelines use tools from the `hkask-mcp-media` server. The server must be running and configured with at least one media provider (DeepInfra or OpenRouter).
 - Image generation and video generation are cloud calls — they incur cost and have latency. Local tools (collage, video_clip, video_to_gif, video_add_caption) are free and fast.
 - The agent coordinates execution by calling each tool in sequence. There is no FlowDef executor — the step topology is encoded in this SKILL.md body and the model follows it.
-- `media/logo-discovery-map` and `media/logo-formal-prompt` are the Logo pipeline's templates (Public); render them with `render_template`.
-- This SKILL.md body is the authoritative methodology.
+- `media/logo-discovery-map` and `media/logo-formal-prompt` are the Logo pipeline's templates; render them with `render_template`.

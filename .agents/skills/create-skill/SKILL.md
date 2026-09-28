@@ -142,7 +142,7 @@ skill's artifacts.
 | Anchoring terms (Phase 1 step 3) | D | `onto_anchor` |
 | 4 Validate — mechanical | D | audit scripts and `cargo test -p agent --lib corpus_` exit counts |
 | 4 Validate — S1–S13 read | P | `skill-maintenance` validate, critiqued by the mechanical counts and the operator |
-| 4 Functional trial | D | the predeclared expected result for the trial task |
+| 4 Functional trial | D when the predeclared result is checked by a tool or test; P when the operator judges it | the predeclared expected result for the trial task |
 | 5 Converge | D | the `lisp_eval` gate over the Phase 4 counts; at most 2 re-entries |
 
 ## PDCA Loop
@@ -247,9 +247,12 @@ Generate the skill artifacts:
      goal, so the two cannot drift. One goal block per template: a long goal
      is one long line, never several consecutive `{# ... #}` blocks (a
      wrapped goal parses only partly).
-   - An `[inference]` contract header (typed `input`/`output` fields and
-     `visibility`) terminated by a lone `---` line; at most one body
-     `[inference]` parameter stanza after it.
+   - An `[inference]` contract header (typed `input`/`output` fields only)
+     terminated by a lone `---` line. No `visibility` key and no body
+     `[inference]` parameter stanza: `render_template` reads only
+     `contract.input` (crates/agent/src/tools/render_template_tool.rs
+     `validate_contract_inputs`) and strips everything else — any other
+     header key is decoration.
    - Jinja2 variables matching the contract inputs, and only those; every
      declared output named in the output instructions.
    - The expected JSON output shape.

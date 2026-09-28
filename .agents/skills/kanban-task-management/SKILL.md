@@ -41,6 +41,17 @@ Decompose → Delegate → Operate
 - For convergent planning with dependency graphs (use `task-breakdown`)
 - For TDD execution of vertical slices (use `tdd`)
 
+## D/P labelling
+
+Task decomposition, delegation configuration, and escalation judgment are P —
+critiqued by the verification evidence tiers and the operator. The board
+operations are D (the kanban tools are the durable ledger — a task's state
+comes from the board, never from the manager's memory), and the sweep gate is
+D (`lisp_eval` over `unverified_review` and `stalled_in_progress` reconciled
+against the newly re-listed board — it checks sweep obstacles only, never
+proving the functional goal). A done task without its evidence tier recorded
+is unverified, not complete.
+
 ## Instructions
 
 The first step (`triage.j2`) examines the available inputs and determines

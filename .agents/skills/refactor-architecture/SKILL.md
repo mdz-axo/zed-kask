@@ -27,7 +27,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
 | ra-explore, ra-candidates, ra-deepen, ra-audit | P | the user's candidate selection; ra-verify's observed outputs |
-| ra-route | D | the user's explicit decision signal |
+| ra-route | P (operator-gated: a human signal, not a deterministic oracle) | the user's explicit decision signal |
 | ra-strangle tests and builds; ra-verify | D | the failing-then-passing tests, `cargo check`, `cargo test`, `./script/clippy` |
 
 ## When to Use

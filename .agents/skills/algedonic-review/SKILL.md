@@ -8,6 +8,14 @@ description: "Human-in-the-loop algedonic review and skill gemba walk through th
 
 The **Algedonic review** board in the kanban panel is the shared worklist for the operator and Curator. The regulation loop places new alerts in Backlog and records changed repeat observations or hourly unchanged-condition checkpoints as comments on the same open card; identical ten-second ticks do not each add a comment. Skill-change proposals also enter this board, not a separate folder. The capped algedonic log is context, not the review backlog; it self-evicts and is never cleared merely to finish a review.
 
+## Reference model, conditions and labels
+
+Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → derived `algedonic_signal`, operator ruling 2026-09-25): an alarm from System 1 to System 5 that carries only the signal that something breached; the policy level (the operator) decides. Rother, *Toyota Kata* (2010) for the gemba walk (`onto_anchor` → derived `gemba_walk`).
+
+- **Initial condition:** the board's columns as read by `kanban_task_list`, `loop_reading`, and the `reg.skill` window — or an explicit visibility gap where a read failed.
+- **Target condition:** every card in Review carries the observation that settles it, every open alert names its next action, and every proposal card has an operator verdict recorded on the card.
+- **D/P labelling:** board reads, column moves and `kanban_task_verify` receipts are D (the kanban tools are the oracle); severity triage, the fix decision and the skill verdict are P — the operator's, never this session's. The one bounded loop: steps 1–10 run once per review; a card whose settling observation is missing re-enters at step 3 for that card only, and the review ends when the target condition holds or the remaining gaps are named on their cards.
+
 ## SENSE — Read the worklist
 
 1. Call `kanban_board_list` to find **Algedonic review**, then `kanban_task_list` for every column. If the board/tool cannot be read, report the backlog as unknown, not empty. Open the board in the kanban panel with the operator; the panel and its existing kanban widget are the visual artifact. `curator_status` supplies loop health, the awaiting-review count (all board cards not Done), and log-cap readings; `curator_algedonic_log` provides recent diagnostic events. Do not confuse latest-cycle new alerts with cards awaiting review.

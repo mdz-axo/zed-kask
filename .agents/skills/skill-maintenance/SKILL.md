@@ -119,15 +119,14 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      templates get read-triage under this check).
    - **T3**: Each `.j2` template defines expected output fields (as comments
      or schema description)
-   - **T4**: `[inference]` blocks in .j2 templates follow the two-stanza
-     convention — templates ARE inference prompts, so the marker is the
-     metadata carrier, not a defect. The rule is about placement:
-     (a) the header `[inference]` block (contract + visibility) must be
-     terminated by a lone `---` line; (b) at most one body `[inference]`
-     param stanza (temperature/work_effort/verbosity/thinking_budget),
-     placed at the top of the body. `render_template` strips both; a
-     third `[inference]` block or a header missing its `---` terminator
-     is a fail. Mechanically enforced corpus-wide by
+   - **T4**: a `.j2` template carries at most one `[inference]` block — the
+     header, holding only `contract.input`/`contract.output`, terminated by
+     a lone `---` line. `render_template` reads `contract.input`
+     (`validate_contract_inputs`) and strips the header; nothing reads any
+     other key. A `visibility:` key or a body `[inference]` parameter
+     stanza (temperature/work_effort/verbosity/thinking_budget) is
+     performative and a fail (removed corpus-wide 2026-09-28). A header
+     missing its `---` terminator is a fail. Mechanically enforced by
      `corpus_templates_strip_without_leaking_metadata`
      (crates/agent/src/tools/render_template_tool.rs).
    - **T5**: If a template is referenced for rendering via `render_template`,

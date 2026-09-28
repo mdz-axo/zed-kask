@@ -69,8 +69,8 @@ For each reasoning phase in the Instructions section, generate one template:
   template: a long goal is one long line, never consecutive `{% raw %}{# ... #}{% endraw %}`
   blocks (wrapped goals parse partially under logic-load-goal and the
   prescreen).
-- An `[inference]` contract header (input/output typed fields, `visibility`),
-  terminated by a lone `---` line.
+- An `[inference]` contract header (typed `input`/`output` fields only — no
+  `visibility`, no body parameter stanza), terminated by a lone `---` line.
 - Jinja2 variables matching the contract inputs, and only the contract inputs.
 - An expected JSON output shape.
 

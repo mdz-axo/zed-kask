@@ -24,6 +24,16 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 - Designing a module from scratch — the gates interrogate an existing artifact; for greenfield interface design, use the design step with the ≤7 target as input.
 - A module already known shallow — skip the assessment and deepen directly.
 
+## D/P labelling
+
+The deletion-test verdict (delete / merge / keep) and the reduction
+recommendations are P — judgment, critiqued by the human in advisory mode and
+by the re-run gates. The interface inventory, the depth score (computed with
+`lisp_eval` over the counted public surface — the same denominator as the
+assess template), and the convergence check (the last three recorded
+public-interface counts equal) are D. A depth score the model states but
+does not compute from the counted items is not a score.
+
 ## Instructions
 
 ### 1. Assess Module Depth

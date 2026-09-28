@@ -29,7 +29,7 @@ Given peer-level skills' outputs on the same task, merge them into one report. T
 4. **Check.** Compare the produced report with the original pairs. Call `lisp_eval` on the ordered skill names and extracted report summary names: `(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (same-names skill_names summary_names) (= (length unsupported_names) 0)))`. Inspect every substantive finding against its source output and mark unsupported findings as gaps; names and counts cannot prove semantic grounding. Check that error entries remain identified and do not contribute findings.
 5. **Act.** If every check passes, return the report after this one pass. If a merge-only gap remains, revise the report once using the named gap and recheck against the *same* inputs. If it still fails, stop with the report marked incomplete and the remaining gaps; never invent input data or re-run peer skills to make the merge look complete.
 
-### Step types and reference model
+### Step types and reference model (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
