@@ -432,7 +432,10 @@ struct DirectEmbeddingProvider {
 /// (that would invert the D8 seam). Not a full mirror: RunPod (endpoint
 /// discovery — no static OpenAI-compatible URL) and KiloCode (chat-only —
 /// the gateway has no embeddings endpoint) are deliberately absent.
-/// Add a row only for providers that serve `/v1/embeddings`.
+/// Add a row only for providers that serve `/v1/embeddings`; the bridge
+/// table marks the same subset with its `serves_embeddings` flag, which
+/// gates `resolve_embedding_credentials` the same way this table gates
+/// the child-local fallback.
 static DIRECT_EMBEDDING_PROVIDERS: &[DirectEmbeddingProvider] = &[
     DirectEmbeddingProvider {
         id: "DeepInfra",

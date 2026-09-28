@@ -5,7 +5,7 @@
 //! module only maintains the `INFERENCE_PROVIDERS` descriptor table used by:
 //! - `resolve_embedding_credentials` (maps a provider-prefixed model string
 //!   to `(api_url, api_key)` for MCP servers that can't access zed's
-//!   `LanguageModelRegistry`)
+//!   `LanguageModelRegistry`; only `serves_embeddings` providers resolve)
 //! - `credential_urls_for_mcp` (builds keychain URLs so MCP server child
 //!   processes receive API keys via `build_mcp_server_env`)
 //!
@@ -48,6 +48,16 @@ pub struct InferenceProviderDescriptor {
     pub credential_key: &'static str,
     /// Dashboard URL where the user can obtain an API key.
     pub dashboard_url: &'static str,
+    /// Whether the provider serves an OpenAI-compatible `/embeddings`
+    /// endpoint at `api_url` — the gate for `resolve_embedding_credentials`.
+    /// Chat-only gateways (KiloCode) and endpoint-discovery providers (RunPod
+    /// — its base URL is the account API, not an OpenAI-compatible root;
+    /// each serverless endpoint has its own
+    /// `https://api.runpod.io/v2/{endpoint_id}/openai/v1`) must not resolve
+    /// an embedding port: the port POSTs to `{api_url}/embeddings`, a route
+    /// those providers do not serve, so resolving it would let the editor
+    /// announce semantic recall as enabled and then fail on every call.
+    pub serves_embeddings: bool,
 }
 
 /// The inference providers used for credential injection and embedding
@@ -63,6 +73,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "OPENROUTER_API_KEY",
         credential_key: "openrouter",
         dashboard_url: "https://openrouter.ai/",
+        serves_embeddings: true,
     },
     // RunPod has a dedicated `LanguageModelProvider` (D29), not an
     // `openai_compatible` entry. Its key lives at the provider `api_url`
@@ -78,6 +89,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "RUNPOD_API_KEY",
         credential_key: "runpod",
         dashboard_url: "https://www.runpod.io/",
+        serves_embeddings: false,
     },
     // Ollama is a local LLM/embedding service (default port 11434). It's
     // OpenAI-compatible at `/v1` and requires no API key — an empty `env_var`
@@ -91,13 +103,12 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "",
         credential_key: "ollama",
         dashboard_url: "https://ollama.com/",
+        serves_embeddings: true,
     },
     // DeepInfra is a cloud inference platform serving Qwen embedding models
-    // via an OpenAI-compatible `/v1/embeddings` endpoint. The default
-    // embedding model routes through this provider.
-    // Operators must set `DEEPINFRA_API_KEY` (via Settings → AI → LLM
-    // Providers, which writes the keychain slot at the provider `api_url`, or
-    // via the env var).
+    // via an OpenAI-compatible `/v1/embeddings` endpoint. Operators must set
+    // `DEEPINFRA_API_KEY` (via Settings → AI → LLM Providers, which writes the
+    // keychain slot at the provider `api_url`, or via the env var).
     InferenceProviderDescriptor {
         id: "DeepInfra",
         name: "DeepInfra",
@@ -105,6 +116,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "DEEPINFRA_API_KEY",
         credential_key: "deepinfra",
         dashboard_url: "https://deepinfra.com/",
+        serves_embeddings: true,
     },
     // Kilo Code (kilo.ai) is a cloud LLM gateway serving frontier models
     // through an OpenAI-compatible chat-completions API. Registered as an
@@ -113,7 +125,8 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // reads. No MCP server consumes `KILOCODE_API_KEY`, so this provider's
     // credential is not collected for child-process injection or restart.
     // Chat-only: the gateway has no embeddings endpoint, so it has no
-    // `DIRECT_EMBEDDING_PROVIDERS` row in hkask-inference.
+    // `DIRECT_EMBEDDING_PROVIDERS` row in hkask-inference and does not
+    // resolve an embedding port here (`serves_embeddings: false`).
     InferenceProviderDescriptor {
         id: "KiloCode",
         name: "KiloCode",
@@ -121,6 +134,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "KILOCODE_API_KEY",
         credential_key: "kilocode",
         dashboard_url: "https://kilo.ai/",
+        serves_embeddings: false,
     },
 ];
 
@@ -405,6 +419,8 @@ pub struct ResolvedEmbeddingCredentials {
 /// Returns `None` (after logging a warn) if:
 /// - The model string has no recognized provider prefix.
 /// - The provider is not in `INFERENCE_PROVIDERS`.
+/// - The provider does not serve embeddings (`serves_embeddings: false` —
+///   chat-only gateways and endpoint-discovery providers).
 /// - The keychain has no key at the provider's `api_url`.
 ///
 /// Providers with an empty `env_var` (e.g. ollama) are local services that
@@ -416,10 +432,12 @@ pub async fn resolve_embedding_credentials(
 ) -> Option<ResolvedEmbeddingCredentials> {
     let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
         tracing::warn!(
-            "Embedding model '{}' has no recognized provider prefix \
-             (expected e.g. 'OpenRouter/...'). \
-             Set kask.corpus.embedding_model to a provider-prefixed name, \
-             or set HKASK_EMBEDDING_MODEL.",
+            "Embedding model '{}' does not name an embedding-capable provider \
+             (no recognized prefix, or a recognized provider that serves no \
+             OpenAI-compatible /embeddings endpoint — KiloCode is chat-only and \
+             RunPod resolves per-endpoint). Set kask.corpus.embedding_model to \
+             an embedding-capable provider (DeepInfra, OpenRouter, ollama), or \
+             set HKASK_EMBEDDING_MODEL.",
             embedding_model
         );
         None
@@ -483,6 +501,12 @@ pub async fn resolve_embedding_credentials(
 
 /// Find the `InferenceProviderDescriptor` for an embedding model string by
 /// matching its provider prefix (case-insensitive) against `INFERENCE_PROVIDERS`.
+/// Only `serves_embeddings` providers resolve: a recognized prefix naming a
+/// chat-only gateway (KiloCode) or an endpoint-discovery provider (RunPod) is
+/// rejected here — before credential resolution — so the editor cannot
+/// announce semantic recall as enabled for a route with no embeddings
+/// endpoint. The direct fallback table in hkask-inference
+/// (`DIRECT_EMBEDDING_PROVIDERS`) encodes the same subset.
 fn embedding_provider_descriptor(
     embedding_model: &str,
 ) -> Option<&'static InferenceProviderDescriptor> {
@@ -492,7 +516,7 @@ fn embedding_provider_descriptor(
     }
     INFERENCE_PROVIDERS
         .iter()
-        .find(|provider| provider.id.eq_ignore_ascii_case(prefix))
+        .find(|provider| provider.id.eq_ignore_ascii_case(prefix) && provider.serves_embeddings)
 }
 
 #[cfg(test)]
@@ -597,5 +621,63 @@ mod tests {
             urls.iter()
                 .any(|(var, url)| var == "HKASK_EXA_API_KEY" && url == "kask://credentials/exa")
         );
+    }
+
+    /// D69 embedding eligibility: only providers that serve an OpenAI-compatible
+    /// `/embeddings` endpoint resolve an embedding port. Chat-only KiloCode and
+    /// endpoint-discovery RunPod are recognized `INFERENCE_PROVIDERS` entries
+    /// (native chat pre-seeding, keychain `api_url` routing, RunPod OCR
+    /// credential injection all keep working through the descriptor) but must
+    /// NOT resolve embeddings: `LanguageModelEmbeddingPort` POSTs to
+    /// `{api_url}/embeddings`, a route neither provider serves, so resolving
+    /// one would let the editor log "semantic recall enabled" at startup and
+    /// then fail on every call. The registry walk pins the flag/resolver
+    /// consistency for every provider; the named controls pin the current
+    /// capability assignment (the flag flip is the behavior under test).
+    #[test]
+    fn embedding_eligibility_rejects_providers_without_an_embeddings_endpoint() {
+        // Registry walk: a provider resolves an embedding descriptor exactly
+        // when its `serves_embeddings` flag is set — the flag and the resolver
+        // cannot drift apart for any current or future entry.
+        for provider in INFERENCE_PROVIDERS {
+            let model = format!("{}/some-model", provider.id);
+            let resolved = super::embedding_provider_descriptor(&model);
+            assert_eq!(
+                resolved.is_some(),
+                provider.serves_embeddings,
+                "provider '{}' (serves_embeddings={}) must resolve an embedding \
+                 descriptor exactly when it serves embeddings",
+                provider.id,
+                provider.serves_embeddings
+            );
+        }
+
+        // Positive controls — the embedding-capable routes resolve
+        // (case-insensitive prefix, matching `resolve_model_names`).
+        for model in [
+            "DeepInfra/BAAI/bge-m3",
+            "OpenRouter/qwen/qwen3-embedding",
+            "ollama/qwen3-embedding:0.6b",
+            "deepinfra/BAAI/bge-m3",
+        ] {
+            assert!(
+                super::embedding_provider_descriptor(model).is_some(),
+                "'{model}' must resolve an embedding-capable provider"
+            );
+        }
+
+        // Negative controls — recognized providers with no embeddings endpoint
+        // are rejected before credential resolution, so the startup
+        // announcement cannot fire for a route that would fail on every call.
+        for model in [
+            "KiloCode/kilo-auto/efficient",
+            "RunPod/kask-ocr",
+            "kilocode/anthropic/claude-sonnet-4.5",
+        ] {
+            assert!(
+                super::embedding_provider_descriptor(model).is_none(),
+                "'{model}' must not resolve an embedding port (no /embeddings endpoint)"
+            );
+        }
     }
 }
