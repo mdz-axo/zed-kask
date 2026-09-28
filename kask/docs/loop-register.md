@@ -2,8 +2,8 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.21.0"
-status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
+version: "0.22.0"
+status: "Phase 1–4 complete: all 23 rows closed or deferred-with-reason — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -412,15 +412,8 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   deleted. A synthetic jq check filtered a QA skip while keeping candidate and
   error rows; an offline public-tool fixture exercised grounding and dry-run
   ingestion (201/201 corpus library tests), without a training output or paid
-  generation. No source-complete corpus run was executed.
-- **Partial count calibration, not Brier:** of L3, L4, L8 and L14's prior
-  adjudications plus the offline-tested L15, each recorded zero defects;
-  their five Phase 0 predictions have mean absolute count error **1.4
-  defects/loop** and **0.8 impedances/loop** (via `lisp_eval`). L2/L5/L6/L7/
-  L9–L13/L16–L23 are not final-count scored while their findings remain open.
-  The Phase 0 `confidence` values are confidence in count predictions, not
-  stated event probabilities, so converting them to a Brier score would
-  fabricate a forecast contract. Re-score after the rows close.
+  generation. No source-complete corpus run was executed. The 2026-09-27 Phase 4 closeout re-ran the full gates on the current tree: both `./script/clippy` and `cargo check -p zed` FAIL on `hkask-kanban-widget` (unexpected closing delimiter, `view.rs:2011` — an unclosed block from the concurrent widget-rework stream's landed subtraction state, whose worktree is clean, i.e. committed). This is not an audit change — the audit's own production changes carry their landing receipts above; the current-tree full-green claim is blocked by that external breakage and flagged to the operator as a release blocker per the .rules concurrent-edit trap.
+- **Final count calibration (all rows closed, via `lisp_eval`):** across all 23 rows the Phase 0 predictions have mean absolute count error **1.22 defects/loop and 1.22 impedances/loop** (both error sums 28/23). Predicted totals: 34 defects / 30 impedances; confirmed actuals: 6 defect-class findings (3 fixed — L2, L5, L9; 3 deferred for operator rulings — L10, L12, L18) and 2 confirmed impedances (L3, L5, both deferred with reasons); 6 further inferred findings stay deferred with falsifiers (L7 ×2, L11, L13, L17, L23). The predictions systematically overestimated — ~5× on defects, ~15× on impedances — quantifying the incident-hardened-surface pattern noted row by row. The Phase 0 `confidence` values are confidence in count predictions, not stated event probabilities, so converting them to a Brier score would fabricate a forecast contract; the count-error MAE is the honest calibration record. L5's Phase 0 prior (2/2/0.50) was recovered from the earliest register (`3f7175bb26`) for this scoring.
 - **Open gate owners:** technical program manager owns repro/validation and
   line-negative proposals; the operator owns experience-changing choices
   (whether to permit L2's net-positive bounded retry despite the deletion
@@ -467,6 +460,21 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   the concurrent in-flight widget subtraction — the row's citations name
   lines being rewritten, so the scoped graph must be re-mapped against the
   landed widget state first. Doc-only pass; no production lines changed.
+- 2026-09-27 — v0.22.0 Phase 4 finalization: the aggregate prediction
+  scoring computed across all 23 closed rows (lisp_eval: MAE 1.22
+  defects/loop and 1.22 impedances/loop, both error sums 28/23; 34
+  predicted defects vs 6 confirmed, 30 predicted impedances vs 2
+  confirmed — the systematic-overestimate pattern quantified); the final
+  register-to-tree coverage walk passed (19 core crates, 12 MCP
+  servers, 7 widgets, 4 kask panels — inventory unchanged, no new
+  crate since the register build, no new loop family); and the fresh
+  full gates were run and fail on the current tree — hkask-kanban-widget
+  does not compile (unexpected closing delimiter, view.rs:2011), a
+  landed state owned by the concurrent widget-rework stream, flagged to
+  the operator as a release blocker. The audit's own production changes
+  remain gated green at their landings (receipts in the ledger). The
+  audit's change set is complete: −30 Rust source lines, 212 test
+  lines, all rows closed or deferred-with-reason.
 - 2026-09-27 — v0.21.0 Batch D closed: L9–L13 and L15, L17–L23 all
   carried complete Phase 1 graphs and adjudicated findings from prior
   passes; this pass re-read every row in its current form (the L7
