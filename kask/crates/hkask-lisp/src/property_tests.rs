@@ -13,6 +13,10 @@
 //!   (i64 bounds, 2^53, multibyte strings) — the crash/lie classes.
 //! A shrunk counterexample is a finding to report, never a signal to
 //! weaken a property.
+//!
+//! NOTE: prop_assert!/prop_assert_eq! messages expand through concat!, so
+//! inline format captures ("{var}") do not compile there — pass positional
+//! args ("{}", var) in macro messages.
 
 use super::*;
 use proptest::prelude::*;
@@ -93,13 +97,18 @@ proptest! {
         ] {
             let form = format!("({op} {a} {b})");
             match (expected, eval_sandboxed(&form, &serde_json::json!({}))) {
-                (Some(want), Ok(got)) => prop_assert_eq!(got, serde_json::json!(want), "{form}"),
+                (Some(want), Ok(got)) => prop_assert_eq!(got, serde_json::json!(want), "{}", form),
                 (None, Err(LispError::Runtime(msg))) => prop_assert!(
                     msg.contains(&format!("integer overflow in {op}")),
-                    "{form}: {msg}"
+                    "{}: {}",
+                    form,
+                    msg
                 ),
-                (Some(_), Err(err)) => prop_assert!(false, "{form} should evaluate, got {err}"),
-                (None, Ok(got)) => prop_assert!(false, "{form} should overflow, got {got}"),
+                (None, Err(other)) => {
+                    prop_assert!(false, "{} should be a typed overflow, got {}", form, other)
+                }
+                (Some(_), Err(err)) => prop_assert!(false, "{} should evaluate, got {}", form, err),
+                (None, Ok(got)) => prop_assert!(false, "{} should overflow, got {}", form, got),
             }
         }
         let div = format!("(/ {a} {b})");
@@ -109,11 +118,12 @@ proptest! {
                     eval_sandboxed(&div, &serde_json::json!({})),
                     Err(LispError::Runtime(ref msg)) if msg.contains("division by zero")
                 ),
-                "{div} should be a typed division-by-zero error"
+                "{} should be a typed division-by-zero error",
+                div
             );
         } else {
             let got = eval_sandboxed(&div, &serde_json::json!({})).expect("division evaluates");
-            prop_assert_eq!(got, serde_json::json!((a as f64) / (b as f64)), "{div}");
+            prop_assert_eq!(got, serde_json::json!((a as f64) / (b as f64)), "{}", div);
         }
     }
 
@@ -127,10 +137,13 @@ proptest! {
             (format!("(abs {a})"), a.checked_abs()),
         ] {
             match (expected, eval_sandboxed(&form, &serde_json::json!({}))) {
-                (Some(want), Ok(got)) => prop_assert_eq!(got, serde_json::json!(want), "{form}"),
+                (Some(want), Ok(got)) => prop_assert_eq!(got, serde_json::json!(want), "{}", form),
                 (None, Err(LispError::Runtime(_))) => {}
-                (Some(_), Err(err)) => prop_assert!(false, "{form} should evaluate, got {err}"),
-                (None, Ok(got)) => prop_assert!(false, "{form} should overflow, got {got}"),
+                (None, Err(other)) => {
+                    prop_assert!(false, "{} should be a typed overflow, got {}", form, other)
+                }
+                (Some(_), Err(err)) => prop_assert!(false, "{} should evaluate, got {}", form, err),
+                (None, Ok(got)) => prop_assert!(false, "{} should overflow, got {}", form, got),
             }
         }
     }
@@ -153,14 +166,14 @@ proptest! {
             (format!("(>= {a} {b})"), a >= b),
         ] {
             let got = eval_sandboxed(&form, &env).expect("comparison evaluates");
-            prop_assert_eq!(got, serde_json::json!(want), "{form}");
+            prop_assert_eq!(got, serde_json::json!(want), "{}", form);
         }
         for (form, want) in [
             (format!("(max {a} {b})"), a.max(b)),
             (format!("(min {a} {b})"), a.min(b)),
         ] {
             let got = eval_sandboxed(&form, &env).expect("extremum evaluates");
-            prop_assert_eq!(got, serde_json::json!(want), "{form}");
+            prop_assert_eq!(got, serde_json::json!(want), "{}", form);
         }
     }
 
@@ -184,21 +197,23 @@ proptest! {
             ),
         ] {
             let got = eval_sandboxed(&form, &env).expect("string op evaluates");
-            prop_assert_eq!(got, want, "{form}");
+            prop_assert_eq!(got, want, "{}", form);
         }
         let contains = format!("(string-contains {ls} {lt})");
         match eval_sandboxed(&contains, &env) {
-            Ok(got) => prop_assert_eq!(got, serde_json::json!(t.contains(&s)), "{contains}"),
+            Ok(got) => prop_assert_eq!(got, serde_json::json!(t.contains(&s)), "{}", contains),
             Err(LispError::Runtime(msg)) if s.is_empty() => {
-                prop_assert!(msg.contains("non-empty"), "{contains}: {msg}")
+                prop_assert!(msg.contains("non-empty"), "{}: {}", contains, msg)
             }
             Err(LispError::Runtime(msg)) => {
                 prop_assert!(
                     s.len() > t.len() && msg.contains("reversed"),
-                    "{contains}: unexpected error {msg}"
+                    "{}: unexpected error {}",
+                    contains,
+                    msg
                 );
             }
-            Err(err) => prop_assert!(false, "{contains}: unexpected error {err}"),
+            Err(err) => prop_assert!(false, "{}: unexpected error {}", contains, err),
         }
     }
 }
@@ -326,7 +341,7 @@ fn every_registry_builtin_has_a_passing_specimen() {
         (
             "assoc",
             "(assoc \"b\" data)".into(),
-            data_env.clone(),
+            data_env,
             serde_json::json!("x"),
         ),
         (
@@ -386,7 +401,7 @@ fn every_registry_builtin_has_a_passing_specimen() {
         (
             "member",
             "(member 2 (list 1 2))".into(),
-            empty.clone(),
+            empty,
             serde_json::json!(true),
         ),
     ];
