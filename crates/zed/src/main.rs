@@ -1421,11 +1421,14 @@ fn main() {
         // spawn authority, 2026-08-29): the governed McpRuntime owns every
         // kask server process and the agent's tool surface routes through
         // `agent::set_kask_tool_source`. This call defensively unregisters
-        // stale descriptors (e.g. registered by an older build) and removes
-        // raw `context_servers` settings entries for kask IDs — a raw entry
-        // would spawn a keyless instance through the generic store path.
-        // Reactive: a SettingsStore observer re-runs it on every settings
-        // change.
+        // any descriptor squatting a kask built-in ID — the extension proxy
+        // (context_server_store/extension.rs) registers descriptors under
+        // extension-supplied, unnamespaced IDs in this same process-global
+        // registry, so an extension can occupy a kask ID and open a second
+        // spawn path for it — and removes raw `context_servers` settings
+        // entries for kask IDs — a raw entry would spawn a keyless instance
+        // through the generic store path. Reactive: a SettingsStore
+        // observer re-runs it on every settings change.
         sync_kask_mcp_servers(cx);
         cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
 
@@ -3377,11 +3380,16 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     // that path spawned per-project instances whose env came from settings
     // entries — the keyless-server defect. The governed McpRuntime owns
     // every kask server process; the agent's tools surface via
-    // `agent::set_kask_tool_source`. This function now only (a)
-    // defensively unregisters any stale kask descriptors (e.g. registered by
-    // an older build) and (b) removes raw `context_servers` entries for kask
-    // IDs — the namespace guard: a raw entry would still spawn a keyless
-    // instance through the generic store path.
+    // `agent::set_kask_tool_source`. This function now only (a) defensively
+    // unregisters any descriptor squatting a kask built-in ID — the
+    // extension proxy (context_server_store/extension.rs), the one
+    // non-test register site besides kask itself, registers descriptors
+    // under extension-supplied, unnamespaced IDs in this process-global
+    // registry, so a kask ID can be occupied from outside (an "older
+    // build" cannot reach an in-process registry; the former rationale
+    // was impossible) — and (b) removes raw `context_servers` entries for
+    // kask IDs — the namespace guard: a raw entry would still spawn a
+    // keyless instance through the generic store path.
     let registry =
         project::context_server_store::registry::ContextServerDescriptorRegistry::default_global(
             cx,
@@ -3391,7 +3399,7 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
             if registry.context_server_descriptor(server.id).is_some() {
                 registry.unregister_context_server_descriptor_by_id(server.id, cx);
                 log::info!(
-                    "Unregistered stale kask MCP server '{}' from zed context servers",
+                    "Unregistered a descriptor squatting kask MCP server ID '{}' from zed context servers",
                     server.id
                 );
                 cx.notify();
