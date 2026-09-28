@@ -8750,14 +8750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-conversation-injector"
-version = "0.40.0"
-dependencies = [
- "gpui",
- "tracing",
-]
-
-[[package]]
 name = "hkask-email"
 version = "0.40.0"
 dependencies = [
@@ -20259,7 +20251,6 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
- "hkask-conversation-injector",
  "hkask-mcp-kata-kanban",
  "hkask-mcp-swarm",
  "hkask-steer",

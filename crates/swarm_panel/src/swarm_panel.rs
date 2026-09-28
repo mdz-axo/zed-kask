@@ -370,17 +370,6 @@ enum CreateTarget {
     Local,
 }
 
-/// A composition prompt waiting to be injected into the Steer conversation
-/// after `create_swarm` succeeds and the Steer conversation is constructed.
-/// Deferred to `render` because the injector needs `&mut Window`, which the
-/// spawn closure does not have.
-struct PendingCompositionPrompt {
-    swarm_id: String,
-    mission: String,
-    agents: Vec<String>,
-    is_local: bool,
-}
-
 /// A loaded App manifest waiting to be applied to the app form on the next
 /// `render` (which has `&mut Window` for `Editor::set_text`). Set by
 /// `load_app_into_form`'s spawn; consumed by `apply_pending_app_load`.
@@ -597,12 +586,6 @@ pub struct SwarmPanel {
     /// back to Browse. Mirrors the `pending_author_load` deferred-mutation
     /// pattern — the spawn closure cannot hold a `&mut Window` reference.
     pending_author_reset: bool,
-    /// A composition prompt waiting to be injected into the Steer conversation
-    /// on the next `render` (after `ensure_steer_conversation` constructs it).
-    /// Set by `create_swarm`'s spawn on a successful create; consumed by
-    /// `render`. Carries the `swarm_id`, `mission`, `agents`, and `is_local`
-    /// flag so the prompt can be built with the correct `mode` context.
-    pending_composition_prompt: Option<PendingCompositionPrompt>,
     /// Composition form state.
     compose: ComposeForm,
     /// App authoring/detail form state.
@@ -807,7 +790,6 @@ impl SwarmPanel {
                 author,
                 pending_author_load: None,
                 pending_author_reset: false,
-                pending_composition_prompt: None,
                 compose,
                 app_form,
                 pending_app_load: None,
@@ -934,79 +916,6 @@ impl SwarmPanel {
         self.steer.invalidate();
         self.ensure_steer_conversation(window, cx);
         cx.notify();
-    }
-
-    /// Launch the pending swarm-intelligence plan by injecting a message into
-    /// the Steer conversation that tells the curator to execute the plan via
-    /// `swarm_execute_plan_local` and feed the results back. Uses the D21
-    /// `ConversationInjector` seam — the same mechanism viz widgets use to
-    /// compose back into the thread. The operator reviews the injected message
-    /// and submits via the existing Send button so the turn-loop's
-    /// checkpoints/telemetry are preserved.
-    fn launch_plan_in_steer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.selected_workspace.clone().unwrap_or_default();
-        let message = format!(
-            "Execute the plan above using `swarm_execute_plan_local` with the \
-             swarm_id `{workspace}`. After the results return, feed the \
-             `delegate_results` array back into the `swarm-intelligence` skill \
-             so C5 (fault attribution) and C6 (reconfigure) can close the loop."
-        );
-        // The D21 injector is a process-global that the active ConversationView
-        // publishes. If the Steer conversation is active, this injects the
-        // message into its editor; the operator reviews and sends.
-        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
-            let task = injector.inject(message, window, cx);
-            cx.spawn(async move |_this, _cx| {
-                if let Err(error) = task.await {
-                    log::warn!("swarm-panel: launch-plan inject failed: {error}");
-                }
-            })
-            .detach();
-        } else {
-            log::warn!("swarm-panel: no active conversation injector — is Steer mode active?");
-        }
-    }
-
-    /// Inject the composition prompt into the Steer conversation after a
-    /// successful `create_swarm`. The prompt carries the `mode` and `swarm_id`
-    /// as leading `key=value` pairs (parsed by the `SkillTool` into the
-    /// cascade context) and the mission + seeded agents as the task text so
-    /// SENSE can derive `required_transforms` and assess the initial roster.
-    /// The operator reviews and sends — the turn-loop's checkpoints/telemetry
-    /// are preserved (same D21 injector mechanism as `launch_plan_in_steer`).
-    fn inject_composition_prompt(
-        &mut self,
-        swarm_id: &str,
-        mission: &str,
-        agents: &[String],
-        is_local: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mode = if is_local { "local" } else { "abw" };
-        let agent_label = if is_local {
-            "Seeded agents"
-        } else {
-            "Hired agents"
-        };
-        let agents_str = agents.join(", ");
-        let message = format!(
-            "/swarm-intelligence mode={mode} swarm_id={swarm_id} compose my swarm. \
-             Mission: {mission}. {agent_label}: {agents_str}."
-        );
-        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
-            let task = injector.inject(message, window, cx);
-            cx.spawn(async move |_this, _cx| {
-                if let Err(error) = task.await {
-                    log::warn!("swarm-panel: composition-prompt inject failed: {error}");
-                }
-            })
-            .detach();
-        } else {
-            log::warn!(
-                "swarm-panel: no active conversation injector — composition prompt not injected"
-            );
-        }
     }
 
     /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents),
@@ -1587,21 +1496,6 @@ impl Render for SwarmPanel {
         if matches!(self.mode, PanelMode::Steer) {
             self.ensure_steer_conversation(window, cx);
         }
-        // Consume a pending composition prompt (set by `create_swarm`'s spawn
-        // on a successful create). Deferred to `render` because the D21
-        // injector needs `&mut Window`, and the Steer conversation must exist
-        // before injection. The prompt is injected into the conversation's
-        // editor; the operator reviews and sends.
-        if let Some(prompt) = self.pending_composition_prompt.take() {
-            self.inject_composition_prompt(
-                &prompt.swarm_id,
-                &prompt.mission,
-                &prompt.agents,
-                prompt.is_local,
-                window,
-                cx,
-            );
-        }
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1947,32 +1841,9 @@ impl Render for SwarmPanel {
                             // it's somehow absent (e.g. the panel was
                             // deserialized into Steer mode), render a
                             // placeholder — the operator can re-click Steer.
-                            let has_workspace = self.selected_workspace.is_some();
                             let member_turns = self.render_member_turns(cx);
-                            let launch_button = h_flex()
-                                .w_full()
-                                .gap_2()
-                                // py only — the content column already carries
-                                // the panel's px_4 inset, so px_4 here doubled it.
-                                .py_1()
-                                .child(
-                                    Button::new("swarm-launch-plan", "Launch Plan")
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::Small)
-                                        .disabled(!has_workspace)
-                                        .tooltip(Tooltip::text(
-                                            "Execute the pending swarm-intelligence plan via \
-                                             swarm_execute_plan_local and feed the results back. \
-                                             The curator will run the plan, stamp task-success \
-                                             verdicts, and re-invoke with delegate_results."
-                                        ))
-                                        .on_click(cx.listener(|this, _event, window, cx| {
-                                            this.launch_plan_in_steer(window, cx);
-                                        })),
-                                );
                             match self.steer.conversation() {
                                 Some(view) => this
-                                    .child(launch_button)
                                     .child(member_turns)
                                     // The Open Thread affordance sits above the
                                     // conversation so the operator can resume a
@@ -1990,7 +1861,6 @@ impl Render for SwarmPanel {
                                     .child(view.clone())
                                     .into_any_element(),
                                 None => this
-                                    .child(launch_button)
                                     .child(member_turns)
                                     .child(
                                         h_flex()

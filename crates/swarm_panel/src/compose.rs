@@ -19,7 +19,6 @@ use ui::{
 use crate::CreateTarget;
 use crate::MIN_AGENTS_TO_LAUNCH;
 use crate::PanelMode;
-use crate::PendingCompositionPrompt;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
 use crate::parse::{AgentSource, extract_agent_mentions, extract_wallet_balance};
@@ -638,20 +637,6 @@ impl SwarmPanel {
                                 // next construction bakes in the new swarm.
                                 this.steer.invalidate();
                                 this.set_mode(PanelMode::Steer, window, cx);
-                                // Queue the composition prompt for injection
-                                // after `render` constructs the Steer
-                                // conversation. The prompt carries the mode,
-                                // swarm_id, mission, and seeded agents so
-                                // swarm-intelligence SENSE can derive
-                                // required_transforms and assess the initial
-                                // roster.
-                                this.pending_composition_prompt =
-                                    Some(PendingCompositionPrompt {
-                                        swarm_id: id,
-                                        mission: mission.trim().to_string(),
-                                        agents: agents.clone(),
-                                        is_local: true,
-                                    });
                             }
                         }
                         Err(err) => {
@@ -804,15 +789,6 @@ impl SwarmPanel {
                             this.select_swarm_for_steer(id.clone(), false, cx);
                             this.steer.invalidate();
                             this.set_mode(PanelMode::Steer, window, cx);
-                            // Queue the composition prompt for injection
-                            // (same as the local path).
-                            this.pending_composition_prompt =
-                                Some(PendingCompositionPrompt {
-                                    swarm_id: id,
-                                    mission: mission.trim().to_string(),
-                                    agents: agents.clone(),
-                                    is_local: false,
-                                });
                         }
                     }
                     Err(err) => {
