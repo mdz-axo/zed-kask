@@ -53,7 +53,7 @@ carrier of the loop itself.
 | Surface | Count | Notes |
 |---------|-------|-------|
 | `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **56** (**286** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**275** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -176,5 +176,5 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `company-research/thesis-judge`, removed 2026-09-27 with the deep pipeline's
 > gate machinery). Folded 2026-09-26: `adapter-lifecycle` into
 > `self-improvement` (Fine-tuning run), `calibration-stewardship` into
-> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 57
-> template namespaces holding 279 `.j2` and 2 `.jinja` files.
+> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 56
+> template namespaces holding 275 `.j2` and 2 `.jinja` files.

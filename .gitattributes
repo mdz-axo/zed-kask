@@ -1,5 +1,9 @@
 # Prevent GitHub from displaying comments within JSON files as errors.
 *.json linguist-language=JSON-with-Comments
 
+# zed-kask (D54): vendored full-ontology sources stay tracked and sha256-pinned,
+# but are excluded from language stats and shown as binary in diffs.
+kask/crates/hkask-bridge-ontology/sources/** linguist-vendored -diff
+
 # Ensure the WSL script always has LF line endings, even on Windows
 crates/zed/resources/windows/zed.sh text eol=lf
