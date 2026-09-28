@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.2.0"
+version: "0.3.0"
 status: "Phase 0 — operator approval pending"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -63,21 +63,27 @@ spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L16 (skill outcomes), algedonic board (`kask_bridge/src/algedonic_board.rs`), `reg_query`/`curator_algedonic_log` tools, energy budgets/call caps governing L1 tool calls
 - **Prediction:** 2 / 2 / 0.55
 
-### L3 — MCP client runtime: spawn / health-supervise / request cycle
-- **Crate/path:** `kask/crates/hkask-mcp/src/runtime.rs` (2,676 ln)
-- **Entry point:** `runtime.rs:1041` `spawn_health_supervisor` (spawned at `:1003-1006` on server start); reconnect-once in `call_tool_inner` (header contract `:20-21`, min interval `:59-68`); circuit breaker config `:233-234`
-- **Participants:** zed `context_server` host (`kask_bridge/src/mcp_servers.rs`, D45/D51), `BUILT_IN_MCP_SERVERS` (`crates/zed/src/main.rs:606`), 12 child servers under `kask/mcp-servers/`
-- **Trigger:** agent tool invocation (on-demand spawn/reconnect); periodic health check; circuit breaker stop
-- **Hands off to:** L4 (server side of each call), L2 (health signals via `context_server_health_bridge`)
-- **Prediction:** 2 / 1 / 0.50
+### L3 — MCP client runtime: spawn / health-supervise / request cycle — AUDITED & CLOSED 2026-09-27
+- **Crate/path:** `kask/crates/hkask-mcp/src/runtime.rs` (2,676 ln; 22 in-file tests + `tests/reconnect_integration.rs`)
+- **Entry point:** `spawn_health_supervisor` `runtime.rs:1041`; on-demand cycle `call_tool_inner` `:1615` → `dispatch` `:1674`; reconnect `try_reconnect` `:1268` → `restart_on_runtime` `:1317`; spawn `start_server_with_env` `:615` (liveness-based idempotency `:609-613`) → `start_recorded` `:643`
+- **Participants:** `McpRuntime` state (`:462-491`: connections, cancellation tokens, launch specs, reconnect cooldown, health-failure counters); generation-stamped keeper task (reap-on-death `:860-881`, generation guard `:429-430`); zed-side registry `kask_bridge/src/mcp_servers.rs` (`BuiltinMcpServer`, `build_mcp_server_env` `:681` — the L14 boundary); `BUILT_IN_MCP_SERVERS` (`crates/zed/src/main.rs:606`); 12 child servers
+- **Trigger:** agent tool invocation via `ToolPort::invoke` (`:1477`); periodic health tick (`:1050-1057`); explicit start/stop (`:615`/`:1403`)
+- **Functional graph (Phase 1, IS-cited per node):** invoke (`:1477`) → governance charge + runaway-loop breaker (`:1498-1536`, the one pre-dispatch refusal; auto-registration instead of denial `:1509-1517`) → `call_tool_inner` (`:1615`): live-peer check → `try_reconnect` (cooldown check + stamp under one write lock, `:1273-1288`) → `dispatch` (`:1674`): three-way failure classification — `NotDelivered` (provably not run; reconnect and retry once `:1641-1657`), `Interrupted` (effect unknown, never auto-retried `:1708-1722`; `DispatchError` `:1779-1805`), `Failed` (`:1723`); call timeout inside `TokioContext` (`:1698-1705`); post-call span emit (`:1542-1554`), per-server reliability `record_outcome` + variety `record_variety` (`:1574-1585`). Parallel supervision cycle (`:1041-1209`): interval tick → classify Healthy/TransportClosed/Missing (`:1063-1070`) → reset or increment failures, saturating (`:1116-1121`) → remove a dead entry only if still closed (`:1092-1101`) → restart via recorded spec, concurrent-safe with the call path (`:1126-1128`) → circuit breaker stops the respawn loop with an operator-actionable error (`:1155-1177`, the 2026-08-29 crash-loop fix); deliberately stopped servers are never resurrected (`:1133-1142`).
+- **Findings (Phase 2, adjudicated):** **F1 impedance, DEFERRED** — the typed error kind crosses the L4→L3 seam string-marshalled: `dispatch` formats `[kind] text` (`:1732-1738`) and governance re-parses it (`:1572`) via shared `error_kind_from_display` (`hkask-types/src/tool_response.rs:123`); both ends single-copy and tested. Typed carry through `ToolPortError` would add a field plus construction and matches against a pinned display contract — net-positive lines — so deferred. **F2 IS, no action** — dual reapers (keeper `:860-881`, supervisor removal `:1092-1101`) are both load-bearing (event-driven reap vs poll-window closer) and cannot race destructively (generation stamp `:861-864`, liveness re-check `:1095-1098`). **F3 IS, no action** — dual rate-limiters (call-path cooldown `:1276-1288`, supervisor interval + circuit breaker) bound different triggers. **F4 OUGHT, out of scope** — no ping-based health check; a hung-but-alive server reads Healthy (`:1029-1030`, documented future enhancement; adding it is a new feature and fails the admission test).
+- **Five properties:** closed — IS (spawn → supervise → reap → reconnect → circuit-break; transitions pinned by the 22 in-file tests and `reconnect_integration.rs`); timely — IS (call timeout, cooldown, interval, breaker all bounded); accurate — IS (three-way delivery classification, unknown-effect never retried, typed-kind ledger breakdown); complete — IS (12 servers; tool-surface membership is event-driven, `:574-585`); actionable — IS (the breaker's error names the operator action `:1167-1175`; `unavailable_error` distinguishes NotFound / never-started / not-connected `:1746-1773`).
+- **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects, 1 impedance deferred with reason (F1). Brier-scored at Phase 4.
+- **Hands off to:** L4 (server side of each call), L2 (record_outcome/record_variety + spans), L14 (zed-side registry and env).
 
-### L4 — MCP server request cycle (shared framework, 12 servers)
-- **Crate/path:** `kask/crates/hkask-mcp-server/src/server/` + `kask/mcp-servers/*`
-- **Entry point:** `server/transport.rs:32` `run_stdio_server`; validation (`validation.rs`), credentials (`credentials.rs`), spans (`tool_span.rs`), errors (`error.rs`); per-server `execute_tool` pattern (e.g. `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:528`)
-- **Participants:** servers: `hkask-mcp-{companies,corpus,curator,kata-kanban,media,portfolio,prediction-markets,research,scenarios,spreadsheet,swarm,training}`
+### L4 — MCP server request cycle (shared framework, 12 servers) — AUDITED & CLOSED 2026-09-27
+- **Crate/path:** `kask/crates/hkask-mcp-server/src/server/` (transport 131, error 163, validation 611, credentials 144, context 163, tool_span 170) + `kask/mcp-servers/*`
+- **Entry point:** `server/transport.rs:32` `run_stdio_server` — the single shared bootstrap: tracing init → DB catalog (`:52-68`, startup refused on inventory failure) → credential resolution, required and optional each surfaced (`:72-91`) → WebID (`:93-105`) → capability tier (`:108`) → factory-gated construction (`:119`, no ambient env authority) → rmcp stdio serve (`:125-129`)
+- **Participants:** shared `execute_tool` (ONE definition, `server/tool_span.rs:162`, used by all 12 servers); shared envelope `hkask_types::tool_response` (`unwrap_tool_envelope`, `parse_tool_error_value` `:100`); typed error taxonomy (`server/error.rs:16` `McpError` per-variant; `McpToolError` carrying `kind: McpErrorKind`); shared input validation (`validation.rs`: identifier/path validation, per-source error mapping `:82-139`, path containment `:302-375`, capped reads `:590`); 12 thin binary mains (9 lines each, e.g. `hkask-mcp-companies/src/main.rs` — library servers for fuzz testability)
 - **Trigger:** stdio JSON-RPC request from the zed host
-- **Hands off to:** per-domain loops L6, L8–L13, L17–L19; L2 (tool spans/outcomes)
-- **Prediction:** 2 / 1 / 0.50
+- **Functional graph (Phase 1, IS-cited per node):** host spawn (L3 `start_server_with_env`, env built by `build_mcp_server_env` `kask_bridge/src/mcp_servers.rs:681`) → bootstrap (`transport.rs:32`) → rmcp dispatch → `execute_tool` (`tool_span.rs:162`, span emission) → tool fn → `{"content": ...}` envelope or typed `McpToolError` with `structured_content` kind (consumed by L3's `dispatch` `:1732-1738`).
+- **Findings (Phase 2, adjudicated):** framework single-copy verified — envelope, error taxonomy, span emission, validation, and bootstrap each have ONE implementation; no per-server duplication found. **Considered and rejected:** merging the 12 binary mains into one multi-server binary would delete ~99 lines but breaks per-server process isolation — per-server credential env allowlists and crash domains are functional requirements (`.rules` MCP server patterns), so behavior preservation rejects it.
+- **Five properties:** closed — IS (request → validate → execute → envelope → span; L3's `record_outcome` closes the loop at the governance layer); timely — IS (stdio, no polling); accurate — IS (typed per-variant errors; startup refuses on inventory failure rather than degrading); complete — IS (12 servers, one framework); actionable — IS (named missing credentials `:87-91`; per-variant `McpError` context).
+- **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects, 0 impedances (the F1 seam impedance is recorded on L3, its formatting side). Brier-scored at Phase 4.
+- **Hands off to:** per-domain loops L6, L8–L13, L17–L19; L2 (tool spans/outcomes); L3 (the client side of every call).
 
 ### L5 — Inference bridge (zed ↔ hkask IPC)
 - **Crate/path:** `kask/crates/kask_bridge/src/inference_*.rs` + `kask/crates/hkask-inference`
@@ -109,7 +115,7 @@ spec's minimum list, recorded below rather than narrowed away.
 - **Functional graph (Phase 1, IS-cited per node):** snapshot arm (`market_check_resolutions` `hkask_mcp_prediction_markets.rs:524` → `CalibrationStore::record_pending` `calibration.rs:172`, earliest snapshot kept, test `:527`) → resolution arm (`market_record_resolution` `:211` → `record` `calibration.rs:125`; subscribe leg `:264-298` logs notifications, never fabricates observations) → scoring (`brier` `calibration.rs:134` → shared `hkask_forecast::brier_score_multi` `hkask_forecast.rs:196`) → readback (`market_calibration` `:187` → `read_calibration` `calibration.rs:313`; missing/empty bucket → `stale: true`, `brier: None`, never a synthetic 0, tests `:410-419`) → act (`reliability_tier` demotion on annotated lookups, `types.rs:251` wired `:433`→`:463`). Equity leg: `dcf_valuation`/`calibrate_forecast` → `forecast_persist` → `forecast_record` (Brier + decomposition at record); feedback application on the equity leg is agent-mediated (OUGHT — no automatic path applies equity calibration history to future priors; INFERRED from absence).
 - **Findings (Phase 2, adjudicated):** **F1 REFUTED** — the Phase 0 "two Brier implementations" signal: `calibration.rs:13`/`:141` delegates to the shared lib and `companies/superforecast.rs:3-9` documents the no-pass-through layering; signal withdrawn. **F2 informational, kept as IS** — `calibration.rs:141` `map_err(|_| ())` collapses only unreachable `ForecastError` variants into the designed `stale: true` semantic (empty bucket pre-checked `:136-137`; length mismatch impossible — both vectors built from one iterator). **F3 verified** — the tier-demotion claim is enforced (`types.rs:251`/`:433`/`:463`): the market loop is CLOSED. **F4 CONSOLIDATED** — `scenarios/superforecast/math.rs:35` `brier_score_multi` was a pure `ForecastError`→`ScenarioError` wrapper while the same module re-exports `brier_score` directly from the lib (`superforecast.rs:16`); the wrapper was deleted and the lib function re-exported (`ScenarioError` carries `#[from] ForecastError`, `types.rs:45`), keeping the `superforecast::brier_score_multi` path stable for callers.
 - **Five properties:** closed — IS (market leg), agent-mediated OUGHT (equity leg); timely — IS (staleness surfaced; scan cadence operator-driven, `zero_scan_reason` on empty scans); accurate — IS (earliest-snapshot discipline `calibration.rs:168-177`, identity-based dedup `:144-162`, no-fabrication contracts, tested); complete — IS with stated boundary (equity and market observations use separate stores by reference class); actionable — IS (tier demotion changes lookup annotations, `matcher.rs:7`).
-- **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 0 defects, 1 module-convention inconsistency consolidated (F4, net −12 lines), 1 Phase 0 signal refuted (F1). Brier-scored at Phase 4.
+- **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 0 defects, 1 module-convention inconsistency consolidated (F4, net −13 lines), 1 Phase 0 signal refuted (F1). Brier-scored at Phase 4.
 
 ### L9 — Kanban/goal loop
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-kata-kanban/src`
@@ -207,7 +213,8 @@ vetoable on functional grounds:
 
 1. **Batch A (early deletion candidates, known duplication signals):** L8
    (closed 2026-09-27 — Brier signal refuted; real finding was the scenarios
-   wrapper, consolidated), L3+L4 (client/server runtime pair), L14.
+   wrapper, consolidated), L3+L4 (closed 2026-09-27 — audited clean, no
+   deletion candidate survives the test), L14.
 2. **Batch B (control core, highest connectivity):** L2, L5, L16.
 3. **Batch C (large surfaces):** L1, L7, L6.
 4. **Batch D (bounded server loops):** L9, L10, L11, L12, L13, L17, L18, L19.
@@ -227,10 +234,18 @@ behavior matters most to the operator) overrides this order on request.
 
 ## Change log
 
+- 2026-09-27 — v0.3.0 L3+L4 audited and closed clean: the runtime pair is
+  already the deep module (single shared framework; generation-stamped keeper
+  + supervisor + cooldown; three-way dispatch classification; circuit
+  breaker). No deletion candidate survives the test — the one impedance
+  (string-marshalled error kind across the L4→L3 seam) is deferred with
+  reason, and the multi-server-binary merge is rejected on isolation
+  grounds. Doc-only slice; no production lines changed (running production
+  total remains −13 from L8's `50cba394fd`).
 - 2026-09-27 — v0.2.0 L8 audited and closed: Phase 0 Brier-duplication signal
   refuted (delegation, not duplication); tier-demotion act arm verified
   (`types.rs:251`/`:433`/`:463`); scenarios' pure `brier_score_multi` wrapper
-  deleted and re-exported from `hkask-forecast` (net −12 lines); 25 scenarios
+  deleted and re-exported from `hkask-forecast` (net −13 lines); 25 scenarios
   tests green via `cargo-test-nonzero`, `./script/clippy -p hkask-mcp-scenarios`
   green, machete clean, 12/12 `brier_score_multi` sweep references legitimate.
   The consolidation and this register update land in one pathspec-limited
