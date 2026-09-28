@@ -1,0 +1,1861 @@
+;; ============================================================================
+;;                  	REARDEN COMMERCE, INC.
+;;                  	Dining Ontology
+;; ============================================================================
+
+;; Created by: Karen Joy Nomorosa (karen.nomorosa [at] reardencommerce [dot] com)
+;; Created on: March 8, 2011
+;; Last modified: August 3, 2011
+;; Modified by: Karen Joy Nomorosa (karen.nomorosa [at] reardencommerce [dot] com)
+
+;; Description:  This ontology describes different concepts related to Dining
+
+;; Ontology dependencies for Dining.kif: Merge.kif, Mid_level_ontology.kif
+
+;; Access to and use of these products is governed by the GNU General Public 
+;; License <http://www.gnu.org/copyleft/gpl.html>. 
+;; By using these products, you agree to be bound by the terms 
+;; of the GPL.
+
+;; We ask the people using or referencing this work cite our primary paper:
+
+;; Niles, I., and Pease, A.  2001.  Towards a Standard Upper Ontology.  In 
+;; Proceedings of the 2nd International Conference on Formal Ontology in 
+;; Information Systems (FOIS-2001), Chris Welty and Barry Smith, eds, 
+;; Ogunquit, Maine, October 17-19, 2001.  See also http://www.ontologyportal.org
+
+;; ----------------------------------------------------------------------------
+;; Restaurant Subclasses
+;; ----------------------------------------------------------------------------
+      
+(subclass Coffeeshop Cafeteria)
+(documentation Coffeeshop EnglishWrittenLanguage "a type of &%Cafeteria that specializes in serving &%Coffee")
+(termFormat EnglishWrittenLanguage Coffeeshop "coffee shop")
+
+(=>
+  (instance ?COMPANY Coffeeshop)
+  (exists (?SERVICE ?BEVERAGE)
+    (and
+      (instance ?SERVICE CommercialService)
+      (agent ?SERVICE ?COMPANY)
+      (instance ?SERVICE Selling)
+      (patient ?SERVICE ?BEVERAGE)
+      (instance ?BEVERAGE Coffee))))
+
+(subclass Brewpub Tavern)
+(documentation Brewpub EnglishWrittenLanguage "a type of &%Tavern that brews &%Beer and whose primary service is selling that &%Beer to customers")
+(termFormat EnglishWrittenLanguage Brewpub "Brewpub")
+
+(=>
+  (instance ?PUB Brewpub)
+  (exists (?SERVICE ?BEER ?BREW)
+    (and
+      (instance ?BREW Making)
+      (result ?BREW ?BEER)
+      (instance ?BEER Beer)
+      (agent ?BREW ?PUB)
+      (instance ?SERVICE CommercialService)
+      (agent ?SERVICE ?PUB)
+      (instance ?SERVICE Selling)
+      (patient ?SERVICE ?BEER))))
+
+;; KJN: Edit.  Subclassing from Business instead of CommercialAgent      
+(subclass Bakery Business)
+(documentation Bakery EnglishWrittenLanguage "a type of &%Business that specializes in the production and selling of the &%result of the process &%Baking")
+(termFormat EnglishWrittenLanguage Bakery "bakery")
+
+(=>
+  (instance ?BAKERY Bakery)
+  (exists (?SERVICE ?FOOD ?BAKE)
+    (and
+      (instance ?BAKE Baking)
+      (result ?BAKE ?FOOD)
+      (instance ?FOOD
+        (FoodForFn Human))
+      (agent ?BAKE ?BAKERY)
+      (instance ?SERVICE CommercialService)
+      (agent ?SERVICE ?BAKERY)
+      (instance ?SERVICE Selling)
+      (patient ?SERVICE ?FOOD))))
+
+(subclass Steakhouse Restaurant)
+(documentation Steakhouse EnglishWrittenLanguage "a type of &%Restaurant that specializes in serving steak, which is cooked &%Beef")
+(termFormat EnglishWrittenLanguage Steakhouse "steakhouse")
+
+(=>
+  (instance ?STEAKHOUSE Steakhouse)
+  (exists (?SERVICE ?STEAK ?BEEF ?COOK)
+    (and
+      (instance ?COOK Cooking)
+      (instance ?BEEF Beef)
+      (resource ?COOK ?BEEF)
+      (result ?COOK ?STEAK)
+      (instance ?SERVICE CommercialService)
+      (agent ?SERVICE ?STEAKHOUSE)
+      (instance ?SERVICE Selling)
+      (patient ?SERVICE ?STEAK))))
+
+
+;; ----------------------------------------------------------------------------
+;; Dining Concepts
+;; ----------------------------------------------------------------------------
+(subclass Corkage ChargingAFee)
+(documentation Corkage EnglishWrittenLanguage "&%Corkage is a &%FinancialTransaction imposed by an &%AutonomousAgent to a customer for bringing items not purchased from &%AutonomousAgent")
+(termFormat EnglishWrittenLanguage Corkage "corkage")
+
+(=>
+  (instance ?C Corkage)
+  (exists (?AMT)
+    (amountCharged ?C ?AMT)))
+
+(instance corkageFee TernaryPredicate)
+(documentation corkageFee EnglishWrittenLanguage "(&%corkageFee ?AMT ?ITEM ?AGENT) refers to the amount ?AMT that ?AGENT charges during a &%Corkage when a customer brings in ?ITEM")
+(termFormat EnglishWrittenLanguage corkageFee "corkage fee")
+(domain corkageFee 1 CurrencyMeasure)
+(domainSubclass corkageFee 2 Object)
+(domain corkageFee 3 AutonomousAgent)
+
+  
+;; if an agent charges corkage for a particular class of items, and customer brings
+;; instances of said items not purchased from agent and consumed while at agent's location,
+;; then an instance of corkage occurs
+
+;; Note: This is still problematic as IntentionalProcess can include something like 
+;; Carrying in which case corkage may not be charged even if ?ITEM is brought in
+(=>
+  (and
+    (customer ?CUST ?AGENT)
+    (corkageFee ?AMT ?ITEM ?AGENT)
+    (instance ?X ?ITEM)
+    (instance ?D Drinking)
+    (agent ?D ?CUST)
+    (resource ?D ?X))
+  (or
+    (exists (?B)
+      (and
+        (instance ?B Buying)
+        (patient ?B ?X)
+        (destination ?B ?CUST)
+        (origin ?B ?AGENT)))
+    (exists (?C)
+      (and
+        (instance ?C Corkage)
+        (agent ?C ?CUST)
+        (refers ?C ?X)
+        (destination ?C ?AGENT)))))
+
+;; Outdoor Dining 
+(subclass OutdoorDiningArea DiningArea)
+(documentation OutdoorDiningArea EnglishWrittenLanguage "&%OutdoorDiningArea refers to a place for eating that is not inside a building")
+(termFormat EnglishWrittenLanguage OutdoorDiningArea "outdoor dining")
+(disjoint OutdoorDiningArea DiningRoom)
+
+(=>
+  (instance ?D OutdoorDiningArea)
+  (exists (?O)
+    (and
+      (instance ?O Outdoors)
+      (located ?D ?O))))
+
+    
+;; ----------------------------------------------------------------------------
+;; Menu / Food Concepts
+;; ----------------------------------------------------------------------------
+      
+;; Menu
+(subclass Menu Catalog)
+(documentation Menu EnglishWrittenLanguage "a &%Menu is a type of &%Catalog that specifically contains the classes of food that is expected to be or proposed to be cooked and served")
+(termFormat EnglishWrittenLanguage Menu "menu")
+
+(=>
+  (and
+    (instance ?MENU Menu)
+    (catalogItem ?X ?MENU))
+  (subclass ?X
+    (FoodForFn Human)))
+
+(subclass SetMenu Menu)
+(documentation SetMenu EnglishWrittenLanguage "a &%SetMenu is a type of &%Menu that contains a specific set of prepared food which is all served and is given one price")
+(termFormat EnglishWrittenLanguage SetMenu "set menu")
+
+(=>
+  (and
+    (instance ?MENU SetMenu)
+    (offers ?AGENT ?MENU)
+    (catalogItem ?CLASS ?MENU)
+    (subclass ?CLASS PreparedFood)
+    (instance ?X ?VLASS)
+    (instance ?Y ?CLASS)
+    (not
+      (equal ?X ?Y))
+    (price ?X ?PRICE1 ?AGENT1)
+    (price ?Y ?PRICE2 ?AGENT2))
+  (equal ?PRICE1 ?PRICE2))
+                  
+(subclass BeverageMenu Menu)
+(documentation BeverageMenu EnglishWrittenLanguage "a &%BeverageMenu is a &%Menu of &%Beverages")
+(termFormat EnglishWrittenLanguage BeverageMenu "drinks menu")
+
+(=>
+  (and
+    (instance ?MENU BeverageMenu)
+    (catalogItem ?X ?MENU))
+  (subclass ?X Beverage))
+
+(subclass AlcoholMenu BeverageMenu)
+(documentation AlcoholMenu EnglishWrittenLanguage "an &%AlcoholMenu is a &%Menu of &%AlcoholicBeverage")
+(termFormat EnglishWrittenLanguage AlcoholMenu "cocktail menu")
+
+(=>
+  (and
+    (instance ?MENU AlcoholMenu)
+    (catalogItem ?X ?MENU))
+  (subclass ?X AlcoholicBeverage))
+
+(subclass WineMenu AlcoholMenu)
+(documentation WineMenu EnglishWrittenLanguage "a &%WineMenu is a &%Menu of &%Wine")
+(termFormat EnglishWrittenLanguage WineMenu "wine list")
+
+(=>
+  (and
+    (instance ?MENU WineMenu)
+    (catalogItem ?X ?MENU))
+  (subclass ?X WineMenu))
+
+(instance Braille WrittenHumanLanguage)
+(documentation Braille EnglishWrittenLanguage "A written human language system in which characters are represented by patterns of raised dots that can be read through tactile perception.")
+(termFormat EnglishWrittenLanguage Braille "Braille")
+
+(=>
+  (and
+    (instance ?READ Reading)
+    (patient ?READ ?TEXT)
+    (language ?TEXT Braille))
+  (exists (?TACTILE)
+    (and
+      (instance ?TACTILE TactilePerception)
+      (subProcess ?TACTILE ?READ))))
+                  
+(subclass Buffet CollectionOfObjects)
+(documentation Buffet EnglishWrittenLanguage "&%Buffet refers to a &%CollectionOfObjects of &%Food that is served in a central location where guests can get their own servings")
+(termFormat EnglishWrittenLanguage Buffet "buffet")
+
+(=>
+  (instance ?X Buffet)
+  (forall (?ITEM)
+    (=>
+      (member ?ITEM ?X)
+      (instance ?ITEM
+        (FoodForFn Human)))))
+
+(=>
+  (instance ?X Buffet)
+  (attribute ?X CommunalAttribute))
+  
+;; if a person is eating something from a buffet, then the person getting the food 
+;; from the buffet's location occurs before the agent eating the food at another 
+;; location  
+(=>
+  (and
+    (instance ?X Buffet)
+    (member ?ITEM ?X)
+    (located ?X ?LOC1)
+    (instance ?E Eating)
+    (agent ?E ?AGENT)
+    (eventLocated ?E ?LOC2)
+    (patient ?E ?ITEM))
+  (and
+    (not
+      (equal ?LOC1 ?LOC2))
+    (exists (?G)
+      (and
+        (instance ?G Getting)
+        (patient ?G ?ITEM)
+        (origin ?G ?LOC1)
+        (agent ?G ?AGENT)
+        (before
+          (EndFn
+            (WhenFn ?G))
+          (BeginFn
+            (WhenFn ?E)))))))
+
+;; if a buffet is a breakfast buffet, then it is likely that all of the food in the
+;; buffet is a breakfast food
+(=>
+  (and
+    (instance ?X Buffet)
+    (attribute ?X Breakfast))
+  (modalAttribute
+    (forall (?FOOD)
+      (=>
+        (member ?FOOD ?X)
+        (attribute ?FOOD Breakfast))) Likely))
+  
+;; ----------------------------------------------------------------------------
+;; Restaurant Properties
+;; ----------------------------------------------------------------------------
+
+;; (subjectiveAttribute ?ENTITY ?ATTRIBUTE ?AGENT)
+(documentation subjectiveAttribute EnglishWrittenLanguage "(&%subjectiveAttribute ?ENTITY ?ATTR ?AGENT) means that ?AGENT attaches ?ATTR to ?ENTITY")
+(instance subjectiveAttribute TernaryPredicate)
+(domain subjectiveAttribute 1 Entity)
+(domain subjectiveAttribute 2 Attribute)
+(domain subjectiveAttribute 3 AutonomousAgent)
+(termFormat EnglishWrittenLanguage subjectiveAttribute "subjective attribute")
+
+(=>
+  (subjectiveAttribute ?ENTITY ?ATTR ?AGENT)
+  (exists (?RATE)
+    (and
+      (instance ?RATE Classifying)
+      (agent ?RATE ?AGENT)
+      (patient ?RATE ?ATTR)
+      (destination ?RATE ?ENTITY))))
+
+(instance facility BinaryPredicate)
+(documentation facility EnglishWrittenLanguage "(&%facility ?AGENT ?OBJ) means that an ?AGENT provides some ?OBJ to fulfill some goal or need")
+(domain facility 2 Object)
+(domain facility 1 AutonomousAgent)
+(termFormat EnglishWrittenLanguage facility "facility")
+
+;; if an AGENT provides some OBJECT, and there exists a customer who wants 
+;; to use that object, then AGENT may allow the customer to use that OBJECT
+(=>
+  (and
+    (facility ?AGENT ?OBJ)
+    (customer ?CUST ?AGENT)
+    (instance ?X ?OBJ))
+  (or
+    (not
+      (desires
+        ?CUST
+        (exists (?PROC)
+          (and
+            (instance ?PROC IntentionalProcess)
+            (patient ?PROC ?X)
+            (agent ?PROC ?CUST)))))
+    (modalAttribute
+      (confersRight
+        ?AGENT
+        ?CUST
+        (uses ?X ?CUST))
+      Possibility)))
+      
+;; NOTE: You can use RecurrentTimeIntervalFn(HourFn HourFn) to come up with
+;; ?TIMEINT
+;; (businessHours ?TIMEINT ?AGENT)
+(instance businessHours BinaryPredicate)
+(documentation businessHours EnglishWrittenLanguage "(&%businessHours ?TIMEINT ?AGENT) means that an ?AGENT conducts business_related activities during ?TIMEINT")
+(domainSubclass businessHours 1 TimeInterval)
+(domain businessHours 2 AutonomousAgent)
+(termFormat EnglishWrittenLanguage businessHours "business hours")
+
+;; (standardRetailHours ?TIMEINT ?AGENT)
+(subrelation standardRetailHours businessHours)
+(instance standardRetailHours BinaryPredicate)
+(documentation standardRetailHours EnglishWrittenLanguage "(%&standardRetailHours ?TIMEINT ?AGENT) means that an ?AGENT engages in &%Selling processes with customers only within the time specified by ?TIMEINT")
+(domainSubclass standardRetailHours 1 TimeInterval)
+(domain standardRetailHours 2 AutonomousAgent)
+(termFormat EnglishWrittenLanguage standardRetailHours "standard retail hours")
+
+(=>
+  (standardRetailHours ?TIMEINT ?AGENT)
+  (exists (?S ?T ?C)
+    (and
+      (instance ?S Selling)
+      (instance ?T ?TIMEINT)
+      (agent ?S ?AGENT)
+      (customer ?C ?AGENT)
+      (during
+        (WhenFn ?S) ?T))))
+
+;; the probability that a customer can be served is higher if it is within
+;; standardRetailHours
+;; Jennie Pease 19 Oct 2022 added above axioms and revised axioms below~
+
+(=>
+  (standardRetailHours ?TIMEINT ?AGENT)
+  (exists (?FT ?T ?C ?SRH ?NONSRH)
+    (and
+      (instance ?FT FinancialTransaction)
+      (agent ?FT ?AGENT)
+      (instance ?T ?TIMEINT)
+      (destination ?FT ?C)
+      (equal ?SRH
+        (ProbabilityFn
+          (and
+            (during
+              (WhenFn ?FT) ?T)
+            (customer ?C ?AGENT))))
+      (equal ?NONSRH
+        (ProbabilityFn
+          (and
+            (not
+              (during
+                (WhenFn ?FT) ?T))
+            (customer ?C ?AGENT))))
+      (greaterThan ?SRH ?NONSRH))))
+
+;; KJN: Importing from MILO, but only the part re: standardRetailHours
+;;(=>
+;;  (instance ?X NightClub)
+;;  (exists (?TIME ?BAR)
+;;    (and
+;;      (instance ?BAR Tavern)
+;;      (located ?BAR ?X)
+;;      (standardRetailHours ?X ?TIME)
+;;      (during (BeginFn ?TIME) NightTime))))
+
+(=>
+  (and
+    (instance ?X NightClub)
+    (standardRetailHours ?TIME ?X))
+  (exists (?T ?NIGHT)
+    (and
+      (instance ?T ?TIME)
+      (instance ?NIGHT NightTime)
+      (during ?T ?NIGHT))))
+
+;; payment with a credit card
+(subclass BankCardPayment Payment)
+(documentation BankCardPayment EnglishWrittenLanguage "a &%BankCardPayment is a type of &%Payment where a &%CreditCard or a &%DebitCard is used as the &%FinancialInstrument in the transaction.")
+(termFormat EnglishWrittenLanguage BankCardPayment "bank card payment")
+
+;; if a process for BankCardPayment is undergone, then the instrument in
+;; that payment should be a ValidCard
+(=>
+  (instance ?PAYMENT BankCardPayment)
+  (exists (?CARD)
+    (and
+      (instance ?CARD ValidCard)
+      (instrument ?PAYMENT ?CARD))))
+
+(=>
+  (instance ?P BankCardPayment)
+  (exists (?C)
+    (and
+      (instrument ?P ?C)
+      (instance ?C BankCard))))
+
+;; payment with cash
+(subclass CashPayment Payment)
+(documentation CashPayment EnglishWrittenLanguage "a &%CashPayment is a type of &%Payment where &%Currency is used as the &%FinancialInstrument in the transaction")
+(termFormat EnglishWrittenLanguage CashPayment "cash payment")
+
+(=>
+  (instance ?P CashPayment)
+  (exists (?C)
+    (and
+      (instrument ?P ?C)
+      (instance ?C Currency))))
+
+(subclass Outfit CollectionOfObjects)
+(documentation Outfit EnglishWrittenLanguage "&%Outfit describes the set of clothes worn by a person")
+(termFormat EnglishWrittenLanguage Outfit "outfit")
+
+(=>
+  (and
+    (instance ?X Outfit)
+    (member ?ITEM1 ?X)
+    (holdsDuring ?TIME
+      (wears ?PERSON ?ITEM1)))
+  (forall (?ITEM2)
+    (=>
+      (member ?ITEM2 ?X)
+      (holdsDuring ?TIME
+        (wears ?PERSON ?ITEM2)))))
+
+;; (dressCode ?CODE ?AGENT)
+(instance dressCode BinaryPredicate)
+(documentation dressCode EnglishWrittenLanguage "(&%dressCode ?CODE ?AGENT) means that ?AGENT obligates his customers to wear at the minimum clothes that fulfill ?CODE")
+(domain dressCode 1 AmbienceAttribute)
+(domain dressCode 2 AutonomousAgent)
+
+;; if an agent has a dresscode, then the agent requires the customer to wear an
+;; outfit that conform to that dress code.
+
+(=>
+  (dressCode ?CODE ?AGENT)
+  (modalAttribute
+    (exists (?OUTFIT ?T)
+      (and
+        (instance ?OUTFIT Outfit)
+        (subjectiveAttribute ?OUTFIT ?CODE ?AGENT)
+        (holdsDuring ?T
+          (forall (?CUST ?ITEM)
+            (and
+              (customer ?CUST ?AGENT)
+              (locatedAtTime ?CUST ?T ?AGENT)
+              (member ?ITEM ?OUTFIT)
+              (wears ?CUST ?ITEM)))))) Obligation))
+;;
+;;(=>
+;;  (dressCode ?CODE ?AGENT)
+;;  (modalAttribute
+;;    (exists (?CUST ?OUTFIT)
+;;      (and
+;;        (subjectiveAttribute ?OUTFIT ?CODE ?AGENT)
+;;       (instance ?OUTFIT Outfit)
+;;        (customer ?CUST ?AGENT)
+;;        (holdsDuring (WhenFn (located ?CUST ?AGENT))
+;;         (forall (?ITEM)
+;;          (=>
+;;            (member ?ITEM ?OUTFIT)
+;;            (wears ?CUST ?ITEM))))) Obligation))
+                       
+;; ----------------------------------------------------------------------------
+;; Restaurant Services
+;; ----------------------------------------------------------------------------
+(instance DeliveryDriver OccupationalTrade)
+(documentation DeliveryDriver EnglishWrittenLanguage "A worker who transports goods, packages, food, or mail from a store, warehouse, or restaurant directly to a customer's home or business.")
+(termFormat EnglishWrittenLanguage DeliveryDriver "delivery driver")
+
+(subclass DeliveryService Transfer)
+(documentation DeliveryService EnglishWrittenLanguage "&%DeliveryService refers to the &%Transfer of an &%AutonomousAgent bringing objects purchased from &%AutonomousAgent to a location indicated by the customer")
+(termFormat EnglishWrittenLanguage DeliveryService "delivery service")
+
+(capability DeliveryService agent AutonomousAgent)
+
+;; (deliveryRegion ?AGENT ?REGION)
+(instance deliveryRegion BinaryPredicate)
+(documentation deliveryRegion EnglishWrittenLanguage "(&%deliveryRegion ?AGENT ?REGION ?DELIVERY) means that ?AGENT only does a &%DeliveryService if the destination is within ?REGION")
+(domain deliveryRegion 1 AutonomousAgent)
+(domain deliveryRegion 2 GeographicArea)
+
+;(=>
+;  (deliveryRegion ?AGENT ?REGION)
+;  (capability DeliveryService agent ?AGENT))
+
+;; the probability of an agent being capable of a delivery service is less 
+;; if the location is outside of the delivery region
+(=>
+  (and
+    (instance ?D DeliveryService)
+    (destination ?D ?LOC1)
+    (deliveryRegion ?AGENT ?REGION)
+    (conditionalProbability
+      (located ?LOC1 ?REGION)
+      (agent ?D ?AGENT) ?NUMBER1)
+    (conditionalProbability
+      (not
+        (located ?LOC1 ?REGION))
+      (agent ?D ?AGENT) ?NUMBER2))
+  (lessThan ?NUMBER2 ?NUMBER1))
+
+;; the origin and destination locations of a delivery service are not equal    
+(=>
+  (and
+    (instance ?D DeliveryService)
+    (origin ?D ?LOC1)
+    (destination ?D ?LOC2))
+  (not
+    (equal ?LOC1 ?LOC2)))
+
+(subclass CateringService ServiceProcess)
+(documentation CateringService EnglishWrittenLanguage "&%CateringService refers to the &%ServiceProcess of an &%AutonomousAgent to prepare food and beverage for consumption in a location away from where the agent is located")
+(termFormat EnglishWrittenLanguage CateringService "catering")
+
+;; a restaurant has to be capable of CateringService for an instance of 
+;; CateringService to exist
+(=>
+  (and
+    (instance ?P CateringService)
+    (instance ?P ?CLASS)
+    (agent ?P ?REST))
+  (capability ?CLASS agent Restaurant))
+
+(=>
+  (and
+    (instance ?C CateringService)
+    (agent ?C ?AGENT)
+    (destination ?C ?CUST)
+    (located ?AGENT ?LOC1)
+    (customer ?CUST ?AGENT))
+  (or
+    (not
+      (exists (?S ?FOOD ?E)
+        (and
+          (instance ?S Cooking)
+          (agent ?S ?AGENT)
+          (result ?S ?FOOD)
+          (patient ?C ?FOOD)
+          (instance ?E Eating)
+          (agent ?E ?CUST)
+          (eventLocated ?E ?LOC2))))
+    (not
+      (equal ?LOC1 ?LOC2))))
+        
+(subclass FoodPickup CateringService)
+(documentation FoodPickup EnglishWrittenLanguage "&%FoodPickup is a type of &%CateringService where the customer has to pick up the food from the agent's location with the intent of eating it somewhere else.")
+(termFormat EnglishWrittenLanguage FoodPickup "food pickup")
+
+(=>
+  (and
+    (instance ?P FoodPickup)
+    (agent ?P ?AGENT)
+    (destination ?P ?CUST)
+    (patient ?P ?FOOD))
+  (and
+    (instance ?FOOD
+      (FoodForFn Human))
+    (exists (?LOC ?T ?G)
+      (and
+        (located ?AGENT ?LOC)
+        (instance ?T Translocation)
+        (agent ?T ?CUST)
+        (destination ?T ?LOC)
+        (instance ?G Getting)
+        (origin ?G ?AGENT)
+        (destination ?G ?CUST)
+        (patient ?G ?FOOD)))))
+
+(subclass DriveThru FoodPickup)
+(documentation DriveThru EnglishWrittenLanguage "&%DriveThru is a type of &%FoodPickup where the customer uses a vehicle to drive thru a driveway and take the food from a window")
+(termFormat EnglishWrittenLanguage DriveThru "drive thru")
+
+;; ----------------------------------------------------------------------------
+;; Reservations
+;; ----------------------------------------------------------------------------
+
+(subclass Reservation Agreement)
+(documentation Reservation EnglishWrittenLanguage "a &%Reservation is a type of &%Agreement between 2 agents that some resource offered by the one agent is allotted for use or consumption by another at a specific bounded time")
+(termFormat EnglishWrittenLanguage Reservation "reservation")
+
+(=>
+  (instance ?R Reservation)
+  (exists (?P)
+    (and
+      (instance ?P Reserving)
+      (result ?P ?R))))
+
+(instance reservingEntity BinaryPredicate)
+(documentation reservingEntity EnglishWrittenLanguage "(&%reservingEntity ?ENTITY ?RESERVE) means that ?ENTITY is the &%AutonomousAgent reserving a particular resource indicated by ?RESERVE")
+(domain reservingEntity 1 AutonomousAgent)
+(domain reservingEntity 2 Reservation)
+
+(=>
+  (reservingEntity ?ENTITY ?RESERVE)
+  (exists (?P)
+    (and
+      (instance ?P Reserving)
+      (agent ?P ?ENTITY)
+      (result ?P ?RESERVE))))
+
+(instance reservationChannel BinaryPredicate)
+(documentation reservationChannel EnglishWrittenLanguage "(&%reservationChannel ?ENTITY ?RESERVE) means that ?ENTITY was used by the &%reservingEntity in order to create the reservation, like an intermediary agent.")
+(domain reservationChannel 1 Physical)
+(domain reservationChannel 2 Reservation)
+
+(=>
+  (reservationChannel ?ENTITY ?RESERVE)
+  (exists (?P)
+    (and
+      (instance ?P Reserving)
+      (instrument ?P ?ENTITY)
+      (result ?P ?RESERVE))))
+      
+(instance fulfillingEntity BinaryPredicate)
+(documentation fulfillingEntity EnglishWrittenLanguage "(&%fulfillingEntity ?ENTITY ?RESERVE) means that ?ENTITY is the &%AutonomousAgent who will execute the agreement")
+(domain fulfillingEntity 1 AutonomousAgent)
+(domain fulfillingEntity 2 Reservation)
+
+(=>
+  (fulfillingEntity ?ENTITY ?RESERVE)
+  (exists (?P)
+    (and
+      (instance ?P Reserving)
+      (destination ?P ?ENTITY)
+      (result ?P ?RESERVE))))
+
+(instance reservationStart BinaryPredicate)
+(documentation reservationStart EnglishWrittenLanguage "(&%reservationStart ?TIME ?RESERVE) means that the use of a resource or consumption of a service which is the object of ?RESERVE starts at ?TIME")
+(domain reservationStart 1 TimePoint)
+(domain reservationStart 2 Reservation)
+
+(instance reservationEnd BinaryPredicate)
+(documentation reservationEnd EnglishWrittenLanguage "(&%reservationEnd ?TIME ?RESERVE) means that the use of a resource or consumption of a service which is the object of ?RESERVE is expected to end at ?TIME")
+(domain reservationEnd 1 TimePoint)
+(domain reservationEnd 2 Reservation)
+
+(=>
+  (and
+    (reservationStart ?TIME1 ?R)
+    (reservationEnd ?TIME2 ?R)
+    (reservingEntity ?CUST ?R)
+    (fulfillingEntity ?AGENT ?R))
+  (modalAttribute
+    (holdsDuring
+      (TimeIntervalFn ?TIME1 ?TIME2)
+      (exists (?P)
+        (and
+          (instance ?P IntentionalProcess)
+          (agent ?P ?AGENT)
+          (destination ?P ?CUST)))) Likely))
+
+(instance numberOfCustomers BinaryPredicate)
+(documentation numberOfCustomers EnglishWrittenLanguage "(&%numberOfCustomers ?NUM ?RESERVE) refers to the number of patrons the reservation is for.")
+(domain numberOfCustomers 1 PositiveInteger)
+(domain numberOfCustomers 2 Reservation)
+
+(=>
+  (and
+    (numberOfCustomers ?NUM ?RESERVE)
+    (fulfillingEntity ?AGENT ?RESERVE)
+    (reservingEntity ?CUST ?RESERVE))
+  (exists (?GRP)
+    (and
+      (potentialCustomer ?GRP ?AGENT)
+      (instance ?GRP GroupOfPeople)
+      (member ?CUST ?GRP)
+      (memberCount ?GRP ?NUM))))
+                    
+(subclass DiningReservation Reservation)
+(documentation DiningReservation EnglishWrittenLanguage "a &%DiningReservation is a type of &%Reservation intended to reserve seats at a &%Restaurant")
+(termFormat EnglishWrittenLanguage DiningReservation "dining reservation")
+
+(=>
+  (instance ?R DiningReservation)
+  (exists (?AGENT)
+    (and
+      (fulfillingEntity ?AGENT ?R)
+      (instance ?AGENT Restaurant))))
+
+(subclass Reserving Committing)
+(documentation Reserving EnglishWrittenLanguage "&%Reserving is a type of &%Committing that dedicates a specific object or service to a destination resource or service for a specific time interval")
+(termFormat EnglishWrittenLanguage Reserving "reserving")
+
+(=>
+  (and
+    (instance ?R Reserving)
+    (agent ?R ?CUST)
+    (destination ?R ?AGENT))
+  (potentialCustomer ?CUST ?AGENT))
+
+;; axiom for 'Requires Reservation' --> if a restaurant requires 
+;; reservation, then the probability of a potentialCustomer becoming a 
+;; customer if a reservation exists is higher
+(forall (?NUM1 ?NUM2)
+  (=>
+    (and
+      (instance ?AGENT AutonomousAgent)
+      (potentialCustomer ?CUST ?AGENT)
+      (modalAttribute
+        (and
+          (instance ?R Reserving)
+          (destination ?R ?AGENT))
+        Necessity))
+    (or
+      (not
+        (conditionalProbability
+          (exists (?RES1)
+            (and
+              (instance ?RES1 Reservation)
+              (reservingEntity ?CUST ?RES1)
+              (fulfillingEntity ?AGENT ?RES1)))
+          (customer ?CUST ?AGENT)
+          ?NUM1))
+      (not
+        (conditionalProbability
+          (not
+            (exists (?RES2)
+              (and
+                (instance ?RES2 Reservation)
+                (reservingEntity ?CUST ?RES2)
+                (fulfillingEntity ?AGENT ?RES2))))
+          (customer ?CUST ?AGENT)
+          ?NUM2))
+      (lessThan ?NUM2 ?NUM1))))
+      
+
+;; ----------------------------------------------------------------------------
+;; General Concepts
+;; ----------------------------------------------------------------------------
+
+
+(instance potentialCustomer BinaryPredicate)
+(documentation potentialCustomer EnglishWrittenLanguage "(&%potentialCustomer ?CUST ?AGENT) means that it is a possibility for ?CUST to participate in a financial transaction with ?AGENT in exchange for goods or services")
+(domain potentialCustomer 1 CognitiveAgent)
+(domain potentialCustomer 2 AutonomousAgent)
+
+(=>
+  (potentialCustomer ?CUST ?AGENT)
+  (exists (?P ?SELLING)
+    (and
+      (instance ?SELLING Selling)
+      (agent ?SELLING ?AGENT)
+      (patient ?SELLING ?P)
+      (inScopeOfInterest ?CUST ?P))))
+      
+(=>
+  (potentialCustomer ?CUST ?AGENT)
+  (modalAttribute
+    (customer ?CUST ?AGENT) Possibility))
+
+(instance Chef SkilledOccupation)
+(documentation Chef EnglishWrittenLanguage "&%Chef refers to the &%Profession of cooking food")
+(termFormat EnglishWrittenLanguage Chef "chef")
+
+(=>
+  (attribute ?X Chef)
+  (exists (?COOKING)
+    (and
+        (instance ?COOKING Cooking)
+        (occupation ?X
+            (OccupationFn ?COOKING)))))
+
+   
+(subclass BoosterChair Chair)
+(documentation BoosterChair EnglishWrittenLanguage "&%BoosterChair is a &%Chair that is made for children")
+(termFormat EnglishWrittenLanguage BoosterChair "booster chair")
+
+(=>
+  (and
+    (instance ?BC BoosterChair)
+    (instance ?H HumanChild))
+  (hasPurposeForAgent ?BC ?H
+    (and
+      (attribute ?H Sitting)
+      (eventLocated ?H ?BC))))
+
+;; KJN: Moving all of this to Mid_level_ontology.kif as it seems more appropriate there.      
+;;(subclass Disability DiseaseOrSyndrome)
+;; english definition taken from Wikipedia
+;;(documentation Disability EnglishWrittenLanguage "&%Disability is a class of 
+;;&%DiseaseOrSyndrome that describes impairments, activity limitations or participation 
+;;restriction that may be physical, cognitive, mental, sensory, emotional, 
+;;developmental or some combination")
+;;(termFormat EnglishWrittenLanguage Disability "disability")
+
+;;(subclass PhysicalDisability Disability)
+;; english definition taken from Wikipedia
+;;(documentation PhysicalDisability EnglishWrittenLanguage "&%PhysicalDisability is any 
+;;impairment that limits the physical function of limbs or fine or gross motor ability, 
+;;or limit the facets of daily living")
+;;(termFormat EnglishWrittenLanguage PhysicalDisability "physical disability")
+
+;;(subclass SensoryDisability Disability)
+;; english definition taken from Wikipedia
+;;(documentation SensoryDisability EnglishWrittenLanguage "&%SensoryDisability is any 
+;;impairement of one of the five senses")
+;;(termFormat EnglishWrittenLanguage SensoryDisability "sensory disability")
+
+;;(instance Blind SensoryDisability)
+
+;; add predicate for objects of contests in cases where what is being judged is not 
+;; physical
+(instance contestObject TernaryPredicate)
+(documentation contestObject EnglishWrittenLanguage "(&%contestObject ?CONTEST ?OBJ ?AGENT) refers to the ?OBJ entered by ?AGENT in a ?CONTEST in cases where winning is based on judging an &%Object instead of some physical process between opponents")
+(domain contestObject 1 Contest)
+(domain contestObject 2 Object)
+(domain contestObject 3 AutonomousAgent)
+
+(=>
+  (contestObject ?CONTEST ?OBJ ?AGENT)
+  (and
+    (contestParticipant ?CONTEST ?AGENT)
+    (exists (?MAKE ?JUDGE ?PROC ?AFTR)
+      (and
+        (instance ?MAKE Making)
+        (result ?MAKE ?OBJ)
+        (agent ?MAKE ?AGENT)
+        (instance ?PROC Judging)
+        (agent ?PROC ?JUDGE)
+        (patient ?PROC ?OBJ)
+        (holdsDuring
+          (ImmediateFutureFn
+            (WhenFn ?PROC))
+          (subjectiveAttribute ?OBJ ?AFTR ?JUDGE))
+        (subProcess ?PROC ?CONTEST)))))
+
+;; axiom for contest attribute Won
+
+(=>
+  (and
+    (subjectiveAttribute ?X Won ?JUDGE)
+    (instance ?X
+      (FoodForFn Human)))
+  (exists (?CONTEST ?AGENT ?PROC)
+    (and
+      (contestObject ?CONTEST ?X ?AGENT)
+      (instance ?PROC Judging)
+      (agent ?PROC ?JUDGE)
+      (subProcess ?PROC ?CONTEST))))
+
+;; ----------------------------------------------------------------------------
+;; Other Features
+;; ----------------------------------------------------------------------------  
+
+(subclass View VisualContentBearingPhysical)
+(documentation View EnglishWrittenLanguage "&%View refers to the patient of a &%Seeing process")
+(termFormat EnglishWrittenLanguage View "view")
+
+;; a view represents some physical thing (could be a process, such as "view of the
+;; manufacturing process" if a person is sitting at an office overseeing a factory, or
+;; could be objects such as "view of the casino" or, the more common "view of the
+;; outdoors"
+(=>
+  (instance ?VIEW View)
+  (exists (?ENTITY)
+    (and
+      (instance ?ENTITY Physical)
+      (represents ?VIEW ?ENTITY))))
+
+(instance OpenLayout RelationalAttribute)
+(documentation OpenLayout EnglishWrittenLanguage "&%OpenLayout refers to different functional areas that are adjacent to each other and are visible from one area to another")
+(termFormat EnglishWrittenLanguage OpenLayout "open layout")
+
+;(=>
+;  (attribute ?ROOM OpenLayout)
+;  (and
+;    (instance ?ROOM Room)
+;    (exists (?R1 ?R2 ?H)
+;      (and
+;        (instance ?R1 Region)
+;        (instance ?R2 Region)
+;        (located ?R1 ?ROOM)
+;        (located ?R2 ?ROOM)
+;        (not (equal ?R1 ?R2))
+;        (orientation ?R1 ?R2 Adjacent)
+;        (exists (?P1 ?P2)
+;          (and
+;            (instance ?P1 Process)
+;            (instance ?P2 Process)
+;            (hasPurpose ?R1 ?P1)
+;            (hasPurpose ?R2 ?P2)))
+;        (=>
+;          (and
+;            (instance ?H AutonomousAgent)
+;            (located ?H ?R2))
+;          (and
+;            (capability Seeing agent ?H)
+;            (capability Seeing patient ?R1)))))))
+
+(subclass PlayArea Region)
+(documentation PlayArea EnglishWrittenLanguage "&%PlayArea refers to a &%Region where children engage in recreational activities")
+(termFormat EnglishWrittenLanguage PlayArea "playground")
+
+(=>
+  (instance ?P PlayArea)
+  (hasPurpose ?P
+    (exists (?K ?REC)
+      (and
+        (instance ?REC RecreationOrExercise)
+        (eventLocated ?REC ?P)
+        (instance ?K HumanChild)
+        (agent ?REC ?K)))))
+
+ 
+;; ----------------------------------------------------------------------------
+;; Descriptors / Attributes
+;; ----------------------------------------------------------------------------  
+
+(instance Organic NormativeAttribute)
+(documentation Organic EnglishWrittenLanguage "&%Organic describes the minimal use of chemicals in the production of an object")
+(termFormat EnglishWrittenLanguage Organic "organic")
+
+(instance Favorite SubjectiveAssessmentAttribute)
+(documentation Favorite EnglishWrittenLanguage "&%Favorite is an attribute that describes how an agent prefers one thing over another")
+(termFormat EnglishWrittenLanguage Favorite "favorite")
+
+(=>
+  (and
+    (subjectiveAttribute ?X Favorite ?AGENT)
+    (instance ?X ?CLASS))
+  (exists (?Y)
+    (and
+      (not
+        (subjectiveAttribute ?Y Favorite ?AGENT))
+      (instance ?Y ?CLASS)
+      (prefers ?AGENT
+        (wants ?AGENT ?X)
+        (wants ?AGENT ?Y)))))
+
+(subclass TimeAttribute SubjectiveAssessmentAttribute)
+(documentation TimeAttribute EnglishWrittenLanguage "&%TimeAttribute refers to the class of attributes that include and assessment of how long it takes an agent to do something")
+
+(=>
+  (and
+    (subjectiveAttribute ?OBJ ?ATTR ?AGENT)
+    (instance ?ATTR TimeAttribute))
+  (instance ?OBJ AutonomousAgent))
+
+(instance Quick TimeAttribute)
+(documentation Quick EnglishWrittenLanguage "&%Quick describes how a process takes less time than expected")
+(termFormat EnglishWrittenLanguage Quick "quick")
+
+(contraryAttribute Quick Slow)
+
+(instance Slow TimeAttribute)
+(documentation Slow EnglishWrittenLanguage "&%Slow describes how a process takes more time than expected")
+(termFormat EnglishWrittenLanguage Slow "slow")
+
+(=>
+  (and
+    (subjectiveAttribute ?AGENT1 Quick ?PERSON)
+    (subjectiveAttribute ?AGENT2 Slow ?PERSON)
+    (instance ?PROCESS1 ?CLASS)
+    (instance ?PROCESS2 ?CLASS)
+    (subclass ?CLASS Process)
+    (agent ?PROCESS1 ?AGENT1)
+    (agent ?PROCESS2 ?AGENT2))
+  (exists (?U ?TIME1 ?TIME2 ?DURATION1 ?DURATION2)
+    (and
+      (instance ?U UnitOfDuration)
+      (instance ?DURATION1 TimeDuration)
+      (equal ?DURATION1
+        (MeasureFn ?TIME1 ?U))
+      (duration
+        (WhenFn ?PROCESS1) ?DURATION1)
+      (instance ?DURATION2 TimeDuration)
+      (equal ?DURATION2
+        (MeasureFn ?TIME2 ?U))
+      (duration
+        (WhenFn ?PROCESS2) ?DURATION2)
+      (greaterThan ?TIME2 ?TIME1))))
+      
+(subclass AmbienceAttribute SubjectiveAssessmentAttribute)
+(documentation AmbienceAttribute EnglishWrittenLanguage "&%AmbienceAttribute describes the atmosphere or general feeling that something evokes")
+(termFormat EnglishWrittenLanguage AmbienceAttribute "ambience")
+
+(=>
+  (and
+    (attribute ?X ?ATTR)
+    (instance ?ATTR AmbienceAttribute))
+  (instance ?X Physical))
+
+(instance RomanticAttribute AmbienceAttribute)
+(documentation RomanticAttribute EnglishWrittenLanguage "&%RomanticAttribute describes that something is of an amorous or non_platonic nature")
+(termFormat EnglishWrittenLanguage RomanticAttribute "romantic")
+
+(instance UnconventionalAttribute AmbienceAttribute)
+(documentation UnconventionalAttribute EnglishWrittenLanguage "&%UnconventionalAttribute describes that something does not conform to the ordinary or the usual")
+(termFormat EnglishWrittenLanguage UnconventionalAttribute "unconventional")
+
+(instance TrendyAttribute AmbienceAttribute)
+(documentation TrendyAttribute EnglishWrittenLanguage "&%TrendyAttribute describes that something is in accord with the latest fad")
+(termFormat EnglishWrittenLanguage TrendyAttribute "trendy")
+
+(instance ConventionalAttribute AmbienceAttribute)
+(documentation ConventionalAttribute EnglishWrittenLanguage "&%ConventionalAttribute describes that something conforms to norms and expectations")
+(termFormat EnglishWrittenLanguage ConventionalAttribute "conventional")
+(successorAttributeClosure ConventionalAttribute UnconventionalAttribute)
+
+(instance CasualAttribute AmbienceAttribute)
+(documentation CasualAttribute EnglishWrittenLanguage "&%CasualAttribute describes that something is appropriate for ordinary or routine occasions")
+(termFormat EnglishWrittenLanguage CasualAttribute "casual")
+
+(instance FormalAttribute AmbienceAttribute)
+(documentation FormalAttribute EnglishWrittenLanguage "&%FormalAttribute describes that something is refined or meets a certain standard")
+(termFormat EnglishWrittenLanguage FormalAttribute "formal")
+
+(instance BusinessCasualAttribute AmbienceAttribute)
+(documentation BusinessCasualAttribute EnglishWrittenLanguage "&%BusinessCasualAttribute describes that something is appropriate for a normal business setting")
+(termFormat EnglishWrittenLanguage BusinessCasualAttribute "business casual")
+
+(instance BusinessFormalAttribute AmbienceAttribute)
+(documentation BusinessFormalAttribute EnglishWrittenLanguage "&%BusinessFormalAttribute describes that something is appropriate for a stricter or more refined business setting")
+(termFormat EnglishWrittenLanguage BusinessFormalAttribute "business formal")
+
+(instance CasualDressyAttribute AmbienceAttribute)
+(documentation CasualDressyAttribute EnglishWrittenLanguage "&%CasualDressyAttribute describes that something is fancier than &%CasualAttribute, normally applied to clothing but can also be applied to things like the ambience of a club or bar")
+(termFormat EnglishWrittenLanguage CasualDressyAttribute "casual dressy")
+
+(instance DressyAttribute AmbienceAttribute)
+(documentation DressyAttribute EnglishWrittenLanguage "&%DressyAttribute describes a less laid_back and fancier atmosphere, normally applied to clothing but can also be applied to things like the ambience of a club, bar or event")
+(termFormat EnglishWrittenLanguage DressyAttribute "dressy")
+
+(subclass FoodAttribute SubjectiveAssessmentAttribute)
+(documentation FoodAttribute EnglishWrittenLanguage "&%FoodAttribute are descriptors that apply to &%Food but are highly subjective")
+(termFormat EnglishWrittenLanguage FoodAttribute "food attribute")
+
+(=>
+  (and
+    (attribute ?OBJ ?ATTR)
+    (instance ?ATTR FoodAttribute))
+  (instance ?OBJ PreparedFood))
+
+(instance ComfortFood FoodAttribute)
+(documentation ComfortFood EnglishWrittenLanguage "&%ComfortFood describes &%PreparedFood that gives a sense of well_being, typically associated with childhood or with home cooking")
+(termFormat EnglishWrittenLanguage ComfortFood "comfort food")
+
+(instance HeartHealthyFood FoodAttribute)
+(documentation HeartHealthyFood EnglishWrittenLanguage "&%HeartHealthyFood describes &%PreparedFood that has is low in sodium and other ingredients that may foster heart disease")
+(termFormat EnglishWrittenLanguage HeartHealthyFood "heart_healthy food")
+
+(=>
+  (and
+    (conditionalProbability
+      (attribute ?X ComfortFood)
+      (attribute ?X HeartHealthyFood) ?NUMBER1)
+    (conditionalProbability
+      (attribute ?X ComfortFood)
+      (not
+        (attribute ?X HeartHealthyFood)) ?NUMBER2))
+  (lessThan ?NUMBER1 ?NUMBER2))
+
+(instance FamilyStylePortion FoodAttribute)
+(documentation FamilyStylePortion EnglishWrittenLanguage "&%FamilyStylePortion means that an instance of food can be shared by 3 or more people")
+(termFormat EnglishWrittenLanguage FamilyStylePortion "family_style portions")
+
+;; prepared food that has family style portion as an attribute has higher measure than
+;; those that are not family_sized portions
+(=>
+  (and
+    (attribute ?FOOD1 FamilyStylePortion)
+    (measure ?FOOD1
+      (MeasureFn ?MEAS1 ?U))
+    (not
+      (attribute ?FOOD2 FamilyStylePortion))
+    (measure ?FOOD2
+      (MeasureFn ?MEAS2 ?U))
+    (instance ?FOOD1 ?CLASS)
+    (instance ?FOOD2 ?CLASS)
+    (instance ?U UnitOfMeasure))
+  (greaterThan ?MEAS1 ?MEAS2))
+ 
+;; KJN: Moving this to Mid_level_ontology.kif as it seems to be more of a common
+;; notion versus one that is solely used in Dining.
+;;(instance CommunalAttribute RelationalAttribute)
+;;;(documentation CommunalAttribute EnglishWrittenLanguage "&%CommunalAttribute 
+;;describes how an &%Object is shared by many")
+;;(termFormat EnglishWrittenLanguage CommunalAttribute "communal")
+
+;;(instance PrivateAttribute RelationalAttribute)
+;;(documentation PrivateAttribute EnglishWrittenLanguage "&%PrivateAttribute describes how an 
+;;object is not available to other people without the consent of the 
+;;current owner")
+
+;;(=>
+;;  (attribute ?X CommunalAttribute)
+;;  (instance ?X Object))
+
+;;(=>
+;;  (attribute ?X PrivateAttribute)
+;;  (modalAttribute
+;;    (not (attribute ?X CommunalAttribute)) Likely))
+
+;;(=>
+;;  (attribute ?X CommunalAttribute)
+;;  (modalAttribute
+;;    (not (attribute ?X PrivateAttribute)) Likely))
+
+;; communal tables    
+;; if a table is communal, then it's possible that 2 groups eating at the 
+;; same time may do so at the same table
+(=>
+  (and
+    (attribute ?X CommunalAttribute)
+    (instance ?X Table)
+    (instance ?E1 Eating)
+    (agent ?E1 ?GRP1)
+    (instance ?GRP1 GroupOfPeople)
+    (eventLocated ?E1 ?X))
+  (modalAttribute
+    (exists (?GRP2 ?E2 ?X2)
+      (and
+        (instance ?E2 Eating)
+        (agent ?E2 ?GRP2)
+        (not
+          (equal ?GRP1 ?GRP2))
+        (instance ?GRP2 GroupOfPeople)
+        (eventLocated ?E2 ?X2)
+        (meetsTemporally
+          (WhenFn ?E1)
+          (WhenFn ?E2))
+        (equal ?X ?X2))) Possibility))
+    
+;; private group room
+(=>
+  (and
+    (instance ?REST Restaurant)
+    (instance ?DR DiningRoom)
+    (attribute ?DR PrivateAttribute)
+    (possesses ?REST ?DR)
+    (customer ?GRP1 ?REST)
+    (instance ?E1 Eating)
+    (agent ?E1 ?GRP1)
+    (instance ?GRP1 GroupOfPeople))
+  (modalAttribute
+    (not
+      (exists (?GRP2 ?E2)
+        (and
+          (customer ?GRP2 ?REST)
+          (not
+            (equal ?GRP1 ?GRP2))
+          (instance ?E2 Eating)
+          (agent ?E2 ?GRP2)
+          (holdsDuring
+            (WhenFn ?E1)
+            (eventLocated ?E2 ?DR))))) Likely))
+
+      
+;; ----------------------------------------------------------------------------
+;; Cuisine
+;; ----------------------------------------------------------------------------      
+
+(subclass Cuisine RelationalAttribute)
+(documentation Cuisine EnglishWrittenLanguage "Cuisine is an attribute applied to classes of PreparedFood to specify that it is typical of a particular region or culture. Note that it cannot be applied to a single Animal or Plant, even if a particular such entity is endemic to a particular region. It captures not just the reality of a particular combination of ingredients, but also the intent of the preparer to conform to a particular style of food and food preparation.")
+
+(=>
+  (and
+    (attribute ?X ?Y)
+    (instance ?Y Cuisine))
+  (instance ?X PreparedFood))
+  
+(documentation AsianCuisine EnglishWrittenLanguage "&%AsianCuisine is a kind of &%Cuisine.")
+(instance AsianCuisine Cuisine)
+(termFormat EnglishWrittenLanguage AsianCuisine "Asian Cuisine")
+(documentation CaribbeanCuisine EnglishWrittenLanguage "&%CaribbeanCuisine is a kind of &%Cuisine that refers to culinary traditions originating in the Caribbean region.")
+(instance CaribbeanCuisine Cuisine)
+(termFormat EnglishWrittenLanguage CaribbeanCuisine "Caribbean Cuisine")
+(documentation EuropeanCuisine EnglishWrittenLanguage "&%EuropeanCuisine is a kind of &%Cuisine characterized by culinary traditions originating in Europe.")
+(instance EuropeanCuisine Cuisine)
+(termFormat EnglishWrittenLanguage EuropeanCuisine "European Cuisine")
+(documentation LatinAmericanCuisine EnglishWrittenLanguage "&%LatinAmericanCuisine is a kind of &%Cuisine originating in Latin America.")
+(instance LatinAmericanCuisine Cuisine)
+(termFormat EnglishWrittenLanguage LatinAmericanCuisine "Latin American Cuisine")
+(documentation AfricanCuisine EnglishWrittenLanguage "&%AfricanCuisine is a kind of &%Cuisine characteristic of Africa.")
+(instance AfricanCuisine Cuisine)
+(termFormat EnglishWrittenLanguage AfricanCuisine "African Cuisine")
+(documentation AmericanCuisine EnglishWrittenLanguage "&%AmericanCuisine is a kind of &%Cuisine.")
+(instance AmericanCuisine Cuisine)
+(termFormat EnglishWrittenLanguage AmericanCuisine "American Cuisine")
+(documentation AustralianCuisine EnglishWrittenLanguage "&%AustralianCuisine is a kind of &%Cuisine characteristic of Australia.")
+(instance AustralianCuisine Cuisine)
+(termFormat EnglishWrittenLanguage AustralianCuisine "Australian Cuisine")
+(documentation CanadianCuisine EnglishWrittenLanguage "&%CanadianCuisine is a kind of &%Cuisine.")
+(instance CanadianCuisine Cuisine)
+(termFormat EnglishWrittenLanguage CanadianCuisine "Canadian Cuisine")
+(documentation FusionCuisine EnglishWrittenLanguage "A &%FusionCuisine is a kind of &%Cuisine that combines culinary elements from distinct culinary traditions into a single coherent style.")
+(instance FusionCuisine Cuisine)
+(termFormat EnglishWrittenLanguage FusionCuisine "Fusion Cuisine")
+(documentation JewishCuisine EnglishWrittenLanguage "&%JewishCuisine is a kind of &%Cuisine.")
+(instance JewishCuisine Cuisine)
+(termFormat EnglishWrittenLanguage JewishCuisine "Jewish Cuisine")
+(documentation HealthFoodCuisine EnglishWrittenLanguage "&%HealthFoodCuisine is a kind of &%Cuisine that emphasizes the preparation and consumption of foods regarded as promoting health and well-being.")
+(instance HealthFoodCuisine Cuisine)
+(termFormat EnglishWrittenLanguage HealthFoodCuisine "Health Food Cuisine")
+(documentation CentralAfricanCuisine EnglishWrittenLanguage "&%CentralAfricanCuisine is a kind of &%AfricanCuisine.")
+(subAttribute CentralAfricanCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage CentralAfricanCuisine "Central African Cuisine")
+(documentation EastAfricanCuisine EnglishWrittenLanguage "&%EastAfricanCuisine is a kind of &%AfricanCuisine.")
+(subAttribute EastAfricanCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage EastAfricanCuisine "East African Cuisine")
+(documentation HornOfAfricaCuisine EnglishWrittenLanguage "&%HornOfAfricaCuisine is a kind of &%AfricanCuisine.")
+(subAttribute HornOfAfricaCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage HornOfAfricaCuisine "Horn of Africa Cuisine")
+(documentation NorthAfricanCuisine EnglishWrittenLanguage "&%NorthAfricanCuisine is a kind of &%AfricanCuisine.")
+(subAttribute NorthAfricanCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage NorthAfricanCuisine "North African Cuisine")
+(documentation SouthernAfricanCuisine EnglishWrittenLanguage "&%SouthernAfricanCuisine is a kind of &%AfricanCuisine.")
+(subAttribute SouthernAfricanCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage SouthernAfricanCuisine "Southern African Cuisine")
+(documentation WestAfricanCuisine EnglishWrittenLanguage "&%WestAfricanCuisine is a kind of &%AfricanCuisine.")
+(subAttribute WestAfricanCuisine AfricanCuisine)
+(termFormat EnglishWrittenLanguage WestAfricanCuisine "West African Cuisine")
+(documentation IndianCuisine EnglishWrittenLanguage "&%IndianCuisine is a kind of &%AsianCuisine.")
+(subAttribute IndianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage IndianCuisine "Indian Cuisine")
+(documentation SouthAsianCuisine EnglishWrittenLanguage "&%SouthAsianCuisine is a kind of &%AsianCuisine.")
+(subAttribute SouthAsianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage SouthAsianCuisine "South Asian Cuisine")
+(documentation SoutheastAsianCuisine EnglishWrittenLanguage "&%SoutheastAsianCuisine is a kind of &%AsianCuisine that comprises culinary traditions originating from Southeast Asia.")
+(subAttribute SoutheastAsianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage SoutheastAsianCuisine "Southeast Asian Cuisine")
+(documentation EastAsianCuisine EnglishWrittenLanguage "&%EastAsianCuisine is a kind of &%AsianCuisine.")
+(subAttribute EastAsianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage EastAsianCuisine "East Asian Cuisine")
+(documentation WestAsianCuisine EnglishWrittenLanguage "&%WestAsianCuisine is a kind of &%AsianCuisine.")
+(subAttribute WestAsianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage WestAsianCuisine "West Asian Cuisine")
+(documentation ChineseCuisine EnglishWrittenLanguage "A &%ChineseCuisine is a kind of &%AsianCuisine.")
+(subAttribute ChineseCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage ChineseCuisine "Chinese Cuisine")
+(documentation PanAsianCuisine EnglishWrittenLanguage "&%PanAsianCuisine is a kind of &%AsianCuisine that integrates culinary traditions from multiple Asian regions into a unified &%Cuisine style.")
+(subAttribute PanAsianCuisine AsianCuisine)
+(termFormat EnglishWrittenLanguage PanAsianCuisine "Pan_Asian Cuisine")
+(documentation JapaneseCuisine EnglishWrittenLanguage "&%JapaneseCuisine is a kind of &%EastAsianCuisine.")
+(subAttribute JapaneseCuisine EastAsianCuisine)
+(termFormat EnglishWrittenLanguage JapaneseCuisine "Japanese Cuisine")
+(documentation EasternEuropeanCuisine EnglishWrittenLanguage "&%EasternEuropeanCuisine is a kind of &%EuropeanCuisine.")
+(subAttribute EasternEuropeanCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage EasternEuropeanCuisine "Eastern European Cuisine")
+(documentation MediterraneanCuisine EnglishWrittenLanguage "&%MediterraneanCuisine is a kind of &%EuropeanCuisine.")
+(subAttribute MediterraneanCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage MediterraneanCuisine "Mediterranean Cuisine")
+(documentation NorthernEuropeanCuisine EnglishWrittenLanguage "&%NorthernEuropeanCuisine is a kind of &%EuropeanCuisine that denotes the culinary tradition of northern Europe.")
+(subAttribute NorthernEuropeanCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage NorthernEuropeanCuisine "Northern European Cuisine")
+(documentation WesternEuropeanCuisine EnglishWrittenLanguage "&%WesternEuropeanCuisine is a kind of &%EuropeanCuisine.")
+(subAttribute WesternEuropeanCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage WesternEuropeanCuisine "Western European Cuisine")
+(documentation AlpineCuisine EnglishWrittenLanguage "&%AlpineCuisine is a kind of &%EuropeanCuisine.")
+(subAttribute AlpineCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage AlpineCuisine "Alpine Cuisine")
+(documentation ContinentalCuisine EnglishWrittenLanguage "&%ContinentalCuisine is a kind of &%EuropeanCuisine that is a &%Cuisine associated with the European culinary tradition.")
+(subAttribute ContinentalCuisine EuropeanCuisine)
+(termFormat EnglishWrittenLanguage ContinentalCuisine "Continental Cuisine")
+(documentation ArabCuisine EnglishWrittenLanguage "&%ArabCuisine is a kind of &%WestAsianCuisine comprising the culinary traditions associated with Arab peoples.")
+(subAttribute ArabCuisine WestAsianCuisine)
+(termFormat EnglishWrittenLanguage ArabCuisine "Arab Cuisine")
+(documentation BritishCuisine EnglishWrittenLanguage "&%BritishCuisine is a kind of &%NorthernEuropeanCuisine.")
+(subAttribute BritishCuisine NorthernEuropeanCuisine)
+(termFormat EnglishWrittenLanguage BritishCuisine "British Cuisine")
+(documentation NordicCuisine EnglishWrittenLanguage "A &%NordicCuisine is a kind of &%NorthernEuropeanCuisine.")
+(subAttribute NordicCuisine NorthernEuropeanCuisine)
+(termFormat EnglishWrittenLanguage NordicCuisine "Nordic Cuisine")
+(documentation IrishCuisine EnglishWrittenLanguage "&%IrishCuisine is a kind of &%NorthernEuropeanCuisine consisting of the culinary traditions of Ireland.")
+(subAttribute IrishCuisine NorthernEuropeanCuisine)
+(termFormat EnglishWrittenLanguage IrishCuisine "Irish Cuisine")
+(documentation ScottishCuisine EnglishWrittenLanguage "&%ScottishCuisine is a kind of &%NorthernEuropeanCuisine.")
+(subAttribute ScottishCuisine NorthernEuropeanCuisine)
+(termFormat EnglishWrittenLanguage ScottishCuisine "Scottish Cuisine")
+(documentation IndonesianCuisine EnglishWrittenLanguage "&%IndonesianCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute IndonesianCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage IndonesianCuisine "Indonesian Cuisine")
+(documentation SpanishCuisine EnglishWrittenLanguage "&%SpanishCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute SpanishCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage SpanishCuisine "Spanish Cuisine")
+(documentation AustrianCuisine EnglishWrittenLanguage "&%AustrianCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute AustrianCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage AustrianCuisine "Austrian Cuisine")
+(documentation GermanCuisine EnglishWrittenLanguage "&%GermanCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute GermanCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage GermanCuisine "German Cuisine")
+(documentation FrenchCuisine EnglishWrittenLanguage "&%FrenchCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute FrenchCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage FrenchCuisine "French Cuisine")
+(documentation DutchCuisine EnglishWrittenLanguage "&%DutchCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute DutchCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage DutchCuisine "Dutch Cuisine")
+(documentation SwissCuisine EnglishWrittenLanguage "&%SwissCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute SwissCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage SwissCuisine "Swiss Cuisine")
+(documentation VienneseCuisine EnglishWrittenLanguage "&%VienneseCuisine is a kind of &%AustrianCuisine.")
+(subAttribute VienneseCuisine AustrianCuisine)
+(termFormat EnglishWrittenLanguage VienneseCuisine "Viennese Cuisine")
+(documentation BosnianCuisine EnglishWrittenLanguage "&%BosnianCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute BosnianCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage BosnianCuisine "Bosnian Cuisine")
+(documentation BolivianCuisine EnglishWrittenLanguage "&%BolivianCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute BolivianCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage BolivianCuisine "Bolivian Cuisine")
+(documentation BelgianCuisine EnglishWrittenLanguage "&%BelgianCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute BelgianCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage BelgianCuisine "Belgian Cuisine")
+(documentation NativeAmericanCuisine EnglishWrittenLanguage "&%NativeAmericanCuisine is a kind of &%AmericanCuisine.")
+(subAttribute NativeAmericanCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage NativeAmericanCuisine "Native American Cuisine")
+(documentation NorthAmericanCuisine EnglishWrittenLanguage "&%NorthAmericanCuisine is a kind of &%AmericanCuisine comprising culinary traditions originating in North America.")
+(subAttribute NorthAmericanCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage NorthAmericanCuisine "North American Cuisine")
+(documentation MidwesternCuisine EnglishWrittenLanguage "&%MidwesternCuisine is a kind of &%AmericanCuisine.")
+(subAttribute MidwesternCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage MidwesternCuisine "Midwestern Cuisine")
+(documentation AmishCuisine EnglishWrittenLanguage "&%AmishCuisine is a kind of &%AmericanCuisine characterized by traditional Pennsylvania German cooking practices associated with the Amish community.")
+(subAttribute AmishCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage AmishCuisine "Amish Cuisine")
+(documentation CreoleCuisine EnglishWrittenLanguage "&%CreoleCuisine is a kind of &%AmericanCuisine.")
+(subAttribute CreoleCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage CreoleCuisine "Creole Cuisine")
+(documentation SouthernCuisine EnglishWrittenLanguage "Southern Cuisine is a style of American cuisine associated with the American South.")
+(subAttribute SouthernCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage SouthernCuisine "Southern Cuisine")
+(documentation CalifornianCuisine EnglishWrittenLanguage "&%CalifornianCuisine is a kind of &%AmericanCuisine.")
+(subAttribute CalifornianCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage CalifornianCuisine "Californian Cuisine")
+(documentation ChesapeakeCuisine EnglishWrittenLanguage "&%ChesapeakeCuisine is a kind of &%AmericanCuisine.")
+(subAttribute ChesapeakeCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage ChesapeakeCuisine "Chesapeake Cuisine")
+(documentation SouthwesternCuisine EnglishWrittenLanguage "&%SouthwesternCuisine is a kind of &%AmericanCuisine.")
+(subAttribute SouthwesternCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage SouthwesternCuisine "Southwestern Cuisine")
+(documentation FloridianCuisine EnglishWrittenLanguage "&%FloridianCuisine is a kind of &%AmericanCuisine.")
+(subAttribute FloridianCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage FloridianCuisine "Floridian Cuisine")
+(documentation HawaiianCuisine EnglishWrittenLanguage "&%HawaiianCuisine is a kind of &%AmericanCuisine.")
+(subAttribute HawaiianCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage HawaiianCuisine "Hawaiian Cuisine")
+(documentation NewEnglandCuisine EnglishWrittenLanguage "&%NewEnglandCuisine is a kind of &%AmericanCuisine.")
+(subAttribute NewEnglandCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage NewEnglandCuisine "New England Cuisine")
+(documentation NewMexicanCuisine EnglishWrittenLanguage "&%NewMexicanCuisine is a kind of &%AmericanCuisine native to the New Mexico region.")
+(subAttribute NewMexicanCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage NewMexicanCuisine "New Mexican Cuisine")
+(documentation PennsylvaniaDutchCuisine EnglishWrittenLanguage "&%PennsylvaniaDutchCuisine is a kind of &%AmericanCuisine characterized by the traditional foodways of Pennsylvania Dutch communities.")
+(subAttribute PennsylvaniaDutchCuisine AmericanCuisine)
+(termFormat EnglishWrittenLanguage PennsylvaniaDutchCuisine "Pennsylvania Dutch Cuisine")
+(documentation YemeniCuisine EnglishWrittenLanguage "&%YemeniCuisine is a kind of &%ArabCuisine.")
+(subAttribute YemeniCuisine ArabCuisine)
+(termFormat EnglishWrittenLanguage YemeniCuisine "Yemeni Cuisine")
+(documentation NewZealandCuisine EnglishWrittenLanguage "&%NewZealandCuisine is a kind of &%AustralianCuisine.")
+(subAttribute NewZealandCuisine AustralianCuisine)
+(termFormat EnglishWrittenLanguage NewZealandCuisine "New Zealand Cuisine")
+(documentation BajanCuisine EnglishWrittenLanguage "&%BajanCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute BajanCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage BajanCuisine "Bajan Cuisine")
+(documentation CubanCuisine EnglishWrittenLanguage "&%CubanCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute CubanCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage CubanCuisine "Cuban Cuisine")
+(documentation DominicanCuisine EnglishWrittenLanguage "&%DominicanCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute DominicanCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage DominicanCuisine "Dominican Cuisine")
+(documentation HaitianCuisine EnglishWrittenLanguage "&%HaitianCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute HaitianCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage HaitianCuisine "Haitian Cuisine")
+(documentation JamaicanCuisine EnglishWrittenLanguage "&%JamaicanCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute JamaicanCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage JamaicanCuisine "Jamaican Cuisine")
+(documentation TinidadianCuisine EnglishWrittenLanguage "&%TinidadianCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute TinidadianCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage TinidadianCuisine "Trinidadian Cuisine")
+(documentation CentralAsianCuisine EnglishWrittenLanguage "&%CentralAsianCuisine is a kind of &%AsianCuisine.")
+(subAttribute CentralAsianCuisine AsianCuisine)
+(documentation AfghanCuisine EnglishWrittenLanguage "&%AfghanCuisine is a kind of &%CentralAsianCuisine.")
+(subAttribute AfghanCuisine CentralAsianCuisine)
+(termFormat EnglishWrittenLanguage AfghanCuisine "Afghan Cuisine")
+(documentation MongolianCuisine EnglishWrittenLanguage "&%MongolianCuisine is a kind of &%CentralAsianCuisine.")
+(subAttribute MongolianCuisine CentralAsianCuisine)
+(termFormat EnglishWrittenLanguage MongolianCuisine "Mongolian Cuisine")
+(documentation TibetanCuisine EnglishWrittenLanguage "&%TibetanCuisine is a kind of &%CentralAsianCuisine.")
+(subAttribute TibetanCuisine CentralAsianCuisine)
+(termFormat EnglishWrittenLanguage TibetanCuisine "Tibetan Cuisine")
+(documentation UzbekiCuisine EnglishWrittenLanguage "&%UzbekiCuisine is a kind of &%CentralAsianCuisine.")
+(subAttribute UzbekiCuisine CentralAsianCuisine)
+(termFormat EnglishWrittenLanguage UzbekiCuisine "Uzbeki Cuisine")
+(documentation CantoneseCuisine EnglishWrittenLanguage "&%CantoneseCuisine is a kind of &%ChineseCuisine.")
+(subAttribute CantoneseCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage CantoneseCuisine "Cantonese Cuisine")
+(documentation HunanCuisine EnglishWrittenLanguage "&%HunanCuisine is a kind of &%ChineseCuisine.")
+(subAttribute HunanCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage HunanCuisine "Hunan Cuisine")
+(documentation MandarinCuisine EnglishWrittenLanguage "&%MandarinCuisine is a kind of &%ChineseCuisine.")
+(subAttribute MandarinCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage MandarinCuisine "Mandarin Cuisine")
+(documentation PekingeseCuisine EnglishWrittenLanguage "&%PekingeseCuisine is a kind of &%ChineseCuisine.")
+(subAttribute PekingeseCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage PekingeseCuisine "Pekingese Cuisine")
+(documentation SichuanCuisine EnglishWrittenLanguage "&%SichuanCuisine is a kind of &%ChineseCuisine.")
+(subAttribute SichuanCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage SichuanCuisine "Sichuan Cuisine")
+(documentation SzechuanCuisine EnglishWrittenLanguage "&%SzechuanCuisine is a kind of &%ChineseCuisine.")
+(subAttribute SzechuanCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage SzechuanCuisine "Szechuan Cuisine")
+(documentation KoreanCuisine EnglishWrittenLanguage "&%KoreanCuisine is a kind of &%EastAsianCuisine.")
+(subAttribute KoreanCuisine EastAsianCuisine)
+(termFormat EnglishWrittenLanguage KoreanCuisine "Korean Cuisine")
+(documentation TaiwaneseCuisine EnglishWrittenLanguage "Taiwanese Cuisine is a type of East Asian cuisine.")
+(subAttribute TaiwaneseCuisine EastAsianCuisine)
+(termFormat EnglishWrittenLanguage TaiwaneseCuisine "Taiwanese Cuisine")
+(documentation CzechCuisine EnglishWrittenLanguage "&%CzechCuisine is a kind of &%EasternEuropeanCuisine.")
+(subAttribute CzechCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage CzechCuisine "Czech Cuisine")
+(documentation HungarianCuisine EnglishWrittenLanguage "&%HungarianCuisine is a kind of &%EasternEuropeanCuisine that comprises the culinary traditions of Hungary.")
+(subAttribute HungarianCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage HungarianCuisine "Hungarian Cuisine")
+(documentation PolishCuisine EnglishWrittenLanguage "&%PolishCuisine is a kind of &%EasternEuropeanCuisine.")
+(subAttribute PolishCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage PolishCuisine "Polish Cuisine")
+(documentation RomanianCuisine EnglishWrittenLanguage "&%RomanianCuisine is a kind of &%EasternEuropeanCuisine.")
+(subAttribute RomanianCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage RomanianCuisine "Romanian Cuisine")
+(documentation RussianCuisine EnglishWrittenLanguage "&%RussianCuisine is a kind of &%EasternEuropeanCuisine.")
+(subAttribute RussianCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage RussianCuisine "Russian Cuisine")
+(documentation UkrainianCuisine EnglishWrittenLanguage "&%UkrainianCuisine is a kind of &%EasternEuropeanCuisine that is the culinary tradition of Ukraine.")
+(subAttribute UkrainianCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage UkrainianCuisine "Ukrainian Cuisine")
+(documentation AlsatianCuisine EnglishWrittenLanguage "&%AlsatianCuisine is a kind of &%FrenchCuisine.")
+(subAttribute AlsatianCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage AlsatianCuisine "Alsatian Cuisine")
+(documentation AuvergneCuisine EnglishWrittenLanguage "&%AuvergneCuisine is a kind of &%FrenchCuisine.")
+(subAttribute AuvergneCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage AuvergneCuisine "Auvergne Cuisine")
+(documentation AveyronCuisine EnglishWrittenLanguage "&%AveyronCuisine is a kind of &%FrenchCuisine.")
+(subAttribute AveyronCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage AveyronCuisine "Aveyron Cuisine")
+(documentation CorsicaCuisine EnglishWrittenLanguage "&%CorsicaCuisine is a kind of &%FrenchCuisine.")
+(subAttribute CorsicaCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage CorsicaCuisine "Corsica Cuisine")
+(documentation BrittanyCuisine EnglishWrittenLanguage "&%BrittanyCuisine is a kind of &%FrenchCuisine.")
+(subAttribute BrittanyCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage BrittanyCuisine "Brittany Cuisine")
+(documentation BurgundyCuisine EnglishWrittenLanguage "&%BurgundyCuisine is a kind of &%FrenchCuisine.")
+(subAttribute BurgundyCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage BurgundyCuisine "Burgundy Cuisine")
+(documentation GasconyCuisine EnglishWrittenLanguage "&%GasconyCuisine is a kind of &%FrenchCuisine.")
+(subAttribute GasconyCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage GasconyCuisine "Gascony Cuisine")
+(documentation HauteCuisine EnglishWrittenLanguage "&%HauteCuisine is a kind of &%FrenchCuisine.")
+(subAttribute HauteCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage HauteCuisine "Haute Cuisine")
+(documentation LyonCuisine EnglishWrittenLanguage "&%LyonCuisine is a kind of &%FrenchCuisine.")
+(subAttribute LyonCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage LyonCuisine "Lyon Cuisine")
+(documentation ProvencalCuisine EnglishWrittenLanguage "&%ProvencalCuisine is a kind of &%FrenchCuisine.")
+(subAttribute ProvencalCuisine FrenchCuisine)
+(termFormat EnglishWrittenLanguage ProvencalCuisine "Provencal Cuisine")
+(documentation EurasianCuisine EnglishWrittenLanguage "&%EurasianCuisine is a kind of &%FusionCuisine.")
+(subAttribute EurasianCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage EurasianCuisine "Eurasian Cuisine")
+(subAttribute EurasianCuisine EuropeanCuisine)
+(subAttribute EurasianCuisine AsianCuisine)
+(documentation AsianFusionCuisine EnglishWrittenLanguage "&%AsianFusionCuisine is a kind of &%AsianCuisine that blends culinary elements from multiple Asian traditions within a &%FusionCuisine style.")
+(subAttribute AsianFusionCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage AsianFusionCuisine "Asian Fusion Cuisine")
+(subAttribute AsianFusionCuisine AsianCuisine)
+(documentation EuropeanFusionCuisine EnglishWrittenLanguage "&%EuropeanFusionCuisine is a kind of &%FusionCuisine that is a distinctive culinary style within &%EuropeanCuisine and the broader domain of &%Cuisine, characterized by the deliberate blending of traditional European cooking methods, ingredients, and flavors with those of one or more non-European culinary traditions to create novel dishes and dining experiences.")
+(subAttribute EuropeanFusionCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage EuropeanFusionCuisine "European Fusion Cuisine")
+(subAttribute EuropeanFusionCuisine EuropeanCuisine)
+(documentation FloribbeanCuisine EnglishWrittenLanguage "&%FloribbeanCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute FloribbeanCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage FloribbeanCuisine "Floribbean Cuisine")
+(subAttribute FloribbeanCuisine CaribbeanCuisine)
+(subAttribute FloribbeanCuisine AmericanCuisine)
+(documentation FrenchIndianCuisine EnglishWrittenLanguage "&%FrenchIndianCuisine is a kind of &%FusionCuisine that combines elements of &%FrenchCuisine and &%IndianCuisine.")
+(subAttribute FrenchIndianCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage FrenchIndianCuisine "French Indian Cuisine")
+(subAttribute FrenchIndianCuisine FrenchCuisine)
+(subAttribute FrenchIndianCuisine IndianCuisine)
+(documentation InternationalCuisine EnglishWrittenLanguage "&%InternationalCuisine is a kind of &%FusionCuisine that blends culinary practices from multiple national traditions.")
+(subAttribute InternationalCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage InternationalCuisine "International Cuisine")
+(documentation GlobalCuisine EnglishWrittenLanguage "&%GlobalCuisine is a kind of &%FusionCuisine.")
+(subAttribute GlobalCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage GlobalCuisine "Global Cuisine")
+(documentation IslandCuisine EnglishWrittenLanguage "&%IslandCuisine is a kind of &%FusionCuisine.")
+(subAttribute IslandCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage IslandCuisine "Island Cuisine")
+(documentation NewWorldCuisine EnglishWrittenLanguage "&%NewWorldCuisine is a kind of &%FusionCuisine that combines culinary traditions originating in the New World with other culinary traditions.")
+(subAttribute NewWorldCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage NewWorldCuisine "New World Cuisine")
+(documentation PacificRimCuisine EnglishWrittenLanguage "&%PacificRimCuisine is a kind of &%FusionCuisine characterized by the combination of Asian, Pacific Island, and Western culinary traditions from the Pacific Rim.")
+(subAttribute PacificRimCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage PacificRimCuisine "Pacific Rim Cuisine")
+(documentation SenegambianCuisine EnglishWrittenLanguage "&%SenegambianCuisine is a kind of &%GambianCuisine.")
+(subAttribute SenegambianCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage SenegambianCuisine "Senegambian Cuisine")
+(subAttribute SenegambianCuisine SenegaleseCuisine)
+(subAttribute SenegambianCuisine GambianCuisine)
+(documentation SeychellesCuisine EnglishWrittenLanguage "&%SeychellesCuisine is a kind of &%FrenchCuisine.")
+(subAttribute SeychellesCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage SeychellesCuisine "Seychelles Cuisine")
+(subAttribute SeychellesCuisine FrenchCuisine)
+(documentation SouthPacificCuisine EnglishWrittenLanguage "&%SouthPacificCuisine is a kind of &%FusionCuisine that blends culinary traditions of the South Pacific region.")
+(subAttribute SouthPacificCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage SouthPacificCuisine "South Pacific Cuisine")
+(documentation ThaiFrenchCuisine EnglishWrittenLanguage "&%ThaiFrenchCuisine is a kind of &%ThaiCuisine that incorporates &%FrenchCuisine influences.")
+(subAttribute ThaiFrenchCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage ThaiFrenchCuisine "Thai French Cuisine")
+(subAttribute ThaiFrenchCuisine ThaiCuisine)
+(subAttribute ThaiFrenchCuisine FrenchCuisine)
+(documentation BavarianCuisine EnglishWrittenLanguage "&%BavarianCuisine is a kind of &%GermanCuisine.")
+(subAttribute BavarianCuisine GermanCuisine)
+(termFormat EnglishWrittenLanguage BavarianCuisine "Bavarian Cuisine")
+(documentation EritreanCuisine EnglishWrittenLanguage "&%EritreanCuisine is a kind of &%HornOfAfricaCuisine.")
+(subAttribute EritreanCuisine HornOfAfricaCuisine)
+(termFormat EnglishWrittenLanguage EritreanCuisine "Eritrean Cuisine")
+(documentation EthiopianCuisine EnglishWrittenLanguage "&%EthiopianCuisine is a kind of &%HornOfAfricaCuisine.")
+(subAttribute EthiopianCuisine HornOfAfricaCuisine)
+(termFormat EnglishWrittenLanguage EthiopianCuisine "Ethiopian Cuisine")
+(documentation EastIndianCuisine EnglishWrittenLanguage "&%EastIndianCuisine is a kind of &%IndianCuisine.")
+(subAttribute EastIndianCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage EastIndianCuisine "East Indian Cuisine")
+(documentation NorthIndianCuisine EnglishWrittenLanguage "&%NorthIndianCuisine is a kind of &%IndianCuisine.")
+(subAttribute NorthIndianCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage NorthIndianCuisine "North Indian Cuisine")
+(documentation NortheastIndianCuisine EnglishWrittenLanguage "&%NortheastIndianCuisine is a kind of &%IndianCuisine.")
+(subAttribute NortheastIndianCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage NortheastIndianCuisine "Northeast Indian Cuisine")
+(documentation SouthIndianCuisine EnglishWrittenLanguage "&%SouthIndianCuisine is a kind of &%IndianCuisine.")
+(subAttribute SouthIndianCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage SouthIndianCuisine "South Indian Cuisine")
+(documentation WestIndianCuisine EnglishWrittenLanguage "&%WestIndianCuisine is a kind of &%IndianCuisine that encompasses culinary traditions associated with the West Indies.")
+(subAttribute WestIndianCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage WestIndianCuisine "West Indian Cuisine")
+(documentation HimalayanCuisine EnglishWrittenLanguage "&%HimalayanCuisine is a kind of &%IndianCuisine.")
+(subAttribute HimalayanCuisine IndianCuisine)
+(termFormat EnglishWrittenLanguage HimalayanCuisine "Himalayan Cuisine")
+(documentation JavaneseCuisine EnglishWrittenLanguage "A &%JavaneseCuisine is a kind of &%IndonesianCuisine.")
+(subAttribute JavaneseCuisine IndonesianCuisine)
+(termFormat EnglishWrittenLanguage JavaneseCuisine "Javanese Cuisine")
+(documentation AbruzzeseCuisine EnglishWrittenLanguage "&%AbruzzeseCuisine is a kind of &%ItalianCuisine.")
+(subAttribute AbruzzeseCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage AbruzzeseCuisine "Abruzzese Cuisine")
+(documentation EmilianCuisine EnglishWrittenLanguage "&%EmilianCuisine is a kind of &%ItalianCuisine that comprises the culinary traditions of the Emilia-Romagna region.")
+(subAttribute EmilianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage EmilianCuisine "Emilian Cuisine")
+(documentation FlorentineCuisine EnglishWrittenLanguage "&%FlorentineCuisine is a kind of &%ItalianCuisine.")
+(subAttribute FlorentineCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage FlorentineCuisine "Florentine Cuisine")
+(documentation LigurianCuisine EnglishWrittenLanguage "&%LigurianCuisine is a kind of &%ItalianCuisine.")
+(subAttribute LigurianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage LigurianCuisine "Ligurian Cuisine")
+(documentation LombardianCuisine EnglishWrittenLanguage "&%LombardianCuisine is a kind of &%ItalianCuisine.")
+(subAttribute LombardianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage LombardianCuisine "Lombardian Cuisine")
+(documentation MarchigianaCuisine EnglishWrittenLanguage "&%MarchigianaCuisine is a kind of &%ItalianCuisine.")
+(subAttribute MarchigianaCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage MarchigianaCuisine "Marchigiana Cuisine")
+(documentation MilaneseCuisine EnglishWrittenLanguage "&%MilaneseCuisine is a kind of &%ItalianCuisine.")
+(subAttribute MilaneseCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage MilaneseCuisine "Milanese Cuisine")
+(documentation NeapolitanCuisine EnglishWrittenLanguage "&%NeapolitanCuisine is a kind of &%ItalianCuisine.")
+(subAttribute NeapolitanCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage NeapolitanCuisine "Neapolitan Cuisine")
+(documentation RomanCuisine EnglishWrittenLanguage "&%RomanCuisine is a kind of &%ItalianCuisine.")
+(subAttribute RomanCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage RomanCuisine "Roman Cuisine")
+(documentation PiedmonteseCuisine EnglishWrittenLanguage "&%PiedmonteseCuisine is a kind of &%ItalianCuisine.")
+(subAttribute PiedmonteseCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage PiedmonteseCuisine "Piedmontese Cuisine")
+(documentation SardinianCuisine EnglishWrittenLanguage "&%SardinianCuisine is a kind of &%ItalianCuisine.")
+(subAttribute SardinianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage SardinianCuisine "Sardinian Cuisine")
+(documentation SicilianCuisine EnglishWrittenLanguage "&%SicilianCuisine is a kind of &%ItalianCuisine.")
+(subAttribute SicilianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage SicilianCuisine "Sicilian Cuisine")
+(documentation TuscanCuisine EnglishWrittenLanguage "&%TuscanCuisine is a kind of &%ItalianCuisine.")
+(subAttribute TuscanCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage TuscanCuisine "Tuscan Cuisine")
+(documentation VenetianCuisine EnglishWrittenLanguage "&%VenetianCuisine is a kind of &%ItalianCuisine.")
+(subAttribute VenetianCuisine ItalianCuisine)
+(termFormat EnglishWrittenLanguage VenetianCuisine "Venetian Cuisine")
+(documentation ArgentineanCuisine EnglishWrittenLanguage "&%ArgentineanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute ArgentineanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage ArgentineanCuisine "Argentinean Cuisine")
+(documentation BrazilianCuisine EnglishWrittenLanguage "A &%BrazilianCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute BrazilianCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage BrazilianCuisine "Brazilian Cuisine")
+(documentation CapeVerdeanCuisine EnglishWrittenLanguage "&%CapeVerdeanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute CapeVerdeanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage CapeVerdeanCuisine "CapeVerdean Cuisine")
+(documentation CentralAmericanCuisine EnglishWrittenLanguage "&%CentralAmericanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute CentralAmericanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage CentralAmericanCuisine "Central American Cuisine")
+(documentation ChileanCuisine EnglishWrittenLanguage "&%ChileanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute ChileanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage ChileanCuisine "Chilean Cuisine")
+(documentation ColombianCuisine EnglishWrittenLanguage "&%ColombianCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute ColombianCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage ColombianCuisine "Colombian Cuisine")
+(documentation MexicanCuisine EnglishWrittenLanguage "&%MexicanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute MexicanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage MexicanCuisine "Mexican Cuisine")
+(documentation CostaRicanCuisine EnglishWrittenLanguage "&%CostaRicanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute CostaRicanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage CostaRicanCuisine "Costa Rican Cuisine")
+(documentation EcuadorianCuisine EnglishWrittenLanguage "&%EcuadorianCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute EcuadorianCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage EcuadorianCuisine "Ecuadorian Cuisine")
+(documentation GuatemalanCuisine EnglishWrittenLanguage "&%GuatemalanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute GuatemalanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage GuatemalanCuisine "Guatemalan Cuisine")
+(documentation GuyaneseCuisine EnglishWrittenLanguage "&%GuyaneseCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute GuyaneseCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage GuyaneseCuisine "Guyanese Cuisine")
+(documentation HonduranCuisine EnglishWrittenLanguage "&%HonduranCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute HonduranCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage HonduranCuisine "Honduran Cuisine")
+(documentation NicaraguanCuisine EnglishWrittenLanguage "&%NicaraguanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute NicaraguanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage NicaraguanCuisine "Nicaraguan Cuisine")
+(documentation PanLatinCuisine EnglishWrittenLanguage "&%PanLatinCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute PanLatinCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage PanLatinCuisine "Pan Latin Cuisine")
+(documentation ParaguayanCuisine EnglishWrittenLanguage "&%ParaguayanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute ParaguayanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage ParaguayanCuisine "Paraguayan Cuisine")
+(documentation PeruvianCuisine EnglishWrittenLanguage "&%PeruvianCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute PeruvianCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage PeruvianCuisine "Peruvian Cuisine")
+(documentation PuertoRicanCuisine EnglishWrittenLanguage "&%PuertoRicanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute PuertoRicanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage PuertoRicanCuisine "Puerto Rican Cuisine")
+(documentation SalvadoranCuisine EnglishWrittenLanguage "&%SalvadoranCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute SalvadoranCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage SalvadoranCuisine "Salvadoran Cuisine")
+(documentation UruguayanCuisine EnglishWrittenLanguage "&%UruguayanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute UruguayanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage UruguayanCuisine "Uruguayan Cuisine")
+(documentation VenezuelanCuisine EnglishWrittenLanguage "&%VenezuelanCuisine is a kind of &%LatinAmericanCuisine.")
+(subAttribute VenezuelanCuisine LatinAmericanCuisine)
+(termFormat EnglishWrittenLanguage VenezuelanCuisine "Venezuelan Cuisine")
+(documentation PalestinianCuisine EnglishWrittenLanguage "&%PalestinianCuisine is a kind of &%LevantineCuisine.")
+(subAttribute PalestinianCuisine LevantineCuisine)
+(termFormat EnglishWrittenLanguage PalestinianCuisine "Palestinian Cuisine")
+(documentation ItalianCuisine EnglishWrittenLanguage "&%ItalianCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute ItalianCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage ItalianCuisine "Italian Cuisine")
+(documentation CypriotCuisine EnglishWrittenLanguage "&%CypriotCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute CypriotCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage CypriotCuisine "Greek Cypriot Cuisine")
+(documentation CroatianCuisine EnglishWrittenLanguage "&%CroatianCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute CroatianCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage CroatianCuisine "Croatian Cuisine")
+(documentation GreekCuisine EnglishWrittenLanguage "&%GreekCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute GreekCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage GreekCuisine "Greek Cuisine")
+(documentation SerbianCuisine EnglishWrittenLanguage "&%SerbianCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute SerbianCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage SerbianCuisine "Serbian Cuisine")
+(documentation SlavicCuisine EnglishWrittenLanguage "&%SlavicCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute SlavicCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage SlavicCuisine "Slavic Cuisine")
+(documentation TurkishCuisine EnglishWrittenLanguage "&%TurkishCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute TurkishCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage TurkishCuisine "Turkish Cuisine")
+(documentation MayanCuisine EnglishWrittenLanguage "&%MayanCuisine is a kind of &%MexicanCuisine.")
+(subAttribute MayanCuisine MexicanCuisine)
+(termFormat EnglishWrittenLanguage MayanCuisine "Mayan Cuisine")
+(documentation ArmenianCuisine EnglishWrittenLanguage "&%ArmenianCuisine is a kind of &%EasternEuropeanCuisine.")
+(subAttribute ArmenianCuisine EasternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage ArmenianCuisine "Armenian Cuisine")
+(documentation CaspianCuisine EnglishWrittenLanguage "&%CaspianCuisine is a kind of &%PersianCuisine.")
+(subAttribute CaspianCuisine PersianCuisine)
+(termFormat EnglishWrittenLanguage CaspianCuisine "Caspian Cuisine")
+(documentation IranianCuisine EnglishWrittenLanguage "A &%IranianCuisine is a kind of &%MiddleEasternCuisine.")
+(subAttribute IranianCuisine MiddleEasternCuisine)
+(termFormat EnglishWrittenLanguage IranianCuisine "Iranian Cuisine")
+(documentation IraqiCuisine EnglishWrittenLanguage "&%IraqiCuisine is a kind of &%MiddleEasternCuisine.")
+(subAttribute IraqiCuisine MiddleEasternCuisine)
+(termFormat EnglishWrittenLanguage IraqiCuisine "Iraqi Cuisine")
+(documentation IsraeliCuisine EnglishWrittenLanguage "&%IsraeliCuisine is a kind of &%LevantineCuisine.")
+(subAttribute IsraeliCuisine LevantineCuisine)
+(termFormat EnglishWrittenLanguage IsraeliCuisine "Israeli Cuisine")
+(documentation LebaneseCuisine EnglishWrittenLanguage "&%LebaneseCuisine is a kind of &%LevantineCuisine.")
+(subAttribute LebaneseCuisine LevantineCuisine)
+(termFormat EnglishWrittenLanguage LebaneseCuisine "Lebanese Cuisine")
+(documentation MesopotamianCuisine EnglishWrittenLanguage "&%MesopotamianCuisine is a kind of &%MiddleEasternCuisine originating from the culinary traditions of Mesopotamia.")
+(subAttribute MesopotamianCuisine MiddleEasternCuisine)
+(termFormat EnglishWrittenLanguage MesopotamianCuisine "Mesopotamian Cuisine")
+(documentation PersianCuisine EnglishWrittenLanguage "&%PersianCuisine is a kind of &%MiddleEasternCuisine.")
+(subAttribute PersianCuisine MiddleEasternCuisine)
+(termFormat EnglishWrittenLanguage PersianCuisine "Persian Cuisine")
+(documentation SyrianCuisine EnglishWrittenLanguage "&%SyrianCuisine is a kind of &%LevantineCuisine.")
+(subAttribute SyrianCuisine LevantineCuisine)
+(termFormat EnglishWrittenLanguage SyrianCuisine "Syrian Cuisine")
+(documentation TunisianCuisine EnglishWrittenLanguage "&%TunisianCuisine is a kind of &%MediterraneanCuisine.")
+(subAttribute TunisianCuisine MediterraneanCuisine)
+(termFormat EnglishWrittenLanguage TunisianCuisine "Tunisian Cuisine")
+(documentation DanishCuisine EnglishWrittenLanguage "&%DanishCuisine is a kind of &%NordicCuisine.")
+(subAttribute DanishCuisine NordicCuisine)
+(termFormat EnglishWrittenLanguage DanishCuisine "Danish Cuisine")
+(documentation FinnishCuisine EnglishWrittenLanguage "&%FinnishCuisine is a kind of &%NordicCuisine.")
+(subAttribute FinnishCuisine NordicCuisine)
+(termFormat EnglishWrittenLanguage FinnishCuisine "Finnish Cuisine")
+(documentation IcelandicCuisine EnglishWrittenLanguage "&%IcelandicCuisine is a kind of &%NordicCuisine.")
+(subAttribute IcelandicCuisine NordicCuisine)
+(termFormat EnglishWrittenLanguage IcelandicCuisine "Icelandic Cuisine")
+(documentation NorwegianCuisine EnglishWrittenLanguage "&%NorwegianCuisine is a kind of &%NordicCuisine.")
+(subAttribute NorwegianCuisine NordicCuisine)
+(termFormat EnglishWrittenLanguage NorwegianCuisine "Norwegian Cuisine")
+(documentation SwedishCuisine EnglishWrittenLanguage "&%SwedishCuisine is a kind of &%NordicCuisine.")
+(subAttribute SwedishCuisine NordicCuisine)
+(termFormat EnglishWrittenLanguage SwedishCuisine "Swedish Cuisine")
+(documentation EgyptianCuisine EnglishWrittenLanguage "&%EgyptianCuisine is a kind of &%NorthAfricanCuisine.")
+(subAttribute EgyptianCuisine NorthAfricanCuisine)
+(termFormat EnglishWrittenLanguage EgyptianCuisine "Egyptian Cuisine")
+(documentation MoroccanCuisine EnglishWrittenLanguage "&%MoroccanCuisine is a kind of &%NorthAfricanCuisine.")
+(subAttribute MoroccanCuisine NorthAfricanCuisine)
+(termFormat EnglishWrittenLanguage MoroccanCuisine "Moroccan Cuisine")
+(documentation BangladeshiCuisine EnglishWrittenLanguage "A &%BangladeshiCuisine is a kind of &%SouthAsianCuisine.")
+(subAttribute BangladeshiCuisine SouthAsianCuisine)
+(termFormat EnglishWrittenLanguage BangladeshiCuisine "Bangladeshi Cuisine")
+(documentation NepaleseCuisine EnglishWrittenLanguage "&%NepaleseCuisine is a kind of &%SouthAsianCuisine.")
+(subAttribute NepaleseCuisine SouthAsianCuisine)
+(termFormat EnglishWrittenLanguage NepaleseCuisine "Nepalese Cuisine")
+(documentation PakistaniCuisine EnglishWrittenLanguage "&%PakistaniCuisine is a kind of &%SouthAsianCuisine.")
+(subAttribute PakistaniCuisine SouthAsianCuisine)
+(termFormat EnglishWrittenLanguage PakistaniCuisine "Pakistani Cuisine")
+(documentation SriLankanCuisine EnglishWrittenLanguage "&%SriLankanCuisine is a kind of &%SouthAsianCuisine.")
+(subAttribute SriLankanCuisine SouthAsianCuisine)
+(termFormat EnglishWrittenLanguage SriLankanCuisine "Sri Lankan Cuisine")
+(documentation BurmeseCuisine EnglishWrittenLanguage "&%BurmeseCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute BurmeseCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage BurmeseCuisine "Burmese Cuisine")
+(documentation CambodianCuisine EnglishWrittenLanguage "Cambodian cuisine is a kind of Southeast Asian cuisine.")
+(subAttribute CambodianCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage CambodianCuisine "Cambodian Cuisine")
+(documentation FilipinoCuisine EnglishWrittenLanguage "&%FilipinoCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute FilipinoCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage FilipinoCuisine "Filipino Cuisine")
+(documentation MalaysianCuisine EnglishWrittenLanguage "&%MalaysianCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute MalaysianCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage MalaysianCuisine "Malaysian Cuisine")
+(documentation LaotianCuisine EnglishWrittenLanguage "&%LaotianCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute LaotianCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage LaotianCuisine "Laotian Cuisine")
+(documentation SingaporeanCuisine EnglishWrittenLanguage "&%SingaporeanCuisine is a kind of &%SoutheastAsianCuisine comprising the culinary traditions originating in Singapore.")
+(subAttribute SingaporeanCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage SingaporeanCuisine "Singaporean Cuisine")
+(documentation ThaiCuisine EnglishWrittenLanguage "&%ThaiCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute ThaiCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage ThaiCuisine "Thai Cuisine")
+(documentation VietnameseCuisine EnglishWrittenLanguage "&%VietnameseCuisine is a kind of &%SoutheastAsianCuisine.")
+(subAttribute VietnameseCuisine SoutheastAsianCuisine)
+(termFormat EnglishWrittenLanguage VietnameseCuisine "Vietnamese Cuisine")
+(documentation SouthAfricanCuisine EnglishWrittenLanguage "&%SouthAfricanCuisine is a kind of &%SouthernAfricanCuisine.")
+(subAttribute SouthAfricanCuisine SouthernAfricanCuisine)
+(termFormat EnglishWrittenLanguage SouthAfricanCuisine "South African Cuisine")
+(documentation TexMexCuisine EnglishWrittenLanguage "&%TexMexCuisine is a kind of &%SouthwesternCuisine that blends Mexican and Texan culinary traditions.")
+(subAttribute TexMexCuisine SouthwesternCuisine)
+(termFormat EnglishWrittenLanguage TexMexCuisine "Tex Mex Cuisine")
+(documentation BasqueCuisine EnglishWrittenLanguage "&%BasqueCuisine is a kind of &%SpanishCuisine.")
+(subAttribute BasqueCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage BasqueCuisine "Basque Cuisine")
+(documentation IberianCuisine EnglishWrittenLanguage "&%IberianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute IberianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage IberianCuisine "Iberian Cuisine")
+(documentation ValencianCuisine EnglishWrittenLanguage "&%ValencianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute ValencianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage ValencianCuisine "Valencian Cuisine")
+(documentation AndalusianCuisine EnglishWrittenLanguage "&%AndalusianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute AndalusianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage AndalusianCuisine "Andalusian Cuisine")
+(documentation CantabrianCuisine EnglishWrittenLanguage "&%CantabrianCuisine is a kind of &%SpanishCuisine originating in the Cantabrian region of Spain.")
+(subAttribute CantabrianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage CantabrianCuisine "Cantabrian Cuisine")
+(documentation CastilianCuisine EnglishWrittenLanguage "&%CastilianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute CastilianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage CastilianCuisine "Castillan Cuisine")
+(documentation CatalanCuisine EnglishWrittenLanguage "&%CatalanCuisine is a kind of &%SpanishCuisine.")
+(subAttribute CatalanCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage CatalanCuisine "Catalan Cuisine")
+(documentation GalicianCuisine EnglishWrittenLanguage "&%GalicianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute GalicianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage GalicianCuisine "Galician Cuisine")
+(documentation MadrilianCuisine EnglishWrittenLanguage "&%MadrilianCuisine is a kind of &%SpanishCuisine.")
+(subAttribute MadrilianCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage MadrilianCuisine "Madrilian Cuisine")
+(documentation NavarraiseCuisine EnglishWrittenLanguage "&%NavarraiseCuisine is a kind of &%SpanishCuisine.")
+(subAttribute NavarraiseCuisine SpanishCuisine)
+(termFormat EnglishWrittenLanguage NavarraiseCuisine "Navarraise Cuisine")
+(documentation GhanianCuisine EnglishWrittenLanguage "&%GhanianCuisine is a kind of &%WestAfricanCuisine.")
+(subAttribute GhanianCuisine WestAfricanCuisine)
+(termFormat EnglishWrittenLanguage GhanianCuisine "Ghanian Cuisine")
+(documentation SenegaleseCuisine EnglishWrittenLanguage "&%SenegaleseCuisine is a kind of &%WestAfricanCuisine.")
+(subAttribute SenegaleseCuisine WestAfricanCuisine)
+(termFormat EnglishWrittenLanguage SenegaleseCuisine "Senegalese Cuisine")
+(documentation GambianCuisine EnglishWrittenLanguage "&%GambianCuisine is a kind of &%WestAfricanCuisine.")
+(subAttribute GambianCuisine WestAfricanCuisine)
+(termFormat EnglishWrittenLanguage GambianCuisine "Gambian Cuisine")
+(documentation LevantineCuisine EnglishWrittenLanguage "&%LevantineCuisine is a kind of &%WestAsianCuisine.")
+(subAttribute LevantineCuisine WestAsianCuisine)
+(termFormat EnglishWrittenLanguage LevantineCuisine "Levantine Cuisine")
+(documentation MiddleEasternCuisine EnglishWrittenLanguage "&%MiddleEasternCuisine is a kind of &%WestAsianCuisine.")
+(subAttribute MiddleEasternCuisine WestAsianCuisine)
+(termFormat EnglishWrittenLanguage MiddleEasternCuisine "Middle Eastern Cuisine")
+(documentation CajunCuisine EnglishWrittenLanguage "&%CajunCuisine is a kind of &%CaribbeanCuisine.")
+(subAttribute CajunCuisine CaribbeanCuisine)
+(termFormat EnglishWrittenLanguage CajunCuisine "Cajun Cuisine")
+(documentation PortugueseCuisine EnglishWrittenLanguage "&%PortugueseCuisine is a kind of &%WesternEuropeanCuisine.")
+(subAttribute PortugueseCuisine WesternEuropeanCuisine)
+(termFormat EnglishWrittenLanguage PortugueseCuisine "Portuguese Cuisine")
+(documentation PolynesianCuisine EnglishWrittenLanguage "&%PolynesianCuisine is a kind of &%FusionCuisine that blends culinary traditions of the Polynesian islands.")
+(subAttribute PolynesianCuisine FusionCuisine)
+(termFormat EnglishWrittenLanguage PolynesianCuisine "Polynesian Cuisine")
+(documentation ShanghaineseCuisine EnglishWrittenLanguage "&%ShanghaineseCuisine is a kind of &%ChineseCuisine.")
+(subAttribute ShanghaineseCuisine ChineseCuisine)
+(termFormat EnglishWrittenLanguage ShanghaineseCuisine "Shanghainese Cuisine")
