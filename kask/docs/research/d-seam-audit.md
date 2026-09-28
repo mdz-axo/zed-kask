@@ -35,7 +35,7 @@ This is a resumable **worklist**, not an assertion that every row below was audi
 | D37 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D39 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D40 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
-| D41 | partial / audit owner (memory, Linux oracle) | upstreaming-candidate (retain; advisory), row aligned | `1ace61fe04`; named FakeFs pin 1 passed; current live fire unproved; see D41 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | uncommitted |
+| D41 | partial / audit owner (memory, Linux oracle) | upstreaming-candidate (retain; advisory), row aligned | `1ace61fe04`; named FakeFs pin 1 passed; current live fire unproved; see D41 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | `a3e45db68c` |
 | D42 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D43 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D44 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
@@ -55,7 +55,7 @@ This is a resumable **worklist**, not an assertion that every row below was audi
 | D63 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D64 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D65 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
-| D66 | partial / audit owner (memory) | upstreaming-candidate (retain; advisory), row aligned | `fe1ec83eae`; named production-shape pin 1 passed; current live fire unproved; see D66 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | uncommitted |
+| D66 | partial / audit owner (memory) | upstreaming-candidate (retain; advisory), row aligned | `fe1ec83eae`; named production-shape pin 1 passed; current live fire unproved; see D66 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | `a3e45db68c` |
 | D67 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D68 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D69 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
