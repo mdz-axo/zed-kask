@@ -2321,9 +2321,10 @@ impl Thread {
         cx.notify();
     }
 
-    /// The agent ID that owns this thread, if set. `None` for the default
-    /// (Zed Agent); subagents inherit from their parent (D6/D34).
-    pub fn agent_id(&self) -> Option<&AgentId> {
+    /// The agent ID that owns this thread. Always set — `ZED_AGENT_ID` by
+    /// construction, overridden by the curator overlay; subagents inherit
+    /// from their parent (D6/D34).
+    pub fn agent_id(&self) -> &AgentId {
         self.kask.agent_id()
     }
 
@@ -3065,7 +3066,7 @@ impl Thread {
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
                                 goal_events: collect_goal_events_for_current_turn(&thread.messages),
-                                agent_id: thread.agent_id().cloned(),
+                                agent_id: Some(thread.agent_id().clone()),
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();
@@ -3303,9 +3304,8 @@ impl Thread {
             ) {
                 // zed-kask: D6 — context injection dispatches by agent_id
                 let agent_id = this
-                    .read_with(cx, |this, _| this.kask.agent_id().cloned())
-                    .ok()
-                    .unwrap_or(None);
+                    .read_with(cx, |this, _| this.kask.agent_id().clone())
+                    .ok();
                 if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
                     let thread_id = this
                         .read_with(cx, |this, _| this.id.to_string())
@@ -4429,11 +4429,7 @@ impl Thread {
         // zed-kask: D59 — mechanical skill-use issue capture (observe stage of
         // the skill learning loop, DIAG-ARCH-LEARNING-LOOP-001).
         let active_skill = self.kask.active_skill_handle();
-        let skill_invoker: SharedString = self
-            .kask
-            .agent_id()
-            .map(|id| id.0.clone())
-            .unwrap_or_else(|| crate::ZED_AGENT_ID.0.clone());
+        let skill_invoker: SharedString = self.kask.agent_id().0.clone();
         let activated_skill = (tool_name.as_ref() == crate::SkillTool::NAME)
             .then(|| {
                 input_for_tracking
@@ -4621,7 +4617,27 @@ impl Thread {
             )));
         };
 
-        let error_message = format!("Error parsing input JSON: {json_parse_error}");
+        // zed-kask: D36 funnel — an EOF-classified parse error is a
+        // transport cut (the same discriminator the provider doors use:
+        // `parse_tool_arguments` + `Category::Eof`). Doors that classify never
+        // dispatch the cut; a door that has not classified it still lands
+        // here, and the bare parse error gives the model nothing to act on —
+        // the 2026-09-27 storm retried an identical cut payload 10+ times.
+        // Name the cut and the remedy; non-EOF malformed JSON keeps the
+        // plain parse error.
+        let is_eof_cut = language_model::parse_tool_arguments(&raw_input)
+            .err()
+            .is_some_and(|err| err.classify() == serde_json::error::Category::Eof);
+        let error_message = if is_eof_cut {
+            format!(
+                "Tool call arguments were cut off mid-JSON ({json_parse_error}); \
+                 the call was not executed. Resend the whole call with a shorter \
+                 payload — pass file paths instead of file contents, or split the \
+                 work into smaller calls."
+            )
+        } else {
+            format!("Error parsing input JSON: {json_parse_error}")
+        };
 
         // A parse failure that reaches this handler means the stream
         // reported a completed tool-call turn with malformed JSON — either
@@ -12124,10 +12140,9 @@ mod tests {
 
         let subagent = cx.new(|cx| Thread::new_subagent(&parent, None, cx));
 
-        let subagent_id = cx.update(|cx| subagent.read(cx).agent_id().cloned());
+        let subagent_id = cx.update(|cx| subagent.read(cx).agent_id().clone());
         assert_eq!(
-            subagent_id,
-            Some(curator_id),
+            subagent_id, curator_id,
             "subagent must inherit parent's agent_id so curator-spawned subagents route turns to the curator's sovereign DB"
         );
     }

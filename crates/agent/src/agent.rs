@@ -3009,8 +3009,11 @@ pub struct ThreadTurnRecord {
     pub agent_response: String,
     pub model: String,
     pub thread_title: Option<String>,
-    /// The agent ID that produced this turn (e.g., `CURATOR_AGENT_ID`, `ZED_AGENT_ID`).
-    /// `None` for threads with no agent identity (upstream-zed compatibility).
+    /// The agent ID that produced this turn (`CURATOR_AGENT_ID` or
+    /// `ZED_AGENT_ID`). The zed side always sets it — thread identity is by
+    /// construction (`kask_thread_state::KaskThreadState::new`), so a turn
+    /// can never be silently classified. `None` remains valid only for port
+    /// implementors constructing records outside a live thread.
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,

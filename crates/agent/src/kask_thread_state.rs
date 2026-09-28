@@ -11,7 +11,10 @@
 //!
 //! | Field | D-seam | Purpose |
 //! |-------|--------|---------|
-//! | `agent_id` | D6 | Memory ingestion routing (Curator vs user) |
+//! | `agent_id` | D6 | Memory ingestion routing (Curator vs user). Identity
+//! | | | is by construction: `ZED_AGENT_ID` at birth, curator overlay or
+//! | | | parent inheritance overrides — no read-site default, so a thread
+//! | | | can never be silently classified (2026-09-27 h_mem `cd1ef984`) |
 //! | `agent_static_context` | D2 | Curator overlay / Steer mode system prompt |
 
 //! | `tool_retry_tracker` | .rules | Tool retry death spiral prevention |
@@ -32,13 +35,13 @@ use crate::thread::{CachedFilteredContext, CachedSystemPrompt, DeferredToolResul
 use crate::tool_retry_tracker::ToolRetryTracker;
 use crate::tool_trace::ToolTraceCapture;
 
-/// All kask-specific per-thread state. Created with `new()` (all defaults)
-/// for both upstream Zed and kask threads. Kask-specific setters
-/// (`set_agent_id`, `set_static_context`, etc.) are called by
-/// `NativeAgent::new_session` after construction.
+/// All kask-specific per-thread state. Created with `new()` for both
+/// upstream Zed and kask threads; the thread is born a `ZED_AGENT_ID`
+/// thread, and kask-specific setters (`set_agent_id`, `set_static_context`,
+/// etc., called by `NativeAgent::new_session`) override from there.
 pub(crate) struct KaskThreadState {
-    // Identity (D6)
-    agent_id: Option<AgentId>,
+    // Identity (D6) — always set; never read through a default
+    agent_id: AgentId,
 
     // System prompt overlays (D2)
     agent_static_context: Option<SharedString>,
@@ -67,7 +70,7 @@ pub(crate) struct KaskThreadState {
 impl KaskThreadState {
     pub fn new() -> Self {
         Self {
-            agent_id: None,
+            agent_id: crate::ZED_AGENT_ID.clone(),
             agent_static_context: None,
             tool_retry_tracker: Rc::new(RefCell::new(ToolRetryTracker::default())),
             deferred_tool_results: Vec::new(),
@@ -281,14 +284,16 @@ impl KaskThreadState {
 
     // ── Agent identity (D6) ──────────────────────────────────────────
 
-    /// The agent ID that owns this thread (D6 routing key).
-    pub fn agent_id(&self) -> Option<&AgentId> {
-        self.agent_id.as_ref()
+    /// The agent ID that owns this thread (D6 routing key). Always set —
+    /// `ZED_AGENT_ID` at construction, overridden by the curator overlay
+    /// (`new_session`) or parent inheritance (`inherit_from`).
+    pub fn agent_id(&self) -> &AgentId {
+        &self.agent_id
     }
 
     /// Set the agent ID.
     pub fn set_agent_id(&mut self, agent_id: AgentId) {
-        self.agent_id = Some(agent_id);
+        self.agent_id = agent_id;
     }
 
     // ── Tool retry cap (.rules) ──────────────────────────────────────
@@ -338,6 +343,8 @@ impl KaskThreadState {
     /// Inherit state from a parent thread's KaskThreadState (for subagents).
     /// Only `agent_id` is inherited — curator-spawned subagents route their
     /// turns to the curator's sovereign DB. All other state starts fresh.
+    /// The parent's identity is always set (identity by construction), so the
+    /// child's is too.
     pub fn inherit_from(parent: &KaskThreadState) -> Self {
         let mut state = Self::new();
         state.agent_id = parent.agent_id.clone();

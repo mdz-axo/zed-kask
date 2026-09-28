@@ -5048,9 +5048,14 @@ async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
         "Expected tool-enriched partial context, got: {content_text}"
     );
     assert!(
-        content_text
-            .contains("Error parsing input JSON: EOF while parsing a string at line 1 column 17"),
-        "Expected forwarded JSON parse error, got: {content_text}"
+        content_text.contains(
+            "Tool call arguments were cut off mid-JSON (EOF while parsing a string at line 1 column 17)",
+        ),
+        "Expected forwarded EOF-cut guidance naming the parse error, got: {content_text}"
+    );
+    assert!(
+        content_text.contains("Resend the whole call with a shorter payload"),
+        "Expected the EOF-cut remedy, got: {content_text}"
     );
     assert!(
         !content_text.contains("tool input was not fully received"),

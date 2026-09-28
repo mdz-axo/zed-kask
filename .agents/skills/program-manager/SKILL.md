@@ -156,7 +156,9 @@ insert is D — the returned h_mem id.
 ### Phase 2 — Design (architect before coder)
 
 1. Render the design review (`render_template`,
-   `program-manager/design-review`) and produce the design record:
+   `program-manager/design-review`, context keys: `requirement`,
+   `spec_provenance`, `design_pattern`, `invariants`, `lazy_version`) and
+   produce the design record:
    requirement, spec provenance (where the spec was recovered from),
    the chosen design pattern and why, the invariants that constrain the
    edit, the surgical boundary (files to touch, files explicitly NOT to
@@ -206,7 +208,8 @@ insert is D — the returned h_mem id.
 ### Phase 4 — Verify (definition of done)
 
 1. Render the DoD checklist (`render_template`,
-   `program-manager/dod-checklist`) and complete every line:
+   `program-manager/dod-checklist`, context keys: `change_summary`,
+   `residue_targets`) and complete every line:
    - **Validation actually run**: the command, and its observed output.
      A repair claim without a run command and its output is FALSE. If
      validation cannot run, say so — do not claim it. Run Rust tests
@@ -246,7 +249,8 @@ insert is D — the returned h_mem id.
 ### Phase 5 — Close (report + record)
 
 1. Render the closeout report (`render_template`,
-   `program-manager/closeout-report`) and produce it: functional
+   `program-manager/closeout-report`, context keys: `goal_text`,
+   `functional_outcome`, `open_items`, `learning`) and produce it: functional
    outcome first — what the operator can now do, or what no longer
    breaks.
 2. If a goal was recorded, judge it (`kanban_goal_judge`) with a result
