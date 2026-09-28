@@ -45,12 +45,12 @@ methodology instructs.
 ## Instructions
 
 ```
-Plan:  seam-map + prior verification  ->  Gate A (lisp: prior exclusivity)
-Do:    audit-security -> audit-architecture -> audit-ui -> Gate B (lisp: citation + severity)
-Check: adjudicate (semantics + cybernetics + essentialist) -> mcda (+ sensitivity)
-Act:   remediate -> Gate C (lisp: test-pinning + divergence membership, hard-stop)
-Converge: lisp open count (uncited/unadjudicated -> 0) -> loop to Do (bound: max 2 re-loops per track; a third failing count escalates the unadjudicated findings to the operator instead of looping)
-Final: report
+Plan:  enumerate live rows + reconcile the durable ledger; seam-map + prior verification -> Gate A
+Do:    for each ranked batch, audit-security -> audit-architecture -> audit-ui -> Gate B
+Check: per-behavior adjudication (essentialist + semantics) -> mcda (+ sensitivity)
+Act:   record verdicts and evidence; remediate only after the applicable ratification -> Gate C
+Converge: lisp open count (uncited/unadjudicated -> 0) within the batch; max 2 re-loops per track
+Final: commit the ledger per completed batch; report remaining rows explicitly as pending
 ```
 
 The Gate A, B, C and Converge forms are pinned in
@@ -58,8 +58,8 @@ The Gate A, B, C and Converge forms are pinned in
 run them with `lisp_eval` over the template outputs. The Converge count is
 passed to `final-report` as `convergence_score`; the model never supplies it.
 
-- **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, and the audited commit.
-- **Target condition:** Converge count 0 with Gate C passing, or the named unadjudicated findings escalated after the second re-loop.
+- **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, the audited commit, and `kask/docs/research/d-seam-audit.md` (if present).
+- **Target condition per batch:** every selected behavior has an evidence-backed advisory verdict and a pin status, the ledger is committed, and unresolved decisions have an owner. Pending rows are not audited rows. Gate C applies to remediations, not record-only updates.
 
 | Phase | Type | Oracle / critique |
 |-------|------|-------------------|
@@ -67,6 +67,21 @@ passed to `final-report` as `convergence_score`; the model never supplies it.
 | Check (adjudicate, mcda) | P | Converge count; the operator on ranking |
 | Act (remediate) | P | Gate C and the tests it pins |
 | Gates, Converge | D | `lisp_eval` forms in `gates.md` |
+
+## Resumable behavior-level pass
+
+The ledger at `kask/docs/research/d-seam-audit.md` is the worklist, not a second authority for what is live. At each session start, extract rows from the `## The divergence surface` table of `DIVERGENCE.md` (never infer a range or reuse the retired paragraph), and run `bash kask/scripts/check-d-seam-audit-ledger.sh`. Add new rows as `pending`, remove retired rows only after verifying no residue, and rerun the check. Rank pending rows by upstreamability first, then files × changed lines, pin health, live-fire evidence and operator pain; write the next small batch and the ranking rationale to the ledger. Stop when that batch is complete or the context budget requires it; three no-new-state iterations per seam stop and escalate.
+
+For **each behavior**, not merely each D-number:
+
+1. Recover the purpose from the row, `.rules`, `git log --oneline -- <files>` and `git log -S '<identifier>'`; recall `seam:DXX` before updating memory. The row claims a contract; it is not proof. Preserve any uncommitted edits by other streams.
+2. Enumerate **every current pin named for this behavior**, locate its test target, then run each with `bash kask/scripts/cargo-test-nonzero.sh -p <crate> <filter>` (or the named non-Cargo script). Record missing/failed/unrun individually. Do not silently count a similarly named test or a zero-test run.
+3. Look for its warn/error signature in available editor logs. Compare the specific behavior with local `upstream/main`: `git remote -v`, `git log -S '<identifier>' upstream/main`, and the upstream implementation. Record the ref and freshness; no ref or network means `unverified`, not absent. No log signature or no logging means `not observable`, not disproven.
+4. Run essentialist in **advisory** mode, with coding-guidelines and refactor-architecture: G1 deletion test (Evidence vs Hypothesis), G2 public surface (7-function rule), G3 pass-through contracts. Apply the existing security/architecture/UI tracks at the behavior's actual reach; UI layout checks are not applicable to a non-UI seam, and a security track outside the batch is not a claim of full-fleet coverage. Label each finding Prohibition / Guardrail / Guideline / Evidence / Hypothesis. Gate B checks citations, not correctness; record oracle strength separately.
+5. Map to upstream-rebase vocabulary: `essential-keep` = retain, `upstreaming-candidate` = retain + issue draft, `demoted-defensive-compatibility` = simplify, `delete` = retire, `already-retired-verify-no-residue`. Update the row, pins and `seam:DXX` memory for keeps/demotions once verified. For deletions, present a red-first removal plan and wait for operator ratification; for upstreaming, draft summary, evidence, discriminator, fix and PR offer, and wait for the operator to send it. Never mark a proposal adopted upstream.
+6. Record evidence links, pin and upstream status, date and **actual** pathspec-limited commit in the ledger; verify `git diff --cached --stat` before commit. A shared `DIVERGENCE.md` edit blocks row alignment, not the independent ledger commit: record its owner and leave the seam `partial` until aligned. Rerun the ledger check and Gate B/Converge for batch findings. Apply Gate C only to code remediations (and run red/green pin + residue sweep). Commit status stays `uncommitted` until the hash exists.
+
+The row-by-row ledger is deliberately compact; detailed evidence and upstream issue drafts sit below the table under the same ID. A prior session's `asserted` result never upgrades itself to `oracle-verified`; re-run pins after a changed test or behavior. Close with verdicts, hashes, validation tiers, code red/green (or none), net lines, residue sweep and every open item's closure state and owner. Do not score a goal until the operator confirms the outcome.
 
 ## Composed skills
 
