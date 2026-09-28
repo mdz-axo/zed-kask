@@ -108,7 +108,7 @@ Template context variables (from each template's [inference] contract):
 - `inventory-components.j2`: `target_system`,`component_inventory`
 - `map-value-chain.j2`: `classified_components`
 - `synthesize-recommendations.j2`: `movement_analysis`,`current_map`
-- `present-map.j2` (pure render — no `[inference]` contract): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
+- `present-map.j2` (pure render; its `[inference]` header declares inputs only, no model call): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
 
 
 ## Constraints
