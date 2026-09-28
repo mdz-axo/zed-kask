@@ -3590,7 +3590,7 @@ description: A skill with no body content
     // missing or changed file is.
     #[test]
     fn template_needs_seed_skips_identical_content_only() {
-        let shipped = "[inference]\ncontract: {}\nvisibility: Public\n---\nbody";
+        let shipped = "[inference]\ncontract: {}\n---\nbody";
         assert!(
             template_needs_seed(None, shipped),
             "a missing file is seeded"

@@ -16,8 +16,9 @@ description: Govern code-producing work as a technical program manager — recov
   through coordinated work streams; integration and dependency
   management are first-class. In this repo that means concurrent agent
   streams sharing one tree.
-- **Scrum/XP Definition of Done** (Scrum.org): the DoD is an
-  organizational standard, and work that does not meet it IS technical
+- **Scrum/XP Definition of Done** (The Scrum Guide 2020; `onto_anchor`
+  → derived `definition_of_done`): the DoD is an organizational
+  standard, and work that does not meet it IS technical
   debt — not work that "just needs a follow-up".
 - **Requirements engineering / spec recovery** (this project's ratified
   spec-loss rule): a written spec is the operator's contract. Recover it
@@ -43,33 +44,32 @@ description: Govern code-producing work as a technical program manager — recov
   verification's evidence tiers. Presenting a weak oracle's green as
   verification is oracle substitution.
 
+Step relations: Phase 0's spec recovery adapts requirements-engineering
+practice; Phase 1's charter restatement adapts TPM requirement
+restatement, and the goal loop (`kanban_goal_*`) is project machinery;
+Phase 2's design record adapts the TPM design review; Phase 3's execution
+governance and the anti-hack constraints are incident-derived project
+rules (the surgical-edit discipline lives in `coding-guidelines`);
+Phase 4's checklist adapts the Scrum Guide 2020 Definition of Done;
+Phase 5's closure ledger adapts the project's Regulation (cybernetic
+closure of feedback loops), and its provenance lattice copies
+`grounding-verify`'s tier ladder.
+
 ## The incident catalog (why this skill exists)
 
-Every pattern below happened in this project. The skill exists to make
-each one structurally impossible to repeat:
+The project's debt ledger. Each incident's countermeasure is enforced at the
+line named below — the catalog is the operator-readable history; the
+Constraints and Instructions are the enforcement:
 
-1. **Hallucinated config baked in as if it belonged there** — an agent
-   invented `ollama/qwen3.8:27b`, stamped it into eval-agent cards and a
-   probe script default, and it survived a dedicated cleanup (the script
-   outlived the cards by days, silently pinning a 20GB CPU model).
-2. **Spec death by dead-code sweep** — a deliberately designed
-   capability was deleted as "unwired"; the replacement was later
-   ratified, but the ratification was nearly lost the same way.
-3. **Silent fallback masking failure** — an unresolvable model override
-   silently substituted the default model, which dropped images and
-   returned garbage that read like an endpoint outage.
-4. **Probe residue in production trees** — diagnostic artifacts left in
-   corpus directories, later ingested as duplicate sources.
-5. **Half-edits swept into commits** — parallel streams auto-committed
-   in-flight work, briefly breaking origin/main.
-6. **Forensic rabbit-holes** — an agent generates hypotheses faster than
-   it kills them, burns the session, and the operator has to ask
-   "what's going on?"
-7. **Oracle substitution** — a worker reports "compiles, tests pass"
-   as verification of functionality: oracles that never exercised the
-   claim. Tests verify their own assertions; a suite written from the
-   implementation is the code agreeing with itself. (Operator-reported
-   failure class, 2026-09-08.)
+| # | Incident (one phrase) | Countermeasure encoded at |
+|---|---|---|
+| 1 | Hallucinated model id baked into eval cards and a probe default, survived a cleanup | Constraints "No hallucinated configuration"; Phase 2 step 2 constants check; `dod-checklist` hardcoding line |
+| 2 | A designed capability deleted as "unwired" (spec death) | Phase 0 spec recovery before design; "No doc-from-code laundering" |
+| 3 | A silent model fallback read as an endpoint outage | "No silent fallbacks" |
+| 4 | Probe artifacts left in production corpus trees, ingested as duplicates | "No probe residue"; `dod-checklist` residue-sweep line |
+| 5 | A parallel stream's half-edit briefly broke origin/main | Phase 3 step 5 (never leave the tree broken); shared-tree index check |
+| 6 | A forensic rabbit-hole burned a session | Phase 3 timebox (3 attempts → stop, escalate); "Timebox forensics" |
+| 7 | "Tests pass" reported as verification of function (oracle substitution) | Phase 4 oracle-match line; "No oracle substitution" |
 
 ## Initial and target condition
 
@@ -86,6 +86,14 @@ each one structurally impossible to repeat:
 | 4 Verify | D | the run validation command and its output; `./script/clippy`; `lisp_eval` for counts |
 | 5 Close: ledger score | D | `lisp_eval` ledger form |
 | 5 Close: goal judgment | P | `kanban_goal_score` Brier against the operator's ground truth |
+
+Step-level exceptions to the phase rows: Phase 0 step 3 (asking the
+operator for a missing spec) is P — critic: the operator. Phase 2 step
+2's hardcoded-value check is D — oracle: the tree
+(`hkask_inference::model_constants`). Phase 3 step 3's tool-issue report
+is D — the curator tool's receipt; step 4's delegate validation is D —
+the delegate's validation evidence. Phase 5 step 3's durable-decision
+insert is D — the returned h_mem id.
 
 ## When to Use
 
@@ -257,23 +265,47 @@ each one structurally impossible to repeat:
    owner and no path — is the one forbidden state; it is a broken
    feedback loop, not a report line.
 5. Score the closure ledger deterministically. Env convention: each
-   item is a flat list `("<id>" "<title>" "<state>" "owner:<owner>")`.
-   Render `program-manager/delivery-rubric` for the ledger table, then
-   call `lisp_eval`:
-   form: `(let ((count-token (lambda (items token) (if (= 0 (length items)) 0 (+ (if (member token (car items)) 1 0) (count-token (cdr items) token)))))) (let ((abandoned (count-token findings "reported-abandoned")) (unowned (count-token findings "owner:none"))) (if (and (= abandoned 0) (= unowned 0)) (quote green) (quote red))))`
+   item is a flat list `("<id>" "<title>" "<state>" "owner:<owner>")` —
+   object-shaped entries read red: an object's alist form makes `member`
+   miss silently, which once read green (the shape guard below closes
+   that). Render `program-manager/delivery-rubric` for the ledger table,
+   then call `lisp_eval`:
+   form: `(let ((count-token (lambda (items token) (if (= 0 (length items)) 0 (+ (if (member token (car items)) 1 0) (count-token (cdr items) token))))) (nonflat (lambda (items) (if (= 0 (length items)) 0 (+ (if (listp (car (car items))) 1 0) (nonflat (cdr items))))))) (let ((abandoned (count-token findings "reported-abandoned")) (unowned (count-token findings "owner:none")) (shape (nonflat findings))) (if (> shape 0) (quote red) (if (and (= abandoned 0) (= unowned 0)) (quote green) (quote red)))))`
    env: `{ "findings": <the open-items ledger as flat lists> }`
    `red` → return to Phase 1 and give every red item a closure path
    before reporting. Each return counts toward the Phase 3 timebox: a
    ledger still `red` with no new state after its second return stops,
-   and the red items go to the operator as `operator-decision` items. (`member` is the string-equality primitive —
-   `assoc`/`eq` compare identity and silently miss env-provided
-   strings; this form is validated live in both directions.)
+   and the red items go to the operator as `operator-decision` items.
+   Reclassifying an item to `operator-decision` requires the operator's
+   sign-off before the ledger re-reads green — the form is the
+   mechanical floor (abandoned, unowned, malformed shape); each
+   state's entry conditions are carried by its definition.
+   (`member` is the string-equality primitive — `assoc`/`eq` compare
+   identity and silently miss env-provided strings; the form is pinned
+   by `test_program_manager_skill_md_pins_closure_ledger_form` in
+   `lisp_eval_tool.rs`, and validated live in both directions plus the
+   object-shape red case in the regression case below.)
 6. When the operator confirms the outcome, resolve the goal
    (`kanban_goal_score`) so the intake prediction is Brier-scored
    against their ground truth — the kata's gap measurement. An
    unjudged goal is an unclosed loop.
 7. Bank the learning: one sentence on what the goal, the approach, or
    the collaboration taught — and start the next bit of work from it.
+
+## Registry Templates
+
+| Template | Purpose | Context |
+|---|---|---|
+| `design-review.j2` | Produce Phase 2's design record. | `requirement`, `spec_provenance`, `design_pattern`, `invariants`, `lazy_version` (the pre-mortem: the hack the lazy version would embed) |
+| `dod-checklist.j2` | Phase 4's Definition of Done checklist. | `change_summary`, `residue_targets` |
+| `closeout-report.j2` | Phase 5's closeout report. | `goal_text`, `functional_outcome`, `open_items`, `learning` |
+| `delivery-rubric.j2` | Phase 5 step 5's open-items ledger table. | `findings` (the flat-list convention above) |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `program-manager/design-review`) and a context object with the required variables.
+
+## Regression case
+
+Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the ledger, and the learning; (iv) render `program-manager/delivery-rubric` with the findings; (v) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is also pinned by `test_program_manager_skill_md_pins_closure_ledger_form`.
 
 ## Convergence
 

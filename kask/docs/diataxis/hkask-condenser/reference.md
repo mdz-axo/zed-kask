@@ -148,7 +148,7 @@ status: VERIFIED
 #### 1. Choose a profile
 
 Set `kask.condenser.profile` to one of the four values parsed by `Profile`
-(`kask/crates/hkask-condenser/src/types.rs:27-104`):
+(`kask/crates/hkask-condenser/src/types.rs:27-82`):
 
 | Profile | Retention | Maximum lines |
 | --- | ---: | ---: |

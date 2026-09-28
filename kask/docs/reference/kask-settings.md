@@ -217,8 +217,8 @@ reads its remaining configuration (`HKASK_MXROUTE_SERVER`,
 | `curator_email` | `String` | `""` | settings→transport note above |
 | `alert_email` | `String` | `""` | alert recipient (falls back to `smtp_username`) |
 | `authorized_emails` | `Vec<String>` | `[]` | settings→transport note above |
-| `inbox_poll_interval_secs` | `u64` | `0` | `HKASK_INBOX_POLL_INTERVAL_SECS` (0 = disabled; reserved for future IMAP) |
-| `digest_interval_secs` | `u64` | `0` | `HKASK_DIGEST_INTERVAL_SECS` (0 = disabled; reserved for future digest) |
+
+These are the only `KaskCuratorEmailSettings` fields (`kask/crates/kask_bridge/src/settings.rs:213-230`).
 
 When `email` is `None` or unconfigured, the alert email sink falls back to the
 log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
@@ -236,11 +236,18 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
 | `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
 | `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
+| `federated_auto_inject` | `bool` | `false` | Opt in to injecting selected federated sources into curator chat |
+| `federated_source_ids` | `Vec<String>` | `[]` | Source IDs selected from the curator federated sources manifest |
 | `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
+| `distillation_cadence_secs` | `u64` | `600` | ALWAYS-mode distillation cadence in seconds (0 = disabled); the curator server's background pass distills finished threads into additive candidate lesson h_mems at the 0.5 confidence floor |
+| `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
+| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled); time-based and distillation-gated, never count-based. Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
+
+These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:233-300`).
 
 **Settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
 
-Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:73–94` and writes `settings.kask.memory.memory_life_days`. No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (evidence: `tasks/plan.md` in git history, last at `b1375ff3be`).
+Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:163-178` and writes `settings.kask.memory.memory_life_days`. No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (evidence: `tasks/plan.md` in git history, last at `b1375ff3be`).
 
 ## Condenser (`KaskCondenserSettings`)
 
@@ -253,7 +260,7 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:322-329`) |
+| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:330-336`) |
 
 ## Companies (`KaskCompaniesSettings`)
 
@@ -273,7 +280,7 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 | `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` | Corpus-layer default; `models.embedding_model` overrides it |
 | `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; `mcp_env()` publishes the effective root to MCP servers and `KaskSettings::resolved_template_root()` resolves the same rule in-process (curator memory chunk tagging) |
 
-These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:355-386`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
+These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:362-393`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
 
 ## Scenarios (`KaskScenariosSettings`)
 
@@ -281,7 +288,7 @@ No fields — the scenarios data dir is derived from the global `data_dir` as `m
 
 ## Prediction Markets (`KaskPredictionMarketsSettings`)
 
-Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:388-399`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
+Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:395-406`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
@@ -300,9 +307,9 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/s
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
 | `default_agent_model` | `String` | `""` | `HKASK_ABW_DEFAULT_AGENT_MODEL` | New ABW agents and unpinned local agents inherit this model; empty uses ABW's default or the local host session model respectively. Explicit card models win. |
 | `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
-| `embedding_dim` | `usize` | `1024` | `HKASK_EMBEDDING_DIM` | Shared semantic-memory vector dimension |
+| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension (`mcp_env.rs:331-336`; read by the swarm server at `config.rs:277`) |
 
-The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs:416-517`.
+The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs:423-517`.
 
 No `local_agents_dir`, `local_swarms_dir`, or `memory_db_path` fields — these paths are derived from the global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and `HKASK_SWARM_MEMORY_DB`.
 
@@ -329,7 +336,7 @@ dependency.
 | `image_gen_model` | `String` | `""` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
 | `video_model` | `String` | `""` | `HKASK_MEDIA_VIDEO_MODEL` |
 
-Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:533-569`, `kask/crates/hkask-inference/src/model_constants.rs:173-203`).
+Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:531-567`, `kask/crates/hkask-inference/src/model_constants.rs:173-203`).
 
 ## Models (`KaskModelsSettings`)
 
@@ -383,7 +390,7 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:599-676`; `kask/crates/hkask-services-core/src/standalone_settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:596-668`; `kask/crates/hkask-services-core/src/standalone_settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
 
 ## Keychain Architecture
 
@@ -421,7 +428,7 @@ The SQLCipher passphrase is resolved through a canonical 2-tier helper,
 `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)`:
 `ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
 (env → hKask keychain). All six DB-passphrase-consuming servers (kata-kanban,
-training, research, curator, condenser, corpus) use this helper, not inline
+training, research, curator, swarm, corpus) use this helper, not inline
 re-implementations; `ServerContext::resolve_db_credential` delegates to it. A miss
 returns `McpToolError::permission_denied` naming the env var.
 
@@ -434,11 +441,12 @@ keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 
-`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:838-861`). There is no separate swarm-memory passphrase.
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:892`). There is no separate swarm-memory passphrase.
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
-passphrase for every SQLCipher database (curator, swarm memory, kata-kanban,
-research, training) — no per-DB passphrases. The user can change it later
+passphrase for every SQLCipher database (curator, corpus, swarm memory,
+kata-kanban, research, training — `kask/crates/kask_bridge/src/identity.rs:139-141`)
+— no per-DB passphrases. The user can change it later
 via the settings UI (Security page); the change is scheduled there and
 applied by the next editor startup, before any database opens.
 
@@ -484,7 +492,7 @@ action) until the next startup applies it
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
-environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:740-742` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
+environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:738` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
 `mcp_env()` also unconditionally injects `HKASK_MCP_SERVER_IDS` (the
 comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 `config_env` allowlist) and passes through `HKASK_DATA_DIR` and
@@ -543,8 +551,6 @@ into the editor process env).
 | `HKASK_CURATOR_EMAIL` | From address (defaults to `HKASK_SMTP_USERNAME`) |
 | `HKASK_ALERT_EMAIL` | Alert recipient (defaults to `HKASK_SMTP_USERNAME`) |
 | `HKASK_AUTHORIZED_EMAILS` | Authorized sender allowlist (comma-separated) |
-| `HKASK_INBOX_POLL_INTERVAL_SECS` | Inbox poll interval (0 = disabled) |
-| `HKASK_DIGEST_INTERVAL_SECS` | Digest interval (0 = disabled) |
 
 ### Per-Server Config
 
@@ -598,10 +604,11 @@ process lifetime. Unset or unparsable values fall back to documented defaults
 | `HKASK_MCP_STARTUP_MAX_RETRIES` | `3` | Max retry attempts when an MCP server fails to start (spawn or handshake). |
 | `HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS` | `500` | Initial backoff (ms) for startup retries. Doubles each attempt. |
 | `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` | `10` | Cap on startup retry backoff (seconds). |
+| `HKASK_MCP_STARTUP_TIMEOUT_SECS` | `60` | Deadline for a spawned server's handshake and tool discovery. Deliberately independent of the health-check interval (F6). |
+| `HKASK_MCP_CALL_TIMEOUT_SECS` | `300` | Deadline for one already-dispatched tool call (F2/P1b). Firing reports `DispatchError::Interrupted` — a timeout proves no non-delivery, never a proven failure. |
 | `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` | `60` | Interval between proactive MCP server health checks. |
 | `HKASK_MCP_MAX_HEALTH_FAILURES` | `3` | Max consecutive health-check failures before the supervisor stops auto-healing. |
 | `HKASK_MCP_MAX_READ_BYTES` | `33554432` (32 MiB) | Read size cap for `read_capped` (CWE-400). 0 is rejected (would block all reads). |
-| `HKASK_TEMPLATE_CACHE_PATH` | Platform cache dir | Template cache directory. Default: `$XDG_CACHE_HOME/hkask/templates` (Linux), `~/Library/Caches/hkask/templates` (macOS). |
 | `HKASK_MEMORY_LIFE_DAYS` | `180` | Memory retention in days (≈6 months). Controls decay constant in the Bayesian forgetting model. |
 | `HKASK_CHUNK_MAX_TOKENS` | `256` | Max tokens per chunk for document chunking (≈192 words, paragraph-level). |
 

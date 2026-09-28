@@ -2,7 +2,7 @@
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
 last_updated: 2026-09-28
-version: "0.40.1"
+version: "0.41.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -23,7 +23,7 @@ A tracing target is not automatically a persisted Regulation record. The tool pa
 
 `CANONICAL_NAMESPACES` is the source of truth for accepted `reg.*` roots and sub-namespaces (`kask/crates/hkask-types/src/event.rs:75-154`). `SpanNamespace::new` validates a full namespace; `SpanNamespace::parse` accepts short or full forms, and hierarchical validation allows descendants of a registered root (`kask/crates/hkask-types/src/event.rs:156-271`).
 
-`SpanKind` currently has 12 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:446-499`):
+`SpanKind` currently has 11 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:411-445,447-499`):
 
 | Group | Typed variants |
 | --- | --- |
@@ -32,7 +32,25 @@ A tracing target is not automatically a persisted Regulation record. The tool pa
 | Outcome assessment | `ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
 | Inference resilience | `InferenceCircuitTransition`, `InferenceObservedRecovery` |
 
-`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs`).
+`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs:468-473`).
+
+`SpanCategory` is the typed dispatch key for span-category-dependent logic — a closed
+classification of a namespace's `short_name()` prefix: `Cybernetics` (`variety`,
+`outcome`, `alert`), `Curation` (`curation`, `spec`), `Inference`, `Skill`, `Memory`
+(historical — `reg.pod*`/`reg.connector*`, pods removed 2026-09-09; the variant
+remains so archived events still classify), and `Unknown` for anything else, so
+the caller decides the fallback policy explicitly (`kask/crates/hkask-types/src/event.rs:267-283`).
+
+**The `reg.*` prefix is reserved.** `SpanNamespace::parse` prepends `reg.` to a short
+form and `short_name()` strips it (`kask/crates/hkask-types/src/event.rs:210-219,232-235`);
+a namespace is valid only if it or a prefix segment is registered in
+`CANONICAL_NAMESPACES` (`is_canonical`, `kask/crates/hkask-types/src/event.rs:176-188`).
+Plain observability tracing targets outside the registry live on `hkask.*`
+instead — e.g. `hkask.mcp`, `hkask.regulation`, `hkask.sensor.ocr`, `hkask.paths`.
+Kask tracing targets using the `reg.*` prefix must be registered in
+`CANONICAL_NAMESPACES` or retargeted to `hkask.*`; performative log targets belong
+on `hkask.*`, not `reg.*` (`DIVERGENCE.md:483-485`, enforced by the reg-canonical
+gate scanning `kask/crates/` and `kask/mcp-servers/`).
 
 `LoopMetricsTelemetry` exposes nullable `rollout_progress_score` from evidence-bearing impact reports; no advice-review progress score is computed. An unchanged persistent condition is summarized with `steady_state_heartbeat` and `suppressed_steady_state_cycles`; clearing is marked with `condition_cleared`. When board delivery is unavailable, successful archive fallback also latches the condition until it clears; failed persistence retries and recurrence emits again. Idle heartbeat, archive retention, and the diagnostic alert-log cap remain separate mechanisms.
 
@@ -40,7 +58,7 @@ A tracing target is not automatically a persisted Regulation record. The tool pa
 
 ### 3.1 Child-server tracing: `reg.tool` with an outcome field
 
-Every server using the framework-level `execute_tool` wrapper creates a `ToolSpanGuard`, awaits the business future, and finishes the guard (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-169`). The guard emits one tracing event at target `reg.tool` with these fields:
+Every server using the framework-level `execute_tool` wrapper creates a `ToolSpanGuard`, awaits the business future, and finishes the guard (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:162-180`). The guard emits one tracing event at target `reg.tool` with these fields:
 
 - `tool`
 - `outcome`: `ok`, `error`, or `dropped`
@@ -54,15 +72,15 @@ This child-process trace goes to stderr. It is an observability signal, not the 
 
 ### 3.2 Governed runtime dispatch: `reg.mcp` path with `ToolCompleted`
 
-For tools invoked through `McpRuntime`, governance performs the per-tick call-meter check, dispatches the tool, then constructs a `RegulationRecord` using `SpanKind::ToolCompleted` and persists it through the configured event sink (`kask/crates/hkask-mcp/src/runtime.rs:1475-1543`). The observation records `server`, `tool`, `calls`, and success/failure status. Persistence failure is surfaced with a warning at target `reg.mcp`.
+For tools invoked through `McpRuntime`, governance performs the per-tick call-meter check, dispatches the tool, then constructs a `RegulationRecord` using `SpanKind::ToolCompleted` and persists it through the configured event sink (`kask/crates/hkask-mcp/src/runtime.rs:1590-1640`). The observation records `server`, `tool`, `calls`, and success/failure status. Persistence failure is surfaced with a warning at target `reg.mcp`.
 
-The same dispatch then records the result in `CyberneticsLoop::record_outcome` and the tool name in the variety feed (`kask/crates/hkask-mcp/src/runtime.rs:1545-1573`). Reliability is aggregated by MCP server name; tool names provide the observed variety states.
+The same dispatch then records the result in `CyberneticsLoop::record_outcome` and the tool name in the variety feed (`kask/crates/hkask-mcp/src/runtime.rs:1629`). Reliability is aggregated by MCP server name; tool names provide the observed variety states.
 
 ### 3.3 Agent context-server dispatch: outcome forwarding
 
-Agent-initiated context-server tools do not pass through `McpRuntime::invoke`. `ContextServerTool::run` therefore wraps `run_inner`, classifies the result, and calls `agent::record_mcp_tool_outcome(server, tool, success, error_kind)` (`crates/agent/src/tools/context_server_registry.rs:775-815`).
+Agent-initiated context-server tools do not pass through `McpRuntime::invoke`. `ContextServerTool::run` therefore wraps `run_inner`, classifies the result, and calls `agent::record_mcp_tool_outcome(server, tool, success, error_kind)` (`crates/agent/src/tools/context_server_registry.rs:927-955`).
 
-The composition root installs the recorder. Its closure logs a trace at `reg.tool.agent`, then asynchronously forwards the outcome and tool-name variety state into the shared Regulation ledger (`crates/zed/src/main.rs:908-953`). This makes agent-path and governed-runtime calls converge on the same per-server reliability domain without pretending that the child stderr trace is the durable input.
+The composition root installs the recorder. Its closure logs a trace at `reg.tool.agent`, then asynchronously forwards the outcome and tool-name variety state into the shared Regulation ledger (`crates/zed/src/main.rs:930-953`). This makes agent-path and governed-runtime calls converge on the same per-server reliability domain without pretending that the child stderr trace is the durable input.
 
 ## 4. Other live span families
 

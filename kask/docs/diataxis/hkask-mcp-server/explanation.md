@@ -83,7 +83,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-031
-verified_date: 2026-09-16
+verified_date: 2026-09-28
 verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-119,145-170
 status: VERIFIED
 -->

@@ -508,6 +508,65 @@ mod tests {
     }
 
     #[test]
+    fn test_program_manager_skill_md_pins_closure_ledger_form() {
+        // program-manager SKILL.md pins the closure-ledger form; if it
+        // drifts — or loses the shape guard that catches object-shaped
+        // ledgers silently reading green — this fails until skill and
+        // tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/program-manager/SKILL.md"
+        ))
+        .expect("program-manager SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains(
+                r#"(nonflat (lambda (items) (if (= 0 (length items)) 0 (+ (if (listp (car (car items))) 1 0) (nonflat (cdr items)))))))"#
+            ),
+            "closure-ledger shape guard must stay pinned in program-manager SKILL.md"
+        );
+        assert!(
+            skill_md.contains(r#"(if (> shape 0) (quote red)"#),
+            "shape violations must read red, not green"
+        );
+
+        // The pinned form, executed three ways: green flat ledger, red
+        // flat ledger (abandoned + unowned), and the object-shaped entry
+        // that the pre-2026-09-28 form silently read green.
+        let form = r#"(let ((count-token (lambda (items token) (if (= 0 (length items)) 0 (+ (if (member token (car items)) 1 0) (count-token (cdr items) token))))) (nonflat (lambda (items) (if (= 0 (length items)) 0 (+ (if (listp (car (car items))) 1 0) (nonflat (cdr items))))))) (let ((abandoned (count-token findings "reported-abandoned")) (unowned (count-token findings "owner:none")) (shape (nonflat findings))) (if (> shape 0) (quote red) (if (and (= abandoned 0) (= unowned 0)) (quote green) (quote red)))))"#;
+
+        let green = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"findings": [["f1", "half-edit left in tree", "fixed-verified", "owner:agent"], ["f2", "unrelated bug", "delegated-tracked", "owner:agent"]]}),
+            100_000,
+            64,
+        )
+        .expect("green-ledger form must evaluate");
+        assert_eq!(green, json!("green"));
+
+        let red = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"findings": [["f1", "half-edit left in tree", "fixed-verified", "owner:agent"], ["f2", "unrelated bug", "reported-abandoned", "owner:none"]]}),
+            100_000,
+            64,
+        )
+        .expect("red-ledger form must evaluate");
+        assert_eq!(red, json!("red"));
+
+        let malformed = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"findings": [["f1", "half-edit left in tree", "fixed-verified", "owner:agent"], {"id": "f3", "state": "operator-decision", "owner": "operator"}]}),
+            100_000,
+            64,
+        )
+        .expect("object-shaped-ledger form must evaluate");
+        assert_eq!(
+            malformed,
+            json!("red"),
+            "an object-shaped ledger entry must read red — the pre-2026-09-28 form silently read green"
+        );
+    }
+
+    #[test]
     fn test_canonical_superforecasting_forms() {
         // superforecasting SKILL.md stage 4 (Bayes) and stage 5 (MCDA-weighted
         // average) — pinned so the pipeline's probability arithmetic is

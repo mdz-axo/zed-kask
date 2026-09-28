@@ -1,8 +1,8 @@
 ---
 title: "MCP Dispatch Diagrams — Runtime Invoke, Tool-Call Sequence, CMP Tool Flow"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
-version: "1.0.1"
+last_updated: 2026-09-28
+version: "1.1.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition, domain]
@@ -30,14 +30,14 @@ flowchart TD
     C -- "Charged" --> G
     C -- "AutoRegistered (log wiring gap)" --> G
     C -- "CeilingReached" --> K["Return EnergyBudgetExceeded<br/>(runaway-loop breaker)"]
-    G --> I["Emit reg.gas.settled span<br/>(target reg.mcp)"]
+    G --> I["Emit call-settled span<br/>(SpanKind::ToolCompleted, target reg.mcp)"]
     I --> J["Return result"]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530, invoke L1531, charge_call_metered L1560, EnergyBudgetExceeded L1582, call_tool_inner L1593/L1668, call-settled span persist L1595-1607, no-governance unmetered dispatch L1642, inline pin no_governance_dispatches_unmetered L2576); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs deleted — the unmetered-dispatch pin now lives inline in runtime.rs
 status: VERIFIED
 -->
 
@@ -103,7 +103,7 @@ sequenceDiagram
     end
     Runtime->>Server: dispatch over stdio (one bounded reconnect on closed transport)
     Server-->>Runtime: tool output (JSON)
-    Runtime->>Runtime: emit reg.gas.settled span (target reg.mcp)
+    Runtime->>Runtime: emit call-settled span (SpanKind::ToolCompleted, target reg.mcp)
     Runtime-->>ToolPort: result Value
     ToolPort-->>Agent: result Value
     Agent->>Unwrap: unwrap_tool_envelope(result)
@@ -113,8 +113,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-09-16
-verified_against: crates/agent/src/thread.rs (enabled_tools — full surface, count_hidden_mcp_tools, D44 removal comment); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool, enumerate_tool_listing); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
+verified_date: 2026-09-28
+verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort L1530, charge_call_metered L1560, call-settled span L1595-1607); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist L843, L918); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist L262-274); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials L40-54)
 status: VERIFIED
 -->
 
@@ -154,8 +154,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-001
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L498); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
 status: VERIFIED
 -->
 
@@ -190,8 +190,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-002
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626-687); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L219); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481)
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574-640); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L220); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414)
 status: VERIFIED
 -->
 

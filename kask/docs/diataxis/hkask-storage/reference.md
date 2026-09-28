@@ -212,12 +212,6 @@ erDiagram
         TEXT last_updated
         INTEGER threshold
     }
-    reg_alerts {
-        TEXT id PK
-        TEXT severity
-        TEXT domain
-        INTEGER resolved
-    }
     agent_registry {
         TEXT name PK
         TEXT definition_json
@@ -232,16 +226,16 @@ erDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-008
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-29
+verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-28
 status: VERIFIED
 -->
 
 Store-owned schemas add `reg_records`, `reg_cursors`, and gallery lifecycle
 tables outside the core schema
 (`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
-`kask/crates/hkask-storage/src/gallery.rs:329-384`). Alert rows live in the
-core schema as `reg_alerts`
-(`kask/crates/hkask-storage/src/core/sql/schema.sql:12`).
+`kask/crates/hkask-storage/src/gallery.rs:329-384`). Escalation alerts do not
+persist as storage rows: they reconcile into kanban board review cards through
+`BoardAlertEscalationSink` (`kask/crates/kask_bridge/src/algedonic_board.rs:227`).
 
 ## Passphrase rotation
 

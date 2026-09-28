@@ -2,7 +2,7 @@
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.44.0"
+version: "0.44.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -15,7 +15,7 @@ mds_categories: [domain, curation]
 The single source of truth for published ontology vocabulary, artifact-axis selection, derived concepts, exact term resolution, and a small sourced relation graph in hKask. The bridge exposes vocabulary modules plus `axis`, `derived`, `term_resolution`, and `ontology_graph` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`).
 No ontology vocabulary lives inside any MCP server; every server that does
 tagging depends on this crate (user directive 2026-08-05, recorded at
-`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:74-78`).
+`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:78-82`).
 
 ## The fallback ladder (P8.3)
 
@@ -45,7 +45,7 @@ Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `a
 
 ### `published` — full vocabularies compiled from pinned sources
 
-`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`kask/crates/hkask-bridge-ontology/build.rs:26-87,136-316,322-403`; `kask/crates/hkask-bridge-ontology/src/published.rs:18-38,61-98`) .
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`kask/crates/hkask-bridge-ontology/build.rs:26-87,136-316,322-403`; `kask/crates/hkask-bridge-ontology/src/published.rs:18-40,61-98,128-150`) .
 
 **Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. FIBO Provisional is excluded. A missing publisher definition stays missing: e.g. the released but deprecated `fibo-be-corp-corp:BoardAgreement` omits `definition` in the serialized resolution and reports `status: "deprecated"` (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:62-72,339-352`), not a fabricated `"[deprecated]"` definition.
 
@@ -301,7 +301,7 @@ Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`
 
 `derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, status, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on derived resolutions and only when supplied by a published source, `status` on published deprecation/supersession, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, status, source }`).
 
-`TERM_RESOLUTION_PROTOCOL` remains `published-term-resolution-v2`. The current resolver includes W3C RDF Data Cube; v1 records do not reconcile, and v2 records whose stored tags no longer match current canonicalization are rejected for re-tagging (`kask/crates/hkask-types/src/corpus.rs:328-346`). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:17-20`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:157-233`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
+`TERM_RESOLUTION_PROTOCOL` remains `published-term-resolution-v2`. The current resolver includes W3C RDF Data Cube; v1 records do not reconcile, and v2 records whose stored tags no longer match current canonicalization are rejected for re-tagging (`kask/crates/hkask-types/src/corpus.rs:328-346`). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:17-20`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:186-280`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
 
 ## Domain → ontology mapping
 
@@ -338,9 +338,9 @@ carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-sec-sec-ast:Portfolio
 | Server | JSON key | Value example | Evidence |
 |---|---|---|---|
 | companies | `"ontology"` | `"fibo-be-le-cb:Corporation"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:94-110` |
-| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:599` |
+| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:826-832` |
 | media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
-| portfolio | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:54` |
+| portfolio | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:511-515` |
 | scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |
 
 The framework-level tool guard emits outcome tracing only; it does not attach semantic ontology metadata. A server that returns an ontology field does so in its own result construction. The actual tracing and durable MCP outcome paths are documented in [`regulation-spans.md`](regulation-spans.md).
@@ -381,7 +381,7 @@ hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
 
 The crate is `forbid(unsafe_code)` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:1`) and
 exposes only `pub` modules plus two root re-exports, `DcConcept` and
-`PkoConcept` (`:105-106`) — no feature flags, no build-time configuration.
+`PkoConcept` (`:116-117`) — no feature flags, no build-time configuration.
 
 **Pick the right entry point.** Three surfaces have different contracts:
 

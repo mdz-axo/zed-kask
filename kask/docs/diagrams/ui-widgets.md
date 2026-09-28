@@ -1,8 +1,8 @@
 ---
 title: "UI Widget Diagrams — Graph, Kanban, Portfolio, Prediction Markets, Scenarios, Spreadsheet, Swarm"
 audience: [architects, developers]
-last_updated: 2026-09-19
-version: "1.1.0"
+last_updated: 2026-09-28
+version: "1.2.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -117,8 +117,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-GRAPH
-verified_date: 2026-09-16
-verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L49-59 — evidence HashMap<usize, EvidenceKind>, repropagate L161)
+verified_date: 2026-09-28
+verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L48-58 — evidence HashMap<usize, EvidenceKind>, repropagate L154)
 status: VERIFIED
 -->
 
@@ -175,14 +175,14 @@ classDiagram
         +status: String
         +description: Option~String~
         +assignee: Option~String~
-        +gas_remaining: Option~u64~
+        +swarm_id: Option~String~
+        +activity: Option~TaskActivityBody~
         +ontology: Option~String~
         +priority: Option~String~
         +labels: Vec~String~
         +criteria: Vec~String~
         +comments: Vec~CommentBody~
         +verification: Option~VerificationBody~
-        +gas_spend: Vec~GasEntryBody~
     }
     class CommentBody {
         +author: String
@@ -193,10 +193,10 @@ classDiagram
         +passed: bool
         +reason: String
     }
-    class GasEntryBody {
-        +amount: u64
-        +reason: String
+    class TaskActivityBody {
+        +text: String
         +kind: String
+        +at: String
     }
     class KanbanColumn {
         +status: String
@@ -223,12 +223,10 @@ classDiagram
         +provenance: BlockProvenance
         +focus_handle: FocusHandle
         +move_controller: KanbanMoveController
-        +disagree_draft: Option~String~
         +expanded_descriptions: HashSet~String~
         +detail_open: Option~String~
         +new(body, cx) KanbanWidget
         +render_dispatch_status(cx)
-        +evaluate_move(window, cx)
     }
     class create_kanban_widget {
         +try_create~KanbanWidget~ via VizWidget
@@ -238,7 +236,7 @@ classDiagram
     KanbanBlockBody "1" o-- "many" ColumnBody : columns
     TaskBody "1" o-- "many" CommentBody : comments
     TaskBody "1" o-- "0..1" VerificationBody : verification
-    TaskBody "1" o-- "many" GasEntryBody : gas_spend
+    TaskBody "1" o-- "0..1" TaskActivityBody : activity
     KanbanWidget "1" *-- "1" KanbanMoveController : move_controller
     KanbanWidget "1" o-- "many" KanbanColumn : columns
     KanbanColumn "1" o-- "many" TaskBody : tasks
@@ -249,8 +247,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
-verified_date: 2026-09-16
-verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs (KanbanWidget L104-114 — column_meta S8, provenance; render_dispatch_status L260; evaluate_move L974); crates/hkask-kanban-widget/src/move_controller.rs (L61-121)
+verified_date: 2026-09-28
+verified_against: crates/hkask-kanban-widget/src/block.rs (KanbanBlockBody L22, ColumnBody L51, TaskBody L67 — swarm_id L86, activity L91, no gas fields; CommentBody L122, VerificationBody L136, TaskActivityBody L147, board_with_tasks L160); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100-121 — no disagree_draft, render_dispatch_status L233, KanbanColumn L81, group_tasks_into_columns L825); crates/hkask-kanban-widget/src/move_controller.rs (fields L62-77, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254); gas_spend/GasEntryBody and evaluate_move/disagree_draft removed (rJoule spend-log removal 2026-09-08; D21 conversation-injector retirement fa95c2b8c7)
 status: VERIFIED
 -->
 
@@ -261,7 +259,7 @@ alphabetically (title-cased).
 
 **Card detail (B3):** `detail_open` holds the task id whose detail panel is
 open. The panel renders the full task (description, criteria, comments,
-verification, gas spend log) passively from the block body.
+verification, latest activity) passively from the block body.
 
 ## Portfolio Widget
 
@@ -352,8 +350,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-PORTFOLIO
-verified_date: 2026-09-16
-verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER/DEFAULT_TOOL L42-44, INVOKER_NOT_WIRED_MSG/PROVENANCE_INCOMPLETE_MSG L46-50, from_focus/to_focus L59-66, from_input/to_input L104-120)
+verified_date: 2026-09-28
+verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER L44 / DEFAULT_TOOL L46, INVOKER_NOT_WIRED_MSG L49 / PROVENANCE_INCOMPLETE_MSG L53, from_focus/to_focus L63-64, from_input/to_input L67-68)
 status: VERIFIED
 -->
 
@@ -379,13 +377,15 @@ spread / volume / calibration / volatility / reliability tier / dual-axis
 ontology, and never returns a bare probability. All calibration math is
 reused from `hkask-forecast` — never reimplemented here.
 
-**Corrections (2026-08-28):** the tool surface expanded from 13 to **31
-tools** — 17 market/CMP tools (adding `market_volatility`,
-`market_cmp_index_store`, `market_cmp_portfolio_store`,
-`market_cmp_context_suggest`) plus a new **economic-data router** with 14
-tools (`fred_*` × 5, `dbnomics_*` × 4, `wb_*` × 5) in
-`economic_data_tools.rs`; `combined_router = prediction_markets_router +
-economic_data_tools_router`.
+**Corrections (2026-08-28, updated 2026-09-28):** the tool surface is now
+**32 tools** — 17 market/CMP tools on the `prediction_markets_router`
+(including `prediction_markets_status`), plus the **economic-data/EQM
+router** with 15 tools in `economic_data_tools.rs` (`fred_*` × 5,
+`dbnomics_*` × 4, `wb_*` × 5, and `market_score_rationale` — the EQM
+rationale scorer, which needs the server's `inference_port`);
+`combined_router = prediction_markets_router + economic_data_tools_router`.
+The server struct also gained `portfolio_store` (CMP indices as transaction
+ledgers), `fred_api_key`, and `inference_port`.
 
 ```mermaid
 classDiagram
@@ -398,6 +398,9 @@ classDiagram
         +calibration_path: Option~String~
         +base_events: Vec~(String,String)~
         +called_tools: Mutex~HashSet~String~~
+        +portfolio_store: PortfolioStore
+        +fred_api_key: Option~String~
+        +inference_port: Arc~InferencePort~
         +combined_router() ToolRouter
     }
     class MarketRecord {
@@ -405,17 +408,24 @@ classDiagram
         +event_id: String
         +market_id: String
         +question: String
+        +description: String
+        +category: String
+        +series: String
         +deadline: String
+        +time_to_maturity: Option~f64~
         +probability: f64
         +probability_method: ProbabilityMethod
         +spread: Option~f64~
-        +volume: Option~f64~
-        +volume_grain: Option~VolumeGrain~
+        +volume: f64
+        +volume_grain: VolumeGrain
         +liquidity: Option~f64~
+        +open_interest: Option~f64~
+        +last_update: String
+        +clob_asset_ids: Option~Vec~String~~
         +volatility: Volatility
         +status: MarketStatus
         +resolved_outcome: Option~bool~
-        +resolution_source: Option~String~
+        +resolution_source: Cow
         +calibration: Calibration
         +reliability_tier: ReliabilityTier
         +ontology: OntologyBlock
@@ -424,8 +434,8 @@ classDiagram
     }
     class Calibration {
         +brier: Option~f64~
-        +domain_bias: f64
-        +bias_source: String
+        +domain_bias: Option~Cow~
+        +bias_source: Cow
         +sample_size: u64
         +stale: bool
     }
@@ -473,11 +483,14 @@ classDiagram
     class economic_data_tools {
         <<module>>
         fred_search_series fred_get_observations
-        fred_get_series_info fred_get_release fred_list_categories
+        fred_get_series_info fred_get_release
+        fred_list_categories
         dbnomics_search dbnomics_list_providers
         dbnomics_get_dataset dbnomics_get_series
         wb_list_topics wb_search_indicators
-        wb_get_indicator_info wb_list_countries wb_get_observations
+        wb_get_indicator_info wb_list_countries
+        wb_get_observations
+        market_score_rationale EQM scorer
     }
 
     PredictionMarketsServer --> CalibrationStore : journal-backed
@@ -490,15 +503,15 @@ classDiagram
     MarketRecord "1" o-- "1" Volatility : volatility
     MarketRecord "1" o-- "1" OntologyBlock : ontology
 
-    note for PredictionMarketsServer "31 tools = 17 market/CMP + 14 economic-data\ncombined_router = prediction_markets_router\n+ economic_data_tools_router"
+    note for PredictionMarketsServer "32 tools = 17 market/CMP + 15 economic-data/EQM\ncombined_router = prediction_markets_router\n+ economic_data_tools_router"
     note for CalibrationStore "Brier math reused from hkask-forecast.\nMissing/empty bucket is Err — mapped to\nstale: true, never a synthetic brier: 0\n(the .rules unwrap_or(0) trap generalized)."
     note for MarketRecord "Every probability carries spread, volume grain,\ncalibration, volatility, reliability tier,\nand a PKO + Dublin Core ontology block.\nBase events come only from config — a market\ncan never auto-promote to benchmark status."
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L60, combined_router L85-89 = prediction_markets_router + economic_data_tools_router, tool fns — 17 market/CMP tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (14 economic-data tools); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L17); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L27); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L55-73 — incl. portfolio_store, fred_api_key, inference_port; combined_router L80-84 = prediction_markets_router + economic_data_tools_router; 17 #[tool] fns incl. prediction_markets_status L105); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 #[tool] fns — 14 economic-data + market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136-180, calibration_for L184); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
 status: VERIFIED
 -->
 
@@ -539,8 +552,8 @@ flowchart LR
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM-PIPELINE-001
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L85-89); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L80-84); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25)
 status: VERIFIED
 -->
 
@@ -661,8 +674,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SCENARIOS
-verified_date: 2026-09-16
-verified_against: crates/hkask-scenarios-widget/src/block.rs; crates/hkask-scenarios-widget/src/view.rs (dispatch fields L35-42, SCENARIO_TOOL_SERVER fallback L21-22, dispatch_rung L554, provenance routing L548-561)
+verified_date: 2026-09-28
+verified_against: crates/hkask-scenarios-widget/src/block.rs (ScenariosBlockBody L23, PipelineOverview L49, RecentForecast L63, CalibrationSummary L79, EventTreeSummary L93, EventNode L107); crates/hkask-scenarios-widget/src/view.rs (dispatch fields L37-43, DEFAULT_SERVER fallback L24, dispatch_rung L548, build_dispatch_args provenance routing L551-556, ScaffoldingPrompt L626, scaffolding_for_state L632)
 status: VERIFIED
 -->
 
@@ -776,8 +789,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SPREADSHEET-001
-verified_date: 2026-09-19
-verified_against: crates/hkask-spreadsheet-widget/src/block.rs (SpreadsheetBlockBody L23, parse_spreadsheet_body L44, claims L50, strict_block L56-83); crates/hkask-spreadsheet-widget/src/view.rs (shared_spreadsheet_service L48, SaveStatus L63, EditorState L117, SpreadsheetWidget L122, dispatch_save L472, apply_save_response L525); crates/hkask-spreadsheet-widget/src/logic.rs (window_covering L76, selection_to_tsv L151, tsv_to_edits L175, commit_to_edit L220); crates/hkask-viz-core/src/hkask_viz_core.rs (VIZ_TAG L161-164, widget registration L592, L605); kask/crates/hkask-types/src/spreadsheet.rs (SPREADSHEET_VIZ L69, SpreadsheetViewport L263, SpreadsheetArtifactRef L338, ArtifactOrigin L412); kask/crates/hkask-types/src/block_provenance.rs (BlockProvenance L33, is_dispatchable L54)
+verified_date: 2026-09-28
+verified_against: crates/hkask-spreadsheet-widget/src/block.rs (SpreadsheetBlockBody L23, parse_spreadsheet_body L44, claims L50, strict_block L56-83); crates/hkask-spreadsheet-widget/src/view.rs (shared_spreadsheet_service L48, SaveStatus L63, EditorState L117, SpreadsheetWidget L122, dispatch_save L472, apply_save_response L525); crates/hkask-spreadsheet-widget/src/logic.rs (window_covering L76, selection_to_tsv L151, tsv_to_edits L175, commit_to_edit L220); crates/hkask-viz-core/src/hkask_viz_core.rs (SpreadsheetWidget VIZ_TAG L161, viz_factories registration L249-257); kask/crates/hkask-types/src/spreadsheet.rs (SPREADSHEET_VIZ L69, SpreadsheetViewport L263, SpreadsheetArtifactRef L338, ArtifactOrigin L412); kask/crates/hkask-types/src/block_provenance.rs (BlockProvenance L33, is_dispatchable L54)
 status: VERIFIED
 -->
 
@@ -858,8 +871,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SWARM
-verified_date: 2026-09-16
-verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (SwarmWidget L47-50, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213, RESPONSE_TRUNCATE_CHARS L43); crates/hkask-swarm-widget/src/block.rs; crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L163-176)
+verified_date: 2026-09-28
+verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (RESPONSE_TRUNCATE_CHARS L43, SwarmWidget L47, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213); crates/hkask-swarm-widget/src/block.rs (SwarmBlockBody L26, DelegateResultCard L46 — cost/cost_uncapped/balance L58-68, TaskSuccessVerdictCard L88); crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L174-185)
 status: VERIFIED
 -->
 

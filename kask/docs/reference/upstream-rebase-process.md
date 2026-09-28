@@ -1,8 +1,8 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-09-23
-version: "1.3.0"
+last_updated: 2026-09-28
+version: "1.4.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition]
@@ -27,11 +27,10 @@ Files that auto-merge cleanly with all markers preserved (`markdown.rs`,
 **Companion skill:** this process is encoded in the installed
 `upstream-rebase` skill (`.agents/skills/upstream-rebase/SKILL.md`), which adds
 the merge & rebase protocol (fetch/merge strategy, conflict classes, commit
-hygiene, recovery) on top of Steps 1–8 below. Note: the skill's "Process
-Document" pointer says `kask/docs/upstream-rebase-process.md`; the actual path
-is this file, `kask/docs/reference/upstream-rebase-process.md`.
+hygiene, recovery) on top of Steps 1–8 below. The skill's Process Document
+pointer names this file (`SKILL.md:231-233`).
 
-**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority for numbered and retired seams. Retired numbers are never reused: D4, D10, D17, D19, D30, D38, D49, D50, and D53 are recorded in the retired-seams ledger in `DIVERGENCE.md`. Trust the table and retired ledger rather than copied range labels in secondary documents.
+**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority for numbered and retired seams. Retired numbers are never reused; the retired-seams ledger at `DIVERGENCE.md:369` currently records eighteen — D4, D10, D11, D12, D13, D15, D17, D19, D21, D22, D30, D38, D47, D48, D49, D50, D53, D62 (as of 2026-09-28). Trust the table and retired ledger rather than copied range labels in secondary documents.
 
 **Removal principles:** what may be removed from upstream Zed (and why) is
 governed by the principle set in §9 — folded here 2026-09-09 from the former
@@ -172,7 +171,7 @@ Run it locally as the fast loop; CI runs the same script in
 1. `cargo check -p <crate>` — the file compiles.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds
-   (`DIVERGENCE.md:100-105`).
+   (`DIVERGENCE.md:457-462`).
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit
    count (every unit is marked).
 5. `git diff upstream/main -- <file>` — the diff is *only* kask additions (no
@@ -369,13 +368,16 @@ It encodes this process plus:
 - **Deletion D-seam scope note:** Steps 1–7 apply to D-seam *files*; deletion
   D-seams (file column `—` or struck through, e.g. D4, D10) skip to Step 8.
 - **Merge & rebase protocol:** merge-not-rebase convention
-  (`DIVERGENCE.md:108`, `git fetch upstream && git merge upstream/main`),
+  (`git fetch upstream && git merge upstream/main`, `DIVERGENCE.md:466`),
   five conflict classes (D-seam modify/modify, kask-additive no-conflict,
   workspace `Cargo.toml` arrays, modify/delete both directions), commit
   hygiene, and recovery procedures.
-- **Merge-level verification gate ordering:** isolation script → §13.1 script →
-  `./script/clippy` → `cargo check -p kask_bridge -p hkask-types -p
-  hkask-mcp-server` (`DIVERGENCE.md:129`) → pinning tests.
+- **Merge-level verification gate ordering** (the `DIVERGENCE.md` runbook,
+  `DIVERGENCE.md:483-505`): §13.1 script (`check-hkask-no-zed-deps.sh`) →
+  `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` →
+  isolation script (`check-zed-isolation.sh`) → `./script/clippy` → the full
+  verification gate (`cargo fmt --check`, `cargo nextest run -p 'hkask-*' -p
+  kask_bridge`) → pinning tests.
 - **Registry templates:** `assess.j2`, `map.j2`, `decide.j2`, `execute.j2`,
   `document.j2`, `reflect.j2` under `kask/registry/templates/upstream-rebase/`, rendered
   via the `render_template` tool, with `lisp_eval` verification gates between

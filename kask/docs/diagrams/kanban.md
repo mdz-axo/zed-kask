@@ -1,8 +1,8 @@
 ---
 title: "Kanban Diagrams — Task Status Lifecycle, Move Controller, Goal Lifecycle"
 audience: [architects, developers]
-last_updated: 2026-09-19
-version: "1.1.0"
+last_updated: 2026-09-28
+version: "1.2.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [lifecycle, composition]
@@ -50,8 +50,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-TASK-STATUS
-verified_date: 2026-09-24
-verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs (can_transition L51); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_move L585, task_reopen L885)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24 — Backlog/Ready/InProgress/Review/Done); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs (can_transition L51); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_move L585, task_reopen L889)
 status: VERIFIED
 -->
 
@@ -65,35 +65,37 @@ controller state via accessors (`pending_move`, `dispatch_in_flight`,
 render.
 
 The lifecycle is: `stage_move` (user clicks a move chip) stages a pending
-move and shows a Confirm/Cancel/Evaluate banner. `confirm_move` takes the
-pending move and dispatches it via `shared_tool_invoker()` (metered against
-the panel persona's call ceiling; not capability-gated), applying
-an optimistic local mutation first. `cancel_move` drops the pending move
-without dispatch. `cancel_dispatch` rolls back the optimistic move if the
-dispatch is still in flight. `evaluate_move` composes an evaluation request
-from the pending move and injects it into the active conversation, then
-clears the pending move (no double-evaluate). Verified current.
+move — clearing any prior dispatch error — and shows a Confirm/Cancel banner.
+`confirm_move` takes the pending move and dispatches it via `shared_tool_invoker()`
+(metered against the panel persona's call ceiling; not capability-gated),
+applying an optimistic local mutation first. `cancel_move` drops the pending
+move without dispatch. `cancel_dispatch` rolls back the optimistic move if the
+dispatch is still in flight. Verified current.
+
+**Regenerated (2026-09-28):** the `evaluate_move` transition (compose an
+evaluation request and inject it into the active conversation) was removed
+with the conversation-injector compose-back seam (commit `fa95c2b8c7`, D21
+retirement) — the Pending→Idle evaluate path no longer exists, and the
+error banner is a passive label cleared only by the next `stage_move`.
 
 ```mermaid
 stateDiagram-v2
     direction TD
     [*] --> Idle
-    Idle --> Pending : stage_move (chip click)
+    Idle --> Pending : stage_move (chip click, clears prior error)
     Pending --> Idle : cancel_move
     Pending --> InFlight : confirm_move (dispatch + optimistic)
-    Pending --> Idle : evaluate_move (compose + inject + clear)
     InFlight --> Idle : dispatch succeeds (optimistic sticks)
     InFlight --> Idle : cancel_dispatch (rollback optimistic)
     InFlight --> Error : dispatch fails
     Error --> Idle : next stage_move clears error
-    Error --> Idle : user dismisses
     Idle --> [*] : widget destroyed
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-KANBAN-MOVE
-verified_date: 2026-08-28
-verified_against: crates/hkask-kanban-widget/src/move_controller.rs (dispatch_in_flight L61, optimistic_move L65, dispatch_error L69, pending_move L73, accessors L96-121); crates/hkask-kanban-widget/src/view.rs (render_dispatch_status L260, evaluate_move L974)
+verified_date: 2026-09-28
+verified_against: crates/hkask-kanban-widget/src/move_controller.rs (dispatch_in_flight L62, optimistic_move L69, dispatch_error L73, pending_move L77, accessors L99-122, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100, render_dispatch_status L233, dispatch_error banner L317); evaluate_move removed with the D21 conversation-injector seam (commit fa95c2b8c7) — no evaluate path remains in crates/hkask-kanban-widget/src/
 status: VERIFIED
 -->
 
@@ -110,11 +112,11 @@ the resolution but **retains** the row across restarts; only `kanban_goal_memory
 — after the production turn-ingestion path confirms the scored outcome is stored in
 curator memory — prunes it. Failed ingestion or acknowledgment leaves the row retryable.
 Scoring is idempotent for the same outcome and rejects a conflicting outcome
-(`goals.rs:255-267`). A judge verdict must judge every criterion exactly once; the
-verdict history is the learning record (`goals.rs:176-236`). The Brier score applies
+(`goals.rs:275`). A judge verdict must judge every criterion exactly once; the
+verdict history is the learning record (`goals.rs:232`, `goals.rs:241`). The Brier score applies
 the intake prediction to the realized outcome; no prediction stays `None` — a
 synthetic 0 would read as perfect calibration (`GoalResolution`,
-`types/goal.rs:163-175`).
+`types/goal.rs:161-175`).
 
 ```mermaid
 stateDiagram-v2
@@ -131,8 +133,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-GOAL-LIFECYCLE
-verified_date: 2026-09-23
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create, goal_get, goal_judge, goal_score, goal_acknowledge_memory, transition_goal, goal_prune); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal, GoalVerdict, GoalResolution)
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L51, goal_get L125, goal_judge L185, goal_score L258, goal_acknowledge_memory L319, transition_goal L341, goal_prune L369, conflicting-outcome rejection L275, judge-every-criterion L232/L241, outbox retention doc L1-23); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic L429); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L143, GoalResolution L161)
 status: VERIFIED
 -->
 

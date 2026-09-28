@@ -1,8 +1,8 @@
 ---
 title: "The lisp_eval Dialect"
 audience: [agents, developers]
-last_updated: 2026-09-19
-version: "0.40.1"
+last_updated: 2026-09-28
+version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust]
 
 # The `lisp_eval` Dialect
 
-This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. The tool delegates to `hkask_lisp::eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:1680-1697`).
+This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. The tool delegates to `hkask_lisp::eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:1733-1737`).
 
 ## Pattern
 
@@ -26,17 +26,18 @@ Unlike the paper's persistent SBCL process, each call is stateless. State crosse
 
 - `form` is the Lisp source string to evaluate.
 - `env` is a JSON object whose keys become top-level bindings.
-- `max_steps` and `max_depth` bound evaluation. The tool defaults are 100,000 steps and depth 1,024 (`kask/crates/hkask-lisp/src/hkask_lisp.rs:1672-1688`).
+- `max_steps` and `max_depth` bound evaluation. The tool defaults are 100,000 steps and depth 1,024 (`kask/crates/hkask-lisp/src/hkask_lisp.rs:1733-1734`; tool-side defaults at `crates/agent/src/tools/lisp_eval_tool.rs:58-82`).
 - The result is converted back to JSON for the next reasoning step.
 
 Pass prior structured output through `env`, then read object members with `assoc` inside the form. `assoc` tests key presence; an empty string remains a present value and needs its own semantic or `length` check.
 
 ## Interpreter surface
 
-The built-in registry is installed by `default_builtins` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:796-858`). Important dialect rules:
+The built-in registry is installed by `default_builtins` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:797-865`). Important dialect rules:
 
 - Boolean literals are `true`, `false`, and `nil`; `t` is also truthy and is suitable as the final `cond` clause.
-- `=` is numeric equality. Use `string=` for string-only equality and `eq` for structural equality (`kask/crates/hkask-lisp/src/hkask_lisp.rs:824-850`, `kask/crates/hkask-lisp/src/hkask_lisp.rs:1306-1321`).
+- `=` is numeric equality. Use `string=` for string-only equality and `eq` for structural equality (`kask/crates/hkask-lisp/src/hkask_lisp.rs:826-860`, `kask/crates/hkask-lisp/src/hkask_lisp.rs:1310-1325`).
+- `string-contains` takes the needle FIRST: `(string-contains "needle" "haystack")` — the searched-for string precedes the searched-in string, following the `assoc`/`member` convention (`kask/crates/hkask-lisp/src/hkask_lisp.rs:834-840`, implementation at `:1350-1392`). An empty needle errors rather than matching anything; a needle longer than the haystack errors naming the probable reversal — reversed arguments return false silently otherwise (a 20-quote verification batch failed every check this way, 2026-09-28).
 - `append` joins lists; `nil` arguments behave as empty lists.
 - `concat` joins strings.
 - Prefix and supported infix arithmetic forms are both accepted. Prefer prefix form around `let`, `if`, recursion, and nested logic.

@@ -685,11 +685,13 @@ composes every widget into one `BlockRenderer` callback and caches widget
 entities by a hash of the block body so state survives the per-token
 re-renders of the streaming chat.
 
-**Corrections (2026-08-28):** the per-widget `create_*` factory functions
-were replaced by a `VizWidget` trait (`VIZ_TAG` / `LOG_PREFIX` / `parse_body`
-/ `viz_of` / `new_widget`) with a shared `try_create` guard and an ordered
-`viz_factories()` registry of five widgets (graph, kanban, portfolio,
-scenarios, swarm). `block_renderer` now tries the media widget
+**Corrections (2026-08-28, updated 2026-09-28):** the per-widget `create_*`
+factory functions were replaced by a `VizWidget` trait (`VIZ_TAG` /
+`LOG_PREFIX` / `parse_body` / `viz_of` / `new_widget`) with a shared
+`try_create` guard and an ordered `viz_factories()` registry — now of **six**
+widgets (graph, kanban, portfolio, scenarios, spreadsheet, swarm; the
+spreadsheet widget was added with the LogiSheets workbook what-if).
+`block_renderer` tries the media widget
 (`hkask_media_widget::create_media_widget`, discriminates on `kind`, needs
 `Window`) first, then the registered viz widgets (discriminate on `viz`).
 `CachedWidget` is a single erased render closure (replacing the former
@@ -716,7 +718,7 @@ classDiagram
         +try_create~T: VizWidget~(body, cx) Option~CachedWidget~
     }
     class viz_factories {
-        +ordered registry of 5 factories
+        +ordered registry of 6 factories
     }
     class CachedWidget {
         <<erased closure>>
@@ -746,22 +748,23 @@ classDiagram
     VizWidget <|.. KanbanWidget : viz kanban
     VizWidget <|.. PortfolioWidget : viz portfolio
     VizWidget <|.. ScenariosWidget : viz scenarios
+    VizWidget <|.. SpreadsheetWidget : viz spreadsheet
     VizWidget <|.. SwarmWidget : viz swarm_delegate_results
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
-verified_date: 2026-09-16
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-101, impls for GraphWidget/KanbanWidget/PortfolioWidget/ScenariosWidget/SwarmWidget L103-176, CachedWidget L186-204, try_create L209-224, viz_factories L233-241, MAX_CACHE_SIZE L243, VizCache L251-281, cache_key L285-289, block_renderer L299-330); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L48); crates/agent_ui/src/conversation_view.rs (media_block_renderer L3539)
+verified_date: 2026-09-28
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-96, impls GraphWidget L99 / KanbanWidget L114 / PortfolioWidget L129 / ScenariosWidget L144 / SpreadsheetWidget L159 / SwarmWidget L174, CachedWidget L197, try_create L220, viz_factories L249-257, MAX_CACHE_SIZE L260, VizCache L356, cache_key L395, block_renderer L409); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
 status: VERIFIED
 -->
 
 **Selection order** (intentional): media (`kind`) first, then graph
 (`viz: "event_tree"`), kanban (`viz: "kanban"`), portfolio
-(`viz: "portfolio"`), scenarios (`viz: "scenarios"`), swarm
-(`viz: "swarm_delegate_results"`). The viz tags are disjoint, so factory
-order is arbitrary. A body claimed by none returns `None` and falls through
-to the default code-block renderer.
+(`viz: "portfolio"`), scenarios (`viz: "scenarios"`), spreadsheet
+(`viz: "spreadsheet"`), swarm (`viz: "swarm_delegate_results"`). The viz
+tags are disjoint, so factory order is arbitrary. A body claimed by none
+returns `None` and falls through to the default code-block renderer.
 
 **Wiring seam:** `crates/agent_ui/src/conversation_view.rs` —
 `render_agent_markdown` calls `.media_block_renderer(hkask_viz_core::block_renderer())`.
@@ -821,9 +824,9 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-LEARNING-LOOP-001
-verified_date: 2026-09-26
-verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session with_invoker L1019, activate_delegated_skill L4676, DELEGATED_SKILL_INVOKER L4702, RecorderHook L4728, record_skill_outcome L4839, record_skill_tool_failure L4846); crates/agent/src/thread.rs (run_tool active-skill capture L4418, L4499); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (single skill outcome recorder L988 with archive set L1680; tool-failure recorder L1692; operator feedback L1718); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L49, persist_skill_outcome L63, persist_skill_tool_failure L74); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1308, memory_insert L1414); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (Learning loop in CURATOR_STATIC_CONTEXT L60); .agents/skills/algedonic-review/SKILL.md (gemba walk step 5 L81, Proposal authority and done L85); .agents/skills/skill-maintenance/SKILL.md (Act L160)
-status: PARTIAL — board path verified by focused code tests; full Phase D removal pending
+verified_date: 2026-09-28
+verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session L963, activate_delegated_skill L4690, DELEGATED_SKILL_INVOKER L4716, RecorderHook L4742, record_skill_feedback tool L4814, record_skill_outcome L4853, record_skill_tool_failure L4860); crates/agent/src/thread.rs (run_tool active-skill capture L4431, L4512); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (skill outcome recorder L988, archive set L1692, tool-failure recorder L1704); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L49, persist_skill_outcome L63, persist_skill_tool_failure L74); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1228, memory_insert L1334); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (CURATOR_STATIC_CONTEXT L45, Learning loop section L60); .agents/skills/algedonic-review/SKILL.md (gemba walk L4, L13); .agents/skills/skill-maintenance/SKILL.md (Plan → Do → Check → Act L157)
+status: VERIFIED
 -->
 
 | Stage | Surface | Record | Who acts |

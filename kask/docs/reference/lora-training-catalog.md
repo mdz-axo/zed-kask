@@ -1,8 +1,8 @@
 ---
 title: "LoRA Training — Method & Gate Catalog"
 audience: [developers, ml-engineers]
-last_updated: 2026-09-19
-version: "0.39.2"
+last_updated: 2026-09-28
+version: "0.40.0"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, trust]
@@ -14,17 +14,17 @@ Reference catalog for the `lora-training` skill (`.agents/skills/lora-training/S
 
 ## MCP Server Surface (9 tools)
 
-`hkask-mcp-training` exposes nine registered `#[tool]` methods across `kask/mcp-servers/hkask-mcp-training/src/tools/`; `combined_router` merges their subrouters in `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:288-310`. The tool framework records outcomes but does not attach a training-specific ontology tag.
+`hkask-mcp-training` exposes nine registered `#[tool]` methods across `kask/mcp-servers/hkask-mcp-training/src/tools/`; `combined_router` merges their subrouters in `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:296-307`, and `tool_surface_is_exactly_9_registered_tools` (`hkask_mcp_training.rs:323-326`) pins the count end-to-end. The tool framework records outcomes but does not attach a training-specific ontology tag.
 
 | Tool | Role | Implementation |
 |---|---|---|
 | `training_ingest_dataset` | Dataset ingestion | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:195-230` |
 | `training_ingest_qa` | QA-pair ingestion | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:13-68` |
 | `training_assemble_dataset` | Dataset assembly | `kask/mcp-servers/hkask-mcp-training/src/tools/dataset.rs:70-193` |
-| `training_submit` | Submit a training job | `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:23-113` |
-| `training_status` | Job status and G-R1 runtime metrics | `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:12-125` |
-| `training_cancel` | Cancel a job | `kask/mcp-servers/hkask-mcp-training/src/tools/cancel.rs:10-25` |
-| `training_evaluate` | Post-training evaluation; semantic mode requires explicit `judge_model`; all attempts count, missing usage totals are null | `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs:76-108` |
+| `training_submit` | Submit a training job | `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:23-28` |
+| `training_status` | Job status and G-R1 runtime metrics | `kask/mcp-servers/hkask-mcp-training/src/tools/status.rs:12-17` |
+| `training_cancel` | Cancel a job | `kask/mcp-servers/hkask-mcp-training/src/tools/cancel.rs:10-13` |
+| `training_evaluate` | Post-training evaluation; semantic mode requires explicit `judge_model`; all attempts count, missing usage totals are null | `kask/mcp-servers/hkask-mcp-training/src/tools/evaluate.rs:92-97` |
 | `training_validate_config` | Static/runtime-enforceable audit subset | `kask/mcp-servers/hkask-mcp-training/src/tools/validate.rs:10-131` |
 | `training_bridge_rollouts` | Verdict-labeled rollout bridge | `kask/mcp-servers/hkask-mcp-training/src/tools/rollout_bridge.rs:43-103` |
 
@@ -37,13 +37,18 @@ runtime observations, not input to a retired skill convergence template
 ### Decision-core verification scope
 
 The production G-M1–G-M4 conditions and severities are computed by `math_decisions`
-in `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:38–78`.
-Five Kani 0.68.0 harnesses verified that allocation-free core over symbolic integer/
-enum inputs in the 2026-09-18 R2 cycle; the harness set and its runner were removed 2026-09-19
-(commit `5b4799bcad`). Formatting, allocation, serialization and provider behavior are
-outside those proofs. A public `training_validate_config` characterization test
-pins complete output across 1,944 boundary/enum configurations. Local proof
-results are source-hash-bound in the preserved execution record (git history;
+in `kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:39-52`.
+Five Kani 0.68.0 harnesses verify that allocation-free core over symbolic integer/
+enum inputs; they remain in-tree in the `#[cfg(kani)] mod proofs` block
+(`kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:526-636`),
+and the bounded-proof runner `kask/scripts/check-bounded-proofs.sh` carries the
+`hkask-mcp-training` case (its default) with the pinned budgets — `--default-unwind 12`,
+2 GiB address-space limit, 120-second wall limit. The separate `hkask-forecast` harness
+set and its runner lines were removed 2026-09-19 (commit `5b4799bcad`) — that removal
+did not touch the training harnesses. Formatting, allocation, serialization and provider
+behavior are outside those proofs. A public `training_validate_config` characterization test
+pins complete output across 1,944 boundary/enum configurations (`hkask_mcp_training.rs:1670`).
+Local proof results are source-hash-bound in the preserved execution record (git history;
 the carrying plan was consolidated out 2026-09-19 — see the README lifecycle ledger);
 they do not prove training quality or establish a continuous promotion gate.
 

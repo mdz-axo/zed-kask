@@ -2,7 +2,7 @@
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
 last_updated: 2026-09-28
-version: "0.39.1"
+version: "0.40.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -11,14 +11,14 @@ mds_categories: [domain, composition]
 # Skill Registry
 
 > **Execution model (verified 2026-08-28):** Skills execute via **upstream Zed body injection**.
-> `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:167`) reads the `SKILL.md` body from disk
+> `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:194`) reads the `SKILL.md` body from disk
 > and injects it into the agent's context via `render_skill_envelope`. The model reads the body
 > and follows the instructions. The agent is the executor.
 >
 > **Two tools support skill execution:**
 > - `lisp_eval` — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O,
 >   no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 1024)
->   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:8`, call-site defaults at `:1677`). The model calls it when a SKILL.md instructs
+>   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:8`, call-site defaults at `:1733-1734`). The model calls it when a SKILL.md instructs
 >   deterministic computation (convergence signals, invariant checks, scoring).
 > - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
 >   Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check.
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **272 Jinja2 templates across 55
+> plus a markdown body of process instructions. **59 skills** are authored here and available in every zed-kask install. **272 Jinja2 templates across 54
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **55** (**272** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **54** (**272** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -67,7 +67,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (60)
+## Skills (59)
 
 ### Research, markets and forecasting
 
@@ -163,7 +163,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-09-26):** `.agents/skills/` contains 60
+> **Filesystem reality (verified 2026-09-28):** `.agents/skills/` contains 59
 > `SKILL.md` directories. Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
@@ -175,5 +175,8 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `company-research/thesis-judge`, removed 2026-09-27 with the deep pipeline's
 > gate machinery). Folded 2026-09-26: `adapter-lifecycle` into
 > `self-improvement` (Fine-tuning run), `calibration-stewardship` into
-> `superforecasting` (Market-prior calibration check). `kask/registry/templates/` contains 55
+> `superforecasting` (Market-prior calibration check). Folded 2026-09-28
+> (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
+> coaching templates moved to `kask/registry/templates/kata-improvement/`.
+> `kask/registry/templates/` contains 54
 > template namespaces holding 272 `.j2` and 2 `.jinja` files.

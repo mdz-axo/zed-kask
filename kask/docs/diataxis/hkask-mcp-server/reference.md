@@ -14,7 +14,7 @@ Lookup reference for the current public types, functions, and macros exported by
 
 ## Module and export map
 
-The crate declares private `security` and public `server` modules (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:11-12`). The `server` facade declares seven private implementation modules and re-exports their public APIs (`kask/crates/hkask-mcp-server/src/server.rs:22-49`).
+The crate declares private `security` and public `server` modules (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-11`). The `server` facade declares seven private implementation modules and re-exports their public APIs (`kask/crates/hkask-mcp-server/src/server.rs:22-49`).
 
 ```mermaid
 classDiagram
@@ -56,7 +56,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-020
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:11-39,41-165; kask/crates/hkask-mcp-server/src/server.rs:22-49; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-39,41-165; kask/crates/hkask-mcp-server/src/server.rs:22-49; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
 status: VERIFIED
 -->
 
@@ -252,7 +252,7 @@ Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs:4
 | API | Behavior | Evidence |
 |---|---|---|
 | `resolve_credential(env_var)` | API/config values from env; shared DB passphrase via keystore resolver | `kask/crates/hkask-mcp-server/src/server/credentials.rs:8-59` |
-| `resolve_db_passphrase(credentials)` | credential map, then canonical passphrase chain; typed permission failure | `kask/crates/hkask-mcp-server/src/server/credentials.rs:79-113` |
+| `resolve_db_passphrase(credentials)` | credential map, then canonical passphrase chain; typed permission failure | `kask/crates/hkask-mcp-server/src/server/credentials.rs:75-113` |
 | `parse_env_warn(key, default)` | parse env value; warn and default on malformed value | `kask/crates/hkask-mcp-server/src/server/credentials.rs:106-144` |
 
 ## Validation APIs
@@ -343,7 +343,7 @@ let database = ctx.open_database("SERVICE_DB_PATH")?;
 
 When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:140-161`).
 
-For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:79-113`).
+For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:75-113`).
 
 ### Execute a tool and preserve typed errors
 

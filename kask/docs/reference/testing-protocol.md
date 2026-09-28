@@ -1,8 +1,8 @@
 ---
 title: "kask Testing Protocol: Expectation Contracts and Evidence"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-22
-version: "1.4.0"
+last_updated: 2026-09-28
+version: "1.5.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -102,11 +102,14 @@ oracle, or weaken generators/assumptions to hide counterexamples.
   crates.io `kani` crate is never added as a dependency
   (Gödel plan R2 mandate). Pinned budgets per harness — `--default-unwind 12`, 2 GiB
   address-space limit, 120-second wall limit, all default safety and
-  unwinding checks on — as recorded by the bounded-proof runner that
-  executed the 2026-09-18 R2 cycle (`kask/scripts/check-bounded-proofs.sh`,
-  removed 2026-09-19 with the `hkask-forecast` harness set, commit `5b4799bcad`;
-  the budgets remain the recorded convention for in-tree harnesses, whose
-  current set is `kask/crates/hkask-types/src/json_extract.rs:231-269`).
+  unwinding checks on — as recorded by the bounded-proof runner
+  `kask/scripts/check-bounded-proofs.sh`, which carries a `hkask-mcp-training`
+  case (its default) and a `hkask-types` case. The separate `hkask-forecast`
+  harness set and its runner lines were removed 2026-09-19 (commit
+  `5b4799bcad`) — that removal did not touch the runner or the two in-tree
+  harness sets, whose current locations are
+  `kask/crates/hkask-types/src/json_extract.rs:231-269` and
+  `kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:526-636`.
   Evidence: exit code, per-harness logs, source
   identity (sha256), manifest. Classify outcomes explicitly: a counterexample
   is a failure; resource exhaustion,

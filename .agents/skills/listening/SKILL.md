@@ -11,8 +11,8 @@ classifies them by horizon, and emits per-section verdicts with evidence.
 
 ## When NOT to Use
 
-- Documents that are not the company's own narrative — a generic interview, media coverage or sell-side reports need a different frame. A single earnings call uses `apply-template.j2`; the company's own multi-document narrative (calls, 10-K business and MD&A, investor days, shareholder letters) uses `apply-template-rag.j2`.
-- Unverified summarization — the process enforces verbatim-evidence quotes; a summary without the retrieve-cite-verify loop is a different (weaker) artifact.
+- Documents that are not the company's own narrative — a generic interview, media coverage or sell-side reports need a different frame.
+- Unverified summarization — a summary without the retrieve-cite-verify loop is a different (weaker) artifact, not this skill's output; produce a plain summary outside this skill if the user declines verification.
 - Live capture — use `transcript-reel` for record/transcribe; this skill consumes an existing transcript.
 
 ## D/P labelling

@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
-version: "0.41.0"
+last_updated: 2026-09-28
+version: "0.41.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -55,7 +55,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 | `GoalVerdict` | Persisted judge verdict with confidence and exactly one result for every criterion | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:145-160`; write at `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:240-244` |
 | `GoalResolution` | Brier-scored closure; scoring retains the resolved goal as a retryable outbox row until confirmed curator-memory ingestion acknowledges and prunes it | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:163-175`; lifecycle contract at `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-15` |
 
-**5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-coaching` skill (`.agents/skills/kata-coaching/`); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
+**5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-improvement` skill (`.agents/skills/kata-improvement/`; the former `kata-coaching` skill folded into it 2026-09-28); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
 
 **Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists (zero hits in `kask/`, verified 2026-09-04).
 
