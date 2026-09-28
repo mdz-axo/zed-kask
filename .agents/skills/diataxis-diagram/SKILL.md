@@ -68,7 +68,6 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- All templates are `visibility: Public` — no restricted spans generated
 - Zed rendering constraints: no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR` for narrow sidebar rendering
 - Labels must be ≤ 40 characters; state names ≤ 30 characters
 - Entity IDs must be alphanumeric with underscores — no spaces, dashes, or special characters

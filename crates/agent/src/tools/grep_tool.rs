@@ -129,7 +129,7 @@ impl AgentTool for GrepTool {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            let results = cx.update(|cx| {
+            let (orphan_note, results) = cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
 
                 let include_matcher = PathMatcher::new(
@@ -167,8 +167,24 @@ impl AgentTool for GrepTool {
                 )
                 .map_err(|error| error.to_string())?;
 
+                // A pattern whose first literal segment names no project
+                // root can only match zero files under full-path matching —
+                // surface that so the "No matches found" it produces is
+                // distinguishable from a genuine empty search.
+                let orphan_note = input.include_pattern.as_deref().and_then(|pattern| {
+                    let root_names: Vec<String> = project
+                        .read(cx)
+                        .worktrees(cx)
+                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
+                        .collect();
+                    super::orphaned_path_pattern_note(pattern, &root_names)
+                });
+
                 Ok::<_, String>(
-                    project.update(cx, |project, cx| project.search(query, cx)),
+                    (
+                        orphan_note,
+                        project.update(cx, |project, cx| project.search(query, cx)),
+                    ),
                 )
             })?;
 
@@ -375,7 +391,11 @@ impl AgentTool for GrepTool {
             }
 
             if matches_found == 0 {
-                Ok("No matches found".into())
+                let mut message = "No matches found".to_string();
+                if let Some(note) = orphan_note {
+                    message.push_str(&format!(". {note}"));
+                }
+                Ok(message.into())
             } else if has_more_matches {
                 Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
@@ -1032,6 +1052,60 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_orphaned_include_pattern_warns(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "src": {
+                    "main.rs": "fn main() {\n    println!(\"Hello, world!\");\n}",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Wrong-root pattern: the include filter cannot match any file (it
+        // is matched against full paths starting with the project root),
+        // and the output says so with the corrected form instead of a bare
+        // "No matches found" that reads as absence.
+        let input = GrepToolInput {
+            regex: "println".to_string(),
+            include_pattern: Some("src/**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        };
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert!(
+            result.contains("No matches found"),
+            "zero result is still reported: {result}"
+        );
+        assert!(
+            result.contains("cannot match any file"),
+            "the orphaned pattern is named: {result}"
+        );
+        assert!(
+            result.contains("`**/src/**/*.rs`"),
+            "the corrected form is suggested: {result}"
+        );
+
+        // Correctly-rooted pattern whose regex genuinely finds nothing:
+        // plain "No matches found" — the warning must never fire on
+        // correct output.
+        let input = GrepToolInput {
+            regex: "zebra_not_present".to_string(),
+            include_pattern: Some("root/**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        };
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert_eq!(result, "No matches found");
     }
 
     #[gpui::test]

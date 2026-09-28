@@ -8,6 +8,19 @@
    and is_supported_diagram_type checks that the first token is quadrantChart.
    Without this render step, map_diagram stays buried inside the map-value-chain
    step's JSON output and the final surfaced text has no diagram. #}
+[inference]
+contract:
+  input:
+    map_diagram:
+      type: string
+      non_blank: true
+    recommendations: array
+    rationale:
+      type: string
+      required: false
+  output:
+    markdown: string
+---
 ## Wardley Map
 
 ```mermaid

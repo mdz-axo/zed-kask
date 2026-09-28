@@ -422,8 +422,12 @@ impl BufferDiffSnapshot {
         let start_point = patch.edit_for_old_position(point_range.start).new.start;
         let end_point = patch.edit_for_old_position(point_range.end).new.end;
         let base_text = self.base_text();
-        let start = base_text.point_to_offset(start_point.min(base_text.max_point()));
-        let end = base_text.point_to_offset(end_point.min(base_text.max_point()));
+        // Patch-translated points keep their source column, which can overshoot
+        // the row they land on in the base text. Clip to that row, matching the
+        // release-mode `point_to_offset` fallback, instead of panicking in
+        // debug builds.
+        let start = base_text.point_to_offset(base_text.clip_point(start_point, Bias::Left));
+        let end = base_text.point_to_offset(base_text.clip_point(end_point, Bias::Right));
         start.min(end)..end
     }
 
@@ -590,6 +594,11 @@ impl BufferDiffSnapshot {
 
         let original_snapshot = self.original_buffer_snapshot();
         let base_text = self.base_text();
+        // `old_to_new` preserves the source column while shifting rows, so the
+        // translated point can overshoot its row in the diff-time snapshot.
+        // Clip before converting to an anchor, mirroring the release-mode
+        // `point_to_offset` row-end fallback.
+        let start_point = original_snapshot.clip_point(start_point, Bias::Left);
 
         let mut cursor = self.hunks.cursor(original_snapshot);
         self.hunk_before_buffer_anchor(
@@ -610,6 +619,7 @@ impl BufferDiffSnapshot {
         if let Some(last_edit) = edits_since_diff.edits().last() {
             range_end = range_end.max(last_edit.new.end);
         }
+        let range_end = original_snapshot.clip_point(range_end, Bias::Right);
         let range_end = original_snapshot.anchor_before(range_end);
 
         let hunk_iter = std::iter::from_fn(move || {
@@ -788,14 +798,23 @@ impl BufferDiffSnapshot {
         hunk_patch.compose(buffer.edits_since::<Point>(original_snapshot.version()))
     }
 
+    /// Maps a point in this diff's main buffer to the range it covers in the
+    /// base text. Both the input and the returned points are clipped to their
+    /// coordinate systems: patch translation preserves the source column while
+    /// shifting rows, so a translated point can overshoot the row it lands
+    /// on, which `point_to_offset` rejects (a debug panic, and a silently
+    /// wrong row-end offset in release builds).
     pub fn buffer_point_to_base_text_range(
         &self,
         point: Point,
         buffer: &text::BufferSnapshot,
     ) -> Range<Point> {
+        let point = buffer.clip_point(point, Bias::Left);
         let patch = self.patch_for_buffer_range(point..=point, buffer);
         let edit = patch.edit_for_old_position(point);
-        edit.new
+        let base_text = self.base_text();
+        base_text.clip_point(edit.new.start, Bias::Left)
+            ..base_text.clip_point(edit.new.end, Bias::Right)
     }
 
     pub fn base_text_point_to_buffer_range(
@@ -803,9 +822,10 @@ impl BufferDiffSnapshot {
         point: Point,
         buffer: &text::BufferSnapshot,
     ) -> Range<Point> {
+        let point = self.base_text().clip_point(point, Bias::Left);
         let patch = self.patch_for_base_text_range(point..=point, buffer);
         let edit = patch.edit_for_old_position(point);
-        edit.new
+        buffer.clip_point(edit.new.start, Bias::Left)..buffer.clip_point(edit.new.end, Bias::Right)
     }
 
     pub fn buffer_point_to_base_text_point(
@@ -813,13 +833,15 @@ impl BufferDiffSnapshot {
         point: Point,
         buffer: &text::BufferSnapshot,
     ) -> Point {
+        let point = buffer.clip_point(point, Bias::Left);
         let patch = self.patch_for_buffer_range(point..=point, buffer);
         let edit = patch.edit_for_old_position(point);
-        if point == edit.old.end {
+        let mapped = if point == edit.old.end {
             edit.new.end
         } else {
             edit.new.start
-        }
+        };
+        self.base_text().clip_point(mapped, Bias::Left)
     }
 
     pub fn base_text_point_to_buffer_point(
@@ -827,13 +849,15 @@ impl BufferDiffSnapshot {
         point: Point,
         buffer: &text::BufferSnapshot,
     ) -> Point {
+        let point = self.base_text().clip_point(point, Bias::Left);
         let patch = self.patch_for_base_text_range(point..=point, buffer);
         let edit = patch.edit_for_old_position(point);
-        if point == edit.old.end {
+        let mapped = if point == edit.old.end {
             edit.new.end
         } else {
             edit.new.start
-        }
+        };
+        buffer.clip_point(mapped, Bias::Left)
     }
 }
 
@@ -4159,6 +4183,152 @@ mod tests {
             base_range.to_point(&new_base_snapshot_4),
             Point::new(1, 4)..Point::new(4, 0),
         );
+    }
+
+    #[gpui::test]
+    async fn test_point_mappers_clip_overshooting_columns(cx: &mut TestAppContext) {
+        // Point mapping across the diff goes through `Patch::compose` and
+        // `old_to_new`, which shift points by row delta while preserving the
+        // source column. A column that is valid in one coordinate system (the
+        // buffer's 34-char table row) can overshoot its row in the other (the
+        // base's shorter row). Unclipped, `point_to_offset` panicked in debug
+        // builds (`point Point(1:35) extends beyond row`, observed while
+        // staging SKILL.md hunks); clipped, both build modes resolve to the
+        // row end, matching the release-mode fallback.
+        let base_text = "# T\n\n| x |\n";
+        let buffer_text = "# T\n\n| step | type | oracle / critique |\n";
+
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+        let diff = BufferDiffSnapshot::new_sync(&buffer, base_text.to_string(), cx);
+        let snapshot = buffer.snapshot();
+
+        // A base-side point carrying the buffer's column overshoots the base
+        // row; it must clamp instead of panicking.
+        let buffer_point = diff.base_text_point_to_buffer_point(Point::new(2, 34), &snapshot);
+        assert!(buffer_point <= snapshot.max_point());
+        assert!(buffer_point.column <= snapshot.line_len(buffer_point.row));
+
+        let buffer_range = diff.base_text_point_to_buffer_range(Point::new(2, 34), &snapshot);
+        assert!(buffer_range.start <= buffer_range.end);
+        assert!(buffer_range.end <= snapshot.max_point());
+
+        // A buffer-side point with a column beyond the buffer's own row.
+        let base_point = diff.buffer_point_to_base_text_point(Point::new(2, 35), &snapshot);
+        assert!(base_point.column <= diff.base_text().line_len(base_point.row));
+
+        let base_range = diff.buffer_point_to_base_text_range(Point::new(2, 35), &snapshot);
+        assert!(base_range.start <= base_range.end);
+        assert!(base_range.end <= diff.base_text().max_point());
+    }
+
+    #[gpui::test]
+    async fn test_random_staging_point_mapping_stays_within_rows(cx: &mut TestAppContext) {
+        use rand::SeedableRng;
+
+        fn gen_row(rng: &mut StdRng) -> String {
+            match rng.random_range(0..4) {
+                0 => "\n".to_owned(),
+                1 => "x\n".to_owned(),
+                2 => "| x |\n".to_owned(),
+                _ => "| step | type | oracle / critique |\n".to_owned(),
+            }
+        }
+
+        fn gen_text(rng: &mut StdRng, line_count: usize) -> String {
+            (0..line_count).map(|_| gen_row(rng)).collect()
+        }
+
+        fn gen_row_edits(rng: &mut StdRng, text: &str) -> String {
+            let lines: Vec<&str> = text.lines().collect();
+            if lines.is_empty() {
+                return gen_text(rng, 1);
+            }
+            let start = rng.random_range(0..lines.len());
+            let end = rng.random_range(start..lines.len().min(start + 2));
+            let mut result = String::new();
+            for line in lines.iter().take(start) {
+                result.push_str(line);
+                result.push('\n');
+            }
+            let replacement_count = rng.random_range(0..=3);
+            for _ in 0..replacement_count {
+                result.push_str(&gen_row(rng));
+            }
+            for line in lines.iter().skip(end + 1) {
+                result.push_str(line);
+                result.push('\n');
+            }
+            result
+        }
+
+        for seed in 0..500u64 {
+            eprintln!("probe seed {seed}");
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let base_line_count = rng.random_range(4..12);
+            let base_text = gen_text(rng, base_line_count);
+            let diff_time_text = gen_row_edits(rng, &base_text);
+
+            let mut buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(1).unwrap(),
+                diff_time_text.clone(),
+            );
+            let diff = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
+
+            let edit_count = rng.random_range(1..=3);
+            for _ in 0..edit_count {
+                let buffer_text = buffer.text();
+                let lines: Vec<&str> = buffer_text.lines().collect();
+                if lines.is_empty() {
+                    continue;
+                }
+                let start_row = rng.random_range(0..lines.len());
+                let end_row = rng.random_range(start_row..lines.len().min(start_row + 2));
+                let start_offset = buffer
+                    .point_to_offset(Point::new(start_row as u32, 0))
+                    .min(buffer.len());
+                let end_offset = buffer
+                    .point_to_offset(Point::new(end_row as u32, lines[end_row].len() as u32))
+                    .min(buffer.len());
+                let replacement_line_count = rng.random_range(0..=2);
+                let new_text = gen_text(rng, replacement_line_count);
+                buffer.edit([(start_offset..end_offset, new_text)]);
+            }
+
+            let snapshot = buffer.snapshot();
+            let base_snapshot = diff.base_text();
+            let snapshot_text = snapshot.text();
+            let lines: Vec<&str> = snapshot_text.lines().collect();
+            for start_row in 0..lines.len() {
+                for end_row in start_row..lines.len() {
+                    let start = Point::new(start_row as u32, 0);
+                    let end = Point::new(end_row as u32, lines[end_row].len() as u32);
+                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    let base_range = diff.base_text_range_for_buffer_range(range, &snapshot);
+                    assert!(base_range.start <= base_range.end);
+                    assert!(base_range.end <= base_text.len());
+                    for point in [start, end] {
+                        let base_point = diff.buffer_point_to_base_text_point(point, &snapshot);
+                        assert!(base_point.column <= base_snapshot.line_len(base_point.row));
+                    }
+                    let base_lines: Vec<&str> = base_text.lines().collect();
+                    for base_row in 0..base_lines.len() {
+                        for base_point in [
+                            Point::new(base_row as u32, 0),
+                            Point::new(base_row as u32, base_lines[base_row].len() as u32),
+                        ] {
+                            let buffer_point =
+                                diff.base_text_point_to_buffer_point(base_point, &snapshot);
+                            assert!(buffer_point.column <= snapshot.line_len(buffer_point.row));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[gpui::test(iterations = 100)]

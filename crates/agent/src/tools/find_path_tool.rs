@@ -46,6 +46,12 @@ pub enum FindPathToolOutput {
         offset: usize,
         current_matches_page: Vec<PathBuf>,
         all_matches_len: usize,
+        /// Present when a non-empty glob matched zero files and its first
+        /// literal segment names no project root (the wrong-root trap) —
+        /// distinguishes "pattern cannot match" from a genuinely empty
+        /// result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zero_match_note: Option<String>,
     },
     Error {
         error: String,
@@ -59,9 +65,13 @@ impl From<FindPathToolOutput> for LanguageModelToolResultContent {
                 offset,
                 current_matches_page,
                 all_matches_len,
+                zero_match_note,
             } => {
                 if current_matches_page.is_empty() {
-                    "No matches found".into()
+                    match zero_match_note {
+                        Some(note) => format!("No matches found. {note}").into(),
+                        None => "No matches found".into(),
+                    }
                 } else {
                     let mut llm_output = format!("Found {} total matches.", all_matches_len);
                     if all_matches_len > RESULTS_PER_PAGE {
@@ -132,7 +142,7 @@ impl AgentTool for FindPathTool {
                 error: e.to_string(),
             })?;
 
-            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
+            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project.clone(), cx));
 
             let matches = futures::select! {
                 result = search_paths_task.fuse() => result.map_err(|e| FindPathToolOutput::Error { error: e.to_string() })?,
@@ -142,6 +152,23 @@ impl AgentTool for FindPathTool {
             };
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
+
+            // A glob whose first literal segment names no project root can
+            // only match zero files (globs are matched against full paths
+            // starting with a project root) — surface that so a zero
+            // result is distinguishable from a genuine empty project.
+            let zero_match_note = if matches.is_empty() && !input.glob.trim().is_empty() {
+                cx.update(|cx| {
+                    let root_names: Vec<String> = project
+                        .read(cx)
+                        .worktrees(cx)
+                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
+                        .collect();
+                    super::orphaned_path_pattern_note(&input.glob, &root_names)
+                })
+            } else {
+                None
+            };
 
             event_stream.update_fields(
                 acp::ToolCallUpdateFields::new()
@@ -174,6 +201,7 @@ impl AgentTool for FindPathTool {
                 offset: input.offset,
                 current_matches_page: paginated_matches.to_vec(),
                 all_matches_len: matches.len(),
+                zero_match_note,
             })
         })
     }
@@ -271,5 +299,90 @@ mod test {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    async fn run_find_path_tool_text(
+        input: FindPathToolInput,
+        project: Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> String {
+        let tool = Arc::new(FindPathTool::new(project));
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(input),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        });
+        let output = task
+            .await
+            .unwrap_or_else(|FindPathToolOutput::Error { error }| {
+                panic!("find_path failed: {error}")
+            });
+        match LanguageModelToolResultContent::from(output) {
+            LanguageModelToolResultContent::Text(text) => text.to_string(),
+            _ => panic!("expected text output"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_find_path_tool_orphaned_glob_warns(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "apple": {
+                    "banana": {
+                        "carrot": "1",
+                    },
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Wrong-root glob: matches zero files (globs are matched against
+        // full paths starting with the project root), and the output says
+        // so with the corrected form instead of a bare "No matches found".
+        let output = run_find_path_tool_text(
+            FindPathToolInput {
+                glob: "apple/**".to_string(),
+                offset: 0,
+            },
+            project.clone(),
+            cx,
+        )
+        .await;
+        assert!(output.contains("No matches found"), "got: {output}");
+        assert!(output.contains("cannot match any file"), "got: {output}");
+        assert!(output.contains("`**/apple/**`"), "got: {output}");
+
+        // Correctly-rooted glob that matches: no note.
+        let output = run_find_path_tool_text(
+            FindPathToolInput {
+                glob: "root/**/car*".to_string(),
+                offset: 0,
+            },
+            project.clone(),
+            cx,
+        )
+        .await;
+        assert!(output.contains("Found 1 total matches."), "got: {output}");
+        assert!(!output.contains("cannot match any file"), "got: {output}");
+
+        // Correctly-rooted glob, genuinely absent target: plain
+        // no-matches — the warning must never fire on correct output.
+        let output = run_find_path_tool_text(
+            FindPathToolInput {
+                glob: "root/**/zebra".to_string(),
+                offset: 0,
+            },
+            project.clone(),
+            cx,
+        )
+        .await;
+        assert_eq!(output, "No matches found");
     }
 }

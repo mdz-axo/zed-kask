@@ -2,6 +2,17 @@
 {# Pure Jinja2 (no inference): display the prepared Mermaid markdown. `written`
    comes from the invoking agent's observed write receipt; rendering cannot
    establish file existence. #}
+[inference]
+contract:
+  input:
+    file_content:
+      type: string
+      non_blank: true
+    file_path: string
+    written: boolean
+  output:
+    markdown: string
+---
 {{ file_content }}
 
 ---

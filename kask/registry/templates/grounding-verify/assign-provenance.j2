@@ -23,6 +23,17 @@
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, claim_ids: array of claim_id, is_sourced: boolean (provisional only) } #}
 {#   cross_check_exemptions: array of { claim_id: string, reason: string } #}
+[inference]
+contract:
+  input:
+    claims: array
+    source_outputs: array
+    pipeline_tool_log: array
+    congruence_rules: array
+  output:
+    provenance_assignments: array
+    sourced_blocks: array
+---
 
 You are a provenance analyst. Your job is to assign a provenance tier to each factual claim, determining where the claim's value comes from and how much reliance a reader can place on it.
 

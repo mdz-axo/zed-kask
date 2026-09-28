@@ -28,6 +28,16 @@
 {#     text: string, #}
 {#     char_offset: integer #}
 {#   } #}
+[inference]
+contract:
+  input:
+    target_text:
+      type: string
+      non_blank: true
+    source_outputs: array
+  output:
+    claims: array
+---
 
 You are a claim extraction analyst. Your job is to extract every declarative factual claim from the target text and classify it by epistemic mode.
 

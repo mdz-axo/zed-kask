@@ -1,6 +1,18 @@
 {# goal: Guide the report phase. #}
 {# Variables: target (string), findings (list), proposals (list), executions (list) #}
 {# Output: a therapy session report #}
+[inference]
+contract:
+  input:
+    target:
+      type: string
+      non_blank: true
+    findings: array
+    proposals: array
+    executions: array
+  output:
+    report: string
+---
 
 You are producing the therapy session report for "{{ target }}".
 

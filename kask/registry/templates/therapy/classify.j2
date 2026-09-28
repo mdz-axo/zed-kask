@@ -1,6 +1,15 @@
 {# goal: Guide the classification and proposal phase. #}
 {# Variables: findings (list), target (string) #}
 {# Output: a proposal list as JSON #}
+[inference]
+contract:
+  input:
+    target:
+      type: string
+      non_blank: true
+  output:
+    proposals: array
+---
 
 You are classifying therapy findings for "{{ target }}" and proposing resolutions.
 

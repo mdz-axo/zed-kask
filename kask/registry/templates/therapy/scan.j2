@@ -1,6 +1,18 @@
 {# goal: Guide the scan phase of memory therapy. #}
 {# Variables: target (string), target_type (string: curator|corpus|swarm) #}
 {# Output: a findings list as JSON #}
+[inference]
+contract:
+  input:
+    target:
+      type: string
+      non_blank: true
+    target_type:
+      type: string
+      non_blank: true
+  output:
+    findings: array
+---
 
 You are scanning the {{ target_type }} memory database "{{ target }}" for therapy issues.
 

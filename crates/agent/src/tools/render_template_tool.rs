@@ -287,42 +287,37 @@ fn template_metadata_header(content: &str) -> Option<&str> {
     metadata.get(..end)
 }
 
-/// Strip the template metadata header and inference-param stanzas from a
-/// template file, leaving only the renderable prompt body.
+/// Strip the template metadata header from a template file, leaving only
+/// the renderable prompt body.
 ///
-/// The on-disk convention (219 of 315 templates) is:
+/// The on-disk convention is:
 ///
 /// ```text
+/// {# goal: … #}
 /// [inference]
-/// contract: …
-/// visibility: Public
+/// contract:
+///   input: …
+///   output: …
 /// ---
 /// <body>
 /// ```
 ///
-/// i.e. an `[inference]`-keyed header (contract schema + visibility) that is
+/// i.e. an `[inference]`-keyed header holding the contract schema that is
 /// NOT YAML-frontmatter and therefore not delimited by leading `---` — the
-/// terminator is a lone `---` line *after* the header. The old stripper only
-/// fired on a leading `---`, which matched 0 of 309 templates, so the header
-/// leaked verbatim into every rendered prompt. The legacy leading-`---`
-/// branch is deleted (2026-09-22): zero shipped templates used it.
+/// terminator is a lone `---` line *after* the header. Everything from a
+/// leading `[inference]` line through the first lone `---` line is
+/// stripped; a file with no header passes through unchanged.
 ///
-/// Two stanzas are stripped:
-/// 1. **Header** — everything from a leading `[inference]` line through the
-///    first lone `---` line. A file opening with `---` has no header under
-///    this convention and passes through as body.
-/// 2. **Body param stanza** — a second `[inference]` block at the top of the
-///    body (temperature/work_effort/verbosity/thinking_budget render params).
-///    These are tool-execution metadata, not prompt text; minijinja would
-///    otherwise emit them verbatim.
-///
-/// A template with neither convention passes through unchanged.
+/// The header is the only metadata carrier. The former body-leading
+/// `[inference]` parameter stanza (temperature/work_effort/verbosity/
+/// thinking_budget) and the header `visibility:` key had no consumer and
+/// were removed corpus-wide on 2026-09-28; `all_registry_templates_conform`
+/// rejects their reintroduction.
 fn strip_frontmatter(content: &str) -> String {
     let mut working: &str = content;
 
-    // ── Stanza 1: the header ─────────────────────────────────────
-    // Skip leading Jinja `{# … #}` comment lines first — ~30 templates carry
-    // a goal/ontology comment above the header.
+    // Skip leading Jinja `{# … #}` comment lines first — templates carry a
+    // goal comment above the header.
     loop {
         let first = working.lines().next().unwrap_or("").trim();
         if first.starts_with("{#") {
@@ -346,59 +341,6 @@ fn strip_frontmatter(content: &str) -> String {
             working = &working[pos + 1..];
             working = working.strip_prefix("---\n").unwrap_or(working);
         }
-    }
-
-    // ── Stanza 2: a body-leading [inference] param block ──────────
-    // Runs from the `[inference]` line through the first blank line. Leading
-    // blank lines and Jinja comments — single- or multi-line — are skipped
-    // first; many templates carry an ontology or design comment between the
-    // header terminator and the param stanza. Only a stanza at the very
-    // start of the body is stripped; an `[inference]` mention in running
-    // prose is left alone.
-    let trimmed = working.trim_start_matches('\n');
-    let mut scan = trimmed;
-    loop {
-        let first = scan.lines().next().unwrap_or("").trim();
-        if first.is_empty() && !scan.is_empty() {
-            scan = scan.strip_prefix('\n').unwrap_or(scan);
-        } else if first.starts_with("{#") {
-            // A `{#` opening is a comment even when the closing `#}` sits on
-            // a later line — the same multi-line skip the header loop applies.
-            // Skipping only single-line comments stopped the scan at the
-            // opening line, so a param stanza following a multi-line design
-            // comment leaked verbatim into rendered prompts (observed across
-            // 27 shipped templates, 2026-09-27).
-            match scan.find("#}") {
-                Some(close) => scan = &scan[close + 2..],
-                None => break, // unterminated comment — leave the rest alone.
-            }
-        } else {
-            break;
-        }
-    }
-    if scan.starts_with("[inference]") {
-        let mut stanza_end = 0usize;
-        for (idx, line) in scan.lines().enumerate() {
-            if idx > 0 && line.trim().is_empty() {
-                stanza_end = idx;
-                break;
-            }
-            stanza_end = idx + 1;
-        }
-        // Cut the stanza out of `trimmed` (preserving any skipped comment
-        // lines) by slicing from the stanza start to its end.
-        let stanza_start = scan.as_ptr() as usize - trimmed.as_ptr() as usize;
-        let stanza_len: usize = scan
-            .lines()
-            .take(stanza_end)
-            .map(|l| l.len() + 1)
-            .sum::<usize>();
-        let cut_start = stanza_start.min(trimmed.len());
-        let cut_end = (cut_start + stanza_len).min(trimmed.len());
-        let mut kept = String::with_capacity(trimmed.len());
-        kept.push_str(&trimmed[..cut_start]);
-        kept.push_str(&trimmed[cut_end..]);
-        return kept.trim().to_string();
     }
 
     working.trim().to_string()
@@ -615,37 +557,15 @@ mod tests {
         // The dominant convention: [inference]-keyed header terminated by a
         // lone `---` — NOT leading frontmatter. The old stripper matched 0
         // templates because it required the file to START with `---`.
-        let input =
-            "[inference]\ncontract:\n  input: {}\nvisibility: Public\n---\nYou are a triage agent.";
+        let input = "[inference]\ncontract:\n  input: {}\n---\nYou are a triage agent.";
         let result = strip_frontmatter(input);
         assert_eq!(result, "You are a triage agent.");
         assert!(!result.contains("contract"));
-        assert!(!result.contains("visibility"));
-    }
-
-    #[test]
-    fn test_strip_body_inference_param_stanza() {
-        // The body's own [inference] block (temperature etc.) is tool-execution
-        // metadata and must not leak into the rendered prompt.
-        let input = "[inference]\ncontract: {}\nvisibility: Public\n---\n[inference]\ntemperature = 0.0\nwork_effort = \"low\"\n\nYou are a triage agent.";
-        let result = strip_frontmatter(input);
-        assert_eq!(result, "You are a triage agent.");
-        assert!(!result.contains("temperature"));
-        assert!(!result.contains("work_effort"));
-        assert!(!result.contains("[inference]"));
-    }
-
-    #[test]
-    fn test_body_inference_stanza_without_trailing_blank_line() {
-        // A stanza that runs to EOF (no blank line) is still stripped whole.
-        let input = "[inference]\ncontract: {}\n---\n[inference]\ntemperature = 0.1";
-        let result = strip_frontmatter(input);
-        assert_eq!(result, "");
     }
 
     #[test]
     fn test_inference_mention_in_running_prose_is_preserved() {
-        // Only a body-LEADING stanza is stripped; a mention in prose stays.
+        // Only the header is stripped; an `[inference]` mention in prose stays.
         let input = "[inference]\ncontract: {}\n---\nUse the [inference] block to set temperature.";
         let result = strip_frontmatter(input);
         assert!(result.contains("Use the [inference] block"));
@@ -653,20 +573,17 @@ mod tests {
 
     #[test]
     fn test_real_triage_template_strips_clean() {
-        // The exact shape of kask/registry/templates/kanban-task-management/triage.j2.
-        let input = "[inference]\ncontract:\n  input:\n    project_description: string\n  output:\n    phase: string\nvisibility: Public\n---\n{# Ontology: PKO #}\n\n[inference]\ntemperature = 0.0\nwork_effort = \"low\"\nverbosity = \"concise\"\n\nYou are a kanban task management triage agent.";
+        // The shape of kask/registry/templates/kanban-task-management/triage.j2.
+        let input = "{# goal: Triage. #}\n[inference]\ncontract:\n  input:\n    project_description: string\n  output:\n    phase: string\n---\n{# Ontology: PKO #}\n\nYou are a kanban task management triage agent.";
         let result = strip_frontmatter(input);
         // The {# Ontology #} Jinja comment survives stripping (minijinja
-        // removes it at render time); everything else must be gone.
+        // removes it at render time); the header must be gone.
         assert!(
             result.contains("You are a kanban task management triage agent."),
             "got: {result:?}"
         );
         assert!(!result.contains("[inference]"));
         assert!(!result.contains("contract"));
-        assert!(!result.contains("visibility"));
-        assert!(!result.contains("temperature"));
-        assert!(!result.contains("work_effort"));
         // Render through minijinja to confirm the comment is gone too.
         let env = minijinja::Environment::new();
         let rendered = env.render_str(&result, &()).unwrap();
@@ -674,9 +591,9 @@ mod tests {
         assert!(!rendered.contains("{#"));
     }
 
-    /// The body param keys are tool-execution metadata that `strip_frontmatter`
-    /// removes; a line matching one of them in the stripped output is a param
-    /// stanza the stripper failed to strip, and it leaks verbatim into the
+    /// The former body `[inference]` parameter stanza keys. No code reads
+    /// them (removed corpus-wide 2026-09-28); a line matching one is a
+    /// reintroduced performative stanza that would leak verbatim into the
     /// rendered prompt.
     fn is_inference_param_line(line: &str) -> bool {
         let trimmed = line.trim_start();
@@ -687,20 +604,6 @@ mod tests {
                     .strip_prefix(key)
                     .is_some_and(|rest| rest.starts_with(" =") || rest.starts_with('='))
             })
-    }
-
-    #[test]
-    fn test_strip_body_inference_stanza_after_multiline_comment() {
-        // Shipped templates carry multi-line design comments between the
-        // header terminator and the body param stanza. The stanza-2 skipper
-        // must skip multi-line comments like the header loop does, or the
-        // stanza's param lines leak into the rendered prompt.
-        let input = "[inference]\ncontract: {}\nvisibility: Public\n---\n{# Phase 1 #}\n{#\n  multi-line design note\n#}\n\n[inference]\ntemperature = 0.3\nwork_effort = \"high\"\n\nYou are a strategist.";
-        let result = strip_frontmatter(input);
-        assert!(result.contains("You are a strategist."), "got: {result:?}");
-        assert!(!result.contains("[inference]"));
-        assert!(!result.contains("temperature"));
-        assert!(!result.contains("work_effort"));
     }
 
     #[test]
@@ -765,7 +668,26 @@ mod tests {
                     "{}: metadata header must be a YAML mapping",
                     path.display()
                 )),
-                Ok(_) => {}
+                // The header carries `contract` only. `visibility` had no
+                // reader anywhere (removed corpus-wide 2026-09-28); any other
+                // key is decoration nothing consumes.
+                Ok(metadata) => {
+                    let extra: Vec<String> = metadata
+                        .as_mapping()
+                        .into_iter()
+                        .flat_map(|mapping| mapping.keys())
+                        .filter_map(|key| key.as_str())
+                        .filter(|key| *key != "contract")
+                        .map(str::to_owned)
+                        .collect();
+                    if !extra.is_empty() {
+                        parse_errors.push(format!(
+                            "{}: header carries keys nothing reads: {}",
+                            path.display(),
+                            extra.join(", ")
+                        ));
+                    }
+                }
                 Err(error) => parse_errors.push(format!("{}: {error}", path.display())),
             }
         }
@@ -781,8 +703,8 @@ mod tests {
         );
         assert!(
             leaked_param_templates.is_empty(),
-            "templates whose rendered prompt leaks inference-param lines \
-             (a body [inference] stanza the stripper did not strip):\n{}",
+            "templates carrying a body [inference] parameter stanza \
+             (performative: no code reads these keys; removed 2026-09-28):\n{}",
             leaked_param_templates.join("\n")
         );
     }

@@ -22,6 +22,15 @@
 {#     char_offset: integer #}
 {#   } #}
 {#   clean_fields: array of { field_name: string, rules_checked: integer } #}
+[inference]
+contract:
+  input:
+    narrative_fields: array
+    sourced_blocks: array
+    leak_rules: array
+  output:
+    narrative_leaks: array
+---
 
 You are a narrative leak scanner. Your job is to scan prose fields for claims that exceed what the sourced blocks can support.
 

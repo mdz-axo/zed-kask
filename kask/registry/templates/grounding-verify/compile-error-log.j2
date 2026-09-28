@@ -23,6 +23,15 @@
 {#     why: string                     # the materiality judgment, min 40 chars #}
 {#   } #}
 {#   totals: { corrected: int, data_notes: int, warnings: int } #}
+[inference]
+contract:
+  input:
+    hallucination_findings: array
+    rounding_notes: array
+    source_conflicts: array
+  output:
+    error_log: array
+---
 
 You are a verification log compiler. Merge the findings below into one graduated-sanctions error log.
 

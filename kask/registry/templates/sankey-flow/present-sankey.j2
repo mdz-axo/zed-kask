@@ -12,6 +12,30 @@
    - An output path for file save
 
    Deterministic — no LLM call. All formatting is Jinja2 template logic. #}
+[inference]
+contract:
+  input:
+    subject_title: string
+    domain: string
+    domain_title: string
+    weight_unit: string
+    conservation_mode: string
+    conservation_check: string
+    node_count: integer
+    edge_count: integer
+    edges: array
+    mermaid_source:
+      type: string
+      non_blank: true
+    adapt_notes:
+      type: string
+      required: false
+    output_path:
+      type: string
+      required: false
+  output:
+    markdown: string
+---
 
 {# ── Title ── #}
 {%- set domain_title = domain | replace("-", " ") | title -%}

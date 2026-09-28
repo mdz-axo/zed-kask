@@ -77,6 +77,79 @@ where
     }
 }
 
+/// Detect a path-filter pattern that provably matches no file, so the
+/// "No matches found" it produces can be told apart from a genuine empty
+/// search. Both the `grep` tool's `include_pattern` and `find_path`'s glob
+/// are matched against full paths that start with a project root
+/// directory, so a pattern whose first segment is a literal that names no
+/// project root can only ever match zero files (observed live 3x
+/// 2026-09-27/28: a docs grep, a call-site grep, and a registry-template
+/// glob each returned "No matches found" while the targeted files existed,
+/// and each was read as absence). Patterns with a wildcard in the first
+/// segment are left to glob semantics; a correctly rooted pattern that
+/// simply finds nothing stays clean — this must never fire on correct
+/// output.
+pub(crate) fn orphaned_path_pattern_note(pattern: &str, root_names: &[String]) -> Option<String> {
+    let trimmed = pattern.trim();
+    let first_segment = trimmed.split(['/', '\\']).next().unwrap_or(trimmed);
+    if trimmed.is_empty()
+        || first_segment.is_empty()
+        || first_segment.contains(['*', '?', '[', ']'])
+        || root_names.iter().any(|name| name == first_segment)
+    {
+        return None;
+    }
+    Some(format!(
+        "the path pattern `{trimmed}` cannot match any file here: patterns are \
+         matched against full paths that start with a project root directory \
+         ({}), so a pattern starting with `{first_segment}` matches nothing. \
+         Re-run with `**/{trimmed}`.",
+        root_names.join(", "),
+    ))
+}
+
+#[cfg(test)]
+mod orphaned_path_pattern_tests {
+    use super::orphaned_path_pattern_note;
+
+    #[test]
+    fn wrong_root_literal_prefix_is_flagged_with_the_corrected_form() {
+        let note = orphaned_path_pattern_note("kask/docs/**", &["zed-kask".to_string()])
+            .expect("wrong-root pattern is flagged");
+        assert!(note.contains("cannot match any file"), "got: {note}");
+        assert!(note.contains("`**/kask/docs/**`"), "got: {note}");
+        assert!(note.contains("zed-kask"), "names the root: {note}");
+    }
+
+    #[test]
+    fn root_name_prefix_is_not_flagged() {
+        assert!(
+            orphaned_path_pattern_note("zed-kask/kask/docs/**", &["zed-kask".to_string()])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn wildcard_first_segment_is_never_flagged() {
+        // Glob semantics for wildcard-leading patterns are the matcher's
+        // business; the flag only covers the provable literal case.
+        assert!(orphaned_path_pattern_note("**/*.rs", &["zed-kask".to_string()]).is_none());
+        assert!(orphaned_path_pattern_note("*.rs", &["zed-kask".to_string()]).is_none());
+    }
+
+    #[test]
+    fn any_matching_root_name_suppresses_the_flag() {
+        // Multi-root projects: the pattern is fine under one of the roots.
+        assert!(orphaned_path_pattern_note("b/**", &["a".to_string(), "b".to_string()]).is_none());
+    }
+
+    #[test]
+    fn empty_pattern_is_never_flagged() {
+        assert!(orphaned_path_pattern_note("", &["zed-kask".to_string()]).is_none());
+        assert!(orphaned_path_pattern_note(" /x", &["zed-kask".to_string()]).is_none());
+    }
+}
+
 pub use apply_code_action_tool::*;
 pub use ask_user_tool::*;
 pub use context_server_registry::*;
