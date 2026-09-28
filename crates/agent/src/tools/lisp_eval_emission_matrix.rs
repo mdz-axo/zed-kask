@@ -259,3 +259,54 @@ fn step_cost_anomaly_walker_exceeds_default_steps() {
         )
     );
 }
+
+// ── lie-class specimens (evaluator semantics — L2's fix flips these) ──────
+// Found by the L0 contract critic (session 1deaa9ab-f425-4a94-bb76-60c1c23928f6),
+// live-falsified. Each assertion pins TODAY's wrong or degraded behavior so
+// the L2 fix has a red-first baseline; the fix flips the assertion to the
+// typed-error (or operator-ruled) expectation. Naming: `lie_specimen_*` =
+// lie-class findings (2, matching the contract's lie count);
+// `degradation_specimen_*` = the defensive-degradation family (grouped for
+// the operator's assoc ruling, NOT counted as lies).
+
+#[test]
+fn lie_specimen_integer_overflow_wraps_silently() {
+    // DEFECT SPECIMEN (L2 fix target: checked arithmetic → typed error).
+    // Today the engine wraps silently — a wrong answer with no error:
+    //   (+ 9223372036854775807 1) → -9223372036854775808
+    // (wrapping_add hkask_lisp.rs:899, wrapping_sub :944, wrapping_mul :964,
+    // wrapping_abs :1411 — (abs -9223372036854775808) stays negative).
+    let out = run(json!({"form": "(+ 9223372036854775807 1)", "env": {}}));
+    assert_eq!(out, Ok(json!(-9223372036854775808i64)));
+}
+
+#[test]
+fn lie_specimen_f64_comparison_silently_miscompares_big_ints() {
+    // DEFECT SPECIMEN (L2 fix target: integer-exact comparison).
+    // Comparisons coerce to f64 (as_f64, hkask_lisp.rs:867-876): every
+    // integer above 2^53 compares wrongly, silently:
+    //   (= 9007199254740993 9007199254740992) → true  (the values differ)
+    //   (< 9007199254740992 9007199254740993) → false (the smaller is "not less")
+    let eq = run(json!({"form": "(= 9007199254740993 9007199254740992)", "env": {}}));
+    assert_eq!(eq, Ok(json!(true)));
+    let lt = run(json!({"form": "(< 9007199254740992 9007199254740993)", "env": {}}));
+    assert_eq!(lt, Ok(json!(false)));
+}
+
+#[test]
+fn degradation_specimen_string_equals_silent_false_on_non_strings() {
+    // DEFECT-ADJACENT SPECIMEN (divergence D11, defensive-degradation
+    // family): string= returns false — not a type error — on non-string
+    // arguments (hkask_lisp.rs:1322-1325). Grouped with assoc's graceful
+    // degradation for the operator's ruling.
+    let out = run(json!({"form": "(string= 1 \"1\")", "env": {}}));
+    assert_eq!(out, Ok(json!(false)));
+}
+
+#[test]
+fn degradation_specimen_nth_negative_index_silent_null() {
+    // DEFECT-ADJACENT SPECIMEN (defensive-degradation family): a negative
+    // nth index casts to a huge usize and returns Nil silently.
+    let out = run(json!({"form": "(nth -1 (list 1 2 3))", "env": {}}));
+    assert_eq!(out, Ok(Value::Null));
+}
