@@ -103,7 +103,6 @@ a caller from retaining the mutex across an await. This type is not for set-once
 `RegulationRecord` is the audit event carried across loops and stores. `Span`
 combines a validated `SpanNamespace` with a path; `SpanKind` supplies canonical
 frequently-used pairs; `SpanCategory` supplies a typed dispatch classification;
-`SpanCategory` supplies a typed dispatch classification;
 `CyclePhase` identifies sense, compute, compare, or act
 (`kask/crates/hkask-types/src/event.rs:15-28,258-459`).
 `RegulationSink` is the persistence port at

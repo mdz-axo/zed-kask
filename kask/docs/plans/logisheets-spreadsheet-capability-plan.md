@@ -121,7 +121,7 @@ Registering generic mutation tools independently in every analytical server woul
 - The widget always dispatches persisted mutations to the same server.
 - Spreadsheet origin metadata still identifies the analytical server and tool that produced the source table.
 
-The new server uses `Some(&[])` for both credential and configuration allowlists. (Recorded deviation, §10 Phase 3: the shipped config allowlist carries `HKASK_ARTIFACTS_DIR` because the server reads it — `kask/crates/kask_bridge/src/mcp_servers.rs:512`; credentials remain `Some(&[])`.)
+The new server uses `Some(&[])` for both credential and configuration allowlists. (Recorded deviation, §10 Phase 3: the shipped config allowlist carries `HKASK_ARTIFACTS_DIR` because the server reads it — `kask/crates/kask_bridge/src/mcp_servers.rs:530-546`, the spreadsheet server's own registry entry (env var at `:546`); credentials remain `Some(&[])`.)
 
 ## 5. Deep module design
 

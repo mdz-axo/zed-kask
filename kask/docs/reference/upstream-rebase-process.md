@@ -399,7 +399,7 @@ process + case-study companion.
 **Meta-constraint (inviolable):** the D-seam discipline is a *boundary on
 the mechanism*, not a removal *reason*. Never edit upstream files outside
 the named D-seams; push any fix into a `kask/` crate behind a D-seam and
-pin it with a test (`.rules:81`). No principle below authorizes forking
+pin it with a test (`.rules:63`). No principle below authorizes forking
 upstream outside a D-seam. For upstream surface, "removal" means
 **disable-behind-a-D-seam + test-pin**, not **delete-the-file**. File
 deletion is reserved for `kask/`-side surface.
@@ -426,12 +426,12 @@ removal may satisfy multiple tests; classify by the one capturing the
   `bash kask/scripts/build/check-zed-isolation.sh` both pass with the
   surface removed and fail with it retained. Forbidden strings in any
   `.desktop` template: `text/plain`, `application/x-zerosize`,
-  `x-scheme-handler/zed`, `Keywords=zed` (`.rules:143`).
+  `x-scheme-handler/zed`, `Keywords=zed` (`.rules:120`).
 - **Failure mode:** zed-kask silently hijacks the user's real Zed (or vice
   versa) — the "complements, not replaces" premise fails. Happened in
   commit `dcc5aa6dd3` (Jul 26 2026): the URL scheme was fixed but
   `text/plain`, `application/x-zerosize`, and `Keywords=zed` were left.
-- **Anchoring evidence:** `.rules:143`; `DIVERGENCE.md` D7 (Hard
+- **Anchoring evidence:** `.rules:120`; `DIVERGENCE.md` D7 (Hard
   Zed-isolation invariant, enforced by `check-zed-isolation.sh`); D16
   (upstream update actions removed, replaced by the safe zed-kask
   updater). Verified: both scripts exist at `kask/scripts/build/`.
@@ -535,7 +535,7 @@ removal may satisfy multiple tests; classify by the one capturing the
 
 Removing upstream code because it is "ugly," "could be cleaner," or "has a
 nicer alternative" is **rejected** as a removal reason. It would authorize
-forking upstream outside a D-seam (`.rules:81`). Only Category 4's
+forking upstream outside a D-seam (`.rules:63`). Only Category 4's
 *provably unreachable* test survives.
 
 ### D-seam-compatibility audit (A1)

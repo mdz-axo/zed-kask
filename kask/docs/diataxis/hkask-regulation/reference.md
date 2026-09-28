@@ -52,6 +52,7 @@ The crate root re-exports its supported cross-crate surface at
 | Runtime | `NoopEventSink`, `OBSERVATION_WINDOW_SECS`, `OperatorFeedbackObservation`, `RegulationLedger` |
 | Sensor seams | `ContextServerHealthSource`, `MemoryHealthSource`, `OcrHealthError`, `OcrHealthSource` |
 | Set-points and alert identity | `SetPoints`, `load_set_points`, `DEFAULT_VARIETY_MAX_DEFICIT`, `alert_condition` |
+| Signals | `Signal`, `CurationInput` (re-exports at `kask/crates/hkask-regulation/src/hkask_regulation.rs:40-41`) |
 
 ## Responsibility map
 

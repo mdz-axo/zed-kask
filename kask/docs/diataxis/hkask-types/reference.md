@@ -164,6 +164,7 @@ classDiagram
     class ToolDispatchPort {
         <<interface>>
         +invoke_tool()
+        +tool_definition()
     }
     class WorktreeSpawnPort {
         <<interface>>

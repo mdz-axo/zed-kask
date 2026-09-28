@@ -276,7 +276,7 @@ Build `check_test_evidence` from the trusted checkout, then invoke the runner
 with absolute paths. Its interface is:
 
 ```text
-bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/evaluate-test-evidence.sh CHECKER MANIFEST PACKAGE CONTRACT ORACLE_FILE NEW_OUTPUT WALL_SECONDS INPUT_FILE...
+bash kask/scripts/evaluate-test-evidence.sh CHECKER MANIFEST PACKAGE CONTRACT ORACLE_FILE NEW_OUTPUT WALL_SECONDS INPUT_FILE...
 ```
 
 - `MANIFEST` is the workspace manifest with its adjacent lockfile; `PACKAGE`

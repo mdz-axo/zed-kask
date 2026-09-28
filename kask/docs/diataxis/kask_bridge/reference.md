@@ -115,13 +115,13 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskGeneralSettings` | concurrency 96; timeout 300s; circuit threshold 3; open interval 30s | `kask/crates/kask_bridge/src/settings.rs:130-138` |
 | `KaskMcpSettings` | load defaults; empty overrides; empty delegated-tool grants | `kask/crates/kask_bridge/src/settings.rs:161-168` |
 | `KaskCuratorSettings` | always on; algedonic threshold 0.8 | `kask/crates/kask_bridge/src/settings.rs:196-203` |
-| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; distillation 600s/300s; forgetting from `MemoryStore::default_memory_life_days` | `kask/crates/kask_bridge/src/settings.rs:284-297`; `kask/crates/hkask-memory/src/memory_store.rs:186` |
+| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; distillation 600s/300s; memory life 180 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-297`; `kask/crates/hkask-memory/src/memory_store.rs:186` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:320-326` |
 | `KaskCompaniesSettings` | staleness 0; no Fermi override; required return 0.15 | `kask/crates/kask_bridge/src/settings.rs:352-358` |
 | `KaskCorpusSettings` | dimension 1024; configured embedding default; template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |
 | `KaskSwarmSettings` | ABW mode; empty URL; credit ceiling 50; curator consent off; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs:496-512` |
 | `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:555-566` |
-| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR and reranker from model constants | `kask/crates/kask_bridge/src/settings.rs:647-667` |
+| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:647-667` |
 
 ## Built-in MCP registry
 
@@ -173,7 +173,7 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | --- | ---: | ---: |
 | `portfolio` | 0 | 3 |
 | `companies` | 6 | 5 |
-| `corpus` | 1 | 21 |
+| `corpus` | 1 | 22 |
 | `curator` | 1 | 12 |
 | `kata-kanban` | 1 | 4 |
 | `research` | 6 | 6 |

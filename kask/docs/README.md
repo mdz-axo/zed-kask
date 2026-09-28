@@ -66,7 +66,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 106 current `DIAGRAM_ALIGNMENT` records representing 106 unique IDs; 35 records are in the five consolidated files and 71 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 105 current `DIAGRAM_ALIGNMENT` records representing 105 unique IDs; 34 records are in the five consolidated files and 71 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |

@@ -15,7 +15,7 @@ mds_categories: [domain, curation]
 The single source of truth for published ontology vocabulary, artifact-axis selection, derived concepts, exact term resolution, and a small sourced relation graph in hKask. The bridge exposes vocabulary modules plus `axis`, `derived`, `term_resolution`, and `ontology_graph` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`).
 No ontology vocabulary lives inside any MCP server; every server that does
 tagging depends on this crate (user directive 2026-08-05, recorded at
-`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:78-82`).
+`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:74-77`).
 
 ## The fallback ladder (P8.3)
 
@@ -182,7 +182,9 @@ Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 
 Canonical concept URIs for machine-learning experiments. The module is
 `ml_schema` (snake_case; the crate re-exports it and servers alias it as
-`mlschema`, e.g. `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:315`).
+`mlschema` — e.g. the corpus manifest's namespace allowlist at
+`kask/mcp-servers/hkask-mcp-corpus/src/corpus/company_manifest.rs:160` and
+the condenser's namespace parse at `kask/crates/hkask-condenser/src/types.rs:403`).
 
 | Constant | URI |
 |----------|-----|

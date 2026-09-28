@@ -35,13 +35,13 @@ No backward compatibility does **not** authorize destroying user data, silently 
 
 Read the current rules and these references before executing:
 
-- `/home/mdz-axolotl/Clones/zed-kask/.rules`
-- `/home/mdz-axolotl/Clones/zed-kask/AGENTS.md`
-- `/home/mdz-axolotl/Clones/zed-kask/DIVERGENCE.md`, especially the applicable seams and §13.1.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/docs/architecture/core/PRINCIPLES.md:43–79`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/docs/architecture/core/magna-carta.md:54–98`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/docs/architecture/functional-interaction-spec.md:135–197`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/docs/architecture/DOCUMENTATION_STANDARDS.md`
+- `.rules`
+- `AGENTS.md`
+- `DIVERGENCE.md`, especially the applicable seams and §13.1.
+- `kask/docs/architecture/core/PRINCIPLES.md:43–79`
+- `kask/docs/architecture/core/magna-carta.md:54–98`
+- `kask/docs/architecture/functional-interaction-spec.md:135–197`
+- `kask/docs/architecture/DOCUMENTATION_STANDARDS.md`
 
 The Magna Carta explicitly distinguishes implemented enforcement from intended consent machinery. Do not treat unimplemented charter types as available APIs or newly discovered regressions. Prompt-level commitments to human oversight are intent, not proof that runtime enforcement exists.
 
@@ -62,7 +62,7 @@ Offline Cargo metadata reported 299 workspace members, including **19 libraries 
 | Regulation and interaction support | `hkask-regulation`, `hkask-email`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |
 
-Servers: companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training. Discover the execution-time inventory anew from manifests and `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/mcp_servers.rs:55–539`; do not hardcode these counts in new tests.
+Servers: companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:55–539`; do not hardcode these counts in new tests.
 
 ### Observed boundaries and paths
 
@@ -89,9 +89,9 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified defect against attenuation intent. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/inference_ipc_server.rs:820–856` checks request list and `parent_allows` for ToolInvoke.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/inference_ipc_server.rs:867–906` independently accepts CreateWorktreeThread.
-- `/home/mdz-axolotl/Clones/zed-kask/crates/agent_ui/src/agent_panel.rs:4859–4907` sets `auto_submit: true` and creates worktree-backed work.
+- `kask/crates/kask_bridge/src/inference_ipc_server.rs:820–856` checks request list and `parent_allows` for ToolInvoke.
+- `kask/crates/kask_bridge/src/inference_ipc_server.rs:867–906` independently accepts CreateWorktreeThread.
+- `crates/agent_ui/src/agent_panel.rs:4859–4907` sets `auto_submit: true` and creates worktree-backed work.
 
 **Mechanism/impact:** a child with same-user socket access and an available workspace can initiate filesystem work and an agent task with an empty/revoked delegated-tool grant. The child restrictions are not visibly propagated into the new thread.
 
@@ -101,16 +101,16 @@ The dependency checker and metadata inspection found no direct forbidden local h
 
 **Acceptance:** fake-spawner tests yield zero effects for missing/revoked/insufficient grants and one for a valid grant; inspect spawned-thread effective authority.
 
-**Related queued-cancellation defect:** `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/inference_ipc_server.rs:422–438` uses an unbounded queue and spawns without checking whether the reply receiver closed. A waiting request can execute after disconnect. Add bounded admission and cancellation-aware dequeue; test request B disconnecting while A occupies the consumer. Do not equate cancellation after a committed effect with rollback.
+**Related queued-cancellation defect:** `kask/crates/kask_bridge/src/inference_ipc_server.rs:422–438` uses an unbounded queue and spawns without checking whether the reply receiver closed. A waiting request can execute after disconnect. Add bounded admission and cancellation-aware dequeue; test request B disconnecting while A occupies the consumer. Do not equate cancellation after a committed effect with rollback.
 
 ### F2 — Stop can leave managed MCP execution pending
 
 **Class:** verified control-flow defect. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/crates/agent/src/tools/context_server_registry.rs:574–592` awaits managed invocation without selecting user cancellation.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/src/runtime.rs:1686–1698` calls rmcp without a request deadline.
-- `/home/mdz-axolotl/Clones/zed-kask/crates/agent/src/thread.rs:2597–2604,3500–3518,6096–6100` signals cancellation but waits for tool results/turn completion.
+- `crates/agent/src/tools/context_server_registry.rs:574–592` awaits managed invocation without selecting user cancellation.
+- `kask/crates/hkask-mcp/src/runtime.rs:1686–1698` calls rmcp without a request deadline.
+- `crates/agent/src/thread.rs:2597–2604,3500–3518,6096–6100` signals cancellation but waits for tool results/turn completion.
 
 **Mechanism/impact:** a connected server that never replies can prevent cancellation completion indefinitely. The locked rmcp implementation was inspected: default request options have no timeout.
 
@@ -125,10 +125,10 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified input-boundary defect; isolated shell semantics reproduced. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/registry/templates/training/axolotl-lora.j2:10` renders model input directly.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs:552–557,649–682` uses a fixed config heredoc delimiter and an unquoted manifest heredoc.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs:90–118` executes the generated script with Bash.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:239–248` does not reject model-resolution failure.
+- `kask/registry/templates/training/axolotl-lora.j2:10` renders model input directly.
+- `kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs:552–557,649–682` uses a fixed config heredoc delimiter and an unquoted manifest heredoc.
+- `kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs:90–118` executes the generated script with Bash.
+- `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:239–248` does not reject model-resolution failure.
 
 **Mechanism/impact:** newline input can terminate the config heredoc; model input in the manifest heredoc can execute shell substitutions in the training VM/container. Local-editor code execution was not demonstrated.
 
@@ -145,13 +145,13 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified filesystem-boundary defects. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:187–210` checks cache directory, appends a filename, then writes it.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp-server/src/server/validation.rs:204–231,289–298` reconstructs a non-existing target from its existing ancestor.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:72–84` writes conversion output through that boundary.
+- `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:187–210` checks cache directory, appends a filename, then writes it.
+- `kask/crates/hkask-mcp-server/src/server/validation.rs:204–231,289–298` reconstructs a non-existing target from its existing ancestor.
+- `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:72–84` writes conversion output through that boundary.
 
 **Mechanism/impact:** an existing cache leaf symlink redirects a write outside the allowed root. A dangling output symlink returns NotFound during canonicalization, survives reconstruction, then redirects a later write. Neither requires a race; OS write permissions still apply.
 
-**Counterevidence/disproof:** slug validation blocks textual traversal, not symlinks. A stronger helper exists at `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-corpus/src/path_safety.rs:28–65`, but these paths do not use it. Eight existing shared path tests passed without covering these cases.
+**Counterevidence/disproof:** slug validation blocks textual traversal, not symlinks. A stronger helper exists at `kask/mcp-servers/hkask-mcp-corpus/src/path_safety.rs:28–65`, but these paths do not use it. Eight existing shared path tests passed without covering these cases.
 
 **Repair:** replace permissive write interfaces with complete-destination, symlink-resistant opening/publication. Another pre-write canonicalization alone does not solve the race variant.
 
@@ -162,9 +162,9 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified policy-enforcement defect. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/gallery.rs:37–47` defines preservation policy.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:337–356` returns mode without enforcing it.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:1393–1427` calls remove_file when requested without checking mode.
+- `kask/crates/hkask-storage/src/gallery.rs:37–47` defines preservation policy.
+- `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:337–356` returns mode without enforcing it.
+- `kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:1393–1427` calls remove_file when requested without checking mode.
 
 **Mechanism/impact:** a tool-name-authorized caller can remove an original file from a gallery whose policy says originals are preserved.
 
@@ -179,10 +179,10 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified attribution defect; broader authorization impact is workflow-dependent. **Severity:** High for ownership/audit semantics. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp-server/src/server/transport.rs:91–117` falls back to anonymous identity.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/mcp_env.rs:46–54` maps curator identity only.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp-server/src/server/tool_span.rs:140–168` attributes from server context.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:885–895` claims tasks as the “authenticated caller” using `self.webid`.
+- `kask/crates/hkask-mcp-server/src/server/transport.rs:91–117` falls back to anonymous identity.
+- `kask/crates/kask_bridge/src/mcp_env.rs:46–54` maps curator identity only.
+- `kask/crates/hkask-mcp-server/src/server/tool_span.rs:140–168` attributes from server context.
+- `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:885–895` claims tasks as the “authenticated caller” using `self.webid`.
 
 **Mechanism/impact:** distinct initiating agents can be indistinguishable in server actions and ownership checks. A process-scoped WebID is not evidence of the caller's authenticated identity.
 
@@ -197,9 +197,9 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** verified retry-safety defect. **Severity:** High. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/crates/agent/src/tools/context_server_registry.rs:988–1046` retries non-timeout errors.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/src/runtime.rs:1632–1653,1686–1698` distinguishes non-delivery and uncertain delivery.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-tool-port/src/tool_port.rs:15–51` defines retry-safe versus interrupted outcomes.
+- `crates/agent/src/tools/context_server_registry.rs:988–1046` retries non-timeout errors.
+- `kask/crates/hkask-mcp/src/runtime.rs:1632–1653,1686–1698` distinguishes non-delivery and uncertain delivery.
+- `kask/crates/hkask-tool-port/src/tool_port.rs:15–51` defines retry-safe versus interrupted outcomes.
 
 **Mechanism/impact:** a server commits a mutation and loses its response; the host may repeat that mutation. Non-timeout protocol/decoding errors can also enter the retry branch.
 
@@ -214,11 +214,11 @@ The dependency checker and metadata inspection found no direct forbidden local h
 **Class:** reproduced packaging defect and verified CI coverage gap. **Severity:** High for capability availability; Medium for CI gap. **Confidence:** High.
 
 **Evidence:**
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/mcp_servers.rs:520–538` registers spreadsheet.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/build/mcp-servers.txt:12–22` omits it.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/scripts/build/install-common.sh:32–46` consumes the list.
-- `/home/mdz-axolotl/Clones/zed-kask/.github/workflows/kask-invariants.yml:75–114` omits the registry check and explicit fixture feature.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/Cargo.toml:32–49` gates reconnect integration tests on `test-fixture`.
+- `kask/crates/kask_bridge/src/mcp_servers.rs:520–538` registers spreadsheet.
+- `kask/scripts/build/mcp-servers.txt:12–22` omits it.
+- `kask/scripts/build/install-common.sh:32–46` consumes the list.
+- `.github/workflows/kask-invariants.yml:75–114` omits the registry check and explicit fixture feature.
+- `kask/crates/hkask-mcp/Cargo.toml:32–49` gates reconnect integration tests on `test-fixture`.
 
 **Reproduction/impact:** `check-mcp-servers.sh` failed, reporting missing `hkask-mcp-spreadsheet`. List-driven installation omits an advertised capability; the inspected CI command skips the process-boundary reconnection suite.
 
@@ -234,7 +234,7 @@ The dependency checker and metadata inspection found no direct forbidden local h
 
 **Class:** design risk reflecting an explicit recovery tradeoff. **Severity:** High if encryption is relied upon against copied-file disclosure. **Confidence:** High.
 
-Evidence: `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-keystore/src/keychain.rs:402–424`. First-run provisioning uses a public fixed default. A copied database using it does not require keychain access to decrypt.
+Evidence: `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `kask/crates/hkask-keystore/src/keychain.rs:402–424`. First-run provisioning uses a public fixed default. A copied database using it does not require keychain access to decrypt.
 
 Counterevidence: source explicitly prioritizes recoverability; users can change the secret. No deployed database or keychain was inspected. This is not proof that any particular user's database still uses the default.
 
@@ -258,13 +258,13 @@ P3 recovery are not closed by this deletion. The following evidence is the
 **Class:** latent API defect/design risk; production use of this API not established. **Severity:** Medium now, High if used for atomic writes. **Confidence:** High.
 
 Evidence:
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/driver.rs:57–66`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/transaction.rs:19–38`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/sqlite.rs:270–290,332–337`
+- `kask/crates/hkask-storage/src/database/driver.rs:57–66`
+- `kask/crates/hkask-storage/src/database/transaction.rs:19–38`
+- `kask/crates/hkask-storage/src/database/sqlite.rs:270–290,332–337`
 
 BEGIN, operations, and COMMIT independently acquire pooled connections. The handle owns a driver reference, not exclusive connection access; it marks itself committed before commit succeeds. Concurrent pool use can break the promised transaction scope.
 
-Counterevidence: inspected real atomic writes use borrowed rusqlite transactions, including `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/hmem.rs:323–343`.
+Counterevidence: inspected real atomic writes use borrowed rusqlite transactions, including `kask/crates/hkask-storage/src/hmem.rs:323–343`.
 
 Plan: confirm callers; delete the unused misleading facade. If actual callers need a shared API, replace it with connection-owning transaction scope, not a wrapper around the unsafe contract. Validate two-connection concurrency, failed commit, and rollback without partial writes.
 
@@ -273,8 +273,8 @@ Plan: confirm callers; delete the unused misleading facade. If actual callers ne
 **Class:** design risk. **Severity:** Medium. **Confidence:** High on sequence, Medium on deployment likelihood.
 
 Evidence:
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,161–172,193–229`
-- `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-spreadsheet/src/service.rs:585–602`
+- `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,161–172,193–229`
+- `kask/crates/hkask-spreadsheet/src/service.rs:585–602`
 
 Revision publication syncs the file and renames it, then operation records use direct writes. A crash can leave a revision without a usable receipt. File sync alone does not establish parent-directory durability.
 
@@ -282,13 +282,13 @@ Counterevidence: absent operation records explicitly mean unknown, not unapplied
 
 Plan: define process-crash versus power-loss guarantees, then replace the publication/receipt contract as needed. Make receipt publication atomic/durable and incomplete publication discoverable. Inject failures between revision and receipt publication; reopened state must never falsely report “not applied” or replay automatically.
 
-**H1 — cached-open digest hypothesis:** `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-spreadsheet/src/service.rs:502–525` returns early for cached IDs before comparing the newly supplied digest. Test valid open followed by the same IDs with a bad digest. This was not dynamically reproduced; assess severity after verifying caller reachability and contract.
+**H1 — cached-open digest hypothesis:** `kask/crates/hkask-spreadsheet/src/service.rs:502–525` returns early for cached IDs before comparing the newly supplied digest. Test valid open followed by the same IDs with a bad digest. This was not dynamically reproduced; assess severity after verifying caller reachability and contract.
 
 ### R4 — Caller assertion is not operator approval evidence
 
 **Class:** design risk. **Severity:** Medium. **Confidence:** High.
 
-Evidence: `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:420–460`. An agent can supply `operator_confirmed: true` and a note without a host-observed confirmation event.
+Evidence: `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:420–460`. An agent can supply `operator_confirmed: true` and a note without a host-observed confirmation event.
 
 Counterevidence: this records advice application rather than executing the intervention, and keeps causal attribution unverified.
 
@@ -299,9 +299,9 @@ Plan: replace the boolean with a host-authenticated receipt wherever authenticat
 **Class:** improvement opportunity with verified documentation defects. **Severity:** Medium. **Confidence:** High.
 
 Evidence:
-- `/home/mdz-axolotl/Clones/zed-kask/AGENTS.md:39–47` says 10 servers, describes an old host path, and references an absent per-tool contract document.
-- `/home/mdz-axolotl/Clones/zed-kask/kask/docs/architecture/zed-host-architecture-plan.md:13–43` says 18 libraries/11 servers.
-- `/home/mdz-axolotl/Clones/zed-kask/DIVERGENCE.md:234–240` includes a removed library and 11 servers.
+- `AGENTS.md:39–47` says 10 servers, describes an old host path, and references an absent per-tool contract document.
+- `kask/docs/architecture/zed-host-architecture-plan.md:13–43` says 18 libraries/11 servers.
+- `DIVERGENCE.md:234–240` includes a removed library and 11 servers.
 
 Counterevidence: the runtime registry is centralized; the charter distinguishes IS/OUGHT. Missing documentation is not proof that all tool contracts lack tests.
 
@@ -321,10 +321,10 @@ Server-library dependencies alone do not justify a new service layer. Extract on
 
 - §13.1 held in inspected local manifests and the repository checker.
 - Managed dispatch distinguishes proven non-delivery from uncertain delivery; see F7.
-- Child environment clearing and selective injection: `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-mcp/src/runtime.rs:649–675`.
-- Independently held, revocable grants: `/home/mdz-axolotl/Clones/zed-kask/kask/crates/kask_bridge/src/delegation_grants.rs:15–74`.
-- Atomic call charging: `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-regulation/src/energy.rs:164–193`.
-- Research strict transport validates redirect destinations and connect-time DNS and disables proxies: `/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs:41–49,93–106,128–144`.
+- Child environment clearing and selective injection: `kask/crates/hkask-mcp/src/runtime.rs:649–675`.
+- Independently held, revocable grants: `kask/crates/kask_bridge/src/delegation_grants.rs:15–74`.
+- Atomic call charging: `kask/crates/hkask-regulation/src/energy.rs:164–193`.
+- Research strict transport validates redirect destinations and connect-time DNS and disables proxies: `kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs:41–49,93–106,128–144`.
 - Immutable spreadsheet bases, explicit unknown outcomes, evidence-aware regulation, and surfaced degradation.
 - Existing real-process lifecycle tests and temporary-installation isolation checks.
 
@@ -498,13 +498,13 @@ These are historical review results, **not fresh execution results at plan-save 
 | Check | Observed result |
 | --- | --- |
 | `cargo metadata --offline --locked --no-deps --format-version 1` plus jq inventory/local-edge inspection | 19 libraries, 12 servers, no direct forbidden local edges outside the bridge |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-hkask-no-zed-deps.sh` | Passed |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-mcp-tool-tests.sh` | Passed, zero gaps; token heuristic, not complete behavioral coverage |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-reg-canonical.sh` | Passed |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-mcp-servers.sh` | Failed: spreadsheet absent from installer list |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/build/check-zed-isolation.sh` | Passed using fake temporary installation; emitted a missing retired-source-path grep warning |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-string-errors.sh` | Passed in library-code scope |
-| `bash /home/mdz-axolotl/Clones/zed-kask/kask/scripts/check-version-sync.sh` | Passed for release 0.40.0 |
+| `bash kask/scripts/check-hkask-no-zed-deps.sh` | Passed |
+| `bash kask/scripts/check-mcp-tool-tests.sh` | Passed, zero gaps; token heuristic, not complete behavioral coverage |
+| `bash kask/scripts/check-reg-canonical.sh` | Passed |
+| `bash kask/scripts/check-mcp-servers.sh` | Failed: spreadsheet absent from installer list |
+| `bash kask/scripts/build/check-zed-isolation.sh` | Passed using fake temporary installation; emitted a missing retired-source-path grep warning |
+| `bash kask/scripts/check-string-errors.sh` | Passed in library-code scope |
+| `bash kask/scripts/check-version-sync.sh` | Passed for release 0.40.0 |
 | Isolated unquoted-heredoc probe below | Model-string shell substitution demonstrated |
 
 The harmless shell probe used no files, network, credentials, or services:
@@ -584,12 +584,12 @@ Initial HEAD was `7f1c83e558df951eec7f74d43fb623b02717c945`; the index was empty
 
 Other actors advanced HEAD and staged/committed shared files during execution, including the repairs. The implementing agents issued **no stage or commit commands**. Initial verification base was `8a1bd7877b63f0cb2c71a57cc96ab84e69302f2a`, plus gallery/doc edits. Later observed HEAD `acbefb647bcb8011cfcf4dfc4ba4e1ad3d2d4d5e` contains the gallery repair and strengthened tests, externally committed alongside unrelated regulation work. The progress record, portal status and media-reference metadata remain **uncommitted**. Unrelated regulation/bridge changes and all index contents were left untouched. This is a moving-checkout record, not an assertion that every check ran on an immutable tree.
 
-Source citations below are relative to `/home/mdz-axolotl/Clones/zed-kask/`; they record execution-time inspection, not new exploit reproductions.
+Source citations below are relative to ``; they record execution-time inspection, not new exploit reproductions.
 
 | Item | Current disposition and evidence |
 | --- | --- |
 | F1 | Upheld at initial baseline; repaired admission and native tool-ceiling paths in the P1a continuation below. Broader per-call MCP identity is not claimed repaired. |
-| F2 | Upheld: `crates/agent/src/tools/context_server_registry.rs:574–592` still awaits the managed source without selecting cancellation; runtime call at `kask/crates/hkask-mcp/src/runtime.rs:1686–1698` has no execution deadline. |
+| F2 | Upheld at baseline; subsequently closed by the independent Gödel stream (see P1b): the reconnect-wait loops now select on `cancelled_by_user()` (`crates/agent/src/tools/context_server_registry.rs:726,1080,1177`), and `McpRuntime::dispatch` runs under `DEFAULT_CALL_TIMEOUT` / `HKASK_MCP_CALL_TIMEOUT_SECS` (`kask/crates/hkask-mcp/src/runtime.rs:106`), reporting `DispatchError::Interrupted` on timeout — pinned by `off_runtime_deadline_and_drop_do_not_replay_effects` (`kask/crates/hkask-mcp/tests/reconnect_integration.rs:54`). |
 | F3 | Upheld at baseline, repaired below. Both providers use the repaired shared generator. Prior TRL removal was retained; only Axolotl/Ludwig are in scope. |
 | F4 | Upheld: `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:199–210` validates the directory then writes a leaf; shared `validation.rs:289–312` reconstructs missing suffixes before `tools/document.rs:72–89` writes. Existing relative-basename and QA-specific link fixes are not race-resistant publication and were not recreated. |
 | F5 | Reproduced and repaired below. Existing transcript-detachment and unlink-failure identity preservation were retained. |
@@ -650,7 +650,7 @@ Prediction/observation: existing `bash kask/scripts/check-mcp-servers.sh` failed
 - Deleted kanban's `spawn_via_local_runtime`, unused `local_runtime` field/construction and fallback behavior. The selected agent card's `mcp_tools` narrows the host grant. An authorization refusal is permission-denied; uncertain transport outcomes remain unavailable and retain an idempotency claim (when a key was supplied), preventing same-key duplicate spawning. Known pre-effect validation failures still release their claim. Queued worktree responses say pending and no longer advance the task to InProgress before asynchronous session startup succeeds.
 - **P2 boundary exposed, not papered over:** the existing MCP grant identifies a server, not the initiating thread. Native `kata-kanban/kanban_task_spawn` is denied—including root native callers—until that per-invocation authority exists. Native agents use the bound `create_thread`/`spawn_agent` paths. Explicit server-origin worktree delegation remains possible under its configured server grant. This is not an implementation of general MCP per-call attribution.
 
-**Exact changed files (relative to `/home/mdz-axolotl/Clones/zed-kask/`):**
+**Exact changed files (relative to ``):**
 
 - Native: `crates/agent/src/{delegation_authority.rs,agent.rs,thread.rs,db.rs,thread_store.rs,tests/mod.rs,tools/context_server_registry.rs,tools/create_thread_tool.rs}`.
 - UI/host: `crates/agent_ui/src/{agent_panel.rs,agent_ui.rs,conversation_view.rs,conversation_view/thread_view.rs,thread_metadata_store.rs}`; `crates/zed/src/{main.rs,visual_test_runner.rs}`. Metadata/visual-test edits only initialize the new persisted field. All upstream edits are recorded in `DIVERGENCE.md` D23/D8 continuation.
@@ -683,7 +683,7 @@ Copy the following into an implementation-authorized session:
 
 ```text
 Execute the evidence-led repair and improvement plan at:
-/home/mdz-axolotl/Clones/zed-kask/kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md
+kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md
 
 This instruction authorizes implementation of the plan's bounded repairs, not
 speculative rewrites or decision-gated destructive operations. There are NO

@@ -68,12 +68,12 @@ status: VERIFIED
 
 ## Profiles
 
-| Profile | Retention | Action threshold | Maximum lines | Evidence |
-| --- | ---: | ---: | ---: | --- |
-| `Heavy` | 0.10 | 0.10 | 30 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
-| `Normal` | 0.20 | 0.25 | 80 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
-| `Soft` | 0.60 | 0.50 | 200 | `kask/crates/hkask-condenser/src/types.rs:39-77` |
-| `Light` | 0.95 | 0.90 | none | `kask/crates/hkask-condenser/src/types.rs:39-77` |
+| Profile | Retention | Maximum lines | Evidence |
+| --- | ---: | ---: | --- |
+| `Heavy` | 0.10 | 30 | `kask/crates/hkask-condenser/src/types.rs:39-55` |
+| `Normal` | 0.20 | 80 | `kask/crates/hkask-condenser/src/types.rs:39-55` |
+| `Soft` | 0.60 | 200 | `kask/crates/hkask-condenser/src/types.rs:39-55` |
+| `Light` | 0.95 | none | `kask/crates/hkask-condenser/src/types.rs:39-55` |
 
 ## Algorithm routes
 

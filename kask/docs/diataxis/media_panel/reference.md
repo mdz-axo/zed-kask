@@ -15,7 +15,7 @@ and Detail (`crates/media_panel/src/media_viewer.rs:138-143`) — covering
 selected media, paginated gallery assets, process-local generation jobs, and
 selected-asset detail. All server calls route through the governed tool
 invoker to the `media` server, and pages are sized at 100 rows with a
-one-second queue poll (`crates/media_panel/src/media_viewer.rs:27-31`).
+one-second queue poll (`crates/media_panel/src/media_viewer.rs:33-34`).
 
 ## Component and request map
 
@@ -148,7 +148,7 @@ an over-cap addition is rejected without truncating the queue
 two clips and rechecks the upper bound before calling `video_concat`
 (`crates/media_panel/src/media_viewer.rs:510-531`). The shared admission limit is
 64 inputs (`MAX_CONCAT_ITEMS`,
-`kask/crates/hkask-types/src/media_limits.rs:9`).
+`kask/crates/hkask-types/src/media_limits.rs:8`).
 
 ## Job lifecycle
 

@@ -196,7 +196,7 @@ The **concept model and server implementation already satisfy** R1 (partially
 - `kanban_task_create` requires a `board_id`
   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:666`),
   and the board index prefix `BOARD_TASKS_PREFIX`
-  (`service_impl/service.rs:52`) ties tasks to their board.
+  (`service_impl/service.rs:51`) ties tasks to their board.
 - The panel's create-board form is name-first (placeholder "Board name",
   `crates/kanban_panel/src/kanban_panel.rs:1672`; submit trims and refuses an
   all-whitespace or over-cap name client-side,

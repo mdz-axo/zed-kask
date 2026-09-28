@@ -516,7 +516,8 @@ status: VERIFIED
 -->
 
 **Pipeline view** (providers → matcher → calibration; economic-data feeds
-the SDMX axis):
+the bridge's ontology axis — DataCube for cube-shaped statistics, SUMO
+otherwise; the former SDMX anchoring was removed):
 
 ```mermaid
 flowchart LR
@@ -536,7 +537,7 @@ flowchart LR
         CAL[CalibrationStore journal]
         CMP[cmp constant_maturity]
         RES[residual residual_analysis]
-        ECON[economic_data_tools<br/>SDMX-anchored]
+        ECON[economic_data_tools<br/>DataCube-or-SUMO via bridge axis]
     end
     PM --> ASM
     KA --> ASM
@@ -553,7 +554,7 @@ flowchart LR
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM-PIPELINE-001
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L80-84); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25)
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L80-84); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/crates/hkask-bridge-ontology/src/axis.rs:219-222 (economic statistics fall through to SUMO; only cube-shaped output takes the DataCube anchor — grounds the ECON node label)
 status: VERIFIED
 -->
 
@@ -567,7 +568,8 @@ frames without dying, and a dead stream surfaces a typed error.
 `market_ontology_map` tool output are both generated from `ontology.rs`
 constants (`MAPPING_VERSION`, `LIFECYCLE_STAGES`) so they cannot drift.
 `dcterms:*` / `pko:*` vocabulary is reused from `hkask-bridge-ontology`;
-economic-data vocabulary is SDMX-anchored (see
+economic-data vocabulary resolves through the bridge's ontology axis
+(DataCube for cube-shaped output, SUMO otherwise — SDMX was removed; see
 [Architecture diagrams](./architecture.md) — ontology bridge).
 
 ## Scenarios Widget
