@@ -27,9 +27,10 @@ mds_categories: [composition, trust]
 > rulings now resolve live at the derived rung (K2 → verified); the
 > embedding port is fixed and curator-memory federated search works, while
 > the john-brooks corpus source is unavailable pending the migration's new
-> sealed run. This pass's work is committed as `ec16add1cd` (landed by the
-> operator's stream during the rebuild); the post-verification updates in
-> this version are uncommitted.
+> This pass's work is committed as `ec16add1cd` (landed by the
+> operator's stream during the rebuild); the post-verification updates were
+> carried by the lisp-eval stream's `46131af558` (named in its message), and
+> the composition-time staleness fixes landed in `720ccd8189`.
 
 ## 0. What this is, and what it adds
 
