@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.0"
+version: "0.23.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -116,14 +116,14 @@ From the register's operator-decision queue:
 | # | Item | Row | Prior state | This pass |
 | --- | --- | --- | --- | --- |
 | 1 | Memory-receipt functional guarantee (EndTurn precedes detached ingestion; panel stop handler has no receipt) | L1 | deferred, falsifier recorded | re-open in L1 slice — operator decision pending |
-| 2 | Typed-error carry across the L4→L3 seam (string-marshalled kind) | L3 | deferred (net-positive lines) | re-open in L3/E1 slice — re-price after drift re-map |
+| 2 | Typed-error carry across the L4→L3 seam (string-marshalled kind) | L3 | deferred (net-positive lines) | **CLOSED (pass 2):** resolved-by-drift — the kind crosses the wire structurally (`runtime.rs:1785-1791`), display round-trip enum-validated and pinned (see L3 row) |
 | 3 | Measured panel seam test + 2 inferred findings (concurrent update unseen after move; optimistic-mutation repaint) | L7 | deferred behind widget rework | re-open in L7 slice — widget tree now clean; re-map citations first |
 | 4 | Direct-acknowledgment memory-receipt gate (`goals.rs:319-337`) | L9 | operator decision | re-present for decision |
 | 5 | Done-verdict/criteria-passed rejection check | L9 | operator decision | re-present for decision |
 | 6 | Recall failure-signal contract (error-discarding legs `memory.rs:927-967`, `:1067-1085`) | L10 | operator ruling | re-present for decision |
 | 7 | Page-visibility impedance (older running job unobserved behind 20 newer) | L11 | deferred pending panel contract | re-open in L11/E3 slice |
 | 8 | Closable-vs-append-only research runs (no status-transition writer exists) | L12 | operator decision | re-present for decision |
-| 9 | Dispatch-seam ingestion candidate (needs red-green public-seam test) | L13 | deferred | re-open in L13 slice — the seam test is the slice's gate |
+| 9 | Dispatch-seam ingestion candidate (needs red-green public-seam test) | L13 | deferred | **CLOSED (pass 2):** the seam test ran red-green; the red exposed the pinned design boundary (`thread_tests.rs:220-223`); seam consolidation REJECTED as contradicting the pin; the `delegate_and_ingest` consolidation for unscoped sites landed in `57c2bdea7a` (see L13 row) |
 | 10 | Posterior carry-forward boundary | L17 | deferred (caller-controlled contract) | re-defer unless the operator changes the contract |
 | 11 | Nebius status-degradation contract (unobservable jobs read Running) | L18 | operator decision | re-present for decision |
 | 12 | Degraded-status contract (poisoned performance lock silently substitutes zero penalty) | L23 | deferred with falsifier | re-open in L23 slice |
@@ -300,6 +300,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects, 1 impedance deferred with reason (F1). Brier-scored at Phase 4.
 - **Hands off to:** L4 (server side of each call), L2 (record_outcome/record_variety + spans), L14 (zed-side registry and env).
 - **Current-tree supersession of the historical line numbers above:** commit `16271e3c60` replaced the six per-server maps with `ServerEntry` (`runtime.rs:466-481`), adding 264 and removing 226 production lines (**net +38**, contrary to the Phase 0 estimate of −150–250). The old graph and F1–F4 citations above describe the pre-consolidation tree. In the current tree: invoke meters then emits settled span and ledger outcome (`:1505-1624`); call path checks live peer, reconnects with cooldown, and retries only `NotDelivered` (`:1642-1686`); dispatch classifies unknown-effect `Interrupted` without replay (`:1701-1750`); supervisor senses closed/missing transport, increments failure count, attempts restart or circuit-breaks (`:1050-1217`); stop clears entry and cancels supervisor/children (`:1428-1456`). These nodes form the return path from tool-call outcome and next health tick to renewed dispatch. **Verified in the current worktree at `ff3bae88e6`:** `bash kask/scripts/cargo-test-nonzero.sh -p hkask-mcp --lib` (21 passed), `bash kask/scripts/cargo-test-nonzero.sh -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1` (16 passed), `./script/clippy` (completed including kask-scoped machete and buf checks), `cargo check -p zed` (passed). An earlier integration invocation without serialized threads failed; it did not follow the test file's required protocol (`tests/reconnect_integration.rs:20-33`) and is not counted as a regression. The deferred L4→L3 typed-error impedance still requires a current-line recheck; no further L3 deletion admitted.
+- **Pass 2 (2026-09-28): E1 typed-error impedance CLOSED, resolved-by-drift.** The kind now crosses the wire structurally: `dispatch` reads `structured_content` through `parse_tool_error_value` (`runtime.rs:1785-1791`, envelope kind validated via `McpErrorKind::from_kind_str`, `tool_response.rs:100-109`) and formats `[kind] text` only as the display detail; `invoke` extracts the kind through the enum-validating `error_kind_from_display` (`runtime.rs:1618-1626`, `tool_response.rs:123-133`), pinned by seven tests including the unknown-kind-returns-full-text discipline (`tool_response.rs:215-374`). The original "string-marshalled seam" finding no longer holds; the residual display round-trip is intra-L3, validated, and pinned. No lines changed — the drift landed via the concurrent streams.
 
 ### L4 — MCP server request cycle (shared framework, 12 servers) — AUDITED & CLOSED 2026-09-27
 - **Crate/path:** `kask/crates/hkask-mcp-server/src/server/` (transport 131, error 163, validation 611, credentials 144, context 163, tool_span 170) + `kask/mcp-servers/*`
@@ -400,7 +401,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Phase 2 open finding (IS + INFERRED):** begin stores `status='planned'` (`runs.rs:32-46`); the inspected source has no `UPDATE research_runs`, while the validator accepts six statuses (`runs.rs:254-302`). INFERRED: a run with sources and annotations can still report `planned` in `get_research_run` (`:231-239`), so the status field may mislead a caller about completion. Falsifier: locate and exercise a production status-transition writer; the repository-wide `UPDATE research_runs` search found none. No automated finish operation is in the tool surface; adding one or removing lifecycle claims changes functional behavior. Defer for operator decision on whether runs should be explicitly closable or remain append-only; do not invent a completion event. No net-negative candidate admitted yet.
 - **Closure (2026-09-27):** the repository-wide `UPDATE research_runs` search re-verified on the current tree — the only match is this register's own record; no status-transition writer exists. The closable-vs-append-only ruling stays with the operator; no completion event invented. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 1 IS finding deferred as the operator's lifecycle decision, 0 impedances, 0 deletion candidates. Brier-scored at Phase 4.
 
-### L13 — Swarm thread/memory cycle — audited; dispatch-seam ingestion candidate gated on a seam test
+### L13 — Swarm thread/memory cycle — CLOSED pass 2: seam test ran; the asymmetry is pinned design; unscoped attach clusters consolidated
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-swarm/src` + `kask/crates/hkask-event-store`
 - **Entry point:** `local_tools.rs:278` `dispatch_in_thread` / `:354` `swarm_delegate_in_thread_local`; `knowledge_tools.rs:67` `swarm_recall_local`; event store `kask/crates/hkask-event-store/src/hkask_event_store.rs`; zed-side feed `kask_bridge/src/rollout_event_bridge.rs:104` `poll_once`
 - **Trigger:** delegation dispatches; recall queries; ABW sync; task-board updates
@@ -409,6 +410,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Phase 1 scoped graph (IS):** a scoped delegation checks roster membership (`local_tools.rs:278-307`), reads prior ordered turns (`:309-333`), invokes the member model and commits a turn (`:335-343`), then `swarm_thread_local` returns retained turns even after roster deletion (`:378-405`). Separately, `attach_narrative_memory` embeds a local response (`:161-179`) and `swarm_recall_local` retrieves passages with a surfaced unavailable note (`knowledge_tools.rs:67-116`). L7 swarm panel fetches durable turns (`crates/swarm_panel/src/member_turns.rs:277-309`); L2's rollout bridge is separate. Five properties in this scoped path: closed for ordered thread readback, timely per dispatch, accurate/complete for successful thread append, but shared semantic recall is not shown to cover every scoped dispatch; actionable via thread read and degraded-memory note.
 - **Phase 2 impedance (IS + INFERRED effect):** `dispatch_in_thread` appends to the durable thread without `attach_narrative_memory` (`local_tools.rs:335-343`); direct `swarm_delegate_in_thread_local` returns it without indexing (`:368-375`), and scoped fanout similarly takes the result (`:594-603`), while scoped pipeline does attach after dispatch (`:842-865`). INFERRED: a direct scoped turn may be visible in `swarm_thread_local` but absent from `swarm_recall_local`. Falsifier: a scoped-delegation → semantic-recall integration test retrieves that turn without a separate caller ingest. Potential consolidation: one ingestion at the common dispatch seam, delete per-caller copies to avoid double indexing; **not admitted yet** because moving inference work into every scoped dispatch changes timing/result shape and needs a red-green public-seam test. Defer with this risk rather than bolt on another caller-specific hook.
 - **Closure (2026-09-27):** the dispatch-seam ingestion consolidation is named but NOT admitted — moving embedding into every scoped dispatch changes timing and result shape and needs a red-green public-seam test first; the impedance stays deferred with its falsifier. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 0 confirmed defects, 1 impedance deferred with a candidate consolidation gated on its seam test. Brier-scored at Phase 4.
+- **Pass 2 closure (2026-09-28):** the red-green public-seam test ran. RED (observed): a direct scoped dispatch via `swarm_delegate_in_thread_local` followed by `swarm_recall_local` returned `count: 0, note: ""` — healthy machinery, zero passages, the exact falsifier. GREEN after a seam attach was attempted — and the full suite then exposed the existing pin `thread_tests.rs:220-223` ("thread turns must not write semantic memory"): the asymmetry is DOCUMENTED DESIGN, not an accident — the encrypted durable thread IS the record for scoped dispatch, and shared semantic memory is an opt-in composition callers take (pipeline/plan attach their steps; the direct thread tool deliberately does not). The seam consolidation is REJECTED on the same grounds as L16's sticky attribution (contradicts a pinned design decision; overriding it is an operator ruling, not an audit action). The refuted test was removed — the pin already covers the design. The surviving, behavior-preserving consolidation landed: `delegate_and_ingest` (one helper replacing the three unscoped attach clusters in `swarm_delegate_local`, sequential fanout, and eval-suite; the parallel fanout keeps its own attach — batch API), plus a design-boundary comment at the dispatch seam so the next audit does not re-propose this. Landed in `57c2bdea7a` (mixed-purpose commit, the stream's): local_tools.rs +41/−40 production (net +1, of which +6 is the seam comment; code motion net −5). Receipts: swarm --lib 210/210 green, rustfmt clean on the touched files, scoped `./script/clippy` clean (machete + buf included).
 
 ### L14 — Settings → MCP server sync/restart cycle — AUDITED & CLOSED 2026-09-27 (minimal by design)
 - **Crate/path:** `kask/crates/kask_bridge/src` + zed-side wiring (`crates/zed/src/main.rs`, `crates/settings_ui/src/pages/kask_page.rs`)
@@ -548,7 +550,7 @@ Each row below is a separate, bounded audit task, not a command to start it.
 
 | Task | Independent slice and observable check | Dependency / local verification |
 | --- | --- | --- |
-| L3 | Closed: consolidated in `16271e3c60` (ServerEntry, +38); typed-error impedance deferred (see row). | L4 contract; 22 runtime tests + `reconnect_integration.rs` and unknown-effect retry pin. |
+| L3 | Closed: consolidated in `16271e3c60` (ServerEntry, +38); typed-error impedance closed pass 2 as resolved-by-drift (see row). | L4 contract; 22 runtime tests + `reconnect_integration.rs` and unknown-effect retry pin. |
 | L4 | Re-check typed-error handoff to L3; do not merge child processes if isolation would change. | L3 seam; server-framework tests and per-server credential isolation. |
 | L8 | Confirm the already landed scoring consolidation retains outcome readback; close only a newly evidenced gap. | L17 scoring edge; forecast/scenarios tests and existing commit `50cba394fd`. |
 | L14 | Confirm settings and credential changes still restart exactly affected servers. | L3, L5; settings-sync tests + launch-order invariant. |
@@ -563,7 +565,7 @@ Each row below is a separate, bounded audit task, not a command to start it.
 | L10 | Closed 2026-09-27: error-discarding finding deferred as the operator's failure-signal ruling (see row). | L1, L2; recall/ingest round-trip tests. |
 | L11 | Closed 2026-09-27: page-visibility impedance deferred pending the panel contract (see row). | L7; job state tests. |
 | L12 | Closed 2026-09-27: no status-transition writer exists; closable-vs-append-only is the operator's decision (see row). | L4; research-run tests. |
-| L13 | Closed 2026-09-27: dispatch-seam ingestion candidate named, not admitted (needs a red-green seam test; see row). | L7, L10; swarm thread tests. |
+| L13 | Closed pass 2 (2026-09-28): seam test ran; the pinned design boundary (`thread_tests.rs:220-223`) refutes the seam consolidation; `delegate_and_ingest` landed in `57c2bdea7a` (see row). | L7, L10; swarm thread tests. |
 | L17 | Closed 2026-09-27: posterior carry-forward boundary deferred (caller-controlled contract; see row). | L8; scenarios scoring tests. |
 | L18 | Closed 2026-09-27: Nebius/manifest degradation contract deferred; no training run launched (see row). | L6; offline submit/status/cancel tests only. |
 | L19 | Closed 2026-09-27: classified as a request-boundary recompute cycle; no automatic controller arm fabricated (see row). | L7; portfolio materialization tests. |
@@ -660,6 +662,28 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   2026-09-27).
 
 ## Change log
+
+- 2026-09-28 — v0.23.1 pass-2 execution began (operator approved the
+  Phase 0 checkpoint and directed work on the queued issues). **S13
+  framework review completed:** all 46 fn items across the six
+  hkask-mcp-server framework files mapped (transport, error, credentials,
+  context, tool_span, validation) — zero `.rules` violations; the F4 TOCTOU
+  window located at `canonicalize_lenient` (`validation.rs:207-235`) plus
+  the caller's non-atomic write; a per-server review item extracted for
+  S1–S12 (DB-path credential declared required vs optional-with-surfaced-
+  degradation, checked against `open_database`'s in-memory fallback). **E1
+  CLOSED resolved-by-drift** (see L3 row). **L13 CLOSED by refutation**
+  (see L13 row): the red-green public-seam test ran — RED observed the
+  exact falsifier (`count: 0, note: ""`), then the existing pin
+  `thread_tests.rs:220-223` revealed the asymmetry is documented design;
+  the seam consolidation was reverted, the surviving `delegate_and_ingest`
+  consolidation landed in `57c2bdea7a` (+41/−40 production, net +1 of
+  which +6 is the design-boundary comment at the seam; the refuted test
+  was removed — the pin already covers it). Receipts: swarm --lib 210/210
+  green, rustfmt clean on the touched files, scoped `./script/clippy`
+  clean (machete + buf included). The terminal tool's git-status
+  truncation (5 failures, skill-use issue filed) was resolved by
+  `633e0c052a` (retry hard-refuse now limited to identical inputs).
 
 - 2026-09-28 — v0.23.0 opened the pass-2 re-audit at Phase 0 and stopped
   at the operator checkpoint. Premise verified FALSE-as-stated: the
