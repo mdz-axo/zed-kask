@@ -58,26 +58,29 @@ fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
         });
     }
 
-    // Every file in every source directory must be pinned.
     let pinned: BTreeSet<&str> = pins.iter().map(|pin| pin.path.as_str()).collect();
-    let directories = std::fs::read_dir(sources).map_err(|error| format!("sources: {error}"))?;
-    for directory in directories {
-        let directory = directory.map_err(|error| error.to_string())?;
-        if !directory.path().is_dir() {
-            continue;
-        }
-        let directory_name = directory.file_name().to_string_lossy().into_owned();
-        let entries = std::fs::read_dir(directory.path())
-            .map_err(|error| format!("sources/{directory_name}: {error}"))?;
-        for entry in entries {
+    if pinned.len() != pins.len() {
+        return Err("SOURCES.lock contains duplicate paths".to_string());
+    }
+    let mut pending = vec![sources.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name == "README.txt" {
-                continue;
-            }
-            let relative = format!("{directory_name}/{name}");
-            if !pinned.contains(relative.as_str()) {
-                return Err(format!("sources/{relative} is not pinned in SOURCES.lock"));
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.file_name().and_then(|name| name.to_str()) != Some("SOURCES.lock") {
+                let relative = path
+                    .strip_prefix(sources)
+                    .map_err(|error| error.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if relative.ends_with("README.txt") {
+                    continue;
+                }
+                if !pinned.contains(relative.as_str()) {
+                    return Err(format!("sources/{relative} is not pinned in SOURCES.lock"));
+                }
             }
         }
     }
@@ -127,6 +130,182 @@ fn read_rdf(sources: &Path, pin: &Pin) -> Result<Vec<published_sources::RdfTripl
     Ok(triples)
 }
 
+/// The fixture is an independent inventory of the tag's Release ontology
+/// declarations. Checking it against both the pinned bytes and the lock
+/// prevents a missing module from looking like a successful small index.
+fn index_fibo(
+    manifest: &Path,
+    sources: &Path,
+    pins: &[Pin],
+) -> Result<Vec<published_sources::IndexedTerm>, String> {
+    use published_sources::{RdfObject, RdfVocabulary};
+    const BASE: &str = "https://spec.edmcouncil.org/fibo/ontology/";
+    const MATURITY: &str = "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/hasMaturityLevel";
+    const RELEASE: &str =
+        "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/Release";
+    let fixture = read(&manifest.join("fixtures/fibo-verified-terms.txt"))?;
+    let mut modules = Vec::new();
+    for line in fixture.lines().filter(|line| line.starts_with("module\t")) {
+        let fields: Vec<_> = line.split('\t').collect();
+        let [_, path, prefix, iri] = fields.as_slice() else {
+            return Err(format!("invalid FIBO module row: {line}"));
+        };
+        if !iri.starts_with(BASE) || prefix.is_empty() || path.is_empty() {
+            return Err(format!("invalid FIBO binding: {line}"));
+        }
+        modules.push((*path, *prefix, *iri));
+    }
+    if modules.len() != 157 {
+        return Err(format!(
+            "Q2 Release manifest expected 157 modules, got {}",
+            modules.len()
+        ));
+    }
+    let selected: BTreeSet<String> = modules
+        .iter()
+        .map(|(path, _, _)| format!("fibo/{path}"))
+        .collect();
+    if selected.len() != modules.len() {
+        return Err("duplicate FIBO Release module".to_string());
+    }
+    let pinned: BTreeSet<String> = pins
+        .iter()
+        .filter(|pin| {
+            pin.path.starts_with("fibo/")
+                && pin.path.ends_with(".rdf")
+                && pin.path != "fibo/AboutFIBOProd.rdf"
+        })
+        .map(|pin| pin.path.clone())
+        .collect();
+    if selected != pinned {
+        return Err(format!(
+            "FIBO Release manifest / lock mismatch: missing {:?}, extra {:?}",
+            selected.difference(&pinned).collect::<Vec<_>>(),
+            pinned.difference(&selected).collect::<Vec<_>>()
+        ));
+    }
+    for path in ["fibo/LICENSE", "fibo/AboutFIBOProd.rdf"] {
+        if !pins.iter().any(|pin| pin.path == path) {
+            return Err(format!("{path} must be pinned"));
+        }
+    }
+    let license = read(&sources.join("fibo/LICENSE"))?;
+    if !license.starts_with("The MIT License (MIT)") {
+        return Err("FIBO license is not the pinned MIT license".to_string());
+    }
+    let mut prefixes = BTreeSet::new();
+    let mut iris = BTreeSet::new();
+    for (_, prefix, iri) in &modules {
+        if !prefixes.insert(*prefix) || !iris.insert(*iri) {
+            return Err(format!(
+                "duplicate or ambiguous FIBO namespace binding: {prefix} {iri}"
+            ));
+        }
+    }
+    let prefix_bindings: Vec<(&str, &str)> = modules
+        .iter()
+        .map(|(_, prefix, iri)| (*prefix, *iri))
+        .collect();
+    let version = pins
+        .iter()
+        .find(|pin| pin.path == "fibo/AboutFIBOProd.rdf")
+        .ok_or("FIBO production manifest missing")?
+        .version
+        .as_str();
+    let production = read_rdf(
+        sources,
+        pins.iter()
+            .find(|pin| pin.path == "fibo/AboutFIBOProd.rdf")
+            .ok_or("FIBO production manifest missing")?,
+    )?;
+    let imports: BTreeSet<String> = production
+        .iter()
+        .filter(|triple| triple.predicate == "http://www.w3.org/2002/07/owl#imports")
+        .filter_map(|triple| match &triple.object {
+            RdfObject::Iri(iri) if iri.starts_with(BASE) => Some(iri.clone()),
+            _ => None,
+        })
+        .collect();
+    let release_iris: BTreeSet<&str> = modules.iter().map(|(_, _, iri)| *iri).collect();
+    let imported_iris: BTreeSet<&str> = imports.iter().map(String::as_str).collect();
+    // The tag's AboutFIBOProd import list omits five Release modules and
+    // includes MarketsIndividuals (not Release). This check records that
+    // divergence rather than silently changing the maturity policy.
+    if imports.len() != 153
+        || release_iris.difference(&imported_iris).count() != 5
+        || imported_iris.difference(&release_iris).count() != 1
+        || !imported_iris.difference(&release_iris).all(|iri|
+            *iri == "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/MarketsIndividuals/")
+    {
+        return Err(
+            "FIBO Release maturity set diverges unexpectedly from AboutFIBOProd imports"
+                .to_string(),
+        );
+    }
+    let mut terms = Vec::new();
+    let mut concepts = BTreeSet::new();
+    for (path, prefix, iri) in modules {
+        let pin_path = format!("fibo/{path}");
+        let pin = pins
+            .iter()
+            .find(|pin| pin.path == pin_path)
+            .ok_or_else(|| format!("missing {pin_path}"))?;
+        let expected_url = format!(
+            "https://raw.githubusercontent.com/EDMCouncil/FIBO/f59157fe156e3d91b1c045222d0a7dc06b7d78a2/{path}"
+        );
+        if pin.url != expected_url || pin.version != version {
+            return Err(format!("{path}: FIBO source must be pinned to the Q2 tag"));
+        }
+        let xml = read(&sources.join(&pin.path))?;
+        if !xml.contains(&format!("xmlns:{prefix}=\"{iri}\"")) {
+            return Err(format!(
+                "{path}: actual XML namespace is not {prefix} = {iri}"
+            ));
+        }
+        let triples = read_rdf(sources, pin)?;
+        let is_release = triples.iter().any(|triple| {
+            triple.subject.as_deref() == Some(iri)
+                && triple.predicate == MATURITY
+                && triple.object == RdfObject::Iri(RELEASE.to_string())
+        }) && triples.iter().any(|triple| {
+            triple.subject.as_deref() == Some(iri)
+                && triple.predicate == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+                && triple.object
+                    == RdfObject::Iri("http://www.w3.org/2002/07/owl#Ontology".to_string())
+        });
+        if !is_release {
+            return Err(format!(
+                "{path}: ontology does not declare Release maturity"
+            ));
+        }
+        let vocabulary = RdfVocabulary {
+            namespace: "FIBO",
+            prefix,
+            iri,
+            directory: "fibo",
+        };
+        let indexed = published_sources::index_rdf_with_prefixes(
+            &vocabulary,
+            &[(path.to_string(), triples)],
+            version,
+            &prefix_bindings,
+        );
+        if indexed.is_empty() {
+            return Err(format!("{path}: Release module indexed no terms"));
+        }
+        for term in indexed {
+            if !concepts.insert(term.concept.clone()) {
+                return Err(format!("FIBO duplicate concept: {}", term.concept));
+            }
+            terms.push(term);
+        }
+    }
+    if terms.is_empty() {
+        return Err("FIBO Release indexed no terms".to_string());
+    }
+    Ok(terms)
+}
+
 fn build() -> Result<(), String> {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?);
     let sources = manifest.join("sources");
@@ -134,6 +313,7 @@ fn build() -> Result<(), String> {
     println!("cargo:rerun-if-changed=src/published_sources.rs");
 
     let pins = verify_lock(&sources)?;
+    let fibo_terms = index_fibo(&manifest, &sources, &pins)?;
 
     // SUMO: Merge.kif and the mid-level ontology first — their English
     // documentation is the definition of record; domain files follow.
@@ -203,6 +383,7 @@ fn build() -> Result<(), String> {
         terms.extend(vocabulary_terms);
     }
 
+    terms.extend(fibo_terms);
     let mut index = String::new();
     for term in &terms {
         index.push_str(&term.to_line());

@@ -83,6 +83,28 @@ enum SemanticRecallError {
     EmbeddingNotConfigured,
 }
 
+/// Semantic-recall outcome: the resolved `(h_mem, distance)` fragments
+/// plus the number of KNN hits that failed to resolve to any h_mem — the
+/// store errored, or the hit's entity has no h_mems (the KNN-orphan case).
+/// Zero fragments with failures > 0 means recall degraded, not an empty
+/// store; callers surface the failure count so the two cannot be confused.
+struct SemanticRecall {
+    fragments: Vec<(hkask_storage::HMem, f64)>,
+    resolution_failures: usize,
+}
+
+/// Note naming the KNN hits that failed h_mem resolution, shared by every
+/// semantic call site so the wording stays identical. `yielded` is the
+/// fragment count that DID resolve; when it is zero the note must say the
+/// empty result is a resolution failure, not an empty store.
+fn resolution_failure_note(failures: usize, yielded: usize) -> String {
+    if yielded == 0 {
+        format!("{failures} semantic hits failed h_mem resolution — recall degraded, not empty")
+    } else {
+        format!("{failures} semantic hits failed h_mem resolution — recall degraded")
+    }
+}
+
 /// The curator's stores, backed by the curator's
 /// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
@@ -417,10 +439,12 @@ impl CuratorServer {
     // ── Memory & Learning ──────────────────────────────────────────────
 
     /// Embed a recall query and resolve the nearest stored h_mems by cosine
-    /// similarity. Returns `(h_mem, distance)` pairs, most similar first.
-    /// Each distinct entity contributes at most `MAX_FRAGMENTS_PER_ENTITY`
-    /// fragments (its freshest), and no h_mem appears twice even when the
-    /// KNN hits it through several embeddings.
+    /// similarity. Returns the resolved `(h_mem, distance)` pairs (most
+    /// similar first) plus the count of KNN hits that failed to resolve to
+    /// any h_mem — the store errored, or the hit's entity has no h_mems
+    /// (the KNN-orphan case). Each distinct entity contributes at most
+    /// `MAX_FRAGMENTS_PER_ENTITY` fragments (its freshest), and no h_mem
+    /// appears twice even when the KNN hits it through several embeddings.
     /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
     /// embedding provider) or the store has no embedding index — callers fall
     /// back to exact-entity lookup and surface the reason.
@@ -428,7 +452,7 @@ impl CuratorServer {
         &self,
         query_vector: &[f32],
         limit: usize,
-    ) -> Result<Vec<(hkask_storage::HMem, f64)>, SemanticRecallError> {
+    ) -> Result<SemanticRecall, SemanticRecallError> {
         let stores = self.db.get();
         let memory = stores
             .memory()
@@ -438,6 +462,7 @@ impl CuratorServer {
             .search_similar(query_vector, knn_limit)
             .map_err(|source| SemanticRecallError::Search { source })?;
         let mut fragments = Vec::with_capacity(results.len());
+        let mut resolution_failures = 0usize;
         let mut seen_h_mem_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut per_entity_counts: std::collections::HashMap<String, usize> =
@@ -450,6 +475,19 @@ impl CuratorServer {
             }
             match memory.query_deduped_untouched(&entity_ref) {
                 Ok(mut h_mems) => {
+                    if h_mems.is_empty() {
+                        // KNN orphan: the embedding's entity has no h_mems,
+                        // so this hit resolved to nothing. Count it so an
+                        // all-orphans run reads as degraded recall, not as
+                        // an empty store.
+                        resolution_failures += 1;
+                        tracing::warn!(
+                            target: "hkask.mcp.curator",
+                            entity_ref = %entity_ref,
+                            "KNN hit resolved to zero h_mems — orphaned embedding (non-fatal)"
+                        );
+                        continue;
+                    }
                     h_mems.sort_by_key(|h_mem| std::cmp::Reverse(h_mem.observed_at));
                     for h_mem in h_mems {
                         if per_entity_counts.get(&entity_ref).copied().unwrap_or(0)
@@ -468,6 +506,7 @@ impl CuratorServer {
                     }
                 }
                 Err(error) => {
+                    resolution_failures += 1;
                     tracing::warn!(
                         target: "hkask.mcp.curator",
                         error = %error,
@@ -478,14 +517,17 @@ impl CuratorServer {
             }
         }
         fragments.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(fragments)
+        Ok(SemanticRecall {
+            fragments,
+            resolution_failures,
+        })
     }
 
     async fn semantic_recall_fragments(
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(hkask_storage::HMem, f64)>, SemanticRecallError> {
+    ) -> Result<SemanticRecall, SemanticRecallError> {
         let embedding_model =
             curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
         let vectors = self
@@ -517,8 +559,9 @@ impl CuratorServer {
             // language question actually matches — the exact-entity leg
             // below only matches when the query IS an entity name.
             match self.semantic_recall_fragments(&req.query, limit).await {
-                Ok(fragments) if !fragments.is_empty() => {
-                    let serialized: Vec<serde_json::Value> = fragments
+                Ok(recall) if !recall.fragments.is_empty() => {
+                    let serialized: Vec<serde_json::Value> = recall
+                        .fragments
                         .iter()
                         .take(limit)
                         .map(|(t, distance)| {
@@ -530,11 +573,17 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    Ok(json!({
-                        "count": serialized.len(),
+                    let yielded = serialized.len();
+                    let mut result = json!({
+                        "count": yielded,
                         "mode": "semantic",
                         "results": serialized,
-                    }))
+                    });
+                    if recall.resolution_failures > 0 {
+                        result["note"] =
+                            json!(resolution_failure_note(recall.resolution_failures, yielded));
+                    }
+                    Ok(result)
                 }
                 // Degradation, not a silent fallback: the operator must be
                 // able to tell "no similar memories" from "semantic recall
@@ -567,11 +616,22 @@ impl CuratorServer {
                         "results": serialized,
                     }))
                 }
-                Ok(_) => Ok(json!({
-                    "count": 0,
-                    "mode": "semantic",
-                    "results": [],
-                })),
+                Ok(recall) => {
+                    // Every KNN hit failed to resolve, or none matched. When
+                    // hits failed, a bare count:0 would read as "genuinely
+                    // no similar memories" — say resolution failed instead
+                    // (the empty-result-as-success trap).
+                    let mut result = json!({
+                        "count": 0,
+                        "mode": "semantic",
+                        "results": [],
+                    });
+                    if recall.resolution_failures > 0 {
+                        result["note"] =
+                            json!(resolution_failure_note(recall.resolution_failures, 0));
+                    }
+                    Ok(result)
+                }
             }
         })
         .await
@@ -608,8 +668,9 @@ impl CuratorServer {
             let mut statuses = Vec::new();
             let mut batches = Vec::new();
             match self.semantic_recall_fragments_for_vector(&query_vector, limit) {
-                Ok(fragments) => {
-                    let hits = fragments
+                Ok(recall) => {
+                    let hits = recall
+                        .fragments
                         .into_iter()
                         .enumerate()
                         .filter_map(|(index, (h_mem, distance))| {
@@ -634,7 +695,13 @@ impl CuratorServer {
                         source_id: "curator".to_string(),
                         source_kind: "curator",
                         state: federated::FederatedSourceState::Ready,
-                        reason: None,
+                        // Hits that failed h_mem resolution must not vanish
+                        // behind a clean Ready: the failure count rides the
+                        // reason so Ready + result_count 0 cannot read as
+                        // "the curator store is empty".
+                        reason: (recall.resolution_failures > 0).then(|| {
+                            resolution_failure_note(recall.resolution_failures, hits.len())
+                        }),
                         result_count: hits.len(),
                     });
                     batches.push(hkask_memory::RankedSourceBatch {
@@ -875,10 +942,11 @@ impl CuratorServer {
             // return zero fragments.
             let semantic = self.semantic_recall_fragments(&req.query, limit).await;
             match &semantic {
-                Ok(fragments) if !fragments.is_empty() => {
+                Ok(recall) if !recall.fragments.is_empty() => {
                     // Entity-wide — the curator's consolidated knowledge:
                     // every KNN-resolved h_mem regardless of who wrote it.
-                    let entity_wide: Vec<serde_json::Value> = fragments
+                    let entity_wide: Vec<serde_json::Value> = recall
+                        .fragments
                         .iter()
                         .take(limit)
                         .map(|(t, distance)| {
@@ -892,14 +960,16 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    result["entity_wide_fragments"] = json!({
-                        "count": entity_wide.len(),
+                    let entity_wide_count = entity_wide.len();
+                    let mut entity_wide_json = json!({
+                        "count": entity_wide_count,
                         "h_mems": entity_wide,
                     });
 
                     // Perspective-scoped — the curator's own turns: the same
                     // semantic hits filtered to h_mems the curator wrote.
-                    let perspective_scoped: Vec<serde_json::Value> = fragments
+                    let perspective_scoped: Vec<serde_json::Value> = recall
+                        .fragments
                         .iter()
                         .filter(|(t, _)| t.access.perspective == Some(self.webid))
                         .take(limit)
@@ -914,10 +984,23 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    result["perspective_scoped_fragments"] = json!({
-                        "count": perspective_scoped.len(),
+                    let perspective_count = perspective_scoped.len();
+                    let mut perspective_json = json!({
+                        "count": perspective_count,
                         "h_mems": perspective_scoped,
                     });
+
+                    // Hits that failed h_mem resolution must not vanish:
+                    // name the failure count so partial (or fully failed)
+                    // recall reads as degraded, not as missing memories.
+                    if recall.resolution_failures > 0 {
+                        let note =
+                            resolution_failure_note(recall.resolution_failures, entity_wide_count);
+                        entity_wide_json["note"] = json!(note);
+                        perspective_json["note"] = json!(note);
+                    }
+                    result["entity_wide_fragments"] = entity_wide_json;
+                    result["perspective_scoped_fragments"] = perspective_json;
                 }
                 // Degradation, not a silent fallback — surface why semantic
                 // recall is unavailable, then fall back to the exact-entity
@@ -998,15 +1081,26 @@ impl CuratorServer {
                         }
                     }
                 }
-                Ok(_) => {
-                    result["entity_wide_fragments"] = json!({
+                Ok(recall) => {
+                    // Every KNN hit failed to resolve, or none matched. When
+                    // hits failed, bare count:0 scopes would read as "the
+                    // curator has no memory of this" — say resolution failed
+                    // instead (the empty-result-as-success trap).
+                    let mut entity_wide_json = json!({
                         "count": 0,
                         "h_mems": [],
                     });
-                    result["perspective_scoped_fragments"] = json!({
+                    let mut perspective_json = json!({
                         "count": 0,
                         "h_mems": [],
                     });
+                    if recall.resolution_failures > 0 {
+                        let note = resolution_failure_note(recall.resolution_failures, 0);
+                        entity_wide_json["note"] = json!(note);
+                        perspective_json["note"] = json!(note);
+                    }
+                    result["entity_wide_fragments"] = entity_wide_json;
+                    result["perspective_scoped_fragments"] = perspective_json;
                 }
             }
 

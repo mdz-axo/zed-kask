@@ -766,12 +766,25 @@ impl RealMemoryPort {
 
     /// Get the connectedness score for an entity — the total co-occurrence
     /// count across all links. Higher = more connected = more salient.
-    /// Returns 0 when the curator store is unavailable.
+    /// Returns 0 when the curator store is not configured (documented
+    /// default) or when the lookup fails — and a lookup failure is WARNED
+    /// with the entity and error, never silently swallowed: a store
+    /// outage must not read as "no connections" in recall ranking.
     pub fn connectedness(&self, entity: &str) -> u64 {
         self.curator_store
             .get()
             .as_ref()
-            .and_then(|store| store.connectedness(entity).ok())
+            .and_then(|store| match store.connectedness(entity) {
+                Ok(count) => Some(count),
+                Err(error) => {
+                    tracing::warn!(
+                        entity = %entity,
+                        error = %error,
+                        "connectedness lookup failed — ranking as 0"
+                    );
+                    None
+                }
+            })
             .unwrap_or(0)
     }
 
@@ -1193,6 +1206,25 @@ pub(crate) mod tests {
 
     pub(crate) fn in_memory_port() -> RealMemoryPort {
         in_memory_port_with_cadence(0, 0.3)
+    }
+
+    #[test]
+    fn connectedness_surfaces_store_errors_instead_of_silent_zero() {
+        // A configured-but-broken curator store must not read as "no
+        // connections" in recall ranking: the swallow site warns with the
+        // entity and the error. Source-structure pin (the D43
+        // concat!-needle precedent — the test's own source cannot satisfy
+        // it, because the needles exist joined only at runtime).
+        let source = include_str!("memory.rs");
+        let body = source
+            .split(concat!("pub fn connectedne", "ss("))
+            .nth(1)
+            .expect("connectedness exists")
+            .split("pub fn ")
+            .next()
+            .expect("connectedness body ends");
+        assert!(body.contains(concat!("tracing::wa", "rn!")));
+        assert!(body.contains(concat!("lookup fai", "led")));
     }
 
     fn in_memory_port_with_cadence(

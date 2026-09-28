@@ -1,16 +1,17 @@
-# Official FIBO term list — fabrication guard fixture.
+# Q2 Release module manifest follows; every module row is cross-checked against pinned RDF maturity and actual xmlns URI. Provisional and Informative excluded.
+# module	path relative to fibo/	actual RDF XML namespace prefix	ontology IRI
+# Official FIBO Release module inventory and named-constant guard.
+# Source: https://github.com/EDMCouncil/FIBO at Q2 tag commit
+#   f59157fe156e3d91b1c045222d0a7dc06b7d78a2.
+# Each module row below records the source's own owl:Ontology IRI and XML
+# namespace binding; build.rs checks its Release maturity and every pin.
+# AboutFIBOProd imports 152 of the 157 Release modules, omits five Release
+# modules and includes one non-Release module (MarketsIndividuals). Inclusion
+# follows the maturity declaration, not that convenience import list.
+# Named constants below were first checked against master in 2026-08/09;
+# the tests now require every one to occur in the pinned Q2 Release index.
 #
-# Source: EDM Council / OMG, Financial Industry Business Ontology.
-#   Spec: https://spec.edmcouncil.org/fibo/
-#   Repository: https://github.com/EDMCouncil/FIBO (master branch)
-# Fetched: 2026-08-29 (full master tarball; every term below mechanically
-#   confirmed as defined in the listed module's RDF file).
-# Re-verified: 2026-09-20 (master tarball via codeload HEAD; TermStructure
-#   and InterestRate added — IND/Indicators/Indicators.rdf L230,
-#   FND/Accounting/CurrencyAmount.rdf L258).
-#
-# Prefix bindings (module namespaces under
-#   https://spec.edmcouncil.org/fibo/ontology/):
+# Named-constant prefix bindings (complete module bindings follow):
 #   fibo-be-le-cb:    BE/LegalEntities/CorporateBodies/
 #   fibo-sec-sec-id:  SEC/Securities/SecuritiesIdentification/
 #   fibo-sec-sec-ast: SEC/Securities/SecurityAssets/
@@ -21,7 +22,8 @@
 #   fibo-ind-ei-ei:   IND/EconomicIndicators/EconomicIndicators/
 #   fibo-fbc-fi-ip:   FBC/FinancialInstruments/InstrumentPricing/
 #
-# Format: one term per line, TAB-separated: <prefixed term> <defining module>
+# Named constant rows: <prefixed term> TAB <defining module>.
+# Release inventory rows: module TAB <RDF path> TAB <source XML prefix> TAB <ontology IRI>.
 #
 # NOTE: the former `fibo-fbc-fct-ra` (Financial Ratios) module prefix never
 # existed in FIBO — no such file in the repository or its git history. Terms
@@ -43,3 +45,160 @@ fibo-ind-ir-ir:ReferenceInterestRate	IND/InterestRates/InterestRates.rdf
 fibo-ind-ir-ir:InterestRateBenchmark	IND/InterestRates/InterestRates.rdf
 fibo-ind-ind-ind:TermStructure	IND/Indicators/Indicators.rdf
 fibo-fnd-acc-cur:InterestRate	FND/Accounting/CurrencyAmount.rdf
+module	BE/Corporations/Corporations.rdf	fibo-be-corp-corp	https://spec.edmcouncil.org/fibo/ontology/BE/Corporations/Corporations/
+module	BE/FunctionalEntities/FunctionalEntities.rdf	fibo-be-fct-fct	https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/FunctionalEntities/
+module	BE/FunctionalEntities/Publishers.rdf	fibo-be-fct-pub	https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/Publishers/
+module	BE/GovernmentEntities/AsianJurisdiction/CentralAsiaGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-casj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/AsianJurisdiction/CentralAsiaGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/AsianJurisdiction/EasternAsiaGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-easj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/AsianJurisdiction/EasternAsiaGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/AsianJurisdiction/SoutheasternAsiaGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-seasj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/AsianJurisdiction/SoutheasternAsiaGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/AsianJurisdiction/SouthernAsiaGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-sasj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/AsianJurisdiction/SouthernAsiaGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/AsianJurisdiction/WesternAsiaGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-wasj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/AsianJurisdiction/WesternAsiaGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/EUGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-euj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/EUGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/EasternEuropeGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-eeuj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/EasternEuropeGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/NorthernEuropeGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-neuj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/NorthernEuropeGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/SouthernEuropeGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-seuj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/SouthernEuropeGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/UKGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-ukj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/UKGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/EuropeanJurisdiction/WesternEuropeGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-weuj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/EuropeanJurisdiction/WesternEuropeGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/GovernmentEntities.rdf	fibo-be-ge-ge	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/GovernmentEntities/
+module	BE/GovernmentEntities/LatinAmericanJurisdiction/CentralAmericanGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-ctlaj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/LatinAmericanJurisdiction/CentralAmericanGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/LatinAmericanJurisdiction/SouthAmericanGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-saj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/LatinAmericanJurisdiction/SouthAmericanGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/NorthAmericanJurisdiction/CAGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-caj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/NorthAmericanJurisdiction/CAGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/NorthAmericanJurisdiction/CaribbeanGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-cbj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/NorthAmericanJurisdiction/CaribbeanGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/NorthAmericanJurisdiction/MXGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-mxj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/NorthAmericanJurisdiction/MXGovernmentEntitiesAndJurisdictions/
+module	BE/GovernmentEntities/NorthAmericanJurisdiction/USGovernmentEntitiesAndJurisdictions.rdf	fibo-be-ge-usj	https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/NorthAmericanJurisdiction/USGovernmentEntitiesAndJurisdictions/
+module	BE/LegalEntities/CorporateBodies.rdf	fibo-be-le-cb	https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/CorporateBodies/
+module	BE/LegalEntities/FormalBusinessOrganizations.rdf	fibo-be-le-fbo	https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/FormalBusinessOrganizations/
+module	BE/LegalEntities/LEIEntities.rdf	fibo-be-le-lei	https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LEIEntities/
+module	BE/LegalEntities/LegalPersons.rdf	fibo-be-le-lp	https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LegalPersons/
+module	BE/OwnershipAndControl/ControlParties.rdf	fibo-be-oac-cpty	https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/ControlParties/
+module	BE/OwnershipAndControl/CorporateControl.rdf	fibo-be-oac-cctl	https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/CorporateControl/
+module	BE/OwnershipAndControl/CorporateOwnership.rdf	fibo-be-oac-cown	https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/CorporateOwnership/
+module	BE/OwnershipAndControl/Executives.rdf	fibo-be-oac-exec	https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/Executives/
+module	BE/OwnershipAndControl/OwnershipParties.rdf	fibo-be-oac-opty	https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/OwnershipParties/
+module	BE/Partnerships/Partnerships.rdf	fibo-be-ptr-ptr	https://spec.edmcouncil.org/fibo/ontology/BE/Partnerships/Partnerships/
+module	BE/PrivateLimitedCompanies/PrivateLimitedCompanies.rdf	fibo-be-plc-plc	https://spec.edmcouncil.org/fibo/ontology/BE/PrivateLimitedCompanies/PrivateLimitedCompanies/
+module	BE/SoleProprietorships/SoleProprietorships.rdf	fibo-be-sps-sps	https://spec.edmcouncil.org/fibo/ontology/BE/SoleProprietorships/SoleProprietorships/
+module	BE/Trusts/Trusts.rdf	fibo-be-tr-tr	https://spec.edmcouncil.org/fibo/ontology/BE/Trusts/Trusts/
+module	CAE/CorporateEvents/CorporateActions.rdf	fibo-cae-ce-act	https://spec.edmcouncil.org/fibo/ontology/CAE/CorporateEvents/CorporateActions/
+module	DER/CreditDerivatives/CreditDefaultSwaps.rdf	fibo-der-cr-cds	https://spec.edmcouncil.org/fibo/ontology/DER/CreditDerivatives/CreditDefaultSwaps/
+module	DER/DerivativesContracts/CommoditiesContracts.rdf	fibo-der-drc-comm	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/CommoditiesContracts/
+module	DER/DerivativesContracts/CurrencyContracts.rdf	fibo-der-drc-cur	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/CurrencyContracts/
+module	DER/DerivativesContracts/DerivativesBasics.rdf	fibo-der-drc-bsc	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/DerivativesBasics/
+module	DER/DerivativesContracts/DerivativesMasterAgreements.rdf	fibo-der-drc-ma	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/DerivativesMasterAgreements/
+module	DER/DerivativesContracts/ExoticOptions.rdf	fibo-der-drc-exo	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/ExoticOptions/
+module	DER/DerivativesContracts/FuturesAndForwards.rdf	fibo-der-drc-ff	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/FuturesAndForwards/
+module	DER/DerivativesContracts/Options.rdf	fibo-der-drc-opt	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/Options/
+module	DER/DerivativesContracts/RightsAndWarrants.rdf	fibo-der-drc-raw	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/RightsAndWarrants/
+module	DER/DerivativesContracts/StructuredInstruments.rdf	fibo-der-drc-str	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/StructuredInstruments/
+module	DER/DerivativesContracts/Swaps.rdf	fibo-der-drc-swp	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/Swaps/
+module	DER/DerivativesContracts/SwapsIndividuals.rdf	fibo-der-drc-swpind	https://spec.edmcouncil.org/fibo/ontology/DER/DerivativesContracts/SwapsIndividuals/
+module	DER/RateDerivatives/IRSwaps.rdf	fibo-der-rtd-irswp	https://spec.edmcouncil.org/fibo/ontology/DER/RateDerivatives/IRSwaps/
+module	DER/RateDerivatives/RateDerivatives.rdf	fibo-der-rtd-rtd	https://spec.edmcouncil.org/fibo/ontology/DER/RateDerivatives/RateDerivatives/
+module	DER/SecurityBasedDerivatives/EquitySwaps.rdf	fibo-der-sbd-eqs	https://spec.edmcouncil.org/fibo/ontology/DER/SecurityBasedDerivatives/EquitySwaps/
+module	DER/SecurityBasedDerivatives/SecurityBasedDerivatives.rdf	fibo-der-sbd-sbd	https://spec.edmcouncil.org/fibo/ontology/DER/SecurityBasedDerivatives/SecurityBasedDerivatives/
+module	EXMP/LegalEntities/DowJonesIndustrialAverageCompanies.rdf	fibo-exmp-le-djiac	https://spec.edmcouncil.org/fibo/ontology/EXMP/LegalEntities/DowJonesIndustrialAverageCompanies/
+module	EXMP/LegalEntities/DowJonesIndustrialAverageExecutives.rdf	fibo-exmp-le-djiaex	https://spec.edmcouncil.org/fibo/ontology/EXMP/LegalEntities/DowJonesIndustrialAverageExecutives/
+module	EXMP/LegalEntities/FinancialInstitutionExamples.rdf	fibo-exmp-le-finst	https://spec.edmcouncil.org/fibo/ontology/EXMP/LegalEntities/FinancialInstitutionExamples/
+module	EXMP/LegalEntities/MarketsAndExchangesExamples.rdf	fibo-exmp-le-mktex	https://spec.edmcouncil.org/fibo/ontology/EXMP/LegalEntities/MarketsAndExchangesExamples/
+module	EXMP/Securities/EquitiesExamples.rdf	fibo-exmp-sec-eqex	https://spec.edmcouncil.org/fibo/ontology/EXMP/Securities/EquitiesExamples/
+module	EXMP/Securities/EquityIndexExamples.rdf	fibo-exmp-sec-eqind	https://spec.edmcouncil.org/fibo/ontology/EXMP/Securities/EquityIndexExamples/
+module	EXMP/Securities/IRSwapExamples.rdf	fibo-exmp-sec-irsex	https://spec.edmcouncil.org/fibo/ontology/EXMP/Securities/IRSwapExamples/
+module	FBC/DebtAndEquities/CreditEvents.rdf	fibo-fbc-dae-cre	https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/CreditEvents/
+module	FBC/DebtAndEquities/Debt.rdf	fibo-fbc-dae-dbt	https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/
+module	FBC/DebtAndEquities/Guaranty.rdf	fibo-fbc-dae-gty	https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Guaranty/
+module	FBC/FinancialInstruments/FinancialInstruments.rdf	fibo-fbc-fi-fi	https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/
+module	FBC/FinancialInstruments/InstrumentPricing.rdf	fibo-fbc-fi-ip	https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/InstrumentPricing/
+module	FBC/FinancialInstruments/Settlement.rdf	fibo-fbc-fi-stl	https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/Settlement/
+module	FBC/FunctionalEntities/BusinessCenters.rdf	fibo-fbc-fct-bc	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/BusinessCenters/
+module	FBC/FunctionalEntities/BusinessCentersIndividuals.rdf	fibo-fbc-fct-bci	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/BusinessCentersIndividuals/
+module	FBC/FunctionalEntities/BusinessRegistries.rdf	fibo-fbc-fct-breg	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/BusinessRegistries/
+module	FBC/FunctionalEntities/CommercialRegistrationAuthorities.rdf	fibo-fbc-fct-cra	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/CommercialRegistrationAuthorities/
+module	FBC/FunctionalEntities/EuropeanEntities/EUFinancialServicesEntities.rdf	fibo-fbc-fct-eufse	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/EuropeanEntities/EUFinancialServicesEntities/
+module	FBC/FunctionalEntities/EuropeanEntities/EURegulatoryAgencies.rdf	fibo-fbc-fct-eurga	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/EuropeanEntities/EURegulatoryAgencies/
+module	FBC/FunctionalEntities/EuropeanEntities/EuropeanFinancialServicesEntitiesIndividuals.rdf	fibo-fbc-fct-eufseind	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/EuropeanEntities/EuropeanFinancialServicesEntitiesIndividuals/
+module	FBC/FunctionalEntities/FinancialServicesEntities.rdf	fibo-fbc-fct-fse	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/FinancialServicesEntities/
+module	FBC/FunctionalEntities/InternationalRegistriesAndAuthorities.rdf	fibo-fbc-fct-ireg	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/InternationalRegistriesAndAuthorities/
+module	FBC/FunctionalEntities/Markets.rdf	fibo-fbc-fct-mkt	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/Markets/
+module	FBC/FunctionalEntities/NorthAmericanEntities/CAFinancialServicesEntities.rdf	fibo-fbc-fct-cafse	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/NorthAmericanEntities/CAFinancialServicesEntities/
+module	FBC/FunctionalEntities/NorthAmericanEntities/CARegulatoryAgencies.rdf	fibo-fbc-fct-cajrga	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/NorthAmericanEntities/CARegulatoryAgencies/
+module	FBC/FunctionalEntities/NorthAmericanEntities/USFinancialServicesEntities.rdf	fibo-fbc-fct-usfse	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/NorthAmericanEntities/USFinancialServicesEntities/
+module	FBC/FunctionalEntities/NorthAmericanEntities/USRegulatoryAgencies.rdf	fibo-fbc-fct-usjrga	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/NorthAmericanEntities/USRegulatoryAgencies/
+module	FBC/FunctionalEntities/RegulatoryAgencies.rdf	fibo-fbc-fct-rga	https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/RegulatoryAgencies/
+module	FBC/ProductsAndServices/ClientsAndAccounts.rdf	fibo-fbc-pas-caa	https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/
+module	FBC/ProductsAndServices/FinancialProductsAndServices.rdf	fibo-fbc-pas-fpas	https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/FinancialProductsAndServices/
+module	FND/Accounting/AccountingEquity.rdf	fibo-fnd-acc-aeq	https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/AccountingEquity/
+module	FND/Accounting/CurrencyAmount.rdf	fibo-fnd-acc-cur	https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/
+module	FND/Accounting/ISO4217-CurrencyCodes.rdf	fibo-fnd-acc-4217	https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/ISO4217-CurrencyCodes/
+module	FND/AgentsAndPeople/Agents.rdf	fibo-fnd-aap-agt	https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/Agents/
+module	FND/AgentsAndPeople/People.rdf	fibo-fnd-aap-ppl	https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/
+module	FND/Agreements/Agreements.rdf	fibo-fnd-agr-agr	https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Agreements/
+module	FND/Agreements/Contracts.rdf	fibo-fnd-agr-ctr	https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/
+module	FND/Arrangements/Arrangements.rdf	fibo-fnd-arr-arr	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Arrangements/
+module	FND/Arrangements/Assessments.rdf	fibo-fnd-arr-asmt	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Assessments/
+module	FND/Arrangements/ClassificationSchemes.rdf	fibo-fnd-arr-cls	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/ClassificationSchemes/
+module	FND/Arrangements/Documents.rdf	fibo-fnd-arr-doc	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Documents/
+module	FND/Arrangements/IdentifiersAndIndices.rdf	fibo-fnd-arr-id	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/IdentifiersAndIndices/
+module	FND/Arrangements/Lifecycles.rdf	fibo-fnd-arr-lif	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Lifecycles/
+module	FND/Arrangements/Ratings.rdf	fibo-fnd-arr-rt	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Ratings/
+module	FND/Arrangements/Reporting.rdf	fibo-fnd-arr-rep	https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Reporting/
+module	FND/DatesAndTimes/BusinessDates.rdf	fibo-fnd-dt-bd	https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/BusinessDates/
+module	FND/DatesAndTimes/FinancialDates.rdf	fibo-fnd-dt-fd	https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/FinancialDates/
+module	FND/DatesAndTimes/Occurrences.rdf	fibo-fnd-dt-oc	https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/Occurrences/
+module	FND/GoalsAndObjectives/Objectives.rdf	fibo-fnd-gao-obj	https://spec.edmcouncil.org/fibo/ontology/FND/GoalsAndObjectives/Objectives/
+module	FND/Law/LegalCapacity.rdf	fibo-fnd-law-lcap	https://spec.edmcouncil.org/fibo/ontology/FND/Law/LegalCapacity/
+module	FND/Law/LegalCore.rdf	fibo-fnd-law-cor	https://spec.edmcouncil.org/fibo/ontology/FND/Law/LegalCore/
+module	FND/Organizations/FormalOrganizations.rdf	fibo-fnd-org-fm	https://spec.edmcouncil.org/fibo/ontology/FND/Organizations/FormalOrganizations/
+module	FND/OwnershipAndControl/Control.rdf	fibo-fnd-oac-ctl	https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Control/
+module	FND/OwnershipAndControl/Ownership.rdf	fibo-fnd-oac-own	https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Ownership/
+module	FND/OwnershipAndControl/OwnershipAndControl.rdf	fibo-fnd-oac-oac	https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/OwnershipAndControl/
+module	FND/Parties/Parties.rdf	fibo-fnd-pty-pty	https://spec.edmcouncil.org/fibo/ontology/FND/Parties/Parties/
+module	FND/Places/Addresses.rdf	fibo-fnd-plc-adr	https://spec.edmcouncil.org/fibo/ontology/FND/Places/Addresses/
+module	FND/Places/Facilities.rdf	fibo-fnd-plc-fac	https://spec.edmcouncil.org/fibo/ontology/FND/Places/Facilities/
+module	FND/Places/NorthAmerica/USPostalServiceAddresses.rdf	fibo-fnd-plc-uspsa	https://spec.edmcouncil.org/fibo/ontology/FND/Places/NorthAmerica/USPostalServiceAddresses/
+module	FND/Places/NorthAmerica/USPostalServiceAddressesIndividuals.rdf	fibo-fnd-plc-uspsai	https://spec.edmcouncil.org/fibo/ontology/FND/Places/NorthAmerica/USPostalServiceAddressesIndividuals/
+module	FND/Places/RealProperty.rdf	fibo-fnd-plc-rp	https://spec.edmcouncil.org/fibo/ontology/FND/Places/RealProperty/
+module	FND/Places/VirtualPlaces.rdf	fibo-fnd-plc-vrt	https://spec.edmcouncil.org/fibo/ontology/FND/Places/VirtualPlaces/
+module	FND/ProductsAndServices/PaymentsAndSchedules.rdf	fibo-fnd-pas-psch	https://spec.edmcouncil.org/fibo/ontology/FND/ProductsAndServices/PaymentsAndSchedules/
+module	FND/ProductsAndServices/ProductsAndServices.rdf	fibo-fnd-pas-pas	https://spec.edmcouncil.org/fibo/ontology/FND/ProductsAndServices/ProductsAndServices/
+module	FND/Relations/Relations.rdf	fibo-fnd-rel-rel	https://spec.edmcouncil.org/fibo/ontology/FND/Relations/Relations/
+module	FND/Utilities/Analytics.rdf	fibo-fnd-utl-alx	https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/Analytics/
+module	FND/Utilities/AnnotationVocabulary.rdf	fibo-fnd-utl-av	https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/
+module	IND/EconomicIndicators/EconomicIndicators.rdf	fibo-ind-ei-ei	https://spec.edmcouncil.org/fibo/ontology/IND/EconomicIndicators/EconomicIndicators/
+module	IND/EconomicIndicators/NorthAmericanIndicators/CAEconomicIndicators.rdf	fibo-ind-ei-caei	https://spec.edmcouncil.org/fibo/ontology/IND/EconomicIndicators/NorthAmericanIndicators/CAEconomicIndicators/
+module	IND/EconomicIndicators/NorthAmericanIndicators/USEconomicIndicators.rdf	fibo-ind-ei-usei	https://spec.edmcouncil.org/fibo/ontology/IND/EconomicIndicators/NorthAmericanIndicators/USEconomicIndicators/
+module	IND/ForeignExchange/ForeignExchange.rdf	fibo-ind-fx-fx	https://spec.edmcouncil.org/fibo/ontology/IND/ForeignExchange/ForeignExchange/
+module	IND/Indicators/Indicators.rdf	fibo-ind-ind-ind	https://spec.edmcouncil.org/fibo/ontology/IND/Indicators/Indicators/
+module	IND/InterestRates/CommonInterestRates.rdf	fibo-ind-ir-cm	https://spec.edmcouncil.org/fibo/ontology/IND/InterestRates/CommonInterestRates/
+module	IND/InterestRates/InterestRates.rdf	fibo-ind-ir-ir	https://spec.edmcouncil.org/fibo/ontology/IND/InterestRates/InterestRates/
+module	IND/InterestRates/MarketDataProviders.rdf	fibo-ind-ir-mdp	https://spec.edmcouncil.org/fibo/ontology/IND/InterestRates/MarketDataProviders/
+module	IND/MarketIndices/BasketIndices.rdf	fibo-ind-mkt-bas	https://spec.edmcouncil.org/fibo/ontology/IND/MarketIndices/BasketIndices/
+module	LOAN/LoansGeneral/Loans.rdf	fibo-loan-ln-ln	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/Loans/
+module	LOAN/LoansSpecific/CardAccounts.rdf	fibo-loan-spc-crd	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/CardAccounts/
+module	LOAN/LoansSpecific/CommercialLoans.rdf	fibo-loan-spc-com	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/CommercialLoans/
+module	LOAN/LoansSpecific/ConsumerLoans.rdf	fibo-loan-spc-cns	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/ConsumerLoans/
+module	LOAN/LoansSpecific/GreenLoans.rdf	fibo-loan-spc-grn	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/GreenLoans/
+module	LOAN/LoansSpecific/StudentLoans.rdf	fibo-loan-spc-stu	https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/StudentLoans/
+module	LOAN/RealEstateLoans/Mortgages.rdf	fibo-loan-reln-mtg	https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/Mortgages/
+module	SEC/Debt/AssetBackedSecurities.rdf	fibo-sec-dbt-abs	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/AssetBackedSecurities/
+module	SEC/Debt/Bonds.rdf	fibo-sec-dbt-bnd	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/Bonds/
+module	SEC/Debt/DebtInstruments.rdf	fibo-sec-dbt-dbti	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/DebtInstruments/
+module	SEC/Debt/DistributedLoans.rdf	fibo-sec-dbt-dln	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/DistributedLoans/
+module	SEC/Debt/ExerciseConventions.rdf	fibo-sec-dbt-ex	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/ExerciseConventions/
+module	SEC/Debt/PoolBackedSecurities.rdf	fibo-sec-dbt-pbs	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/PoolBackedSecurities/
+module	SEC/Debt/TradedShortTermDebt.rdf	fibo-sec-dbt-tstd	https://spec.edmcouncil.org/fibo/ontology/SEC/Debt/TradedShortTermDebt/
+module	SEC/Equities/DepositaryReceipts.rdf	fibo-sec-eq-dr	https://spec.edmcouncil.org/fibo/ontology/SEC/Equities/DepositaryReceipts/
+module	SEC/Equities/EquityCFIClassificationIndividuals.rdf	fibo-sec-eq-10962	https://spec.edmcouncil.org/fibo/ontology/SEC/Equities/EquityCFIClassificationIndividuals/
+module	SEC/Equities/EquityInstruments.rdf	fibo-sec-eq-eq	https://spec.edmcouncil.org/fibo/ontology/SEC/Equities/EquityInstruments/
+module	SEC/Funds/Funds.rdf	fibo-sec-fund-fund	https://spec.edmcouncil.org/fibo/ontology/SEC/Funds/Funds/
+module	SEC/Securities/Baskets.rdf	fibo-sec-sec-bsk	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/Baskets/
+module	SEC/Securities/EuropeanSecurities/EUSecuritiesRestrictions.rdf	fibo-sec-sec-eurst	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/EuropeanSecurities/EUSecuritiesRestrictions/
+module	SEC/Securities/NorthAmericanSecurities/USSecuritiesRestrictions.rdf	fibo-sec-sec-usrst	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/NorthAmericanSecurities/USSecuritiesRestrictions/
+module	SEC/Securities/ParametricSchedules.rdf	fibo-sec-sec-sch	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/ParametricSchedules/
+module	SEC/Securities/Pools.rdf	fibo-sec-sec-pls	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/Pools/
+module	SEC/Securities/SecuritiesClassification.rdf	fibo-sec-sec-cls	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesClassification/
+module	SEC/Securities/SecuritiesIdentification.rdf	fibo-sec-sec-id	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesIdentification/
+module	SEC/Securities/SecuritiesIdentificationIndividuals.rdf	fibo-sec-sec-idind	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesIdentificationIndividuals/
+module	SEC/Securities/SecuritiesIssuance.rdf	fibo-sec-sec-iss	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesIssuance/
+module	SEC/Securities/SecuritiesListings.rdf	fibo-sec-sec-lst	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesListings/
+module	SEC/Securities/SecuritiesRestrictions.rdf	fibo-sec-sec-rst	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecuritiesRestrictions/
+module	SEC/Securities/SecurityAssets.rdf	fibo-sec-sec-ast	https://spec.edmcouncil.org/fibo/ontology/SEC/Securities/SecurityAssets/

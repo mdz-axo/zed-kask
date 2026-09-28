@@ -2125,10 +2125,10 @@ fn main() {
                 // loaded. The non-secret email fields are set as process env
                 // vars so `send_email()` (called from `tokio::spawn` inside
                 // `CuratorAlertEmailSink::send_alert_email`) can read them.
-                // The SMTP password is read from the keychain by
-                // `build_mcp_server_env` for MCP server child processes;
-                // for the main-process alert sink we set `HKASK_SMTP_PASSWORD`
-                // from the keychain here too.
+                // The alert sink runs in the editor process, so its SMTP
+                // password is read from the keychain and set in that process's
+                // `HKASK_SMTP_PASSWORD` environment here. MCP server children
+                // do not receive this credential.
                 //
                 // When email is not configured (no `smtp_username`), the sink
                 // is `None` — the cybernetics loop silently skips the email

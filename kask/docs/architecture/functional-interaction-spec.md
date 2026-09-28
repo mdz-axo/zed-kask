@@ -271,26 +271,38 @@ evidence.
 The emergent properties of the dyad arrive in order: first collaboration,
 then learning, then trust.
 
-| Level | Name | What the dyad does | Status |
+| Level | Name | Curator interaction contract | Status |
 |---|---|---|---|
-| 1 | Control | The user is controller and regulator; the Curator proposes and every decision waits for the user | Available |
-| 2 | Collaboration | Shared understanding and shared solutions; decisions reached jointly and recorded, e.g. in the `algedonic-review` gemba walk | Available (default) |
-| 3 | Learning collaboration | Level 2 plus bidirectional learning: each side challenges the other with evidence, disagreements are recorded, and each side learns from the other | Available |
-| 4 | Trust and delegation | Level 3 plus protected expectations, so each side can delegate to the other | Future release |
+| 1 | Control | The user is controller and regulator. The Curator presents proposals with evidence and consequences; proposals, directives, skill changes and algedonic-review decisions wait for the user's explicit decision, not standing grants. Recording an observed learning signal is not a decision. | Available |
+| 2 | Collaboration | The Curator interprets the user's goal for correction, recommends with reasons, handles technical decisions with their functional consequences, and works with the user on functional decisions. In `algedonic-review`, they record joint reasoning on the card; a grant is usable only when recorded there. | Available (default) |
+| 3 | Learning collaboration | Level 2 plus evidenced challenges in both directions: the Curator names contrary evidence and what would change its view, invites correction, makes uncertainty and calibration visible, and names what each side learned. It records disagreements and resolutions on a card or in evidence-backed memory; proposed method changes follow `skill-maintenance` or `therapy`. | Available |
+| 4 | Trust and delegation | Level 3 plus protected expectations and mutual delegation. Neither its models nor its delegation infrastructure exists yet. | Future release; not selectable |
 
-**Implementation.** The setting is `kask.curator.interaction_mode`
-(`control` / `collaboration` / `learning_collaboration`), edited in
-Settings > Kask > Curator. `NativeAgent::new_session` reads it for each new
-Curator thread and appends the level's guidance from
-`interaction_mode_context` (`crates/agent/src/curator_agent_server.rs`) to
-the Curator overlay, so a change applies to the next Curator thread. Pinned by
-`test_curator_session_carries_the_users_interaction_mode` (`agent.rs`) and
+**Setting and prompt effect.** The user selects `kask.curator.interaction_mode`
+(`control` / `collaboration` / `learning_collaboration`) in Settings > Kask >
+Curator. The default is `collaboration` (Level 2). `NativeAgent::new_session`
+reads the setting for each *new Curator thread* and appends the matching
+`interaction_mode_context` from `crates/agent/src/curator_agent_server.rs` to
+the Curator overlay. `Thread::render_system_prompt` renders that overlay in
+the system prompt's Session Context; it does not replace the common agent
+prompt. Changing the setting does not rewrite existing threads or alter
+non-Curator sessions. The user alone changes the setting; at Level 3 the
+Curator may argue for a different level with evidence, but cannot set it.
+
+**Boundary and verification.** These are instructions for conduct, not an
+authorization boundary, an automatic learning guarantee, or new tool rights.
+Existing grants and permissions remain in force. Levels 1–3 can use existing
+algedonic-review cards and recorded grants, kanban goal calibration,
+`memory_insert` (which requires an evidence h_mem), `skill-maintenance` and
+`therapy`; the prompt cannot guarantee that the model follows the guidance or
+that a durable lesson is recorded. `test_curator_session_carries_the_users_interaction_mode`
+(`crates/agent/src/agent.rs`) checks default and next-thread selection, and
 `curator_interaction_mode_is_read_from_the_user_setting`
-(`kask/crates/kask_bridge/src/settings.rs`). Levels 1–3 use affordances that
-exist today: algedonic-review cards and recorded grants, kanban goals with
-Brier-scored predictions, `memory_insert`, `skill-maintenance` and `therapy`.
-The guidance is prompt-level: it shapes the Curator's conduct but is not an
-authorization boundary.
+(`kask/crates/kask_bridge/src/settings.rs`) checks the setting path. A runtime
+behavior check requires a new Curator thread: at Level 3, give it a premise
+with contrary evidence, challenge its reasoning, and observe whether it
+responds specifically without claiming unsupported learning or acting under
+an unrecorded grant.
 
 **Protected expectations (Level 4, future).** The user holds an internal
 model that predicts how the Curator behaves in a given context, and the

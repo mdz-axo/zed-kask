@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-24
+last_updated: 2026-09-27
 version: "0.39.3"
 status: "Active"
 domain: "Composition"
@@ -186,6 +186,16 @@ Providers, find the provider, and add models via its configuration sub-page.
 | `algedonic_threshold` | `f64` | `0.8` | Algedonic signal threshold (0.0–1.0) |
 | `interaction_mode` | `CuratorInteractionMode` | `collaboration` | User–Curator dyad level, set only by the user: `control` (Level 1), `collaboration` (Level 2), `learning_collaboration` (Level 3). Read per new Curator thread; see `architecture/functional-interaction-spec.md` §9 |
 | `email` | `KaskCuratorEmailSettings` | `Default` | Outbound algedonic alerts via MXroute |
+
+Interaction mode adds level-specific guidance to the **system prompt's
+Session Context** for each new Curator thread; it does not replace the shared
+agent prompt, change an existing thread, grant tool rights, or enforce a
+permission boundary. Level 1 asks Curator to wait for explicit decisions on
+proposals; Level 2 (default) asks it to work toward and record shared decisions;
+Level 3 also asks both sides to challenge and learn from each other with
+evidence. Level 4 (trust and delegation) is a future design, not a setting.
+The behavior contract and its limits are specified in
+[Functional Interaction Specification §9](../architecture/functional-interaction-spec.md#9-the-usercurator-dyad-and-its-levels).
 
 ### Curator Email (`KaskCuratorEmailSettings`)
 

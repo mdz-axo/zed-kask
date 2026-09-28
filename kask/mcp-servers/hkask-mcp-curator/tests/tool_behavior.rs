@@ -425,6 +425,93 @@ async fn semantic_search_degrades_to_entity_exact_with_note() {
     );
 }
 
+/// KNN-orphan trap: an embedding stored under an entity with no h_mem is a
+/// hit that fails resolution. When EVERY hit fails, the result must NOT be
+/// a bare count:0 — that reads as "genuinely no similar memories" (the
+/// empty-result-as-success trap). The note must name the failures.
+#[tokio::test]
+async fn semantic_search_all_hits_failing_resolution_is_not_reported_as_empty() {
+    let (server, memory) = make_server_with_embeddings();
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding("curator:thread:orphaned-hit", &vector, "test-model", None)
+        .expect("seed orphan embedding (no h_mem under the entity)");
+
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    assert_eq!(
+        response["mode"].as_str(),
+        Some("semantic"),
+        "the semantic leg ran (embed + KNN found the orphan) — got: {response}",
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(0),
+        "no hit resolved to an h_mem — got: {response}",
+    );
+    assert!(
+        response["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("1 semantic hits failed h_mem resolution")
+                && n.contains("not empty")),
+        "an all-hits-failed run must say resolution failed, not imply an empty store — got: {response}",
+    );
+}
+
+/// A run where SOME hits resolve and some fail must still surface the
+/// failure count — partial results must not mask the degraded recall.
+#[tokio::test]
+async fn semantic_search_partial_resolution_failure_notes_degradation() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "curator:thread:partial-live";
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        "turn",
+        serde_json::Value::String("live turn content".to_string()),
+        WebID::new(),
+    );
+    memory.store(h_mem).expect("seed h_mem");
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(entity, &vector, "test-model", None)
+        .expect("seed live embedding");
+    memory
+        .store_embedding("curator:thread:partial-orphan", &vector, "test-model", None)
+        .expect("seed orphan embedding");
+
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(1),
+        "the live hit must still resolve — got: {response}",
+    );
+    assert!(
+        response["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("1 semantic hits failed h_mem resolution")),
+        "the failed hit must be named alongside the partial results — got: {response}",
+    );
+}
+
 /// `curator_consult` with a natural-language question must return semantic
 /// fragments. Before the fix, both consult scopes did exact-entity lookup on
 /// the raw question text — every consult returned zero fragments, which is
@@ -476,6 +563,96 @@ async fn consult_returns_semantic_fragments_for_question() {
             .is_some_and(|v| v.contains("frobnicator")),
         "the consulted fragment must be the seeded turn — got: {response}",
     );
+}
+
+/// Consult twin of the KNN-orphan trap: when every semantic hit fails
+/// resolution, both scopes must say resolution failed — a bare count:0
+/// per scope reads as "the curator has no memory of this".
+#[tokio::test]
+async fn consult_all_hits_failing_resolution_is_not_reported_as_empty() {
+    let (server, memory) = make_server_with_embeddings();
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding("curator:thread:consult-orphan", &vector, "test-model", None)
+        .expect("seed orphan embedding (no h_mem under the entity)");
+
+    let response = parse(
+        &server
+            .curator_consult(Parameters(CuratorConsultRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    for scope in ["entity_wide_fragments", "perspective_scoped_fragments"] {
+        assert_eq!(
+            response[scope]["count"].as_u64(),
+            Some(0),
+            "{scope}: no hit resolved — got: {response}",
+        );
+        assert!(
+            response[scope]["note"]
+                .as_str()
+                .is_some_and(|n| n.contains("1 semantic hits failed h_mem resolution")
+                    && n.contains("not empty")),
+            "{scope}: an all-hits-failed consult must say resolution failed, not imply an empty store — got: {response}",
+        );
+    }
+}
+
+/// Consult with partial resolution: the resolved scope results must carry
+/// the failure count for the hits that did not resolve.
+#[tokio::test]
+async fn consult_partial_resolution_failure_notes_degradation() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "curator:thread:consult-partial-live";
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        "turn",
+        serde_json::Value::String("live consult turn".to_string()),
+        WebID::new(),
+    );
+    memory.store(h_mem).expect("seed h_mem");
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(entity, &vector, "test-model", None)
+        .expect("seed live embedding");
+    memory
+        .store_embedding(
+            "curator:thread:consult-partial-orphan",
+            &vector,
+            "test-model",
+            None,
+        )
+        .expect("seed orphan embedding");
+
+    let response = parse(
+        &server
+            .curator_consult(Parameters(CuratorConsultRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    assert_eq!(
+        response["entity_wide_fragments"]["count"].as_u64(),
+        Some(1),
+        "the live hit must still resolve — got: {response}",
+    );
+    for scope in ["entity_wide_fragments", "perspective_scoped_fragments"] {
+        assert!(
+            response[scope]["note"]
+                .as_str()
+                .is_some_and(|n| n.contains("1 semantic hits failed h_mem resolution")),
+            "{scope}: the failed hit must be named alongside the partial results — got: {response}",
+        );
+    }
 }
 
 // ── Memory distillation — evidence-grounded insert ─────────────────────
@@ -2159,5 +2336,57 @@ async fn federated_search_surfaces_unconfigured_source_with_curator_results() {
         response["sources"][1]["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("not configured"))
+    );
+}
+
+/// Federated twin of the KNN-orphan trap: when every curator hit fails
+/// resolution, the curator source status must stay Ready (the leg ran)
+/// but carry the failure count in its reason — Ready + result_count 0 +
+/// no reason reads as "the curator store is empty".
+#[tokio::test]
+async fn federated_search_ready_path_carries_resolution_failure_count() {
+    let (server, memory) = make_server_with_embeddings();
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    memory
+        .store_embedding(
+            "curator:thread:federated-orphan",
+            &vector,
+            "test-model",
+            None,
+        )
+        .expect("seed orphan embedding (no h_mem under the entity)");
+
+    let response = parse(
+        &server
+            .curator_federated_search(Parameters(FederatedSearchRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("tool ok"),
+    );
+
+    let curator_status = response["sources"]
+        .as_array()
+        .unwrap_or_else(|| panic!("sources list missing — got: {response}"))
+        .iter()
+        .find(|status| status["source_id"] == "curator")
+        .cloned()
+        .unwrap_or_else(|| panic!("curator source status missing — got: {response}"));
+    assert_eq!(
+        curator_status["state"], "ready",
+        "the curator leg ran — got: {response}",
+    );
+    assert_eq!(
+        curator_status["result_count"].as_u64(),
+        Some(0),
+        "no hit resolved to an h_mem — got: {response}",
+    );
+    assert!(
+        curator_status["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("1 semantic hits failed h_mem resolution")),
+        "the Ready status must carry the failure count — got: {response}",
     );
 }

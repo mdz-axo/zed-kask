@@ -138,7 +138,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `coding-guidelines` | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution |
 | `deep-module` | Module design via Ousterhout's deletion test and interface minimalism |
 | `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
-| `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance |
+| `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance; route computation steps to deterministic or probabilistic machines (D/P labelling, P8.4) |
 | `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |
 | `falsifiability` | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals |
 | `metacognition` | Improvement-Kata self-reflection: grasp, target, predict, experiment (including branching inquiry with delegation), measure the gap; predictions recorded for operator scoring |

@@ -47,6 +47,53 @@ mod assess_tiers {
     pub const RECOMMENDATION_THRESHOLD: f64 = 0.6;
 }
 
+/// Names of the seven quantitative metrics the caller did not report, in
+/// `AssessInput` declaration order.
+fn unreported_metric_names(input: &AssessInput) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if input.perspective_count.is_none() {
+        missing.push("perspective_count");
+    }
+    if input.disagreement_score.is_none() {
+        missing.push("disagreement_score");
+    }
+    if input.event_count.is_none() {
+        missing.push("event_count");
+    }
+    if input.events_with_deps.is_none() {
+        missing.push("events_with_dependencies");
+    }
+    if input.strategies_generated.is_none() {
+        missing.push("strategies_generated");
+    }
+    if input.strategies_implemented.is_none() {
+        missing.push("strategies_implemented");
+    }
+    if input.has_early_warning_indicators.is_none() {
+        missing.push("has_early_warning_indicators");
+    }
+    missing
+}
+
+/// The subset of `dependent` metrics the caller did not report, in the order
+/// given. Empty when everything the phase needs was reported.
+fn unreported_subset(unreported: &[&'static str], dependent: &[&'static str]) -> Vec<&'static str> {
+    dependent
+        .iter()
+        .copied()
+        .filter(|name| unreported.contains(name))
+        .collect()
+}
+
+/// The gap text for a phase withheld because its dependent metrics were not
+/// reported: names the missing metrics so the caller knows what to supply.
+fn insufficient_data_gap(missing: &[&str]) -> String {
+    format!(
+        "Score withheld — insufficient data: {} not reported by the caller",
+        missing.join(", ")
+    )
+}
+
 /// Assess a scenario project across Chermack's five performance phases.
 ///
 /// Evaluates whether the scenario project was worth doing — not just
@@ -54,125 +101,194 @@ mod assess_tiers {
 /// (Brier scores, disagreement, calibration) with qualitative assessment
 /// of preparation, exploration, implementation, and learning.
 ///
+/// A quantitative metric the caller did not report is not a zero
+/// measurement: the phase whose score depends on it is withheld as
+/// insufficient data (null score + a gap naming the metric), the output
+/// names every unreported metric, and the overall score averages only the
+/// phases with reported data.
+///
 /// Reference: Chermack, T.J. (2011). Scenario Planning in Organizations:
 /// How to Create, Use, and Assess Scenarios. Berrett-Koehler.
 pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
     let project_id = input.project_id;
     let subject = input.subject;
-    let perspective_count = input.perspective_count;
-    let disagreement_score = input.disagreement_score;
-    let event_count = input.event_count;
-    let events_with_deps = input.events_with_deps;
-    let calibration_curve = input.calibration_curve;
-    let strategies_generated = input.strategies_generated;
-    let strategies_implemented = input.strategies_implemented;
     let learning_events = &input.learning_events;
-    let has_early_warning_indicators = input.has_early_warning_indicators;
-    // ── Phase 1: Preparation ──────────────────────────────────────
+    let calibration_curve = input.calibration_curve;
+    let unreported = unreported_metric_names(input);
+
+    // ── Phase 1: Preparation ──────────────────────────────────
     // (Chermack, Ch. 5): Scope clarity, stakeholder engagement, resource allocation
-    let prep_score = if perspective_count >= assess_tiers::PREP_PERSPECTIVE_HIGH {
-        assess_tiers::PREP_STRONG
-    } else if perspective_count >= 2 {
-        0.6
-    } else {
-        0.3
+    let (prep_score, prep_strengths, prep_gaps) = match input.perspective_count {
+        Some(perspective_count) => {
+            let score = if perspective_count >= assess_tiers::PREP_PERSPECTIVE_HIGH {
+                assess_tiers::PREP_STRONG
+            } else if perspective_count >= 2 {
+                0.6
+            } else {
+                0.3
+            };
+            let mut strengths = Vec::new();
+            let mut gaps = Vec::new();
+            if perspective_count >= 3 {
+                strengths.push("Multiple perspectives engaged".into());
+            } else if perspective_count == 0 {
+                gaps.push(
+                    "No perspectives recorded — project may lack stakeholder engagement (Chermack Phase 1)"
+                        .into(),
+                );
+            } else {
+                gaps.push(format!("Only {} perspective(s) — consider engaging more diverse viewpoints (Chermack: stakeholder dialogue)", perspective_count));
+            }
+            (Some(score), strengths, gaps)
+        }
+        None => (
+            None,
+            Vec::new(),
+            vec![insufficient_data_gap(&unreported_subset(
+                &unreported,
+                &["perspective_count"],
+            ))],
+        ),
     };
-    let mut prep_strengths = Vec::new();
-    let mut prep_gaps = Vec::new();
-    if perspective_count >= 3 {
-        prep_strengths.push("Multiple perspectives engaged".into());
-    } else if perspective_count == 0 {
-        prep_gaps.push(
-            "No perspectives recorded — project may lack stakeholder engagement (Chermack Phase 1)"
-                .into(),
-        );
-    } else {
-        prep_gaps.push(format!("Only {} perspective(s) — consider engaging more diverse viewpoints (Chermack: stakeholder dialogue)", perspective_count));
-    }
 
-    // ── Phase 2: Exploration ─────────────────────────────────────
+    // ── Phase 2: Exploration ─────────────────────────────
     // (Chermack, Ch. 6): Driving forces identified, trends mapped, uncertainties surfaced
-    let exp_score = if event_count >= assess_tiers::EXP_EVENT_HIGH
-        && disagreement_score > assess_tiers::EXP_DISAGREEMENT_HIGH
-    {
-        assess_tiers::EXP_STRONG
-    } else if event_count >= assess_tiers::EXP_EVENT_MID {
-        assess_tiers::EXP_ADEQUATE
-    } else {
-        assess_tiers::EXP_WEAK
+    let (exp_score, exp_strengths, exp_gaps) = match (input.event_count, input.disagreement_score) {
+        (Some(event_count), Some(disagreement_score)) => {
+            let score = if event_count >= assess_tiers::EXP_EVENT_HIGH
+                && disagreement_score > assess_tiers::EXP_DISAGREEMENT_HIGH
+            {
+                assess_tiers::EXP_STRONG
+            } else if event_count >= assess_tiers::EXP_EVENT_MID {
+                assess_tiers::EXP_ADEQUATE
+            } else {
+                assess_tiers::EXP_WEAK
+            };
+            let mut strengths = Vec::new();
+            let mut gaps = Vec::new();
+            if disagreement_score > assess_tiers::EXP_DISAGREEMENT_SIGNIFICANT {
+                strengths.push(format!("Significant disagreement ({:.0}%) detected — healthy diversity of views (Chermack: conversation quality)", disagreement_score * 100.0));
+            }
+            if event_count >= assess_tiers::EXP_EVENT_HIGH {
+                strengths.push(format!(
+                    "{} events identified — comprehensive force mapping",
+                    event_count
+                ));
+            } else {
+                gaps.push(format!(
+                    "Only {} events — consider deeper STEEP force mapping",
+                    event_count
+                ));
+            }
+            if disagreement_score < assess_tiers::EXP_DISAGREEMENT_GROUPTHINK && event_count > 0 {
+                gaps.push("Very low disagreement — potential groupthink. Chermack warns against false consensus in scenario exploration.".into());
+            }
+            (Some(score), strengths, gaps)
+        }
+        _ => (
+            None,
+            Vec::new(),
+            vec![insufficient_data_gap(&unreported_subset(
+                &unreported,
+                &["event_count", "disagreement_score"],
+            ))],
+        ),
     };
-    let mut exp_strengths = Vec::new();
-    let mut exp_gaps = Vec::new();
-    if disagreement_score > assess_tiers::EXP_DISAGREEMENT_SIGNIFICANT {
-        exp_strengths.push(format!("Significant disagreement ({:.0}%) detected — healthy diversity of views (Chermack: conversation quality)", disagreement_score * 100.0));
-    }
-    if event_count >= assess_tiers::EXP_EVENT_HIGH {
-        exp_strengths.push(format!(
-            "{} events identified — comprehensive force mapping",
-            event_count
-        ));
-    } else {
-        exp_gaps.push(format!(
-            "Only {} events — consider deeper STEEP force mapping",
-            event_count
-        ));
-    }
-    if disagreement_score < assess_tiers::EXP_DISAGREEMENT_GROUPTHINK && event_count > 0 {
-        exp_gaps.push("Very low disagreement — potential groupthink. Chermack warns against false consensus in scenario exploration.".into());
-    }
 
-    // ── Phase 3: Development ─────────────────────────────────────
+    // ── Phase 3: Development ─────────────────────────────
     // (Chermack, Ch. 7): Scenario logic, internal consistency, narrative quality
-    let dep_ratio = if event_count > 0 {
-        events_with_deps as f64 / event_count as f64
-    } else {
-        0.0
+    let (dev_score, dev_strengths, dev_gaps) = match (input.event_count, input.events_with_deps) {
+        (Some(event_count), Some(events_with_deps)) => {
+            let dep_ratio = if event_count > 0 {
+                events_with_deps as f64 / event_count as f64
+            } else {
+                0.0
+            };
+            let score = if dep_ratio > assess_tiers::DEV_RATIO_HIGH
+                && event_count >= assess_tiers::DEV_EVENT_MIN
+            {
+                assess_tiers::DEV_STRONG
+            } else if dep_ratio > assess_tiers::DEV_RATIO_MID {
+                assess_tiers::DEV_ADEQUATE
+            } else {
+                assess_tiers::DEV_WEAK
+            };
+            let mut strengths = Vec::new();
+            let mut gaps = Vec::new();
+            if dep_ratio > assess_tiers::DEV_RATIO_HIGH {
+                strengths.push(format!("{:.0}% of events have conditional dependencies — structured causal reasoning (Chermack: internal consistency)", dep_ratio * 100.0));
+            } else {
+                gaps.push("Most events lack dependency links. Chermack requires internal consistency: events should form a causal chain, not a list.".into());
+            }
+            if event_count < assess_tiers::DEV_EVENT_MIN {
+                gaps.push("Fewer than 4 events — scenarios may lack sufficient structure for meaningful narratives.".into());
+            }
+            (Some(score), strengths, gaps)
+        }
+        _ => (
+            None,
+            Vec::new(),
+            vec![insufficient_data_gap(&unreported_subset(
+                &unreported,
+                &["event_count", "events_with_dependencies"],
+            ))],
+        ),
     };
-    let dev_score =
-        if dep_ratio > assess_tiers::DEV_RATIO_HIGH && event_count >= assess_tiers::DEV_EVENT_MIN {
-            assess_tiers::DEV_STRONG
-        } else if dep_ratio > assess_tiers::DEV_RATIO_MID {
-            assess_tiers::DEV_ADEQUATE
-        } else {
-            assess_tiers::DEV_WEAK
-        };
-    let mut dev_strengths = Vec::new();
-    let mut dev_gaps = Vec::new();
-    if dep_ratio > assess_tiers::DEV_RATIO_HIGH {
-        dev_strengths.push(format!("{:.0}% of events have conditional dependencies — structured causal reasoning (Chermack: internal consistency)", dep_ratio * 100.0));
-    } else {
-        dev_gaps.push("Most events lack dependency links. Chermack requires internal consistency: events should form a causal chain, not a list.".into());
-    }
-    if event_count < assess_tiers::DEV_EVENT_MIN {
-        dev_gaps.push("Fewer than 4 events — scenarios may lack sufficient structure for meaningful narratives.".into());
-    }
 
-    // ── Phase 4: Implementation ──────────────────────────────────
+    // ── Phase 4: Implementation ──────────────────────────
     // (Chermack, Ch. 8): Strategies applied, wind-tunneling, early warning systems
-    let impl_score = if strategies_implemented > 0 && has_early_warning_indicators {
-        assess_tiers::IMPL_STRONG
-    } else if strategies_generated > 0 {
-        assess_tiers::IMPL_ADEQUATE
-    } else {
-        assess_tiers::IMPL_WEAK
+    let (impl_score, impl_strengths, impl_gaps) = match (
+        input.strategies_generated,
+        input.strategies_implemented,
+        input.has_early_warning_indicators,
+    ) {
+        (
+            Some(strategies_generated),
+            Some(strategies_implemented),
+            Some(has_early_warning_indicators),
+        ) => {
+            let score = if strategies_implemented > 0 && has_early_warning_indicators {
+                assess_tiers::IMPL_STRONG
+            } else if strategies_generated > 0 {
+                assess_tiers::IMPL_ADEQUATE
+            } else {
+                assess_tiers::IMPL_WEAK
+            };
+            let mut strengths = Vec::new();
+            let mut gaps = Vec::new();
+            if strategies_implemented > 0 {
+                strengths.push(format!(
+                    "{} strategies implemented — scenario insights drove action (Chermack Phase 4)",
+                    strategies_implemented
+                ));
+            }
+            if strategies_generated > 0 && strategies_implemented == 0 {
+                gaps.push(format!("{} strategies generated but none implemented — the scenario-to-action gap (Chermack's critical Phase 4)", strategies_generated));
+            }
+            if !has_early_warning_indicators {
+                gaps.push("No early warning indicators defined. Chermack: scenarios without tripwires are stories without sensors.".into());
+            }
+            (Some(score), strengths, gaps)
+        }
+        _ => (
+            None,
+            Vec::new(),
+            vec![insufficient_data_gap(&unreported_subset(
+                &unreported,
+                &[
+                    "strategies_generated",
+                    "strategies_implemented",
+                    "has_early_warning_indicators",
+                ],
+            ))],
+        ),
     };
-    let mut impl_strengths = Vec::new();
-    let mut impl_gaps = Vec::new();
-    if strategies_implemented > 0 {
-        impl_strengths.push(format!(
-            "{} strategies implemented — scenario insights drove action (Chermack Phase 4)",
-            strategies_implemented
-        ));
-    }
-    if strategies_generated > 0 && strategies_implemented == 0 {
-        impl_gaps.push(format!("{} strategies generated but none implemented — the scenario-to-action gap (Chermack's critical Phase 4)", strategies_generated));
-    }
-    if !has_early_warning_indicators {
-        impl_gaps.push("No early warning indicators defined. Chermack: scenarios without tripwires are stories without sensors.".into());
-    }
 
-    // ── Phase 5: Project Assessment ──────────────────────────────
+    // ── Phase 5: Project Assessment ──────────────────────
     // (Chermack, Ch. 9): Did the project improve decision quality? Learning outcomes?
+    // Scored from learning_events (a caller-supplied list) and the optional
+    // calibration curve — neither is one of the seven quantitative metrics,
+    // so this phase always reports.
     let assess_score = if !learning_events.is_empty()
         && calibration_curve
             .is_some_and(|c| c.resolved_forecasts >= assess_tiers::ASSESS_RESOLVED_MIN)
@@ -206,30 +322,54 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
         assess_gaps.push("No calibration data. Chermack + Tetlock: without outcome tracking, you cannot know if the project improved forecast accuracy.".into());
     }
 
-    // ── Composite ─────────────────────────────────────────────────
-    let overall = (prep_score + exp_score + dev_score + impl_score + assess_score) / 5.0;
-
-    let assessment_text = if overall >= assess_tiers::OVERALL_STRONG {
-        "Strong scenario project. Preparation was thorough, exploration surfaced diverse views, scenarios are causally structured, insights drove action, and learning is being tracked. Continue deepening the calibration loop."
-    } else if overall >= assess_tiers::OVERALL_ADEQUATE {
-        "Adequate scenario project with room for improvement. Strengthen the weakest phases (see per-phase gaps below). Focus on closing the implementation gap: scenarios without action are entertainment."
-    } else if overall >= assess_tiers::OVERALL_FOUNDATIONAL {
-        "Foundational scenario project. Core elements are present but significant gaps remain. Priority: engage more perspectives (Phase 1), add conditional dependencies (Phase 3), and track outcomes (Phase 5)."
+    // ── Composite ─────────────────────────
+    // Average only over phases with reported data; a withheld phase
+    // contributes nothing (its score is null, not a fabricated zero).
+    let reported_scores: Vec<f64> = [
+        prep_score,
+        exp_score,
+        dev_score,
+        impl_score,
+        Some(assess_score),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let overall = if reported_scores.is_empty() {
+        None
     } else {
-        "Early-stage scenario project. The scaffolding exists but lacks depth. Start with Phase 1 (preparation): define the focal question clearly and engage multiple perspectives before building scenarios."
+        Some(reported_scores.iter().sum::<f64>() / reported_scores.len() as f64)
+    };
+
+    let assessment_text = match overall {
+        Some(overall) if overall >= assess_tiers::OVERALL_STRONG => {
+            "Strong scenario project. Preparation was thorough, exploration surfaced diverse views, scenarios are causally structured, insights drove action, and learning is being tracked. Continue deepening the calibration loop."
+        }
+        Some(overall) if overall >= assess_tiers::OVERALL_ADEQUATE => {
+            "Adequate scenario project with room for improvement. Strengthen the weakest phases (see per-phase gaps below). Focus on closing the implementation gap: scenarios without action are entertainment."
+        }
+        Some(overall) if overall >= assess_tiers::OVERALL_FOUNDATIONAL => {
+            "Foundational scenario project. Core elements are present but significant gaps remain. Priority: engage more perspectives (Phase 1), add conditional dependencies (Phase 3), and track outcomes (Phase 5)."
+        }
+        Some(_) => {
+            "Early-stage scenario project. The scaffolding exists but lacks depth. Start with Phase 1 (preparation): define the focal question clearly and engage multiple perspectives before building scenarios."
+        }
+        None => {
+            "Insufficient data — no phase could be scored. Report the quantitative metrics named in unreported_metrics so the withheld phases can be assessed."
+        }
     };
 
     let mut recommendations = Vec::new();
-    if prep_score < assess_tiers::RECOMMENDATION_THRESHOLD {
+    if prep_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
         recommendations.push("Phase 1 (Preparation): Engage at least 3 diverse perspectives. Chermack: 'The quality of the conversation determines the quality of the scenarios.'".into());
     }
-    if exp_score < assess_tiers::RECOMMENDATION_THRESHOLD {
+    if exp_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
         recommendations.push("Phase 2 (Exploration): Map more driving forces. Use scenario_research to gather external data. Chermack: systematic STEEP analysis prevents blind spots.".into());
     }
-    if dev_score < assess_tiers::RECOMMENDATION_THRESHOLD {
+    if dev_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
         recommendations.push("Phase 3 (Development): Link events with conditional dependencies. Scenarios must form causal chains, not lists. Chermack: internal consistency is the quality gate.".into());
     }
-    if impl_score < assess_tiers::RECOMMENDATION_THRESHOLD {
+    if impl_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
         recommendations.push("Phase 4 (Implementation): Define early-warning indicators and track which strategies get implemented. Chermack: 'Scenario planning without implementation is intellectual tourism.'".into());
     }
     if assess_score < assess_tiers::RECOMMENDATION_THRESHOLD {
@@ -265,10 +405,11 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
         },
         project_assessment: PhaseScore {
             phase: "Phase 5: Project Assessment".into(),
-            score: assess_score,
+            score: Some(assess_score),
             strengths: assess_strengths,
             gaps: assess_gaps,
         },
+        unreported_metrics: unreported.iter().map(|m| m.to_string()).collect(),
         overall_score: overall,
         overall_assessment: assessment_text.to_string(),
         learning_evidence: input.learning_events.clone(),

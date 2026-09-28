@@ -11,8 +11,8 @@
 #![cfg(test)]
 
 use hkask_mcp_scenarios::requests::{
-    BrainstormRequest, CalibrateRequest, ContractCoherenceRequest, OutcomeEntry, QuantifyRequest,
-    ScoreRequest, StatusRequest, TriageRequest,
+    AssessRequest, BrainstormRequest, CalibrateRequest, ContractCoherenceRequest,
+    FullPipelineRequest, OutcomeEntry, QuantifyRequest, ScoreRequest, StatusRequest, TriageRequest,
 };
 use hkask_mcp_scenarios::types::{ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon};
 use hkask_mcp_scenarios::{ForecastStore, ScenariosServer};
@@ -826,5 +826,169 @@ async fn from_cmp_indices_caches_tree_for_coherence_default() {
     assert!(
         coherence_parsed.get("divergence").is_some(),
         "coherence must compute against the cached joint, got: {coherence_parsed}"
+    );
+}
+
+// ── scenario_assess unreported-metrics contract ─────────────────────────────
+
+/// `scenario_assess` with every quantitative metric omitted must not fabricate
+/// measurements: the four phases whose scores depend on unreported metrics are
+/// withheld as insufficient data (null score + a gap naming the missing
+/// metric), the output names every unreported metric, and the overall score
+/// averages only the reported phases. An unreported metric is not a zero.
+#[tokio::test]
+async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
+    let server = make_server();
+    let output = server
+        .scenario_assess(Parameters(AssessRequest {
+            project_id: "unreported-project".to_string(),
+            subject: "ACME".to_string(),
+            perspective_count: None,
+            disagreement_score: None,
+            event_count: None,
+            events_with_dependencies: None,
+            strategies_generated: None,
+            strategies_implemented: None,
+            learning_events: None,
+            has_early_warning_indicators: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+
+    // Every unreported quantitative metric is named — all seven were omitted.
+    let unreported: Vec<String> = parsed["unreported_metrics"]
+        .as_array()
+        .unwrap_or_else(|| panic!("assessment must carry unreported_metrics, got: {parsed}"))
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    for metric in [
+        "perspective_count",
+        "disagreement_score",
+        "event_count",
+        "events_with_dependencies",
+        "strategies_generated",
+        "strategies_implemented",
+        "has_early_warning_indicators",
+    ] {
+        assert!(
+            unreported.contains(&metric.to_string()),
+            "unreported_metrics must name {metric}, got: {unreported:?}"
+        );
+    }
+    assert_eq!(
+        unreported.len(),
+        7,
+        "all seven quantitative metrics were omitted, got: {unreported:?}"
+    );
+
+    // Phases 1-4 depend on the unreported metrics: their scores are withheld
+    // (null), never zero-derived, and their gaps name the missing metrics.
+    let withheld = [
+        ("preparation", &["perspective_count"][..]),
+        ("exploration", &["event_count", "disagreement_score"][..]),
+        (
+            "development",
+            &["event_count", "events_with_dependencies"][..],
+        ),
+        (
+            "implementation",
+            &[
+                "strategies_generated",
+                "strategies_implemented",
+                "has_early_warning_indicators",
+            ][..],
+        ),
+    ];
+    for (phase, missing) in withheld {
+        assert_eq!(
+            parsed["phases"][phase]["score"],
+            serde_json::Value::Null,
+            "{phase} depends on unreported metrics — its score must be null (insufficient data), not zero-derived, got: {parsed}"
+        );
+        assert_eq!(
+            parsed["phase_scores"][phase],
+            serde_json::Value::Null,
+            "phase_scores[{phase}] must be null too, got: {parsed}"
+        );
+        let gaps = parsed["phases"][phase]["gaps"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{phase} must carry gaps, got: {parsed}"))
+            .iter()
+            .filter_map(|g| g.as_str())
+            .collect::<String>();
+        assert!(
+            gaps.contains("insufficient data"),
+            "{phase} gap must say insufficient data, got: {gaps}"
+        );
+        for metric in missing {
+            assert!(
+                gaps.contains(metric),
+                "{phase} gap must name {metric}, got: {gaps}"
+            );
+        }
+    }
+
+    // The overall score averages only the reported phases: with phases 1-4
+    // withheld, overall equals the one reported phase (project_assessment,
+    // scored from learning events + calibration) — not the zero-derived
+    // (0.3 + 0.2 + 0.3 + 0.1 + 0.2) / 5 = 0.22 the defaults fabricated.
+    assert_eq!(
+        parsed["overall_score"], parsed["phase_scores"]["project_assessment"],
+        "overall must average only the reported phases, got: {parsed}"
+    );
+}
+
+/// `scenario_full` passes its optional assessment metrics through unchanged:
+/// with every optional field omitted, the assessment names exactly the
+/// request-level metrics (plus unmeasured disagreement) as unreported —
+/// `event_count` and `events_with_dependencies` are genuinely measured from
+/// the event tree and must NOT appear — and the overall score stays a
+/// number averaged over the phases that did report.
+#[tokio::test]
+async fn scenario_full_reports_unreported_metrics_not_measured_ones() {
+    let server = make_server();
+    let output = server
+        .scenario_full(Parameters(FullPipelineRequest {
+            subject: "ACME".to_string(),
+            events: vec![independent_event("event", "durable event", 0.4)],
+            perspectives: None,
+            perspective_count: None,
+            strategies_generated: None,
+            strategies_implemented: None,
+            learning_events: None,
+            has_early_warning_indicators: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+
+    let mut unreported: Vec<String> = parsed["assessment"]["unreported_metrics"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!(
+                "scenario_full assessment must carry unreported_metrics, got: {parsed}"
+            )
+        })
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    unreported.sort();
+    assert_eq!(
+        unreported,
+        vec![
+            "disagreement_score".to_string(),
+            "has_early_warning_indicators".to_string(),
+            "perspective_count".to_string(),
+            "strategies_generated".to_string(),
+            "strategies_implemented".to_string(),
+        ],
+        "exactly the unmeasured metrics are unreported — event_count and \
+         events_with_dependencies are measured from the event tree, got: {parsed}"
+    );
+    assert!(
+        parsed["assessment"]["overall"].is_number(),
+        "overall averages the phases that reported (development, project_assessment), got: {parsed}"
     );
 }

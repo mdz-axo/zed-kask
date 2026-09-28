@@ -1,12 +1,10 @@
 //! FIBO (Financial Industry Business Ontology) vocabulary bridge.
 //!
-//! Every URI in this module is mechanically verified against the FIBO
-//! master ontology (EDMCouncil/FIBO, <https://spec.edmcouncil.org/fibo/>)
-//! — `fixtures/fibo-verified-terms.txt` pins the term list with its
-//! defining module, and `all_terms_are_official` fails the build if a
-//! term drifts from it. Do not add a term that is not in that fixture.
+//! The named constants are checked against the complete pinned EDMC FIBO
+//! Q2 Release index. All Release modules are compiled into `published`, not
+//! just the named constants. Provisional and Informative are not loaded.
 //!
-//! Verification (2026-08-29, FIBO master branch) found that 63 of the 70
+//! Historical verification (2026-08-29, FIBO master branch) found that 63 of the 70
 //! terms formerly carried here were fabricated: the `fibo-fbc-fct-ra`
 //! "Financial Ratios" module prefix never existed in FIBO (no such file
 //! in the repository or its git history), and FIBO publishes no terms
@@ -22,24 +20,23 @@
 //!
 //! Reference: EDM Council / OMG, Financial Industry Business Ontology.
 //! <https://spec.edmcouncil.org/fibo/> — source repository
-//! <https://github.com/EDMCouncil/FIBO> (master, fetched 2026-08-29).
+//! <https://github.com/EDMCouncil/FIBO> (Q2 tag commit
+//! f59157fe156e3d91b1c045222d0a7dc06b7d78a2).
 //!
-//! Pattern: thin mapping layer — canonical URI constants, no
-//! dependencies, no reasoners, no overhead. Mirrors the dc_bibo, pko,
-//! golem, and sepio modules in this crate.
+//! Pattern: named constant facade over the source-backed published index.
 
 /// A FIBO concept URI (prefixed canonical form, e.g. `fibo-be-le-cb:Corporation`).
 pub type FiboConcept = &'static str;
 
-/// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
-/// so the fixture test covers each constant by construction.
+/// Defines named constants and registers every one in `ALL_TERMS`,
+/// so the source-backed Release test covers each constant by construction.
 macro_rules! fibo_terms {
     ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
         $($(#[$doc])* pub const $name: FiboConcept = $uri;)*
 
-        /// Every term in this module. The fixture test asserts each appears
-        /// in the official FIBO term list — a fabricated URI cannot pass.
-        /// New terms must go through this macro.
+        /// Named FIBO terms used directly by callers; the compiled Release
+        /// index contains all published terms, including those not named here.
+        /// New named constants must go through this macro.
         pub const ALL_TERMS: &[FiboConcept] = &[$($name),*];
     };
 }
@@ -114,34 +111,66 @@ fibo_terms! {
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official FIBO term list checked in as a fixture (source URL and
-    /// fetch date in the fixture header). A term that is not in the
-    /// published ontology fails here — pin tests on the constants alone
-    /// cannot catch a plausible-looking invented URI.
+    /// Named constants remain a thin facade over the entire pinned Release.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fixtures/fibo-verified-terms.txt"
-        );
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
+        for term in ALL_TERMS {
+            let published = crate::published::get(term)
+                .unwrap_or_else(|| panic!("{term} is not in the pinned FIBO Release"));
+            assert_eq!(published.namespace, "FIBO");
+            assert!(!published.source.is_empty());
+        }
+    }
+
+    /// expect: the full Release inventory, not the named constants, is in
+    /// the same published index used by term resolution; no provisional
+    /// ontology leaks in through the production import list.
+    #[test]
+    fn release_is_complete_and_provisional_is_excluded() {
+        let fixture = include_str!("../fixtures/fibo-verified-terms.txt");
+        let modules: std::collections::HashSet<&str> = fixture
             .lines()
-            .map(|line| line.split('\t').next().unwrap_or("").trim())
-            .filter(|term| !term.is_empty() && !term.starts_with('#'))
+            .filter_map(|line| line.strip_prefix("module\t"))
+            .filter_map(|line| line.split('\t').next())
+            .collect();
+        assert_eq!(modules.len(), 157);
+        let release: Vec<_> = crate::published::terms()
+            .iter()
+            .filter(|term| term.namespace == "FIBO")
             .collect();
         assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
+            release.len() > 6_000,
+            "Release vocabulary truncated: {}",
+            release.len()
         );
-        for term in ALL_TERMS {
-            assert!(
-                official.contains(term),
-                "{term} is not in the official FIBO term list ({fixture_path}) — \
-                 it must be verified against https://spec.edmcouncil.org/fibo/ before use"
-            );
-        }
+        let indexed_modules: std::collections::HashSet<_> = release
+            .iter()
+            .filter_map(|term| term.source.split(" (EDMCouncil/").next())
+            .collect();
+        assert_eq!(
+            indexed_modules, modules,
+            "each Release module contributes terms"
+        );
+        assert!(release.iter().all(|term| {
+            term.concept.starts_with("fibo-")
+                && term
+                    .source
+                    .contains("f59157fe156e3d91b1c045222d0a7dc06b7d78a2")
+        }));
+        let omitted_from_production = crate::published::get("fibo-be-corp-corp:BoardAgreement")
+            .expect("Release maturity, despite absence from AboutFIBOProd imports");
+        assert!(omitted_from_production.definition.contains("[deprecated]"));
+        assert_eq!(
+            omitted_from_production.source.split(" (").next(),
+            Some("BE/Corporations/Corporations.rdf")
+        );
+        assert!(
+            !crate::published::contains("fibo-sec-fund-civ:AccumulatingShareClass"),
+            "Provisional ontology entered Release index"
+        );
+        assert!(
+            !crate::published::contains("fibo-fbc-fct-mkti:Facility-21XX"),
+            "production import without Release maturity entered index"
+        );
     }
 }

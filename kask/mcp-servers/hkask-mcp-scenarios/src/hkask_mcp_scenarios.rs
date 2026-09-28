@@ -443,7 +443,9 @@ impl ScenariosServer {
                 }
             });
 
-            // Step 6: Assess
+            // Step 6: Assess — request Options pass through unchanged so an
+            // omitted metric is reported as unreported, never zero;
+            // event_count/events_with_deps are genuinely measured here.
             let deps = events.iter().filter(|e| !e.depends_on.is_empty()).count();
             let learning: Vec<String> = req.learning_events.as_deref()
                 .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
@@ -452,15 +454,15 @@ impl ScenariosServer {
             let assessment = superforecast::assess_project(&types::AssessInput {
                 project_id: &req.subject,
                 subject: &req.subject,
-                perspective_count: req.perspective_count.unwrap_or(1),
-                disagreement_score: synth.as_ref().map(|s| s.disagreement_score).unwrap_or(0.0),
-                event_count: events.len(),
-                events_with_deps: deps,
+                perspective_count: req.perspective_count,
+                disagreement_score: synth.as_ref().map(|s| s.disagreement_score),
+                event_count: Some(events.len()),
+                events_with_deps: Some(deps),
                 calibration_curve: curve.as_ref(),
-                strategies_generated: req.strategies_generated.unwrap_or(0),
-                strategies_implemented: req.strategies_implemented.unwrap_or(0),
+                strategies_generated: req.strategies_generated,
+                strategies_implemented: req.strategies_implemented,
                 learning_events: learning,
-                has_early_warning_indicators: req.has_early_warning_indicators.unwrap_or(false),
+                has_early_warning_indicators: req.has_early_warning_indicators,
             });
 
             let output = serde_json::json!({
@@ -470,7 +472,7 @@ impl ScenariosServer {
                 "sensitivity": sensitivity.iter().map(|(id, s)| serde_json::json!({"event_id": id, "score": s})).collect::<Vec<_>>(),
                 "calibration": calibration,
                 "synthesis": synth.map(|s| serde_json::json!({"aggregated": s.aggregated_probability, "disagreement": s.disagreement_score})),
-                "assessment": {"overall": assessment.overall_score, "recommendations": assessment.recommendations},
+                "assessment": {"overall": assessment.overall_score, "unreported_metrics": assessment.unreported_metrics, "recommendations": assessment.recommendations},
                 "provenance": provenance("scenario_full", {
                     let mut m = serde_json::Map::new();
                     m.insert("pipeline_steps".into(), serde_json::json!(["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"]));
@@ -1698,21 +1700,13 @@ impl ScenariosServer {
 
     /// Assess a scenario project across Chermack's five performance phases.
     #[tool(
-        description = "Assess a scenario project's effectiveness (Chermack Phase 5). Evaluates the project across all five phases: Preparation (stakeholder engagement), Exploration (perspective diversity), Development (causal structure), Implementation (strategies applied), and Project Assessment (learning + calibration). Combines quantitative metrics (Brier scores, disagreement, event count, dependency ratio) with qualitative assessment. Answers Chermack's core question: did the scenario project improve decision quality? Returns per-phase scores, gaps, strengths, learning evidence, and actionable recommendations."
+        description = "Assess a scenario project's effectiveness (Chermack Phase 5). Evaluates the project across all five phases: Preparation (stakeholder engagement), Exploration (perspective diversity), Development (causal structure), Implementation (strategies applied), and Project Assessment (learning + calibration). Combines quantitative metrics (Brier scores, disagreement, event count, dependency ratio) with qualitative assessment. Omitted quantitative metrics are reported as unreported (unreported_metrics) and the phase scores that depend on them are withheld as insufficient data (null) — never defaulted to zero. Answers Chermack's core question: did the scenario project improve decision quality? Returns per-phase scores, gaps, strengths, learning evidence, and actionable recommendations."
     )]
     pub async fn scenario_assess(
         &self,
         Parameters(req): Parameters<AssessRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "scenario_assess", async {
-            let perspective_count = req.perspective_count.unwrap_or(1);
-            let disagreement = req.disagreement_score.unwrap_or(0.0);
-            let event_count = req.event_count.unwrap_or(0);
-            let events_with_deps = req.events_with_dependencies.unwrap_or(0);
-            let strategies_gen = req.strategies_generated.unwrap_or(0);
-            let strategies_impl = req.strategies_implemented.unwrap_or(0);
-            let has_indicators = req.has_early_warning_indicators.unwrap_or(false);
-
             let learning_events: Vec<String> = req
                 .learning_events
                 .as_deref()
@@ -1725,26 +1719,30 @@ impl ScenariosServer {
                 superforecast::compute_calibration_curve(&store).ok()
             };
 
+            // Caller-omitted metrics pass through as None: assess_project
+            // reports them as unreported and withholds the dependent phase
+            // scores as insufficient data — an omission is not a zero.
             let assessment = superforecast::assess_project(&types::AssessInput {
                 project_id: &req.project_id,
                 subject: &req.subject,
-                perspective_count,
-                disagreement_score: disagreement,
-                event_count,
-                events_with_deps,
+                perspective_count: req.perspective_count,
+                disagreement_score: req.disagreement_score,
+                event_count: req.event_count,
+                events_with_deps: req.events_with_dependencies,
                 calibration_curve: curve.as_ref(),
-                strategies_generated: strategies_gen,
-                strategies_implemented: strategies_impl,
+                strategies_generated: req.strategies_generated,
+                strategies_implemented: req.strategies_implemented,
                 learning_events: learning_events,
-                has_early_warning_indicators: has_indicators,
+                has_early_warning_indicators: req.has_early_warning_indicators,
             });
 
             let output = serde_json::json!({
                 "project_id": assessment.project_id,
                 "subject": assessment.subject,
                 "overall_score": assessment.overall_score,
-                "overall_pct": format!("{:.0}%", assessment.overall_score * 100.0),
+                "overall_pct": assessment.overall_score.map(|s| format!("{:.0}%", s * 100.0)),
                 "overall_assessment": assessment.overall_assessment,
+                "unreported_metrics": assessment.unreported_metrics,
                 "phases": {
                     "preparation": {
                         "score": assessment.preparation.score,

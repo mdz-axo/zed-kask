@@ -298,7 +298,7 @@ pub struct SubQuestion {
 /// A single perspective on an event — one analyst's probability estimate
 /// with their Fermi decomposition and rationale.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct Perspective {
+pub struct Perspective {
     /// Who or what produced this perspective (analyst name, agent ID, model name)
     pub source: String,
     /// Calibrated probability for this event (0.0–1.0)
@@ -467,19 +467,24 @@ pub(crate) struct BrainstormProtocol {
 /// Input bundle for `assess_project`. Groups the 11 former positional
 /// parameters into a single struct so callers don't need to remember
 /// argument order.
+///
+/// The seven quantitative metrics are `Option`: a `None` metric was not
+/// reported by the caller and is NOT a zero measurement — `assess_project`
+/// names it in `ProjectAssessment::unreported_metrics` and withholds the
+/// phase scores that depend on it as insufficient data (null).
 #[derive(Debug)]
 pub(crate) struct AssessInput<'a> {
     pub project_id: &'a str,
     pub subject: &'a str,
-    pub perspective_count: usize,
-    pub disagreement_score: f64,
-    pub event_count: usize,
-    pub events_with_deps: usize,
+    pub perspective_count: Option<usize>,
+    pub disagreement_score: Option<f64>,
+    pub event_count: Option<usize>,
+    pub events_with_deps: Option<usize>,
     pub calibration_curve: Option<&'a CalibrationCurve>,
-    pub strategies_generated: usize,
-    pub strategies_implemented: usize,
+    pub strategies_generated: Option<usize>,
+    pub strategies_implemented: Option<usize>,
     pub learning_events: Vec<String>,
-    pub has_early_warning_indicators: bool,
+    pub has_early_warning_indicators: Option<bool>,
 }
 
 /// Assessment of a scenario project's effectiveness.
@@ -506,8 +511,13 @@ pub(crate) struct ProjectAssessment {
     // Phase 5: Project Assessment — did the project improve outcomes?
     pub project_assessment: PhaseScore,
 
-    /// Composite score across all five phases (0-1)
-    pub overall_score: f64,
+    /// Quantitative metrics the caller did not report. Phase scores that
+    /// depend on one of these are withheld as insufficient data (null)
+    /// instead of being scored from a fabricated zero.
+    pub unreported_metrics: Vec<String>,
+    /// Composite score averaged over the phases with reported data only
+    /// (0-1); null when no phase could be scored.
+    pub overall_score: Option<f64>,
     /// Overall assessment narrative
     pub overall_assessment: String,
     /// Observable learning events (Chermack: evidence of mental model change)
@@ -521,8 +531,9 @@ pub(crate) struct ProjectAssessment {
 pub(crate) struct PhaseScore {
     /// Phase name
     pub phase: String,
-    /// Score 0-1
-    pub score: f64,
+    /// Score 0-1; null when the phase's dependent metrics were not reported
+    /// (insufficient data — the gaps name the missing metrics).
+    pub score: Option<f64>,
     /// What was done well
     pub strengths: Vec<String>,
     /// What needs improvement

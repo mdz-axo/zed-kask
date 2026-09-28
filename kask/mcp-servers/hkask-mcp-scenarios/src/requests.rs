@@ -149,8 +149,14 @@ pub struct CmpBridgeRequest {
     pub dependency_specs: Option<Vec<CmpDependencySpecRequest>>,
 }
 
+/// Request for `scenario_full`: the Tetlock core batch in one call.
+///
+/// The optional assessment metrics pass through to the Chermack
+/// assessment unchanged: omitted metrics are reported as unreported
+/// (never zero) and their dependent phase scores are withheld as
+/// insufficient data.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FullPipelineRequest {
+pub struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Events (from scenario_brainstorm or manual construction)
@@ -270,8 +276,13 @@ pub struct TriageRequest {
     pub has_resolution_criteria: Option<bool>,
 }
 
+/// Request for `scenario_assess` (Chermack Phase 5 project assessment).
+///
+/// Omitted quantitative metrics are never defaulted to zero: the
+/// assessment lists them in `unreported_metrics` and withholds the phase
+/// scores that depend on them as insufficient data (null).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct AssessRequest {
+pub struct AssessRequest {
     /// Project identifier
     pub project_id: String,
     /// Subject domain

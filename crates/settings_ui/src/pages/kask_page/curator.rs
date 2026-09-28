@@ -192,7 +192,8 @@ pub(crate) fn render_curator_page(
 /// alert recipient, authorized senders) live in
 /// settings.json under `kask.curator.email`. The SMTP password is stored in
 /// the OS keychain under `kask://credentials/hkask_smtp_password` and
-/// injected into MCP server child processes as `HKASK_SMTP_PASSWORD`.
+/// supplied to the editor-process alert sink as `HKASK_SMTP_PASSWORD`;
+/// MCP server children do not receive it.
 pub(crate) fn render_curator_email_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,

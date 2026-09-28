@@ -101,8 +101,9 @@ pub struct CanonicalTerms {
     pub concepts: Vec<String>,
 }
 
-/// Full published vocabularies consulted as domain supplements, in stable
-/// resolution order. OMC precedes PKO so media terms keep their published sense.
+/// Full published vocabularies after FIBO and the remaining local SDMX
+/// registry, in stable resolution order. OMC precedes PKO so media terms
+/// keep their published sense.
 const PUBLISHED_DOMAIN: &[&str] = &[
     "OMC",
     "PKO",
@@ -113,15 +114,12 @@ const PUBLISHED_DOMAIN: &[&str] = &[
     "CIDOC-CRM",
     "LRMoo",
     "ML-Schema",
+    "RDF",
+    "RDFS",
 ];
 
-/// Remaining local identifier registries; these are not claimed as published
-/// RDF IRIs until their source identities have been established.
-const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
-    ("FIBO", crate::fibo::ALL_TERMS),
-    ("SDMX", crate::sdmx::ALL_CONCEPTS),
-    ("RDF", crate::rdf::ALL_TERMS),
-];
+/// The remaining local identifier registry is not yet a published source index.
+const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[("SDMX", crate::sdmx::ALL_CONCEPTS)];
 
 /// Full published vocabularies consulted after the domain and derived rungs,
 /// in ladder order: SUMO (formal upper ontology) first, then schema.org (a
@@ -181,6 +179,10 @@ pub fn resolve_term(term: &str) -> TermResolution {
     let key = normalize(trimmed);
     let mut senses: Vec<Sense> = Vec::new();
 
+    // Preserve the pre-index domain ordering: FIBO before SDMX, then OMC
+    // and the other published supplements. FIBO now resolves from the
+    // source-backed index rather than its named-constant registry.
+    senses.extend(published_senses("domain_supplement", "FIBO", trimmed));
     for (namespace, registry) in DOMAIN_REGISTRIES {
         let found = registry.iter().find(|uri| {
             let name = uri.rsplit(':').next().unwrap_or(uri);
@@ -317,6 +319,25 @@ mod tests {
             assert_eq!(resolved.namespace, namespace, "{term}: {resolved:?}");
             assert_eq!(resolved.concept, concept, "{term}: {resolved:?}");
         }
+    }
+
+    /// expect: a FIBO Release concept outside the named constants resolves
+    /// with the source's definition and its real, pinned module identity.
+    #[test]
+    fn full_fibo_release_resolves_beyond_named_constants() {
+        let result = resolve_term("fibo-be-le-cb:BenefitCorporation");
+        assert_eq!(result.tier, "domain_supplement");
+        assert_eq!(result.namespace, "FIBO");
+        assert_eq!(result.concept, "fibo-be-le-cb:BenefitCorporation");
+        assert!(
+            result
+                .definition
+                .as_deref()
+                .is_some_and(|text| text.contains("not-for-profit"))
+        );
+        assert!(result.source.as_deref().is_some_and(|source| {
+            source.contains("BE/LegalEntities/CorporateBodies.rdf") && source.contains("f59157fe")
+        }));
     }
 
     /// expect: terms the fragment lists missed now resolve on the full

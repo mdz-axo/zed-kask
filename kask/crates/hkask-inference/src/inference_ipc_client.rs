@@ -480,12 +480,11 @@ impl InferenceIpcClient {
                 },
                 actual_model,
             }),
-            InferenceOutcome::Error { error } if error.code == "InvalidRequest" => {
-                Err(EmbeddingGenerationError::InvalidRequest(error.message))
-            }
-            InferenceOutcome::Error { error } => Err(EmbeddingGenerationError::Connection(
-                format!("{}: {}", error.code, error.message),
-            )),
+            InferenceOutcome::Error { error } => Err(match error.code.as_str() {
+                "InvalidRequest" => EmbeddingGenerationError::InvalidRequest(error.message),
+                "Json" => EmbeddingGenerationError::Json(error.message),
+                _ => EmbeddingGenerationError::Connection(error.code + ": " + &error.message),
+            }),
             InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
                 unexpected_outcome_msg(&method, "Result"),
             )),
@@ -1066,6 +1065,31 @@ mod tests {
             assert_eq!(batch.actual_model, actual_model);
             assert_eq!(batch.vectors, vec![vec![1.0, 0.0]]);
         }
+    }
+
+    #[tokio::test]
+    async fn embedding_ipc_preserves_json_error_class() {
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::Error {
+                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                        code: "Json".into(),
+                        message: "malformed embedding payload".into(),
+                    },
+                },
+                1,
+            )
+            .into_bytes(),
+        );
+        let error = bridge
+            .client()
+            .embed("provider/model", &["text".to_string()])
+            .await
+            .expect_err("embedding error");
+        assert!(matches!(
+            error,
+            EmbeddingGenerationError::Json(message) if message == "malformed embedding payload"
+        ));
     }
 
     #[test]
