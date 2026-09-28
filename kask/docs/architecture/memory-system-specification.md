@@ -2,7 +2,7 @@
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "5.2.0"
+version: "5.2.1"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -1169,7 +1169,7 @@ All SQLCipher DBs (curator, corpus, swarm memory, kata-kanban, training)
 share one passphrase architecture:
 
 - **Default:** `"allostery"` on first run
-  (`kask/crates/hkask-keystore/src/passphrase.rs:18`) — fixed by design so
+  (`kask/crates/hkask-keystore/src/passphrase.rs:17`) — fixed by design so
   first-run provisioning always produces a DB the user can open; the
   keychain is the security boundary, not the default.
 - **Provisioning:** `provision_agent` resolves env override → existing
@@ -1235,10 +1235,12 @@ tests passed. Full application check and scoped lint subsequently passed;
 the evidence record is `tasks/plan.md` in git history (last at `b1375ff3be`). The Memory settings UI
 already exposes this field; no UI omission is intended.
 
-`HKASK_MEMORY_STORAGE_BUDGET` does not exist: count-based pruning was
-removed with the storage budget (operator ruling 2026-09-04, completed
+`HKASK_MEMORY_STORAGE_BUDGET` has no read site in code: count-based pruning
+was removed with the storage budget (operator ruling 2026-09-04, completed
 2026-09-08; `consolidation_service.rs:30-37`). The consolidation pass runs
-confidence-floor cleanup only.
+confidence-floor cleanup only. The `hkask-memory` README still documents the
+variable as a live knob (`kask/crates/hkask-memory/README.md:75`) — a stale
+README claim, not a code surface.
 
 ### Environment variables (live — read via `std::env::var`)
 

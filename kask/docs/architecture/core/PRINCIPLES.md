@@ -2,7 +2,7 @@
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
 last_updated: 2026-09-28
-version: "0.43.0"
+version: "0.43.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -227,9 +227,9 @@ This does not change board condition matching, archive retention, or the in-memo
 
 When board delivery is unavailable, a successful archive fallback latches the condition locally so an unchanged escalation disposition does not flood history. Failed archive persistence retries; clearing the disposition releases the latch and a recurrence emits again. When the board is readable, its open condition card governs deduplication and repeat observations are comments. Call-cap exhaustion is not coalesced: each alert requires fresh cap exhaustion after the per-tick reset.
 
-> **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 12 MCP server executables and the `mcp-test-fixture` test fixture; verified 2026-09-04, recount 2026-09-18); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
+> **Deleted rows (v0.31.0, in-process pivot; updated 2026-08-28):** The `reg.cli` (CLI command dispatch), `reg.api` (API middleware), `reg.deploy` deployment-sessions row, and `reg.deploy` backup-export-lifecycle row are removed. The standalone `kask` CLI is gone entirely — no `kask` binary ships (the only bin targets in `kask/` are the 12 MCP server executables plus three tooling binaries — the feature-gated `mcp-test-fixture` test fixture (`kask/crates/hkask-mcp/Cargo.toml:38-41`) and the two `hkask-regulation` checkers `check_principle_constraints` and `check_test_evidence` (`kask/crates/hkask-regulation/src/bin/`); verified 2026-09-04, recount 2026-09-28); the HTTP API (`hkask-api`) is deleted; cloud deployment and backup-export lifecycle are deleted.
 
-**§9.2 — Event emission pattern**
+**§9.7 — Event emission pattern**
 
 There is no universal tracing-message contract across the process boundary.
 Server tool wrappers emit message `REG` at target `reg.tool`; managed runtime

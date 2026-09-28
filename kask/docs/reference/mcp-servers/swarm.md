@@ -2,7 +2,7 @@
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.39.4"
+version: "0.39.5"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -37,14 +37,14 @@ failure; zero drop counters alone do not establish recorded evidence. Available
 capture still requires checking dropped-event counters and durable records.
 Pinned through the public tool by
 `harness_counts_wrong_answers_and_reports_capture_unavailable` in
-`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
+`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
 
 Implementation: `ResponseEvaluator` and `swarm_eval_agent_local` in
-`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`.
+`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`.
 Public contract tests `evaluator_admission_rejects_effectful_specs_before_agent_lookup`,
 `evaluator_specs_are_validated_before_every_batch`, and
 `response_evaluator_held_out_admission_matrix` live in
-`/home/mdz-axolotl/Clones/zed-kask/kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
+`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
 This follows parse-before-execute separation; Rust's bounded regex engine is
 the existing implementation, not a shell-based oracle.[^response-regex]
 
@@ -582,10 +582,6 @@ plan's §14.
 [^aco-swarm-ecosystem]:
     Dorigo, M., & Stützle, T. (2004). _Ant Colony Optimization_. MIT Press. https://mitpress.mit.edu/9780262042192/
     Cited for the ACO pheromone-deposition metaphor the swarm-intelligence skill's DECIDE step uses.
-
-[^mcp-spec-swarm-dual]:
-    Anthropic. (2024). _Model Context Protocol Specification_. Anthropic PBC. https://modelcontextprotocol.io/specification
-    Cited for the MCP server model that the dual launch paths (McpRuntime + ContextServerStore) both implement.
 
 [^owasp-swarm-config]:
     OWASP. (2023). _OWASP Secrets Management Cheat Sheet_. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html

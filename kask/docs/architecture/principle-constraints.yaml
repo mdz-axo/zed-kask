@@ -35,12 +35,17 @@ principles:
           command: cargo test -p hkask-mcp-training axolotl_refuses_non_sft_training_method
       - id: ax-training-math-proofs
         assertion: >-
-          Five allocation-free production decision-core harnesses passed
-          locally with Kani 0.68.0 after the R2 extraction; diagnostic rendering
-          is separately regression-tested, not formally verified. Proof source
-          is currently uncommitted and no continuing proof gate is installed.
-          The remaining gap is committed evidence binding and broader boundary
-          coverage, not decision-core solver feasibility. See plan section 9.
+          Five allocation-free production decision-core harnesses are
+          committed in-tree (param_gates.rs, commit 99f61e549a, 2026-09-18)
+          and passed locally with Kani 0.68.0 after the R2 extraction;
+          diagnostic rendering is separately regression-tested, not
+          formally verified. No continuing proof gate is installed: no CI
+          workflow runs Kani, and the pinned-budget run
+          (kask/scripts/check-bounded-proofs.sh) is a local on-demand
+          evidence script, not an enforced gate. The remaining gap is a
+          continuing enforced proof obligation and broader boundary
+          coverage, not decision-core solver feasibility. See the proof
+          layer in kask/docs/reference/testing-protocol.md section 3.
         status: gap
         scope: G-M1–G-M4 decision core locally checked; no rendering, utility, or training-quality theorem
         owner: formal-methods engineer

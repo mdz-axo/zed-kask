@@ -2,7 +2,7 @@
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
 last_updated: 2026-09-28
-version: "0.40.0"
+version: "0.40.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -285,7 +285,7 @@ P2's affirmative consent provides.
 
 ### Verification as Holistic Enforcement
 
-Principle 4 is verified by checking that P1–P3 are correctly implemented as capability boundaries. This is the structural audit that confirms the gates exist, are not bypassable, and that tokens are checked by the capability-match gate.
+Principle 4 is verified by checking that P1–P3 are correctly implemented as capability boundaries. This is the structural audit that confirms the gates exist and are not bypassable — authority is exercised only through caller-external allowlists; there is no per-call capability token to check (the token gate was removed 2026-08-12 as vacuous; see the Dual Enforcement Gate above).
 
 ---
 
@@ -371,7 +371,7 @@ When triggered, the Curator escalates to:
 > obsolete skills (commit `5eed0134bf`); the live principle-verification
 > surface is the governance inventory
 > `kask/docs/architecture/principle-constraints.yaml` (one approved
-> principle, `self-change-acceptance`, with nine constraint sets),
+> principle, `self-change-acceptance`, with ten constraint sets),
 > structurally validated by `kask/scripts/check-principle-constraints.sh`
 > (which runs the `check_principle_constraints` binary from
 > `hkask-regulation`). The assertions below
@@ -420,7 +420,7 @@ assertions:
     targets:
       - crate: hkask-types (replaces deleted hkask-pods)
         module: visibility
-        methods: [store_episodic, recall_episodic, store_semantic, recall_semantic]
+        methods: [ingest_turn, recall_context, recall_thread]  # the live MemoryPort surface (kask/crates/hkask-types/src/ports/memory_port.rs:143,155,173)
         gate: require_sovereignty
 ```
 

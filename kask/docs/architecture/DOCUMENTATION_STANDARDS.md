@@ -2,7 +2,7 @@
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
 last_updated: 2026-09-28
-version: "0.39.4"
+version: "0.39.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -339,7 +339,7 @@ This checklist is the publication quality gate per Hackos's Information Process 
 
 Before a document is merged:
 
-- [ ] Six-field metadata header present and correct
+- [ ] Seven-field metadata header present and correct
 - [ ] `MDS Categories` field present with ≥1 category
 - [ ] Every `##` section has ≥ 1 footnoted citation with URL
 - [ ] Every current-state Mermaid block has implementation `DIAGRAM_ALIGNMENT` metadata; a conceptual block is exempt only when its document satisfies all three `status: "Proposed"` conditions in §4.2
@@ -376,9 +376,8 @@ Documents spanning multiple categories list all applicable categories in the met
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-audience: [developers, architects, agents, operators]
-last_updated: 2026-09-16
-version: "2.1.0"
+last_updated: 2026-09-28
+version: "0.39.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]

@@ -2,7 +2,7 @@
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.41.0"
+version: "0.41.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -549,15 +549,15 @@ Non-tool modules hold shared implementation, re-exported for the `tools/` group 
 
 ## Error classification
 
-`kask/mcp-servers/hkask-mcp-media/src/error.rs` replaces `Result<_, String>` with a structured `MediaError` enum (13 variants, `kask/mcp-servers/hkask-mcp-media/src/error.rs:13-68`) and classifies errors into MCP wire-level `McpToolError` kinds. Per-variant, not blanket-internal:
+`kask/mcp-servers/hkask-mcp-media/src/error.rs` replaces `Result<_, String>` with a structured `MediaError` enum (17 variants, `kask/mcp-servers/hkask-mcp-media/src/error.rs:13-80`) and classifies errors into MCP wire-level `McpToolError` kinds. Per-variant, not blanket-internal:
 
 | Mapper | Classification |
 |--------|----------------|
-| `map_media_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:108`) | `GalleryNotInitialized`, `ImageNotFound` → `invalid_argument` (user error); `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable`; `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template`, `AssetPersistence`, `SidecarNotFound`, `SidecarInvalid`, `FaceRegistration` → `internal` |
+| `map_media_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:108`) | `GalleryNotInitialized`, `ImageNotFound` → `invalid_argument` (user error); `FfmpegUnavailable`, `YtDlpUnavailable`, `YtDlpExtractor` → `unavailable`; `YtDlpAuthorization` → `permission_denied`; `YtDlpVideoUnavailable` → `not_found`; `YtDlpFailed`, `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template`, `AssetPersistence`, `SidecarNotFound`, `SidecarInvalid`, `FaceRegistration` → `internal` |
 | `map_gallery_store_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:136`) | `NotFound` → `not_found`; infra errors → shared `map_infra_error`; `InvalidMode`, `InvalidPath`, `Conflict` → `invalid_argument` (caller-fixable) |
 | `map_image_open_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:154`) | missing file → `not_found`; permission failure → `permission_denied`; other I/O and decode failures → `internal` |
-| `classify_inference_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:196-210`) | typed `InferenceError::NotConfigured`/`Auth` → `permission_denied` (missing or rejected credential, matching the canonical `hkask-mcp-swarm` pattern); `Model` → `invalid_argument`; `Overloaded` → `rate_limited`; `Timeout` → `timeout`; every other failure → `unavailable` |
-| `classify_embedding_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:216-226`) | credential-missing substrings → `permission_denied` (string-matched — `EmbeddingGenerationError` has no typed `NotConfigured` variant yet, `kask/mcp-servers/hkask-mcp-media/src/error.rs:211-215`); otherwise → `unavailable` |
+| `classify_inference_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:196-209`) | typed `InferenceError::NotConfigured`/`Auth` → `permission_denied` (missing or rejected credential, matching the canonical `hkask-mcp-swarm` pattern); `Model` → `invalid_argument`; `Overloaded` → `rate_limited`; `Timeout` → `timeout`; every other failure → `unavailable` |
+| `classify_embedding_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:216-223`) | credential-missing substrings → `permission_denied` (string-matched — `EmbeddingGenerationError` has no typed `NotConfigured` variant yet, `kask/mcp-servers/hkask-mcp-media/src/error.rs:211-215`); otherwise → `unavailable` |
 
 ## OMC ontology anchoring
 

@@ -2,7 +2,7 @@
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
 last_updated: 2026-09-28
-version: "0.44.0"
+version: "0.44.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-09-28):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **12 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-conversation-injector`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired). 12 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
+**Status (2026-09-28):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **12 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). 12 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

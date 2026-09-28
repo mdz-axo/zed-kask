@@ -2,7 +2,7 @@
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
 last_updated: 2026-09-28
-version: "0.40.0"
+version: "0.40.1"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -32,12 +32,6 @@ The framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + out
 ## Scenarios ↔ Companies Bridge
 
 (Folded from `architecture/core/scenarios-companies-bridge.md`, 2026-08-28.)
-
-# Scenarios ↔ Companies Bridge
-
-**Diataxis type:** Architecture
-**Status:** Active (v0.39.0)
-**Related:** `kask/mcp-servers/hkask-mcp-scenarios` (scenario forecasting), `kask/mcp-servers/hkask-mcp-companies` (financial modeling)
 
 ## Purpose
 
@@ -115,9 +109,6 @@ status: VERIFIED
 
 [^tetlock-superforecasting]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The art and science of prediction*. Crown Publishers. https://www.penguinrandomhouse.com/books/317711/superforecasting-by-philip-e-tetlock-and-dan-gardner/
     Cited for the Brier-scoring and probability-heuristic design decisions drawn from superforecasting methodology.
-
-
-[^otel-companies-arch]
 
 ## Tool routing and dispatch flow
 
@@ -368,9 +359,6 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 - [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-004 registration
 
 ## Footnotes
-
-[^otel-companies-arch]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
-    Cited for the dual-path span emission pattern the architecture table describes.
 
 [^mcp-spec-companies-ref]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
     Cited for the MCP tool-dispatch protocol the combined_router/execute_tool seam implements.
