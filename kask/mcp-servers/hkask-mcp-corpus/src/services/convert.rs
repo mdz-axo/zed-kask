@@ -474,8 +474,12 @@ impl<'a> ConvertService<'a> {
                     .collect(),
             )
             .map_err(PassageIndexError::Publication)?;
-        let vectors = match self.inference_router.embed(&model_name, &texts).await {
-            Ok(v) => v,
+        let vectors = match self
+            .inference_router
+            .embed_with_dimensions(&model_name, &texts, Some(crate::embedding_dim() as u32))
+            .await
+        {
+            Ok(batch) => batch.vectors,
             Err(e) => {
                 tracing::warn!(
                     target: "hkask.mcp.docproc.index",

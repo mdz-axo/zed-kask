@@ -370,8 +370,17 @@ impl ConsolidationService {
                     for batch in reembed_texts.chunks(50) {
                         let texts: Vec<String> =
                             batch.iter().map(|(_, _, text)| text.clone()).collect();
-                        match self.inference_router.embed(&emb_model, &texts).await {
-                            Ok(vectors) => {
+                        match self
+                            .inference_router
+                            .embed_with_dimensions(
+                                &emb_model,
+                                &texts,
+                                Some(crate::embedding_dim() as u32),
+                            )
+                            .await
+                        {
+                            Ok(batch) => {
+                                let vectors = batch.vectors;
                                 if let Err(error) =
                                     crate::index::validate_vectors(&vectors, batch.len())
                                 {

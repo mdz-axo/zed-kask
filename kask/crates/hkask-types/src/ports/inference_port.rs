@@ -345,6 +345,25 @@ pub trait InferencePort: Send + Sync {
         })
     }
 
+    /// Generate embeddings requesting a specific output width from
+    /// MRL-capable embedding models (Matryoshka truncation — e.g. Qwen3
+    /// Embedding, text-embedding-3). Callers whose vector stores are
+    /// width-bound (sqlite-vec `float[N]` tables) pass the store's width so
+    /// returned vectors always fit; `None` requests the model's native
+    /// width. The default delegates to [`InferencePort::embed_with_identity`],
+    /// ignoring the width — ports that talk to a provider honor it.
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> EmbedWithIdentityFuture<'a> {
+        let _ = dimensions;
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
+    }
+
     /// Rerank documents against a query with a dedicated reranker.
     ///
     /// `model` is the provider-prefixed model string (e.g.

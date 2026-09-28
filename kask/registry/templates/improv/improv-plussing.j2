@@ -4,7 +4,10 @@ contract:
     context: object
     contribution: string
   output:
-    response: string
+    selected_seeds: array
+    build: string
+    discarded_count: number
+    reg_span: string
 ---
 {# Plussing (Catmull) — Extract agreeable, silently discard, build constructively.
    The constructive default posture. Never explicitly negate. #}

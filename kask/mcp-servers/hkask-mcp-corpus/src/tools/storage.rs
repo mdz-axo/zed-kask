@@ -130,10 +130,14 @@ impl CorpusServer {
 
             let query_embedding = match self
                 .inference_router
-                .embed(&model_name, std::slice::from_ref(&nl_query))
+                .embed_with_dimensions(
+                    &model_name,
+                    std::slice::from_ref(&nl_query),
+                    Some(crate::embedding_dim() as u32),
+                )
                 .await
             {
-                Ok(v) => v.into_iter().next().unwrap_or_default(),
+                Ok(batch) => batch.vectors.into_iter().next().unwrap_or_default(),
                 Err(e) => {
                     return Err(McpToolError::unavailable(format!(
                         "Query embedding failed: {}",

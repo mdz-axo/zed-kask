@@ -525,12 +525,15 @@ pub(crate) async fn ingest_turn(
 
     let mut degradations = Vec::new();
     let vectors = match embedding_model {
-        Some(embedding_model) => match inference.embed(embedding_model, &chunk_texts).await {
-            Ok(vectors) if vectors.len() == attempted => Some(vectors),
-            Ok(vectors) => {
+        Some(embedding_model) => match inference
+            .embed_with_dimensions(embedding_model, &chunk_texts, Some(memory.dim as u32))
+            .await
+        {
+            Ok(batch) if batch.vectors.len() == attempted => Some(batch.vectors),
+            Ok(batch) => {
                 degradations.push(MemoryDegradation::EmbeddingCountMismatch {
                     expected: attempted,
-                    actual: vectors.len(),
+                    actual: batch.vectors.len(),
                 });
                 None
             }
@@ -647,11 +650,16 @@ pub(crate) async fn recall_turns(
         )
     })?;
     let vectors = inference
-        .embed(embedding_model, &[query.to_string()])
+        .embed_with_dimensions(
+            embedding_model,
+            &[query.to_string()],
+            Some(memory.dim as u32),
+        )
         .await
         .map_err(|error| {
             LocalSwarmError::Unavailable(format!("embedding the recall query failed: {error}"))
-        })?;
+        })?
+        .vectors;
     if vectors.len() != 1 {
         return Err(LocalSwarmError::Unavailable(format!(
             "embedding the recall query returned {} vectors; expected exactly 1",

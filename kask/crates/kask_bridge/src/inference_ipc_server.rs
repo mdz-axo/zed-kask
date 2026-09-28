@@ -797,7 +797,11 @@ async fn dispatch(
         };
         let model = params.embed_model.as_deref().unwrap_or("");
         let texts = params.embed_texts.as_deref().unwrap_or(&[]);
-        return match emb_port.embed_with_identity(model, texts).await {
+        let dimensions = params.embed_dimensions;
+        return match emb_port
+            .embed_with_dimensions(model, texts, dimensions)
+            .await
+        {
             Ok(batch) => InferenceOutcome::Embeddings {
                 embeddings: batch.vectors,
                 requested_model: batch.requested_model,

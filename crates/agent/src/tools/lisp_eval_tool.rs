@@ -571,6 +571,84 @@ mod tests {
     }
 
     #[test]
+    fn test_gradient_hunter_skill_md_pins_convergence_gate() {
+        // gradient-hunter SKILL.md pins the Phase 6 stability gate; if it
+        // drifts (or the set-comparison vocabulary changes), this fails until
+        // skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/gradient-hunter/SKILL.md"
+        ))
+        .expect("gradient-hunter SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains("(and (eq new_gradient_shapes 0) (eq top_k_stable 1))"),
+            "the Phase 6 stability gate must stay pinned in gradient-hunter SKILL.md"
+        );
+
+        let gate = r#"(and (eq new_gradient_shapes 0) (eq top_k_stable 1))"#;
+        let green = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"new_gradient_shapes": 0, "top_k_stable": 1}),
+            100_000,
+            64,
+        )
+        .expect("converged gate env must evaluate");
+        assert_eq!(green, json!(true));
+
+        let red = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"new_gradient_shapes": 1, "top_k_stable": 1}),
+            100_000,
+            64,
+        )
+        .expect("planted-new-shape gate env must evaluate");
+        assert_eq!(
+            red,
+            json!(false),
+            "a planted new gradient shape must fail the stability gate"
+        );
+    }
+
+    #[test]
+    fn test_improv_skill_md_pins_yes_but_form() {
+        // improv SKILL.md pins the yes-but forbidden-words check; if it
+        // drifts — or the needle-first argument order is "fixed" into
+        // reversal — this fails until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/improv/SKILL.md"
+        ))
+        .expect("improv SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains(r#"(string-contains (car ws) reply)"#),
+            "the yes-but check must stay needle-first — the word is the needle, reply the haystack (reversed args silently return false)"
+        );
+
+        let form = r#"(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible")))"#;
+        let flagged = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"reply": "No, that can't work — wrong approach"}),
+            100_000,
+            64,
+        )
+        .expect("flagged-reply form must evaluate");
+        assert_eq!(flagged, json!(["No,", "wrong", "can't"]));
+
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"reply": "Yes — and let's also account for the deployment constraint"}),
+            100_000,
+            64,
+        )
+        .expect("clean-reply form must evaluate");
+        assert_eq!(
+            clean,
+            json!([]),
+            "an empty list names no literal forbidden words — it does not prove the reply avoids contradiction (that stays the human's judgment)"
+        );
+    }
+
+    #[test]
     fn test_create_skill_skill_md_pins_convergence_forms() {
         // create-skill SKILL.md pins the Phase 5 convergence gate and the
         // translation reconciliation form; if they drift (or the

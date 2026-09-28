@@ -11,9 +11,14 @@ Investigate a disagreement between a grounded expectation and reality, then revi
 
 Grounded in Parisi's spin glass theory (Parisi 1979; Sherrington-Kirkpatrick 1975; Nobel 2021). Non-ergodic systems that store work, information, or memory have **rugged energy landscapes with metastable valleys separated by barriers**. The energy gradient is non-monotonic, so following the local gradient gets you stuck in a local minimum, not the global optimum.
 
-A "desert" is therefore not necessarily an absence — it is often a **metastable valley** the system has relaxed into and cannot leave without crossing an energy barrier. The system stores information *by being trapped*. A gradient between two metastable states is a gradient between two memories.
+A "desert" is therefore not necessarily an absence — it is often a **metastable valley** the system has relaxed into and cannot leave without crossing an energy barrier: the system stores information *by being trapped*.
 
 The seven surface ontologies (the shape table in `gradient-detect.j2` Step 2) describe the *shape* of gradients at boundaries. The spin glass substrate explains *why there are boundaries at all*. Before classifying a gradient's shape, consider whether the desert is a valley the system is trapped in — if so, "add the missing artifact" will not work; the system will relax back. The intervention must inject enough energy to cross the barrier (a deferred task, a startup signal, a reconfiguration that reshapes the landscape itself).
+
+## Initial and target condition
+
+- **Initial condition:** the target region and field type (what is being hunted — tests, spans, error branches, paired comments), plus either a grounded prior (source, scope and falsifier named) or a stated expectation with its source and what would contradict it — or an explicit `unknown` with a scoping probe. Without a prior or expectation, only absences can be detected, not gradients.
+- **Target condition:** the Phase 6 gate is green (no new gradient shapes versus the prior map, top-K unchanged) within the bound — the first map plus at most 2 prior refinements — or the bound is exhausted with the report emitted, `lessons_learned` and `pattern_signatures` recorded, and the revised expectation or explicit unknown stated. On the expectation-led route: at most two discriminating probes per question, then the mismatch report names the observation that would change the verdict.
 
 ## When to Use
 
@@ -47,8 +52,19 @@ observation-versus-expectation comparison and by the user (a surprise alone
 does not justify a detour). The measurements are D: probe outputs, counts,
 and the gradient-map stability gate (`lisp_eval` — no new gradient shapes
 versus the prior map and the top-K unchanged). An expectation with no stated
-falsifier is not a prediction; a gradient with no measured difference is not
-a finding.
+falsifier is not a prediction; a gradient with no measured difference is not a
+finding.
+
+| Step | Type | Oracle / critic |
+|------|------|-----------------|
+| Phase 1 Prior (expected-field model) | P | the prior's stated source and falsifier; the user when the prior is contested |
+| Phase 2 Map, Phase 3 Detect (measurements) | D | probe outputs and counts (grep/read_file receipts, span counts) |
+| Phase 4 Hypothesize | P | the discriminating-prediction test — each hypothesis must predict differently for the next probe |
+| Phase 5 Report (prioritization) | P | the fixed reason-class priority order; the user |
+| Phase 6 Converge (stability gate) | D | `lisp_eval` `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` — pinned in `lisp_eval_tool.rs` |
+| Phase 7 Loop (re-enter or emit) | D | the gate result vs the bound (max 2 prior refinements) |
+| Expectation-led step 3 (relevance gate) | P | the operator — explicit feedback is the priority signal; no consequence for the active goal → stop |
+| Expectation-led step 6 (bound and report) | P | the user (revised-expectation honesty); the two-probe count is D |
 
 ## Instructions
 
@@ -79,25 +95,12 @@ Start this route at intake for a substantive uncertain inquiry by selecting a qu
 
 **Gate (D)**: the Phase 6 set-based check — `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` over the measured gradient maps, with shapes named from the closed vocabulary of the `gradient-detect.j2` Step 2 shape table so they compare as sets. **Bound**: the first map plus at most 2 prior refinements (3 maps in all). This governs the field-mapping route only; the expectation-led route above has its own bound (at most two probes per question).
 
-**Reported estimate (P, not a gate)**: the composite below is a labelled judgment for the report. No tool computes it; `field_coverage_estimate` can be read from `gradient-map`'s per-element coverage. It never decides convergence. **Threshold**: 0.25.
-
-| Score | Meaning |
-|-------|---------|
-| 0.00 | Fully stabilized — all gradients re-confirmed, full field coverage |
-| 0.25 | Converged at threshold — adequate for action, minor unexplored surface |
-| 0.50 | Not converged — many new gradients or significant unexplored surface |
-| 1.00 | First iteration or no meaningful mapping performed |
-
-Composite of two sub-metrics (weighted 0.5/0.5):
-
-1. **process_stabilization_metric** (0.0–1.0): gradient overlap across iterations. High overlap = stabilization (low metric). First iteration = 1.0.
-2. **field_coverage_estimate** (0.0–1.0): fraction of expected field mapped. Honest estimate — false precision is worse than honest ignorance.
+(The former composite estimate — process stabilization plus field coverage, threshold 0.25 — was deleted 2026-09-28: no tool computed it, no output slot consumed it, and it never decided convergence.)
 
 ## Composed Skills
 
 | Skill | Role | When Invoked |
 |-------|------|-------------|
-| `grep + manual code analysis | Field topology extraction | Map phase — when hunting topology gradients (orphan nodes, missing edges, disconnected components) |
 | `pragmatic-cybernetics` | Prior modeling | Prior phase — when no sibling or convention prior is available; models expected field via variety engineering |
 | `falsifiability` | Counterfactual discrimination | Hypothesize phase — when discriminating between reason hypotheses |
 | `metacognition` | Prior perspective rotation and source-scoped ellipsis analysis | Hypothesize phase — different priors surface different gradients; when an expected detail is missing amid rich data, test whether it is actually unmeasured, merely unretrieved, or of unknown intent |
@@ -114,7 +117,7 @@ Composite of two sub-metrics (weighted 0.5/0.5):
 
 ## Shape and Reason Taxonomy
 
-The eight gradient shapes (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) and the seven reason classes (intentional boundary / MCAR, explainable gap / MAR, forgotten wire / MNAR, stale refactor / MNAR drift, scope creep / MNAR missing abstraction, metastable trap / spin glass, broken allosteric coupling / allostery) are defined in the `gradient-detect.j2` Step 2 shape table (shapes, ontology anchors) and the reason-class list in `gradient-hypothesize.j2` — the closed vocabulary the Phase 6 gate compares as sets.
+The eight gradient shapes (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift) and the seven reason classes (intentional boundary / MCAR, explainable gap / MAR, forgotten wire / MNAR, stale refactor / MNAR drift, scope creep / MNAR missing abstraction, metastable trap / spin glass, broken allosteric coupling / allostery) are defined in the `gradient-detect.j2` Step 2 shape table (shapes, ontology anchors) and the reason-class list in `gradient-hypothesize.j2` — the closed vocabulary the Phase 6 gate compares as sets. Published anchors: Canny edge detection; Womble 1951 (wombling boundary detection); Thistlethwaite & Campbell 1960 (regression discontinuity); Edelsbrunner & Carlsson 2009 (topological holes); Petrova et al., ISSRE 2023 (oracle gaps); Parisi (frustrated landscapes); Monod, Wyman & Changeux 1965 (allostery). The reason classes adapt Rubin 1976's missing-data taxonomy loosely — MCAR/MAR/MNAR name the nearest missingness family, not a faithful mapping (a designed absence is a deterministic mechanism, not chance missingness); the spin-glass and allosteric classes are the substrate's own.
 
 Key non-obvious rules the taxonomy encodes:
 
@@ -123,6 +126,10 @@ Key non-obvious rules the taxonomy encodes:
 - The metastable trap reason class must be considered for every gradient. The default assumption that "the artifact is missing" is an ergodic-system assumption; non-ergodic systems trap.
 - The broken allosteric coupling reason class must be considered for every gradient in an orchestrator context. The coupling is broken, not the strategy.
 - Priority: broken allosteric coupling > metastable trap > MNAR > MAR > MCAR, then fractal recurrence, then magnitude, then populated-side criticality.
+
+## Regression case
+
+Field-mapping route: render `gradient-hunter/gradient-prior` with `target_region` and `field_type` (first pass — `prior_iteration` absent), then `gradient-map` with the prior, `gradient-detect` with prior and actual field (one planted gradient: a sibling-rich region missing one test), `gradient-hypothesize` over the detected gradient, and `gradient-report` — whose `lessons_learned` and `pattern_signatures` feed the next `gradient-prior` render as `prior_iteration` (the feedback seam). Gate: the Phase 6 form green — env `{new_gradient_shapes: 0, top_k_stable: 1}` → true — and red with a planted new shape (`new_gradient_shapes: 1`) → false. Expectation-led route: render `expectation-inquiry` with `active_goal`, `expectation`, `observation`, `probe_results: []`, then re-render with populated `probe_results` (the retained/eliminated/undetermined pass). The gate form is pinned by `test_gradient_hunter_skill_md_pins_convergence_gate` in `lisp_eval_tool.rs`.
 
 ## Registry Templates
 
@@ -138,13 +145,16 @@ Key non-obvious rules the taxonomy encodes:
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-hunter/gradient-prior`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `gradient-prior.j2`: `target_region`, `field_type`, `prior_iteration`
+- `gradient-prior.j2`: `target_region`, `field_type`, `prior_iteration` (absent on the first pass; gradient-report's `lessons_learned`/`pattern_signatures` on re-entry)
+- `gradient-map.j2`: `target_region`, `field_type`, `prior`
+- `gradient-detect.j2`: `prior`, `actual_field`, `target_region`
+- `gradient-hypothesize.j2`: `gradients`, `prior`
+- `gradient-report.j2`: `gradients`, `gradient_hypotheses`, `prior`
 - `expectation-inquiry.j2`: `active_goal` (required string, the user's words), `operator_feedback` (explicit string or null), `expectation`, `observation`, `probe_results` (empty array on first pass; carry actual results on re-render)
 
 
 ## Constraints
 
-- All flow templates are prompt templates with `Public` visibility. Reference documents are rendering templates.
 - The prior must be explicit before gradient detection. A reconstructed prior is labeled retrospective, not scored as a pre-registered forecast.
 - Do not claim a spatial gradient without measured neighbors and an explicit comparison rule; do not claim learnability from prediction error alone. Do not promote 'not reported in this source' to 'absent from the field' or infer an author's intention from silence.
 - Operator-declared irrelevance stops an agent-initiated inquiry even if the discrepancy surprises the agent; user priority is not inferred from error magnitude.

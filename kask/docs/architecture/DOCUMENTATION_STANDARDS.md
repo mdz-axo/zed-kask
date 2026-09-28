@@ -110,7 +110,7 @@ status: VERIFIED
 
 **Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. An operator-retained `Proposed` plan is not an archive: it remains under `kask/docs/plans/` while the product decision is open and explicitly states that it is a plan rather than an implementation record. No current-state document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves that purpose.
 
-**Condensation requirement (2026-08-28):** The docs tree is capped at **fewer than 70 documents**. A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
+**Condensation requirement (2026-08-28; count basis aligned 2026-09-28):** The docs tree is capped at **fewer than 70 files** (all files, not only Markdown — the two plain-text evidence companions and the YAML inventory count against the cap; `find kask/docs -type f | wc -l`). A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
 
 Git history is the project's Architecture Repository[^archrepo]. Retired
 documents are recoverable through `git log --all --diff-filter=D -- <path>`
@@ -253,6 +253,7 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 | Per-crate Diataxis docs | `kask/docs/diataxis/` |
 | Prior-art research findings (operator-authorized class, introduced 2026-09-16) | `kask/docs/research/` |
 | Operator-retained, not-yet-authorized plans (`status: "Proposed"`) | `kask/docs/plans/` |
+| Plain-text evidence companions (durable tool-run logs, adoption-gate records; introduced 2026-09-28 for the Aeneas evidence files) | Beside their governing document — currently `kask/docs/plans/` (`aeneas-results.txt`, `aeneas-adoption-gate.txt`); referenced from it, never standalone |
 | Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
 | Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |
@@ -618,7 +619,7 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 
 ```bash
 # The docs tree holds no handoff class — the count gate is the enforcement:
-find kask/docs -name '*.md' | wc -l   # must stay < 70
+find kask/docs -type f | wc -l     # must stay < 70
 
 # Anything durable from a handoff must be traceable to the ledger:
 grep -n "lifecycle ledger" kask/docs/README.md

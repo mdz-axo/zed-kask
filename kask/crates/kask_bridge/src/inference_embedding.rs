@@ -24,6 +24,8 @@ struct EmbedRequest {
     model: String,
     /// Texts to embed.
     texts: Vec<String>,
+    /// Output width to request from MRL-capable models; `None` = native.
+    dimensions: Option<u32>,
     /// Reply channel.
     reply: oneshot::Sender<Result<EmbeddingBatch, EmbeddingGenerationError>>,
 }
@@ -89,11 +91,20 @@ impl LanguageModelEmbeddingPort {
                     // `encoding_format: "float"` requests raw float arrays instead
                     // of the default base64 encoding — avoids ~33% wire overhead
                     // and a decode pass. DeepInfra and OpenAI both support this.
-                    let body = serde_json::json!({
+                    let mut body = serde_json::json!({
                         "model": model_id,
                         "input": req.texts,
                         "encoding_format": "float",
                     });
+                    // MRL truncation: request the store's width so width-bound
+                    // vec0 tables always receive fitting vectors. Providers
+                    // without `dimensions` support reject or ignore it; the
+                    // insert-side dimension check fails visibly either way.
+                    if let Some(dimensions) = req.dimensions {
+                        if let Some(map) = body.as_object_mut() {
+                            map.insert("dimensions".to_string(), serde_json::json!(dimensions));
+                        }
+                    }
                     let body_bytes = serde_json::to_vec(&body).map_err(|e| {
                         EmbeddingGenerationError::Json(format!(
                             "failed to serialize embedding request: {e}"
@@ -221,6 +232,20 @@ impl LanguageModelEmbeddingPort {
         model: &str,
         texts: &[String],
     ) -> Result<EmbeddingBatch, EmbeddingGenerationError> {
+        self.embed_with_dimensions(model, texts, None).await
+    }
+
+    /// Generate embeddings, requesting a specific output width from
+    /// MRL-capable models (the OpenAI-compatible `dimensions` body field).
+    /// `None` lets the model emit its native width; callers whose vector
+    /// stores are width-bound (sqlite-vec `float[N]` tables) pass the
+    /// store's width so returned vectors always fit.
+    pub async fn embed_with_dimensions(
+        &self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> Result<EmbeddingBatch, EmbeddingGenerationError> {
         if texts.is_empty() {
             return Err(EmbeddingGenerationError::EmptyResponse);
         }
@@ -229,6 +254,7 @@ impl LanguageModelEmbeddingPort {
             .send(EmbedRequest {
                 model: model.to_string(),
                 texts: texts.to_vec(),
+                dimensions,
                 reply: tx_reply,
             })
             .map_err(|e| {

@@ -279,11 +279,13 @@ impl ComposeService {
             &gen_model,
         )?;
         let prompt_vector = inference
-            .embed(
+            .embed_with_dimensions(
                 &request.cognition.embedding.model,
                 std::slice::from_ref(&request.prompt),
+                Some(crate::embedding_dim() as u32),
             )
             .await?
+            .vectors
             .into_iter()
             .next()
             .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
@@ -490,11 +492,13 @@ impl ComposeService {
             match embedding_store_direct.get(&request.cognition.embedding.centroid_entity_ref) {
                 Ok(centroid_embedding) => {
                     let prose_vector = inference
-                        .embed(
+                        .embed_with_dimensions(
                             &request.cognition.embedding.model,
                             std::slice::from_ref(&generated_prose),
+                            Some(crate::embedding_dim() as u32),
                         )
                         .await?
+                        .vectors
                         .into_iter()
                         .next()
                         .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;

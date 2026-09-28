@@ -135,6 +135,13 @@ pub struct InferenceParams {
     pub embed_model: Option<String>,
     /// Texts to embed for `InferenceMethod::Embed`.
     pub embed_texts: Option<Vec<String>>,
+    /// Output width to request from MRL-capable embedding models (the
+    /// OpenAI-compatible `dimensions` body field — e.g. Qwen3 Embedding's
+    /// Matryoshka truncation). `None` lets the model emit its native width;
+    /// callers whose vector stores are width-bound (sqlite-vec `float[N]`
+    /// tables) must pass the store's width so returned vectors always fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_dimensions: Option<u32>,
 
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
     pub tool_server: Option<String>,

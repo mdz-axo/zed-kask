@@ -5,7 +5,11 @@ contract:
     session: string
     time_bound: number
   output:
-    response: string
+    turn: string
+    time_remaining: number
+    next_speaker: string
+    session_summary: string
+    reg_span: string
 ---
 {# Freestyling — Rapid collaborative short-response cycling.
    Time-bounded, no single owner, round-robin through participants. #}

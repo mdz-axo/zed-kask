@@ -321,6 +321,35 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            // Same routing as `embed_with_identity`: IPC bridge first, then
+            // the direct-HTTP fallback — with the requested width threaded
+            // to both so MRL models emit the store's width either way.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return hkask_types::InferencePort::embed_with_dimensions(
+                    &client, &model, &texts, dimensions,
+                )
+                .await;
+            }
+            let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
+                hkask_types::EmbeddingGenerationError::Connection(format!(
+                    "embed model '{model}': no provider prefix matched and no \
+                     provider credentials resolved — use a provider-prefixed \
+                     model or run under the zed bridge"
+                ))
+            })?;
+            port.embed_with_dimensions(&model, &texts, dimensions).await
+        })
+    }
+
     fn list_models<'a>(
         &'a self,
     ) -> std::pin::Pin<
@@ -770,8 +799,16 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         model: &str,
         texts: &[String],
     ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        self.embed_with_dimensions(model, texts, None)
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
         let requested_model = model.to_string();
-        // Strip any provider prefix — the API expects the bare model id.
         let model_id = model
             .split_once('/')
             .map(|(_, rest)| rest)
@@ -787,10 +824,17 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
             }
 
             let uri = format!("{api_url}/embeddings");
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": model_id,
                 "input": texts,
             });
+            // MRL truncation (the OpenAI-compatible `dimensions` field):
+            // width-bound vec0 stores pass their width so vectors always fit.
+            if let Some(dimensions) = dimensions {
+                if let Some(map) = body.as_object_mut() {
+                    map.insert("dimensions".to_string(), serde_json::json!(dimensions));
+                }
+            }
 
             let mut request = client
                 .post(&uri)

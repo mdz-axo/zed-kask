@@ -115,11 +115,16 @@ async fn embed_goal_event(
         ))
     })?;
     let embedding_model = ctx.embedding_model.to_string();
+    let dimensions = ctx.curator_store.embedding_dim() as u32;
     let passage = event.semantic_text();
     let passages = vec![passage.clone()];
     let result = ctx
         .tokio_handle
-        .spawn(async move { embedding_port.embed(&embedding_model, &passages).await })
+        .spawn(async move {
+            embedding_port
+                .embed_with_dimensions(&embedding_model, &passages, Some(dimensions))
+                .await
+        })
         .await
         .map_err(|error| {
             MemoryError::Ingestion(format!(
@@ -493,10 +498,15 @@ pub(crate) async fn write_turn(
     let vectors: Option<Vec<Vec<f32>>> = match ctx.embedding_port.cloned() {
         Some(embedding_port) => {
             let embedding_model = ctx.embedding_model.to_string();
+            let dimensions = ctx.curator_store.embedding_dim() as u32;
             let texts = chunk_texts.clone();
             let vectors = ctx
                 .tokio_handle
-                .spawn(async move { embedding_port.embed(&embedding_model, &texts).await })
+                .spawn(async move {
+                    embedding_port
+                        .embed_with_dimensions(&embedding_model, &texts, Some(dimensions))
+                        .await
+                })
                 .await;
             match vectors {
                 Ok(Ok(vectors)) if vectors.len() == chunk_texts.len() => Some(vectors),

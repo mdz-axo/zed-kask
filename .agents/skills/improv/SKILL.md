@@ -9,7 +9,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 
 ## Reference models
 
-Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and building on an offer (`onto_anchor` → derived `yes_and`); Catmull, *Creativity, Inc.* (2014) — plussing as Pixar's constructive-critique rule (`onto_anchor` → derived `plussing`); both operator rulings 2026-09-26. Yes But, Freestyling and Riffing are this skill's own extensions of those two sources — named modes with no independent published definition; their constraints below are the operative spec.
+Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and building on an offer (`onto_anchor` → derived `yes_and`); Catmull, *Creativity, Inc.* (2014) — plussing as Pixar's constructive-critique rule (`onto_anchor` → derived `plussing`); both operator rulings 2026-09-26. Yes But, Freestyling and Riffing are this skill's own extensions of those two sources — named modes with no independent published definition; their constraints below are the operative spec. Per-step: Yes And's accept-then-extend copies Johnstone's offer rule; Plussing's never-negate copies Catmull's rule, while its confidence ranking, silent discard and top-3 build are this skill's own mechanisms (unanchored); Yes But, Freestyling and Riffing are unanchored throughout.
 
 ## Initial and target condition
 
@@ -23,14 +23,14 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 |------|------|-------------------|
 | Mode selection; every mode's reply | P | the human participant |
 | Yes But literal forbidden words (partial) | D | `lisp_eval` check below; catches literal words only, not contradiction |
+| Plussing seed confidence ranking | P | a model estimate used only to rank seeds — never reported as a finding |
+| Freestyling time tracking | P | the agent tracks `time_remaining` against the declared `time_bound` (no machine timer reads it back); the bound is the checkable |
+| Riffing step counting | P | the agent tracks `steps_remaining` against `return_policy`'s max_steps; the must-resolve rule is the checkable |
+| Selector kata overrides | P | kata-improvement's coaching-question numbering (as numbered in its SKILL.md) — the binding drifts if kata renumbers |
 
 ## When to Use
 
-- General conversation, kata observation drill, or coaching Q5 amplification → default to Plussing
-- Brainstorming, kata five-questions drill, or building momentum → Yes And
-- Coaching Q4 (next-step guidance), scope narrowing, or risk assessment → Yes But
-- Creative problem-solving, architecture exploration, or ensemble ideation with multiple participants → Freestyling
-- Deep-dive on a single contribution, "what if" tangents, or independent research threads → Riffing
+- Mode routing is the selector's job: render `improv-select` — its rendered guide carries the full context-to-mode mapping, including the kata overrides (bound to kata-improvement's coaching-question numbering)
 - Dual-presence chat, ensemble sessions, and kata coaching loops where constructive-by-default posture is required
 - When the agent's own evidence is thin and it needs non-obvious paths to firmer ground — **Riffing** for divergent exploration of tangents that may surface higher-confidence findings, **Plussing** for constructive extraction of agreeable components from uncertain output
 - When standard evidence-gathering has plateaued and a perspective-shift (not more data) is the path forward — improv modes reframe rather than accumulate
@@ -79,7 +79,7 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 1. Initiate the session with a declared time bound and participant list.
 2. Cycle through participants in round-robin order; each turn is short (1–3 sentences), associative, and builds on the prior turn's energy.
 3. Track time remaining; when the time bound is reached, signal session end and summarize emergent themes.
-4. Record all turns for Regulation coherence analysis.
+4. Record all turns for Regulation coherence analysis (the `reg_span` outputs have no automated consumer yet — emitted for the operator's Regulation review; not yet enforced).
 5. Mark each turn `[freestyle turn N by AGENT] content`.
 6. Return `{turn, time_remaining, next_speaker, session_summary, reg_span}`.
 
@@ -90,22 +90,25 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 4. The riff must resolve — it cannot hang indefinitely.
 5. Return `{tangent, outcome, synthesis, thread_id, steps_remaining, reg_span}`.
 
+## Regression case
+
+Render `improv/improv-select` with `context`, `contribution`, `active_mode` (null or a mode), and `previous_contributions` — it returns `{mode, rationale}`. Render `improv/improv-yes-but` with `context` and a `contribution`, then run the forbidden-words check both ways with `lisp_eval`: a reply containing " no " returns a non-empty list naming it; a clean reply ("Yes — and let's also account for the deployment constraint") returns an empty list, which does NOT prove the reply avoids contradiction (that stays the human's judgment). The check is needle-first — `(string-contains (car ws) reply)`, the word is the needle — and is pinned by `test_improv_skill_md_pins_yes_but_form` in `lisp_eval_tool.rs`. Also render `improv/improv-freestyling` with `participants`, `session`, `time_bound`, and `improv/improv-riffing` with `seed`, `steps_taken`, `return_policy`.
+
 ## Registry Templates
 
-| Template | Purpose |
-|----------|---------|
-| `improv-select.j2` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — the agent then renders the selected mode's template. |
-| `improv-plussing.j2` | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
-| `improv-yes-and.j2` | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
-| `improv-yes-but.j2` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
-| `improv-freestyling.j2` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
-| `improv-riffing.j2` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
+| Template | Purpose | Context |
+|----------|---------|---------|
+| `improv-select.j2` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — the agent then renders the selected mode's template. | `context`, `contribution`, `active_mode`, `previous_contributions` |
+| `improv-plussing.j2` | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. | `context`, `contribution` |
+| `improv-yes-and.j2` | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. | `context`, `contribution` |
+| `improv-yes-but.j2` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. | `context`, `contribution` |
+| `improv-freestyling.j2` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. | `participants`, `session`, `time_bound` |
+| `improv-riffing.j2` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. | `seed`, `steps_taken`, `return_policy` |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `improv/improv-select`) and a context object with the required variables.
 
 ## Constraints
 
-- **Visibility:** All templates are `Public`.
 - **Never explicitly negate** (Plussing, and governing principle in selector). Criticism is deletion-by-omission.
 - **Yes And extension must be additive, not substitutive** — the accepted base remains intact and visible.
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."

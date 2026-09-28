@@ -398,7 +398,13 @@ impl CorpusServer {
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
                     &format!("batch {batch_idx} of {batch_len}"),
-                    || router.embed_with_identity(&model_name, &batch_texts),
+                    || {
+                        router.embed_with_dimensions(
+                            &model_name,
+                            &batch_texts,
+                            Some(crate::embedding_dim() as u32),
+                        )
+                    },
                 )
                 .await
                 {

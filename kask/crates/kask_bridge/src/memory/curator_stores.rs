@@ -202,6 +202,13 @@ impl CuratorStore {
         }
     }
 
+    /// The store's vector width (the vec0 table's `float[N]`). Embedding
+    /// requests must request this width from MRL-capable models so
+    /// returned vectors always fit the table.
+    pub(crate) fn embedding_dim(&self) -> usize {
+        self.embedding_dim
+    }
+
     #[cfg(test)]
     pub(crate) fn for_tests(store: Option<Arc<MemoryStore>>) -> Self {
         Self {

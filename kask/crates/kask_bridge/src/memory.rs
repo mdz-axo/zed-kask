@@ -614,10 +614,15 @@ impl RealMemoryPort {
             .clone()
             .ok_or("External passage search requires a configured embedding port".to_string())?;
         let model = self.embedding_model.clone();
+        let dimensions = self.curator_store.embedding_dim() as u32;
         let text = query.to_string();
         let vectors = self
             .tokio_handle
-            .spawn(async move { embedding_port.embed(&model, &[text]).await })
+            .spawn(async move {
+                embedding_port
+                    .embed_with_dimensions(&model, &[text], Some(dimensions))
+                    .await
+            })
             .await
             .map_err(|error| format!("External query embedding task failed: {error}"))?
             .map_err(|error| format!("External query embedding failed: {error}"))?;
@@ -800,6 +805,7 @@ impl RealMemoryPort {
         // HTTP call.
         let embedding_model = self.embedding_model.clone();
         let embedding_port = self.embedding_port.clone();
+        let dimensions = self.curator_store.embedding_dim() as u32;
         let query_owned = query.to_string();
         let vectors = self
             .tokio_handle
@@ -807,7 +813,9 @@ impl RealMemoryPort {
                 let Some(ref embedding_port) = embedding_port else {
                     return Ok(Vec::new());
                 };
-                embedding_port.embed(&embedding_model, &[query_owned]).await
+                embedding_port
+                    .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
+                    .await
             })
             .await;
 

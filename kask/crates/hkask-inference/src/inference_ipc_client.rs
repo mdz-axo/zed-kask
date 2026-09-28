@@ -458,11 +458,13 @@ impl InferenceIpcClient {
         &self,
         model: &str,
         texts: &[String],
+        dimensions: Option<u32>,
     ) -> Result<hkask_types::EmbeddingBatch, EmbeddingGenerationError> {
         let method = InferenceMethod::Embed;
         let params = InferenceParams {
             embed_model: Some(model.to_string()),
             embed_texts: Some(texts.to_vec()),
+            embed_dimensions: dimensions,
             ..Default::default()
         };
         let response = self.ipc_roundtrip(&method, params).await?;
@@ -841,7 +843,18 @@ impl InferencePort for InferenceIpcClient {
     ) -> hkask_types::EmbedWithIdentityFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
-        async move { self.call_embed(&model, &texts).await }.boxed()
+        async move { self.call_embed(&model, &texts, None).await }.boxed()
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        async move { self.call_embed(&model, &texts, dimensions).await }.boxed()
     }
 
     fn rerank<'a>(
