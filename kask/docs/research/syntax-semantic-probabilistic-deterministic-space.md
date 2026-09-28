@@ -163,14 +163,21 @@ anchors carry the ruling path per protocol — an operator ruling is requested;
 no private definitions are assigned in the meantime. Interim usage follows
 the exemplar sources' published senses, which is why §5 exists.
 
+**Update 2026-09-28 (post-rebuild).** The five coarse terms below have since
+been ruled into the derived registry (operator ruling 2026-09-28, granted in
+the follow-up pass) and resolve live at the derived rung — entries at
+`derived.rs:675-718`, live probes recorded in
+`navigating-the-region-space-collaboration.md` §1. The table preserves the
+composition-time tier with the update noted per row.
+
 | Term | Tier / anchor | Ruling path / published grounding |
 |---|---|---|
-| `syntax` | coarse — 5W1H core | Operator ruling requested. Interim published senses: Tarski's formalized-language calculus [S1]; Chomsky's autonomous syntax [S2] |
-| `semantics` | coarse — 5W1H core | Ruling requested. Interim: Tarski's semantic conception (truth for formalized languages) [S1]; Wittgenstein's meaning-as-use [S3] |
+| `syntax` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Chomsky (1957) + Tarski (1944) — entry `derived.rs:675`; live probe in the collaboration report §1 |
+| `semantics` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Tarski (1944) + Wittgenstein (1953) — entry `derived.rs:683`; live probe in the collaboration report §1 |
 | `probability` | upper — SUMO `ProbabilityFn` | "The a priori probability of a state of affairs" (Merge.kif, pinned) |
-| `determinism` | coarse — 5W1H core | The operative P-axis uses the ruled composites below |
-| `computation` | coarse — 5W1H core | Ruling requested; see `deterministic_computation` |
-| `template` | coarse — 5W1H core | Ruling requested. Local instance: registry Jinja templates — deterministic render (D) feeding model consumption (P) |
+| `determinism` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) — entry `derived.rs:691`; live probe in the collaboration report §1 |
+| `computation` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) + Newell & Simon (1976) — entry `derived.rs:699`; live probe in the collaboration report §1 |
+| `template` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Jinja2 (Pallets) + the registry instance — entry `derived.rs:711`; live probe in the collaboration report §1 |
 | `deterministic_computation` | **derived rung** (operator ruling 2026-09-27) | "Execution with multiplicity 1 … enforces zero conditional entropy relative to the spec." Authority: Turing (1936) |
 | `probabilistic_computation` | **derived rung** (operator ruling 2026-09-27) | "A sample from a learned approximation of a posterior … model confidence is not task probability." Authority: Gershman & Goodman (2014); Hu et al. (2024) [S11] |
 
@@ -354,7 +361,7 @@ States from the six-value lattice; every claim's citation resolves in
 |---|---|---|---|
 | C1 | 2×2 is the user-confirmed base model; graded refinement is open-question extension | verified | U1 |
 | C2 | P-axis terms resolve on the derived rung (Turing 1936; Gershman & Goodman 2014; Hu et al. 2024) | verified | O1 |
-| C3 | Five R-axis/P-axis terms resolve only coarse (5W1H); rulings requested, none assigned privately | verified | O1 |
+| C3 | Five R-axis/P-axis terms resolved only coarse (5W1H) at composition; rulings requested, none assigned privately. **Update 2026-09-28:** all five ruled and live at the derived rung (collaboration report §1) | verified (composition-time; superseded by the landed ruling) | O1 |
 | C4 | `probability` resolves to SUMO `ProbabilityFn` | verified | O1 |
 | C5 | First-shot artifact failed 5/12 vectors: 4 accepted-invalid + 1 type-error crash | verified | E1 |
 | C6 | One gate-driven revision closed it: 12/12 pass | verified | E1 |
@@ -389,8 +396,9 @@ States from the six-value lattice; every claim's citation resolves in
    against the incident census.
 6. **Corpus re-query** after migration goal `74cfe8a2` lands — the blocked
    channel's retry, to move C12 from partial toward verified.
-7. **Ontology rulings** for the five coarse terms in §2 (request queued via
-   the anchor protocol).
+7. **Ontology rulings — RESOLVED 2026-09-28:** the five terms are ruled
+   into the derived registry (`derived.rs:675-718`) and resolve live at the
+   derived rung post-rebuild; §2's table carries the per-row update.
 
 ## 9. Check ledger
 
