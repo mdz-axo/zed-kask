@@ -43,8 +43,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-CAP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CAP-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CAP-003` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-16 | VERIFIED |
-| `DIAG-CAP-004` | [`diataxis/hkask-tool-port/explanation.md`](./diataxis/hkask-tool-port/explanation.md) | 2026-08-28 | VERIFIED |
-| `DIAG-CAP-005` | [`diataxis/hkask-tool-port/explanation.md`](./diataxis/hkask-tool-port/explanation.md) | 2026-08-28 | VERIFIED |
+| `DIAG-CAP-004` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-08-28 | VERIFIED |
+| `DIAG-CAP-005` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-08-28 | VERIFIED |
 | `DIAG-CAP-006` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CMP-ARCH-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-CMP-ARCH-002` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |

@@ -14,6 +14,11 @@ Hemingway's embedded prose — not merely prompted toward him.
 
 ## Reference model
 
+Generation is retrieval-augmented few-shot style transfer: `corpus_compose`
+retrieves up to `k_max` salient exemplars from the author's embedded corpus
+and places them in the system prompt (`compose.rs`, retrieval section) —
+the in-context style-transfer family (e.g. Reif et al., "A Recipe for
+Arbitrary Text Style Transfer with Large Language Models", ACL 2022).
 The validation is embedding-space stylometry: cosine distance between the
 composed prose's embedding and the author's corpus centroid
 (`hkask-mcp-corpus/src/compose.rs:502`, `helpers.rs:334`), gated by the

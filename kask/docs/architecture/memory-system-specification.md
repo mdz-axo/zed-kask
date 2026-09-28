@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-19
-version: "5.1.1"
+last_updated: 2026-09-28
+version: "5.2.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -62,7 +62,7 @@ The memory system is a **vector embedding + relational lookup** store. One
 `entity_ref` string links each embedding vector to its relational row, so
 KNN search results can be joined back to the full text. There is exactly one
 store type: every h_mem — chat turn, curator fact, swarm delegation — flows
-through the same `MemoryStore` (`kask/crates/hkask-memory/src/memory_store.rs:128`).
+through the same `MemoryStore` (`kask/crates/hkask-memory/src/memory_store.rs:174`).
 The ontology blob on each h_mem carries dual-axis anchoring (PKO process
 axis + Dublin Core state axis, `kask/crates/hkask-storage/src/hmem.rs:53-58`);
 it is a discriminator for recall queries, not a type system. There are no
@@ -97,8 +97,10 @@ narrative generation loop.
    - Merging, ranking by relevance × confidence × connectedness, and
      injecting the top results into the model's context
    (`kask/crates/kask_bridge/src/memory.rs`)
-3. **Consolidates** on a background timer — confidence-floor cleanup plus
-   budget pruning only (`kask/crates/hkask-memory/src/consolidation_service.rs:29-33`).
+3. **Consolidates** on a background timer — confidence-floor cleanup only
+   (`kask/crates/hkask-memory/src/consolidation_service.rs:38-81`; the bridge
+   passes `confidence_floor` with no count cap,
+   `kask/crates/kask_bridge/src/memory.rs:460-471`).
 4. **Federates explicit searches** without merging stores. `curator_federated_search`
    embeds once, retrieves untouched Curator candidates plus passage text from
    identity-bound sealed corpus databases, and rank-interleaves the already-ranked
@@ -117,16 +119,16 @@ narrative generation loop.
 - No promotion, re-tagging, or reflection in consolidation — the
   episodic→semantic promotion pipeline does not exist
   (`consolidation_service.rs:1-8`; enforced by the absence of any such phase
-  in `consolidate`, `consolidation_service.rs:34-162`)
+  in `consolidate`, `consolidation_service.rs:38-135`)
 - No query-embedding cache — every recall embeds the query fresh
   (`memory.rs:673-691`)
 - No zed-agent recall — recall is curator-scoped (operator ruling 2026-09-28):
   `BridgeContextInjector::inject_context` returns empty for non-curator
   threads, and the curator recalls via the inherent `recall_context_curator` /
-  `recall_thread_curator` methods (`memory.rs:499-519`, `memory.rs:568-614`).
+  `recall_thread_curator` methods (`memory.rs:691-735`).
   The `MemoryPort` trait's `recall_context` / `recall_thread` keep their
-  default no-op implementations as the port contract; `RealMemoryPort` no
-  longer overrides them.
+  default no-op implementations as the port contract (`kask/crates/hkask-types/src/ports/memory_port.rs:155,173`);
+  `RealMemoryPort` no longer overrides them (`memory.rs:492`).
 - External-evidence injection is opt-in for Curator chat and off by default.
   The Memory page uses one `Auto-Inject Memories` master switch and a dropdown:
   Curator memory only, or one named source from the sealed-source manifest.
@@ -178,8 +180,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-ARCH
-verified_date: 2026-09-04
-verified_against: kask/crates/kask_bridge/src/memory.rs:454-520 (BridgeMemoryPort→RealMemoryPort ingest, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:568-614 (recall_context_curator), kask/crates/kask_bridge/src/memory/ingest.rs:58-235 (write path), kask/crates/hkask-memory/src/memory_store.rs:128-184 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:647 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
+verified_date: 2026-09-28
+verified_against: kask/crates/kask_bridge/src/memory.rs:492-560 (MemoryPort impl — ingest only, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:691-735 (recall_context_curator / recall_thread_curator), kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (write path), kask/crates/hkask-memory/src/memory_store.rs:174-266 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:716 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
 status: VERIFIED
 -->
 
@@ -188,12 +190,12 @@ status: VERIFIED
 | Component                    | Crate           | Role                                                                                      |
 | ---------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
 | `Thread` turn loop           | `agent`         | Calls `ingest_turn` on turn completion; calls `inject_context` per prompt                   |
-| `BridgeMemoryPort`           | `kask_bridge`   | Adapts `agent::ThreadMemoryPort` (`crates/agent/src/agent.rs:2924`) → `RealMemoryPort`     |
-| `RealMemoryPort`             | `kask_bridge`   | The real implementation: ingestion, curator recall, consolidation timer (`memory.rs:74`)   |
-| `BridgeContextInjector`      | `kask_bridge`   | Implements `agent::ContextInjector`; curator variant calls `recall_*_curator` (`context_injector.rs:164`) |
-| `CuratorStore`               | `kask_bridge`   | Self-healing handle over the curator's `MemoryStore` (`kask/crates/kask_bridge/src/memory/curator_stores.rs:52`)       |
-| `MemoryStore`                | `hkask-memory`  | Wraps `HMemStore` + `EmbeddingStore`; `store`, `query_deduped`, `search_similar` (`memory_store.rs:128`) |
-| `MemoryConsolidator`         | `hkask-memory`  | Confidence cleanup + budget pruning (`consolidation_service.rs:20`)                        |
+| `BridgeMemoryPort`           | `kask_bridge`   | Adapts `agent::ThreadMemoryPort` (`crates/agent/src/agent.rs:3029`) → `RealMemoryPort`     |
+| `RealMemoryPort`             | `kask_bridge`   | The real implementation: ingestion, curator recall, consolidation timer (`memory.rs:190`)   |
+| `BridgeContextInjector`      | `kask_bridge`   | Implements `agent::ContextInjector`; curator variant calls `recall_*_curator` (`context_injector.rs:223,262-330`) |
+| `CuratorStore`               | `kask_bridge`   | Self-healing handle over the curator's `MemoryStore` (`kask/crates/kask_bridge/src/memory/curator_stores.rs:169`)       |
+| `MemoryStore`                | `hkask-memory`  | Wraps `HMemStore` + `EmbeddingStore`; `store`, `query_deduped`, `search_similar` (`memory_store.rs:174`) |
+| `MemoryConsolidator`         | `hkask-memory`  | Confidence cleanup + explicit-cap pruning (`consolidation_service.rs:22`)                        |
 | `HMemStore`                  | `hkask-storage` | Relational EAV table (`hmems`, `hmem.rs:135`)                                              |
 | `EmbeddingStore`             | `hkask-storage` | Vector table (`embeddings` + `vec_embeddings` via sqlite-vec)                              |
 | `LanguageModelEmbeddingPort` | `kask_bridge`   | OpenAI-compatible `/embeddings` HTTP client over zed's credentials                         |
@@ -244,13 +246,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding float[$DI
 Keyed on `rowid` (mirrors `embeddings.rowid`). KNN search via the `MATCH`
 operator returns nearest neighbors ordered by cosine distance.
 
-### `memory_links` (co-occurrence — `schema.sql:23-29`)
+### `memory_links` (co-occurrence — `schema.sql:21-29`)
 
 `entity_a`, `entity_b`, `co_count`, `last_linked`, `PRIMARY KEY (entity_a,
 entity_b) WITHOUT ROWID`. Populated by `record_co_occurrence`
-(`memory_store.rs:924-951`), called from the context injector after every
-non-empty recall (`context_injector.rs:324-335`). Read by `connectedness`
-(`memory_store.rs:957-969`) as the recall-ranking salience signal.
+(`memory_store.rs:1195`), called from the context injector after every
+non-empty recall (`context_injector.rs:456`). Read by `connectedness`
+(`memory_store.rs:1228`) as the recall-ranking salience signal.
 
 ### The entity_ref invariant
 
@@ -333,8 +335,8 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-ERD
-verified_date: 2026-08-28
-verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1 (hmems), :5 (embeddings incl. passage_text), :6 (vec_embeddings), :23-29 (memory_links)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1 (hmems), :5 (embeddings incl. passage_text), :6 (vec_embeddings), :21-29 (memory_links)
 status: VERIFIED
 -->
 
@@ -350,12 +352,12 @@ status: VERIFIED
 | `memory_links` | (implicit) | `PRIMARY KEY (entity_a, entity_b) WITHOUT ROWID` |
 
 All index definitions live in `kask/crates/hkask-storage/src/core/sql/schema.sql:2-4`,
-`:7`, `:23-29`.
+`:7`, `:21-29`.
 
 ## 4. Ingestion
 
-**Source:** `kask/crates/kask_bridge/src/memory.rs:454-497` (trait impl,
-semaphore) and `kask/crates/kask_bridge/src/memory/ingest.rs:58-235`
+**Source:** `kask/crates/kask_bridge/src/memory.rs:492-530` (trait impl,
+semaphore) and `kask/crates/kask_bridge/src/memory/ingest.rs:271-660`
 (`write_turn`).
 
 When a thread turn completes, the turn loop calls
@@ -379,7 +381,7 @@ the complete goal list. Any other id-less goal result is malformed and is
 surfaced rather than filed under a synthetic `curator:goal:list` identity.
 
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
-(`ingest.rs`) — used for logging only; the write path is identical for
+(`ingest.rs:277`) — used for logging only; the write path is identical for
 every agent. The curator store is behind the self-healing `CuratorStore`
 handle — a failed initial open leaves the store `None`, and every `get()`
 re-attempts the open (`curator_stores.rs`); a successful re-open also
@@ -420,9 +422,9 @@ intake prediction recorded) calibrates nothing. Pinned by
 
 A `tokio::sync::Semaphore` (default 1 permit, configurable via
 `HKASK_MEMORY_INGEST_CONCURRENCY`, malformed values warn and fall back —
-`memory.rs:290-331`) serializes concurrent ingestions so they don't contend
+`memory.rs:311,380-400`) serializes concurrent ingestions so they don't contend
 with the recall path for the SQLite pool. Pinned by
-`ingestion_semaphore_serializes_concurrent_ingestions` (`memory.rs:1927`).
+`ingestion_semaphore_serializes_concurrent_ingestions` (`memory.rs:3501`).
 
 ### Memory Ingest Sequence
 
@@ -486,8 +488,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-INGEST
-verified_date: 2026-09-21
-verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn tests: goal semantic visibility + chunk recall), kask/crates/kask_bridge/src/memory/ingest.rs (write_turn: goal vector-before-h_mem publication, list exclusion, heal/rebuild, clean/chunk/tag, batch chunk embedding), kask/crates/hkask-types/src/ports/memory_port.rs (GoalEvent identity/passage contract), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
+verified_date: 2026-09-28
+verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn tests: goal semantic visibility + chunk recall), kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (write_turn: goal vector-before-h_mem publication, list exclusion, heal/rebuild, clean/chunk/tag, batch chunk embedding), kask/crates/hkask-types/src/ports/memory_port.rs (GoalEvent identity/passage contract), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
 status: VERIFIED
 -->
 
@@ -523,16 +525,16 @@ status: VERIFIED
 
 ## 5. Recall
 
-**Source:** `kask/crates/kask_bridge/src/memory.rs:655-882` (`recall_from`),
-`memory.rs:884-991` (`recall_thread_from`), and
-`kask/crates/kask_bridge/src/context_injector.rs:185-345`
+**Source:** `kask/crates/kask_bridge/src/memory.rs:777-1030` (`recall_from`),
+`memory.rs:1036-1150` (`recall_thread_from`), and
+`kask/crates/kask_bridge/src/context_injector.rs:262-460`
 (`inject_context`).
 
 ### When recall fires
 
-- `kask.memory.auto_inject` is true (`context_injector.rs:215`)
+- `kask.memory.auto_inject` is true (`context_injector.rs:298`)
 - The prompt is ≥ 20 chars AND ≥ 3 words (`should_recall`,
-  `context_injector.rs:38-42`, `:85-90`)
+  `context_injector.rs:87`, `:256`)
 - The `ContextInjector` hook is wired (deferred startup task)
 
 ### The two legs
@@ -548,23 +550,23 @@ status: VERIFIED
    `limit × 10`, minimum 50) → filter by query-word substring overlap
    (words > 3 chars, first 5 words) → relevance =
    `0.5 × matched query entries / query entries` via
-   `hkask_memory::salience::keyword_overlap_score` (T18, 2026-09-08).
+   `hkask_memory::salience::keyword_overlap_score` (`memory.rs:924,939`; T18, 2026-09-08).
    This replaces the constant score while preserving the keyword leg's
    0.5 ceiling, confidence/connectedness weighting, and semantic dedup precedence.
 
 ### Merge, rank, inject
 
 Candidates from both legs are merged (the keyword leg skips texts already
-present, so the semantic candidate wins on collision — `memory.rs:804-807`),
+present, so the semantic candidate wins on collision — `memory.rs:928-939`),
 sorted by `relevance × confidence × (1 + min(connectedness × 0.1, 0.5))`
-(`memory.rs:821-850`), truncated to `recall_limit`, and only the survivors
-are `touch_recall`-ed (resetting their decay clocks — `memory.rs:852-867`).
+(`memory.rs:979-991`), truncated to `recall_limit`, and only the survivors
+are `touch_recall`-ed (resetting their decay clocks — `memory.rs:1000-1015`).
 The injector then filters by `recall_min_confidence` (prompt snippets) and
 `recall_min_confidence + 0.1` (thread snippets), wraps each snippet in
 data-boundary markers with the closing marker neutralized against injection
-(`context_injector.rs:56-77`, `:240-243`, `:266-269`), and injects the
+(`context_injector.rs:46-77`, `:282-285`), and injects the
 result as a `Role::System` message. Zero-result recalls return an explicit
-absence message (the hypocognition guard, `context_injector.rs:285-311`).
+absence message (the hypocognition guard, `context_injector.rs:395-407`).
 
 ### Thread-scoped recall (per turn)
 
@@ -606,31 +608,35 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-RECALL
-verified_date: 2026-09-04
+verified_date: 2026-09-28
 verified_against: kask/crates/kask_bridge/src/context_injector.rs (prompt gate, should_recall, auto_inject gate, confidence filters, absence message, data-boundary markers); kask/crates/kask_bridge/src/memory.rs (recall_from: KNN passage_text pinpointing, keyword leg curator:thread: prefix via query_deduped_untouched_by_prefix, sort, touch; recall_thread_from: single-entity)
 status: VERIFIED
 -->
 
 A failed embed degrades recall to keyword-only with a `tracing::warn!` —
 the operator can distinguish "no memory found" from "embedding endpoint
-down" (`memory.rs:693-716`). The embedding HTTP call adds ~100–300ms to
+down" (`memory.rs:814-833`). The embedding HTTP call adds ~100–300ms to
 recall on every qualifying prompt; there is no query-embedding cache (see
 [Design rationale](#8-design-rationale)).
 
 ## 6. Consolidation
 
-**Source:** `kask/crates/hkask-memory/src/consolidation_service.rs:34-162`
+**Source:** `kask/crates/hkask-memory/src/consolidation_service.rs:38-135`
 
 A background timer (cadence from `kask.memory.consolidation_cadence_secs`,
-default 300s, 0 = disabled — `memory.rs:236-287`) runs
+default 300s, 0 = disabled — `memory.rs:329`) runs
 `MemoryConsolidator::consolidate`, which does exactly two things:
 
 1. Delete h_mems at or below the confidence floor (if specified)
-   (`consolidation_service.rs:82-109`)
-2. Delete lowest-confidence h_mems until within the storage budget
-   (default 10_000, `memory_store.rs:112`; the curator store uses the
-   default with no override — `curator_stores.rs:225-233`)
-   (`consolidation_service.rs:111-149`)
+   (`consolidation_service.rs:57-81`)
+2. Delete lowest-confidence h_mems until within the caller's **explicit**
+   `max_h_mems` cap (if specified) (`consolidation_service.rs:86-110`).
+   The production bridge pass passes only the confidence floor —
+   `ConsolidationRequest { confidence_floor: Some(..), ..Default::default() }`
+   (`memory.rs:460-471`) — so no count cap runs: count-based pruning was
+   deprecated (operator ruling 2026-09-04, completed 2026-09-08; the former
+   hidden `storage_budget` fallback is removed,
+   `consolidation_service.rs:30-37`).
 
 There is no promotion, no re-tagging, no Bayesian combination in the
 consolidation path. `combine_confidences` (log-odds pooling,
@@ -646,10 +652,11 @@ decoupled from ingestion — it runs on the timer, never in the
    completion.
 2. **Contention.** Consolidation writes to the same SQLite pool as
    ingestion and recall. Running it on a timer spreads the load.
-3. **Ashby's Law.** The storage budget (default 10,000 h_mems,
-   `memory_store.rs:112`) is the attenuator for unbounded memory
-   growth[^ashby]. Decoupling pruning from ingestion means the pruning
-   decision is made on a schedule, not under write pressure.
+3. **Ashby's Law.** Unbounded memory growth is attenuated by time-based,
+   distillation-gated forgetting (`kask.memory.forgetting_days`, §6) and the
+   confidence floor — not by a count budget (count-based pruning was removed
+   by the 2026-09-04 ruling)[^ashby]. Decoupling cleanup from ingestion means
+   the pruning decision is made on a schedule, not under write pressure.
 4. **Editing lessons is deliberate.** Reflection that modifies lesson
    content — promotion, re-tagging, contradiction resolution — is the
    therapy skill's job: user-initiated and user-approved. Automatic
@@ -669,8 +676,8 @@ the real pruning and ingestion-independence controls remain green.
 ### Distillation pass (ALWAYS-mode)
 
 **Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
-(spawn `:123`, core `distill_store` `:208`), started from the server
-factory (`hkask_mcp_curator.rs:1498`).
+(spawn `:163`, core `distill_store` `:404`), started from the server
+factory (`hkask_mcp_curator.rs:2002`).
 
 The `curator_memory_extract` tool is on-demand ALWAYS-mode learning: an
 agent lists a thread's turns and inserts the lessons worth keeping. The
@@ -752,9 +759,9 @@ so lessons survive the session without anyone choosing to save them.
   with the same ruling that removed the consolidation cap).
 - **Configuration.** `kask.memory.distillation_cadence_secs` (default
   600, 0 = disabled) and `kask.memory.distillation_idle_secs` (default
-  300) — `settings.rs:241`, defaults in `Default` (`:257`), emitted to
+  300) — `settings.rs:268-272`, defaults in `Default` (`:295-297`), emitted to
   the curator server only via `emit_curator_distillation_env`
-  (`mcp_env.rs:62`), allowlisted at `mcp_servers.rs:217-218`, read from
+  (`mcp_env.rs:62`), allowlisted at `mcp_servers.rs:223-225`, read from
   `HKASK_MEMORY_DISTILLATION_CADENCE_SECS` /
   `HKASK_MEMORY_DISTILLATION_IDLE_SECS` with malformed values warned and
   defaulted.
@@ -827,15 +834,16 @@ construction. Time-based and distillation-gated, never count-based
 ## 7. Decay
 
 **Source:** `kask/crates/hkask-memory/src/bayesian.rs:1-47`,
-`memory_store.rs:121-123`, `:458-467`
+`memory_store.rs:155`, `:563`
 
 Confidence decays by the Wozniak-Gorzelanczyk forgetting curve[^wg95]:
 `R(t) = exp(-t / S)` where `S` is `memory_life_days` (default 180) and `t`
 is days since `recalled_at`. Decay is applied at recall time (`decayed`,
-`memory_store.rs:458-467`), not at write time. At recall, `touch_recall`
-resets the decay clock (`hmem.rs:501-507`). Only h_mems that survive the
+`memory_store.rs:563`), not at write time. At recall, `touch_recall`
+resets the decay clock (`memory_store.rs:447`; storage layer at
+`hmem.rs:883`). Only h_mems that survive the
 `recall_limit` truncation are touched — this prevents a write storm under
-concurrent recall (`memory.rs:852-867`).
+concurrent recall (`memory.rs:1000-1015`).
 
 **Why this curve:** it is a single parameter (`S`, memory life in days —
 no multi-exponential decay, no spaced-repetition scheduling); it is
@@ -899,7 +907,7 @@ paraphrases. Together they cover the space[^hybrid-retrieval].
 
 The semantic leg ranks above the keyword leg when cosine distance < 0.5
 (relevance > 0.5), and below it when distance > 0.5 — the keyword leg's
-relevance is the constant `0.5` (`kask/crates/kask_bridge/src/memory.rs:813`).
+relevance is the constant `0.5` (`kask/crates/kask_bridge/src/memory.rs:939`).
 This is the right default: a strong semantic match is more relevant than a
 keyword match, but a weak semantic match is less relevant than a keyword
 match.
@@ -911,7 +919,7 @@ The user has already seen the turn's response. The memory ingestion
 pay. So `ingest_turn` is spawned in the background and the thread moves
 on. The ingestion semaphore (default 1 permit) serializes concurrent
 ingestions so they don't contend with the recall path for the SQLite pool
-(`kask/crates/kask_bridge/src/memory.rs:459-481`).
+(`kask/crates/kask_bridge/src/memory.rs:492-530`).
 
 ### Why no query-embedding cache?
 
@@ -920,7 +928,7 @@ provider (~100–300ms). A query-embedding LRU cache would eliminate repeat
 embeddings for identical prompts. But:
 
 1. The `should_recall` gate already skips short prompts (< 20 chars or
-   < 3 words, `kask/crates/kask_bridge/src/context_injector.rs:38-42`),
+   < 3 words, `kask/crates/kask_bridge/src/context_injector.rs:87`),
    which are the most common repeat prompts ("yes", "continue", "ok").
 2. The latency is acceptable for the simplicity model.
 3. A cache adds invalidation complexity (when should a cached query
@@ -932,7 +940,7 @@ right first step. Not needed now.
 ### Why the ranking multiplies by confidence and connectedness
 
 Candidates are sorted by `relevance × confidence × (1 +
-min(connectedness × 0.1, 0.5))` (`memory.rs:839-849`), not by relevance
+min(connectedness × 0.1, 0.5))` (`memory.rs:979-991`), not by relevance
 alone. Two reasons, both grounded in the calibration literature[^tetlock]:
 
 1. **Confidence is the outcome-calibrated signal.** Dunning's double
@@ -962,12 +970,12 @@ floor — live in the curator server, pinned by
 `test_curator_memory_edit_tools_available_to_non_curator_threads` in
 `crates/agent/src/tests/mod.rs`):
 
-- **`memory_insert`** (`:1145`) — evidence-grounded insert; confidence
+- **`memory_insert`** (`:1334`) — evidence-grounded insert; confidence
   starts at 0.5, calibrated by outcomes, not self-assessment; the value's
   text is embedded under the entity (the entity_ref invariant) so semantic
   recall finds it by meaning — embedding failure is non-fatal and surfaced
   in the output, via the shared insert-path contract
-  `embed_for_semantic_recall` (`:1578`).
+  `embed_for_semantic_recall` (`:1934`).
 - **`memory_update`** — Bayesian-combines confidence (log-odds pooling),
   rather than assigning the incoming confidence directly. Storage atomically
   deletes the old row and inserts its replacement with the combined confidence
@@ -975,16 +983,16 @@ floor — live in the curator server, pinned by
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
   dissonant h_mem; `update_confidence` reduces its importance. These are the
   only supported strategies (operator reaffirmation 2026-09-04).
-- **`curator_memory_prune`** (`:1424`) — deterministic bulk hygiene:
+- **`curator_memory_prune`** (`:1626`) — deterministic bulk hygiene:
   delete curator h_mems older than `max_age_days`, optionally sparing
   those recalled within a recent window.
 - **`curator_memory_dedup`** — deterministic bulk hygiene: group by
   (entity, attribute, normalized string value), keep the highest-confidence
   h_mem, and delete the rest. Non-string values are skipped; the result
   reports `deleted_count`.
-- **`curator_memory_extract`** (`:1507`) — on-demand reification-candidate
-  extraction; inserts nothing automatically (`:1507-1511`).
-- **`curator_report_skill_use_issue`** (`:1045`) — skill-reported tool
+- **`curator_memory_extract`** (`:1858`) — on-demand reification-candidate
+  extraction; inserts nothing automatically (`:1858-1862`).
+- **`curator_report_skill_use_issue`** (`:1228`) — skill-reported tool
   issues stored at the 0.5 floor under `skill_use_issue:<skill_name>`,
   with the report text embedded under the entity (the same shared
   contract) so the reports are semantically recallable.
@@ -1042,8 +1050,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-THERAPY-TOOLS
-verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:557 (curator_semantic_search), :632 (curator_memory_recall), :764 (curator_consult), :1045 (curator_report_skill_use_issue), :1145 (memory_insert), :1249 (memory_update), :1319 (memory_resolve_contradiction), :1424 (curator_memory_prune), :1463 (curator_memory_dedup), :1507 (curator_memory_extract), :1578 (embed_for_semantic_recall); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/tests/mod.rs:5488 (edit-tools-available pin — the curator-thread gate itself was removed 2026-09-01)
-verified_date: 2026-09-04
+verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:548 (curator_semantic_search), :790 (curator_memory_recall), :925 (curator_consult), :1228 (curator_report_skill_use_issue), :1334 (memory_insert), :1455 (memory_update), :1532 (memory_resolve_contradiction), :1626 (curator_memory_prune), :1705 (curator_memory_dedup), :1858 (curator_memory_extract), :1934 (embed_for_semantic_recall); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/tests/mod.rs:5470 (edit-tools-available pin — the curator-thread gate itself was removed 2026-09-01)
+verified_date: 2026-09-28
 status: VERIFIED
 -->
 
@@ -1052,8 +1060,9 @@ Templates do NOT make tool calls — they are prompt structures rendered by
 itself (scan → classify → propose → user approval → execute → report) is
 specified in the [Therapy Skill](../../../.agents/skills/therapy/SKILL.md).
 The curator remembers the therapy session because curator turns are
-ingested to `curator.db` with the curator's perspective (`ingest.rs:100-130`,
-curator-turn detection at `:68`) — the cybernetic loop closes: the curator
+ingested to `curator.db` with the curator's perspective (`ingest.rs:277`,
+curator-turn detection used for logging; every turn is ingested identically
+as shared chunks) — the cybernetic loop closes: the curator
 learns from the act of therapy.
 
 ## 10. User sovereignty
@@ -1082,11 +1091,12 @@ sovereignty:
   coverage boundary but does not revise user-facing memory content.
 
 - **The user can run without recall.** The zed agent (the default coding
-  agent) has no recall — the `MemoryPort` trait impls are no-ops
-  (`memory.rs:499-519`). Its turns are ingested as shared copies only, so
+  agent) has no recall — the `MemoryPort` trait's recall methods are
+  no-op defaults (`memory_port.rs:155,173`; `RealMemoryPort` overrides
+  only `ingest_turn`, `memory.rs:492-530`). Its turns are ingested as shared copies only, so
   the curator observes them, but the zed agent itself never injects
   recalled memory. Setting `kask.memory.auto_inject` to false disables
-  recall globally (`context_injector.rs:213-217`).
+  recall globally (`context_injector.rs:296-299`).
 
 - **The user controls what the curator remembers.** All turns are ingested
   identically — shared chunk h_mems under `curator:thread:{id}` (the
@@ -1097,14 +1107,14 @@ sovereignty:
 
 - **The user can purge memory.** The `memory_resolve_contradiction` tool
   allows the user to forget or reduce confidence in a memory
-  (`hkask_mcp_curator.rs:1175`). `curator_memory_prune` (`:1280`)
-  and `curator_memory_dedup` (`:1319`) provide deterministic bulk hygiene.
+  (`hkask_mcp_curator.rs:1532`). `curator_memory_prune` (`:1626`)
+  and `curator_memory_dedup` (`:1705`) provide deterministic bulk hygiene.
   The user is never trapped by accumulated memory.
 
 - **Forgetting is deliberate, not automatic.** Consolidation (automatic)
-  only deletes low-confidence h_mems and prunes to budget — it never
+  only deletes low-confidence h_mems — it never
   deletes memories the user might want
-  (`kask/crates/hkask-memory/src/consolidation_service.rs:29-33`). Therapy
+  (`kask/crates/hkask-memory/src/consolidation_service.rs:21-27`). Therapy
   (user-initiated) is the deliberate forgetting process — the user chooses
   what to forget and why. The distillation pass (§6) only adds —
   automatic forgetting remains out of bounds.
@@ -1113,8 +1123,8 @@ sovereignty:
 graph TD
     subgraph "zed-kask Memory Architecture"
         User["User (human)<br/>NO kask memory<br/>Has own memory"]
-        ZedAgent["Zed Agent<br/>Turns ingested as shared copies<br/>NO recall (trait impls are no-ops)"]
-        Curator["Curator Agent<br/>curator.db<br/>Curator turns get perspective h_mems<br/>Recalls own memory"]
+        ZedAgent["Zed Agent<br/>Turns ingested as shared copies<br/>NO recall (trait defaults are no-ops)"]
+        Curator["Curator Agent<br/>curator.db<br/>Turns ingested as shared chunk copies<br/>Recalls own memory"]
         Corpus["Replica / Corpus<br/>Static memory<br/>Built from corpus<br/>via corpus server"]
         Swarm["Swarm Agents<br/>mcp/swarm/memory.db<br/>ONE DB for ALL swarms<br/>Per-turn entities"]
     end
@@ -1128,8 +1138,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-WHO
-verified_date: 2026-08-28
-verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:39-57 (all turns ingested, curator turns get perspective h_mem), kask/crates/kask_bridge/src/memory.rs:499-519 (zed-agent recall no-ops), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:118-122 (swarm memory DB path), kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs:304-320 (one shared DB, per-turn entities)
+verified_date: 2026-09-28
+verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (all turns ingested as shared chunk copies; curator-turn detection at :277 is logging-only), kask/crates/hkask-types/src/ports/memory_port.rs:155,173 (zed-agent recall no-op defaults), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:118-122 (swarm memory DB path), kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs:304-320 (response-passage chunking)
 status: VERIFIED
 -->
 
@@ -1143,12 +1153,12 @@ knowledge or consent.
 | Priority | Change | Status |
 |---|---|---|
 | Episodic/semantic removal | Complete elimination of the type distinction | ✅ Done |
-| User memory store removal | RealMemoryPort no longer holds a user store — all writes go to `curator.db` (`memory.rs:74-119`) | ✅ Done |
-| 1 | Confidence in recall ranking | ✅ Done (`memory.rs:839-849`) |
-| 2 | Absence signaling (hypocognition guard) | ✅ Done (`context_injector.rs:285-311`) |
-| 3 | Connectedness tracking (co-occurrence links) | ✅ Done — schema (`schema.sql:23-29`), recording (`context_injector.rs:324-335`), ranking bonus (`memory.rs:839-845`) |
+| User memory store removal | RealMemoryPort no longer holds a user store — all writes go to `curator.db` (`memory.rs:190-260`) | ✅ Done |
+| 1 | Confidence in recall ranking | ✅ Done (`memory.rs:979-991`) |
+| 2 | Absence signaling (hypocognition guard) | ✅ Done (`context_injector.rs:395-407`) |
+| 3 | Connectedness tracking (co-occurrence links) | ✅ Done — schema (`schema.sql:21-29`), recording (`context_injector.rs:456`), ranking bonus (`memory.rs:979-991`) |
 | 4 | Brier loop → memory confidence | ✅ Done (2026-09-05) — a `kanban_goal_score` event's Brier Bayesian-combines into the goal's `kanban_goal_create` record at ingestion (§4); disconfirmed records drop below the consolidation floor |
-| 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1037-1179`) |
+| 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1228-1532`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
 | 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |
 | 8 | ALWAYS-mode distillation pass | ✅ Done — additive lesson layer, latest-only transactional watermark, source-thread key reuse, and mutable-state provenance gate (`distillation.rs`) |
@@ -1159,17 +1169,17 @@ All SQLCipher DBs (curator, corpus, swarm memory, kata-kanban, training)
 share one passphrase architecture:
 
 - **Default:** `"allostery"` on first run
-  (`kask/crates/hkask-keystore/src/passphrase.rs:17`) — fixed by design so
+  (`kask/crates/hkask-keystore/src/passphrase.rs:18`) — fixed by design so
   first-run provisioning always produces a DB the user can open; the
   keychain is the security boundary, not the default.
 - **Provisioning:** `provision_agent` resolves env override → existing
   keychain entry → default-and-store via the one canonical keystore chain
   (`kask/crates/kask_bridge/src/identity.rs:106-110`, backed by
   `hkask_keystore::provision_db_passphrase_string`,
-  `kask/crates/hkask-keystore/src/keychain.rs:357`). The username-independent
+  `kask/crates/hkask-keystore/src/keychain.rs:383`). The username-independent
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
   `build_mcp_server_env` at MCP launch time so servers get a passphrase
-  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:780`).
+  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:778-784`).
   There is no swarm-memory provisioning step: the separate
   `HKASK_SWARM_MEMORY_PASSPHRASE` and its spawn site were removed — the
   swarm memory DB opens with the ONE shared passphrase, resolved inside
@@ -1185,11 +1195,15 @@ share one passphrase architecture:
   2-tier chain (credentials map → `resolve_credential`, which for
   `HKASK_DB_PASSPHRASE` delegates to the keystore's env → keychain chain)
   (`kask/crates/hkask-mcp-server/src/server/credentials.rs:80-90`,
-  `:27-30`; keystore chain `keychain.rs:318-321`).
-- **Rotation ordering invariant:** `rotate_all_kask_db_passphrases`
-  (`kask/crates/kask_bridge/src/identity.rs:219`) must complete — every
+  `:27-30`; keystore chain `keychain.rs:347-352`).
+- **Rotation ordering invariant:** `run_pending_db_passphrase_rotation`
+  (`kask/crates/kask_bridge/src/passphrase_rotation.rs:167`, called at
+  startup from `crates/zed/src/main.rs:373`) must complete — every
   shared-passphrase DB rotated, with rollback of already-rotated DBs on
-  failure — before the new passphrase is written to the keychain; on
+  failure — before the new passphrase is written to the main keychain slot;
+  the keychain write is always last (a partial rotation plus an updated
+  keychain is the one state that leaves databases unopenable,
+  `passphrase_rotation.rs:13-15`). On
   failure the old passphrase remains in effect and the caller must NOT
   save.
 
@@ -1197,8 +1211,8 @@ share one passphrase architecture:
 
 ### Settings (`kask.memory` section in settings.json)
 
-Defined in `kask/crates/kask_bridge/src/settings.rs:211-234`; defaults at
-`:237-244`:
+Defined in `kask/crates/kask_bridge/src/settings.rs:234-281`; defaults at
+`:285-297`:
 
 | Setting                      | Default | Description                                           |
 | ---------------------------- | ------- | ----------------------------------------------------- |
@@ -1221,18 +1235,20 @@ tests passed. Full application check and scoped lint subsequently passed;
 the evidence record is `tasks/plan.md` in git history (last at `b1375ff3be`). The Memory settings UI
 already exposes this field; no UI omission is intended.
 
-`HKASK_MEMORY_STORAGE_BUDGET` remains unwired: the curator store uses the
-default budget with no env override. This update does not change that policy.
+`HKASK_MEMORY_STORAGE_BUDGET` does not exist: count-based pruning was
+removed with the storage budget (operator ruling 2026-09-04, completed
+2026-09-08; `consolidation_service.rs:30-37`). The consolidation pass runs
+confidence-floor cleanup only.
 
 ### Environment variables (live — read via `std::env::var`)
 
 | Variable                          | Default                               | Description                            |
 | --------------------------------- | ------------------------------------- | -------------------------------------- |
-| `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`memory.rs:326-331`) |
-| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:647`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
-| `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:25-35`) |
+| `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`memory.rs:380-400`) |
+| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:716`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
+| `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
-| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`kask/crates/hkask-keystore/src/keychain.rs:321`) |
+| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`kask/crates/hkask-keystore/src/keychain.rs:347-352`) |
 
 ### Settings UI
 
@@ -1245,20 +1261,20 @@ memory life, and the auto-inject toggle.
 ### End-to-end semantic recall
 
 `recall_context_finds_turn_by_embedding_only`
-(`kask/crates/kask_bridge/src/memory.rs:1681`) — isolates the semantic leg
+(`kask/crates/kask_bridge/src/memory.rs:3080`) — isolates the semantic leg
 from the keyword leg by using a constant stub embedding (every text → same
 vector, so KNN always matches) and a query with zero word overlap.
 
 ### Degradation and ranking
 
-- `recall_degrades_to_keyword_leg_when_embedding_fails` (`memory.rs:1577`)
-- `recall_context_ranks_by_confidence_weighted_relevance` (`memory.rs:1772`)
-- `recall_context_touches_only_injected_h_mems` (`memory.rs:1855`)
-- `curator_store_heals_after_outage` (`memory.rs:2233`)
+- `recall_degrades_to_keyword_leg_when_embedding_fails` (`memory.rs:2979`)
+- `recall_context_ranks_by_confidence_weighted_relevance` (`memory.rs:3346`)
+- `recall_context_touches_only_injected_h_mems` (`memory.rs:3429`)
+- `curator_store_heals_after_outage` (`memory.rs:3730`)
 
 ### Test infrastructure
 
-`in_memory_port_with_embed_fn` (`memory.rs:1172`) — constructs a
+`in_memory_port_with_embed_fn` (`memory.rs:1263`) — constructs a
 `RealMemoryPort` from in-memory stores plus a deterministic embed closure,
 without a DB open, passphrase, or consolidation timer.
 
@@ -1271,8 +1287,9 @@ without a DB open, passphrase, or consolidation timer.
 
 [^ashby]: Ashby, W. R. (1956). *An Introduction to Cybernetics*. Chapman &
     Hall. The Law of Requisite Variety: a regulator must be able to
-    attenuate the variety it receives. The storage budget is the
-    attenuator for unbounded memory growth.
+    attenuate the variety it receives. Time-based, distillation-gated
+    forgetting and the confidence floor are the attenuators for unbounded
+    memory growth (count budgets were removed 2026-09-04).
 
 [^vespa-hybrid]: Vespa. (2024). *Hybrid search — combining text and vector
     search*. https://docs.vespa.ai/en/hybrid-search.html. Reference
@@ -1288,7 +1305,7 @@ without a DB open, passphrase, or consolidation timer.
     and Science of Prediction*. Broadway Books. The dilution effect
     (irrelevant information weakens judgment) grounds the connectedness
     bonus cap; the ranking rationale is cited in-code at
-    `kask/crates/kask_bridge/src/memory.rs:830-845`.
+    `kask/crates/kask_bridge/src/memory.rs:968-978`.
 
 [^wg95]: Wozniak, P. A., & Gorzelanczyk, E. J. (1995). *Two components of
     long-term memory*. Acta Neurobiologiae Experimentalis. Equation (3):

@@ -1,15 +1,15 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
-version: "2.2.1"
+last_updated: 2026-09-28
+version: "2.3.0"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
 ---
 
 This document consolidates the two surfaces that instruct the zed-kask agent:
-the system prompt (base template + four overlays, and its divergences from
+the system prompt (base template + five overlays, and its divergences from
 upstream Zed) and the skill system (SKILL.md body injection, composition
 principles, testing). Formerly two documents — `AGENT_SYSTEM_PROMPT.md` and
 `explanation/skills-and-composition.md` — folded 2026-08-28 during the docs
@@ -63,8 +63,8 @@ modified, so upstream changes to it keep flowing through[^martin-ocp].
 
 ## 3. Rendering pipeline
 
-`SystemPromptTemplate` (`crates/agent/src/templates.rs:37-65`) is the Handlebars
-render context; `TEMPLATE_NAME` pins it to `system_prompt.hbs` (`:67-69`).
+`SystemPromptTemplate` (`crates/agent/src/templates.rs:37-69`) is the Handlebars
+render context; `TEMPLATE_NAME` pins it to `system_prompt.hbs` (`:82`).
 
 ```mermaid
 flowchart TD
@@ -82,8 +82,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PROMPT-001
-verified_date: 2026-09-16
-verified_against: crates/agent/src/templates.rs; crates/agent/src/curator_agent_server.rs; crates/agent/src/kask_thread_state.rs; crates/hkask-steer/src/hkask_steer.rs:174-184; crates/media_panel/src/media_panel.rs:235-314
+verified_date: 2026-09-28
+verified_against: crates/agent/src/templates.rs:37-82; crates/agent/src/curator_agent_server.rs:45; crates/agent/src/kask_thread_state.rs; crates/hkask-steer/src/hkask_steer.rs:174-184; crates/media_panel/src/media_panel.rs:235-250
 status: VERIFIED
 -->
 
@@ -101,17 +101,17 @@ cannot honour[^parnas-1972].
 
 | Guard | Line | Effect when false |
 |-------|------|-------------------|
-| `(gt (len available_tools) 0)` | `:34` | Entire tool-use half is replaced by a no-tools instruction |
-| `(gt mcp_tools_hidden 0)` | `:49` | Drops the hidden-tools visibility marker (D44) — the count of registered-but-filtered MCP tools, with the `list_mcp_tools` recovery path |
-| `(contains available_tools 'grep')` | `:67` | Drops the grep/find_path search guidance |
-| `(contains available_tools 'spawn_agent')` | `:121` | Drops `## Multi-agent delegation` |
-| `sandboxing` + `(contains available_tools 'terminal')` | `:163-164` | Drops `## Terminal sandbox` entirely |
-| `is_linux` / `is_windows` | `:170`, `:177`, `:194` | Selects the platform-correct writable-temp and network story |
-| `model_name` | `:221` | Drops `## Model Information` |
-| `has_skills` | `:227` | Drops `## Agent Skills` and the `<available_skills>` catalog |
-| `(or user_agents_md has_rules)` | `:255` | Drops `## User's Custom Instructions` |
+| `(gt (len available_tools) 0)` | `:41` | Entire tool-use half is replaced by a no-tools instruction |
+| `(gt mcp_tools_hidden 0)` | `:62` | Drops the hidden-tools visibility marker (D44) — the count of registered-but-filtered MCP tools, with the `list_mcp_tools` recovery path |
+| `(contains available_tools 'grep')` | `:80` | Drops the grep/find_path search guidance |
+| `(contains available_tools 'spawn_agent')` | `:135` | Drops `## Multi-agent delegation` |
+| `sandboxing` + `(contains available_tools 'terminal')` | `:177-178` | Drops `## Terminal sandbox` entirely |
+| `is_linux` / `is_windows` | `:184`, `:191`, `:208` | Selects the platform-correct writable-temp and network story |
+| `model_name` | `:235` | Drops `## Model Information` |
+| `has_skills` | `:241` | Drops `## Agent Skills` and the `<available_skills>` catalog |
+| `(or user_agents_md has_rules)` | `:269` | Drops `## User's Custom Instructions` |
 | `(contains available_tools 'kanban_goal_create')` | `:337` | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
-| `static_context` | `:358` | Drops `## Session Context` |
+| `static_context` | `:359` | Drops `## Session Context` |
 
 ## 4. Section inventory
 
@@ -123,39 +123,40 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 
 | Section | Line | Status vs. upstream |
 |---------|------|---------------------|
-| Communication | `:3` | Identical |
-| Formatting Responses | `:13` | **Modified** (§5.3, §5.4) |
-| Tool Use | `:35` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:49-50`) |
-| Task Execution | `:53` | **Modified** (§5.2, §5.7) |
-| Searching and Reading | `:60` | Identical |
-| Making Code Changes | `:73` | Identical |
-| Ambition vs. Precision | `:86` | **Modified** (§5.7, D40 — "creative touches when scope is vague" replaced with "resolve the vagueness with the user") |
-| Validation | `:92` | Identical |
-| Fixing Diagnostics | `:100` | Identical |
-| Debugging | `:105` | Identical |
-| Calling External APIs | `:114` | Identical |
-| Multi-agent delegation | `:122` | Identical |
-| Final Message | `:137` | **Modified** (§5.7, D40 — functional-outcome-first bullet) |
-| System Information | `:151` | Identical |
-| Terminal sandbox | `:165` | Identical |
-| Model Information | `:222` | Identical |
-| Agent Skills | `:228` | **Modified** — em-dash only (§5.5) |
-| User's Custom Instructions | `:256` | Identical |
-| → Personal `AGENTS.md` | `:263` | Identical |
-| → Project Rules | `:274` | Identical |
+| Expectation-led inquiry (kask) | `:5` | **New section** (D75 — one falsifiable expected observation before substantive inquiry; pinned by `test_system_prompt_establishes_expectation_before_substantive_inquiry`, `templates.rs:140`) |
+| Communication | `:9` | Identical |
+| Formatting Responses | `:20` | **Modified** (§5.3, §5.4) |
+| Tool Use | `:42` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:62-63`) |
+| Task Execution | `:66` | **Modified** (§5.2, §5.7) |
+| Searching and Reading | `:73` | Identical |
+| Making Code Changes | `:86` | Identical |
+| Ambition vs. Precision | `:100` | **Modified** (§5.7, D40 — "creative touches when scope is vague" replaced with "resolve the vagueness with the user") |
+| Validation | `:106` | Identical |
+| Fixing Diagnostics | `:114` | Identical |
+| Debugging | `:119` | Identical |
+| Calling External APIs | `:128` | Identical |
+| Multi-agent delegation | `:136` | Identical |
+| Final Message | `:151` | **Modified** (§5.7, D40 — functional-outcome-first bullet) |
+| System Information | `:165` | Identical |
+| Terminal sandbox | `:179` | Identical |
+| Model Information | `:236` | Identical |
+| Agent Skills | `:242` | **Modified** — em-dash only (§5.5) |
+| User's Custom Instructions | `:270` | Identical |
+| → Personal `AGENTS.md` | `:274` | Identical |
+| → Project Rules | `:285` | Identical |
 | Opening identity + roles (kask) | `:1`–`:3` | **Amended upstream opening** (§5.7, D40 evolution — agent renamed Z-K; roles fixed at the top) |
-| Redeemable-claims bullet (kask) | `:10` | **Amended upstream section** (§5.9 — claims carry their ground) |
-| Feature-justification bullet (kask) | `:84` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
+| Redeemable-claims bullet (kask) | `:14` | **Amended upstream section** (§5.9 — claims carry their ground) |
+| Feature-justification bullet (kask) | `:94` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
 
-| Division of Responsibilities (kask) | `:301` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
-| Ontology anchoring bullet in Tool Use (kask) | `:47` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
-| Session Context | `:359` | **New section** (§5.1) |
+| Division of Responsibilities (kask) | `:302` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
+| Ontology anchoring bullet in Tool Use (kask) | `:49` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
+| Session Context | `:360` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
 
 `git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs` reports
-**73 insertions, 2 deletions across 7 hunks** (verified 2026-09-04). Each is catalogued below with its
-D-seam and its pinning test, except the structured tool-call bullet (`:39`, a
+**95 insertions, 6 deletions** (verified 2026-09-28). Each is catalogued below with its
+D-seam and its pinning test, except the structured tool-call bullet (`:46`, a
 single added line in `## Tool Use` instructing the model to emit tool calls via
 the structured tool-call mechanism rather than narrating parameters as text).
 Every zed-kask deviation that disables or replaces upstream behaviour carries a
@@ -164,7 +165,7 @@ test, per the repo's divergence rule.
 ### 5.1 `## Session Context` — new section (D2 / D6)
 
 - **zed-kask** renders `{{{static_context}}}`. Field declared at
-  `templates.rs:49`.
+  `templates.rs:52`.
 - **Upstream** has no such block and no `static_context` field.
 - **Why:** it is the render target for agent overlays (Curator role, Steer
   panel prompts). Memory recall is per-turn via `inject_context`
@@ -193,7 +194,7 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 
 ### 5.2 Loop-termination guardrail — new bullet
 
-- **zed-kask** `:53`: *"If a tool loop repeats without measurable progress (the
+- **zed-kask** `:71`: *"If a tool loop repeats without measurable progress (the
   same error recurring or no new state appearing) **three times**, stop, summarize
   what you tried, and ask the user rather than continuing indefinitely."*
 - **Upstream** `## Task Execution` ends at its `:51` with no loop bound.
@@ -208,7 +209,7 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 
 ### 5.3 Mermaid diagram-type list (D18)
 
-- **zed-kask** `:26` names the exact directives the renderer accepts —
+- **zed-kask** `:33` names the exact directives the renderer accepts —
   `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`, `treemap`,
   `block`, `kanban` — and separately notes that the ` ```media `, ` ```graph `,
   ` ```kanban `, ` ```portfolio `, ` ```scenarios `, and
@@ -220,7 +221,7 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
   prompt had advertised bare `sankey`/`xychart`, which the renderer silently
   drops, while denying `kanban` was a mermaid type at all (it is; `mermaid.rs:445`).
 - **Pinned by** `test_system_prompt_advertises_every_supported_diagram_type`
-  (`mermaid.rs:1252`) — an exhaustive prompt-vs-allowlist check living next to
+  (`mermaid.rs:1253`) — an exhaustive prompt-vs-allowlist check living next to
   the constant, replacing the manual-sync comment. Also
   `test_system_prompt_mermaid_list_uses_renderer_directives` in `templates.rs`.
 
@@ -229,18 +230,18 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 
 ### 5.4 Display-hint bullets (D18)
 
-- **zed-kask** `:51`: copy the ` ```media ` block from a `display_hint`
+- **zed-kask** `:59`: copy the ` ```media ` block from a `display_hint`
   tool-result field verbatim into the reply.
-- **zed-kask** `:52`: copy the ` ```spreadsheet ` block from a
+- **zed-kask** `:60`: copy the ` ```spreadsheet ` block from a
   `spreadsheet`/`portfolio` tool result's `display_hint` verbatim into the
   reply — an editable workbook what-if from `spreadsheet_apply` or
   `portfolio_what_if`.
-- **zed-kask** `:53`: copy the ` ```media ` blocks from a `display_hints`
+- **zed-kask** `:61`: copy the ` ```media ` blocks from a `display_hints`
   array verbatim into the reply.
 - **Upstream** has none of these bullets.
 - **Why load-bearing:** the block *renderers* live in
   `hkask_viz_core::block_renderer()` (wired at
-  `crates/agent_ui/src/conversation_view.rs:3584`), so the prompt bullets
+  `crates/agent_ui/src/conversation_view.rs:3574`), so the prompt bullets
   remain live for any tool that emits a display-hint fenced block.
 
 ### 5.5 `## Agent Skills` — project-aware body injection (D1)
@@ -250,17 +251,17 @@ listed up front; the body is loaded only when the model invokes `skill`.[^anthro
 The live execution path is project-aware rather than filesystem-only:
 
 - `NativeAgent::register_session` constructs `SkillTool::with_body_resolver`
-  with `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:1016-1021`).
+  with `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:1029-1031`).
 - Project-local skill bodies are opened through the project buffer, so remote
-  workspaces and unsaved buffer edits are visible (`crates/agent/src/agent.rs:4339-4373`).
+  workspaces and unsaved buffer edits are visible (`crates/agent/src/agent.rs:4641-4675`).
 - Global skills still resolve through `agent_skills::read_skill_body` on the
-  filesystem (`crates/agent/src/agent.rs:4376-4380`).
+  filesystem (`crates/agent/src/agent.rs:4676-4680`).
 - Slash activation uses the same resolver, preventing tool and slash invocation
-  from reading different bodies (`crates/agent/src/agent.rs:2317-2342`).
+  from reading different bodies (`crates/agent/src/agent.rs:2320-2350`).
 
 `test_project_skill_body_resolves_through_buffer` proves the distinction by
 changing a buffer without saving it and asserting that the resolver returns the
-buffer content rather than the disk content (`crates/agent/src/agent.rs:6781-6835`).
+buffer content rather than the disk content (`crates/agent/src/agent.rs:8296`).
 The Kask authorization, dependency, and outcome-recording behavior remains around
 this upstream resolver seam; unreadable bodies and missing dependencies surface as
 errors rather than no-body fallbacks.
@@ -276,7 +277,7 @@ composition is now driven by the **skill-bundler** skill (see Part II,
 
 ### 5.7 `## Division of Responsibilities (kask)` — new section (D40)
 
-- **zed-kask** `:294-319` carries the four-moves interaction loop from the
+- **zed-kask** `:302-358` carries the four-moves interaction loop from the
   functional-interaction spec
   ([`functional-interaction-spec.md`](functional-interaction-spec.md)):
   point at the same target (intake interpretation, user corrects), bring
@@ -322,7 +323,7 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   paragraph carrying the question-class rule — functional questions are
   the user's to answer, asked in functional terms; technical questions
   are the agent's to decide, "do not route technical decisions to the
-  user as questions". The section (now at `:304`) opens "The roles are
+  user as questions". The section (now at `:302`) opens "The roles are
   fixed in the opening of this prompt" and move 2 is **Decide by class**:
   functional decisions surfaced as experiences with a recommendation;
   technical decisions decided and presented with their functional
@@ -335,7 +336,7 @@ composition is now driven by the **skill-bundler** skill (see Part II,
   form: a technical choice that genuinely needs the user's input is
   "present[ed] in functional terms — what each option lets the user do —
   with the technical detail attached as context". A feature-justification
-  bullet was added to `## Making Code Changes` (":84"): every feature
+  bullet was added to `## Making Code Changes` (":94"): every feature
   names the functional requirement it serves; a feature that cannot
   name its requirement is a functional question for the user, not code
   to write. The opening role paragraph now carries the skills pointer
@@ -390,9 +391,10 @@ operator's authority instead of inspectable grounds.
 ## 6. Shared upstream structure and seam boundary
 
 `system_prompt.hbs` remains an upstream-shared file, but it is not byte-identical:
-the current fork diff is 93 inserted and 6 deleted lines. Kask changes include
+the current fork diff is 95 inserted and 6 deleted lines. Kask changes include
 the role opening, ontology/tool guidance, media display hints, functional decision
-rules, failure-mode warnings, and session context. Unchanged regions should still
+rules, failure-mode warnings, the expectation-led-inquiry section (D75), and
+session context. Unchanged regions should still
 merge from upstream normally; only the named D1/D2/D26/D40/D54 prompt obligations
 are mapped reapplications. The complete authoritative boundary is the current
 `DIVERGENCE.md`, not a count of apparently identical sections.
@@ -416,8 +418,8 @@ sync:
 3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,
    not a merge: the two versions state opposite instructions, so a textual merge
    can produce a prompt that both forbids and requires reading `SKILL.md`.
-4. Check `mermaid.rs:428-451` against `:26` — upstream adds diagram types, and the
-   drift test will fail until the prompt is updated.
+4. Check `mermaid.rs:428-451` against `:33` — upstream adds diagram types, and
+   the drift test will fail until the prompt is updated.
 
 ## 8. Verification
 
@@ -467,7 +469,7 @@ cargo test -p markdown --lib mermaid
 
 # Skills and Composition
 
-Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` resolves the current catalog and reads the selected `SKILL.md` through an injected body resolver (`crates/agent/src/tools/skill_tool.rs:184-288`). Session registration supplies the project-aware resolver, so project-local bodies come through project buffers—including remote workspaces and unsaved edits—while global bodies come through the filesystem (`crates/agent/src/agent.rs:4339-4383`; registration at `:1016-1021`). The model reads the resulting `render_skill_envelope`; the agent is the executor.[^anthropic-skills]
+Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` resolves the current catalog and reads the selected `SKILL.md` through an injected body resolver (`crates/agent/src/tools/skill_tool.rs:194-240`). Session registration supplies the project-aware resolver, so project-local bodies come through project buffers—including remote workspaces and unsaved edits—while global bodies come through the filesystem (`crates/agent/src/agent.rs:4641-4680`; registration at `:1029-1031`). The model reads the resulting `render_skill_envelope`; the agent is the executor.[^anthropic-skills]
 
 This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers are launched as child processes over stdio by the in-process governed `McpRuntime` (D3 — single spawn authority since 2026-08-29; kask servers are no longer registered with zed's per-project `ContextServerStore`); the standalone `kask mcp start <id>` CLI is deleted.
 
@@ -490,10 +492,10 @@ A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kas
 
 When the agent invokes the `skill` tool with a skill name:
 
-1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:184-288`) receives the skill name from `SkillToolInput` and snapshots the current project catalog.
-2. It selects the skill and invokes the injected body resolver (`skill_tool.rs:203-224,275-284`). In production that is `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:4339-4383`), shared by tool and slash activation (`:1016-1021,2317-2345`).
+1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:194-240`) receives the skill name from `SkillToolInput` and snapshots the current project catalog.
+2. It selects the skill and invokes the injected body resolver (`skill_tool.rs:214-235`). In production that is `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:4641-4680`), shared by tool and slash activation (`:1029-1031,2320-2350`).
 3. It calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`), which wraps the resolved body in a structured envelope.
-4. The envelope is returned to the agent as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:285-288`).
+4. The envelope is returned to the agent as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:235`).
 5. The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
 
 The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
@@ -502,8 +504,8 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
-| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:700-711`. |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 1024 — raised from 64 because recursive helpers consume 2–4 depth frames per list element; `lisp_eval_tool.rs:76-80`). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
+| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
 
 ### PDCA Loops Are Model-Coordinated
 
@@ -630,7 +632,7 @@ The agent panel routes this through `SkillTool::run` (D1), which:
 
 ## Invoking Skills
 
-Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:184-288`), which resolves the current catalog, obtains the body through its injected resolver, and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
+Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:194-240`), which resolves the current catalog, obtains the body through its injected resolver, and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
 
 ### Via the Agent Panel
 
@@ -640,17 +642,17 @@ Open the zed-kask agent panel and invoke a skill:
 /skill diagnose "My application crashes on startup"
 ```
 
-Model tool invocation uses `SkillTool::run`; `/skill` slash activation uses `send_skill_invocation`. Both execute in-process and share `skill_body_resolver_for_project`, so they resolve the same project-local body (`crates/agent/src/agent.rs:1016-1021,2310-2345,4339-4383`).
+Model tool invocation uses `SkillTool::run`; `/skill` slash activation uses `send_skill_invocation`. Both execute in-process and share `skill_body_resolver_for_project`, so they resolve the same project-local body (`crates/agent/src/agent.rs:1029-1031,2320-2350,4641-4680`).
 
 ### What Happens During Execution
 
 When a skill is invoked in-process:
 
-1. **Lookup** — The skill name is resolved against the current loaded catalog (`skill_tool.rs:195-224`).
-2. **Body resolution** — The injected resolver obtains the body; production tool and slash activation share `skill_body_resolver_for_project`, so project-local unsaved/remote content is authoritative (`crates/agent/src/agent.rs:1016-1021,2317-2345,4339-4383`).
-3. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`) wraps the body in a structured envelope and returns `SkillToolOutput::Found { rendered }` (`:285-288`).
+1. **Lookup** — The skill name is resolved against the current loaded catalog (`skill_tool.rs:205-235`).
+2. **Body resolution** — The injected resolver obtains the body; production tool and slash activation share `skill_body_resolver_for_project`, so project-local unsaved/remote content is authoritative (`crates/agent/src/agent.rs:1029-1031,2320-2350,4641-4680`).
+3. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`) wraps the body in a structured envelope and returns `SkillToolOutput::Found { rendered }` (`:235`).
 4. **Agent follows instructions** — The agent reads the envelope content and calls `lisp_eval`, `render_template`, and MCP tools as the skill directs.
-5. **Regulation feedback** — activation success or resolver/dependency failure is persisted as `reg.skill.<skill-id>.outcome`; direct ratings and skill-naming advice applications persist `reg.skill.<skill-id>.operator_feedback` (`kask/crates/hkask-regulation/src/runtime.rs:773-790`; wiring at `crates/zed/src/main.rs:956-1020`).
+5. **Regulation feedback** — activation success or resolver/dependency failure is persisted as `reg.skill.<skill-id>.outcome`; direct ratings and skill-naming advice applications persist `reg.skill.<skill-id>.operator_feedback` (`kask/crates/hkask-regulation/src/runtime.rs:773-790`; wiring at `crates/zed/src/main.rs:976-1015`).
 
 ### Convergence (Model-Coordinated)
 
@@ -735,7 +737,7 @@ Skill execution is bounded by the **per-agent call cap** (System A): every gover
 
 Tool-call bounding is the per-agent `CallCap`.
 
-Tool use is observable after dispatch through two concrete records: server-side execution emits one `reg.tool` tracing event with `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:111-119`); governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1534-1540`). There is no separate pre-invocation `reg.tool.invoked` event.
+Tool use is observable after dispatch through two concrete records: server-side execution emits one `reg.tool` tracing event with `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:111-119`); governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`). There is no separate pre-invocation `reg.tool.invoked` event.
 
 ### Error Handling
 
@@ -808,20 +810,20 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 
 | Record key | Producer |
 |---|---|
-| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:196-310`; `crates/zed/src/main.rs:988`). |
-| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4418-4507`; `crates/zed/src/main.rs:1692`). |
-| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1718-1750`). |
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:988`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4358-4512`; `crates/zed/src/main.rs:1704-1712`). |
+| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1726-1762`). |
 
 ---
 
 ## Building MCP Servers
 
-zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 11
+zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 12
 registered `hkask-mcp-*` binaries as child processes over stdio, performs the MCP
 handshake and tool discovery, and owns child shutdown/reconnect
-(`kask/crates/hkask-mcp/src/runtime.rs:4-12,445-455,576-680`). The canonical
+(`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-38,55-547`).[^mcp-spec-build][^ousterhout-mcp-build]
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`).[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Current crate shape
 
@@ -854,10 +856,10 @@ intended surface (corpus example: `hkask_mcp_corpus.rs:268-278`).
 Every tool boundary returns a typed MCP result and wraps its future with
 `execute_tool(self, "tool_name", ...)`. `ToolSpanGuard` then emits one child
 tracing event at target `reg.tool`, including outcome and duration
-(`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119,166-170`).
+(`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119,163-170`).
 That stderr event is observability only; the editor-side managed runtime records
 completed governed calls separately through the injected Regulation sink
-(`kask/crates/hkask-mcp/src/runtime.rs:1534-1543`).
+(`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`).
 
 ### Bootstrap and child binary
 
@@ -879,7 +881,7 @@ hkask_mcp_server::run_server(
 The framework signature is at
 `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:42-52`; the corpus server
 shows async inference-port resolution followed by factory construction at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:308-368`. The binary
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:397-410`. The binary
 entry point is intentionally thin:
 
 ```rust
@@ -918,7 +920,7 @@ builds and copies the child binary.
   silently substitute an empty result or in-memory store.
 - Keep `credentials` and `config_env` allowlists aligned with actual reads.
 - An unset/invalid `HKASK_WEBID` produces a warning and anonymous child identity
-  (`kask/crates/hkask-mcp-server/src/server/transport.rs:89-103`). This is
+  (`kask/crates/hkask-mcp-server/src/server/transport.rs:93-105`). This is
   distinct from editor startup, which proceeds immediately with fallback agent
   identity `kask` when the Zed account has not resolved.
 
@@ -940,7 +942,7 @@ builds and copies the child binary.
 
 **Symptom:** `lisp_eval` returns an error.
 
-**Fix:** Check the Lisp form for infinite recursion or excessive steps. The interpreter is bounded by `max_steps` (default 100000) and `max_depth` (default 64). Simplify the form or increase the budget if needed.
+**Fix:** Check the Lisp form for infinite recursion or excessive steps. The interpreter is bounded by `max_steps` (default 100000) and `max_depth` (default 1024). Simplify the form or increase the budget if needed.
 
 ---
 

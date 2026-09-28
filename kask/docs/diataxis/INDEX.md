@@ -10,10 +10,11 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Diataxis Documentation Index
 
-This index lists 20 retained artifacts across 10 cross-cutting documentation
-sets. Eight tutorials were folded on 2026-09-16, and on 2026-09-28 the eight
+This index lists 19 retained artifacts across 10 cross-cutting documentation
+sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight
 per-crate how-to documents were folded into their set references (each reference
-gained a Procedures section); `hkask-mcp-server/tutorial.md` is the one retained
+gained a Procedures section) and the hkask-tool-port explanation was folded into
+its reference; `hkask-mcp-server/tutorial.md` is the one retained
 tutorial. The count is the current filesystem result under
 `kask/docs/diataxis/*/*.md` on 2026-09-28, excluding this index.
 
@@ -35,13 +36,13 @@ Since the 2026-09-28 fold, the per-crate task procedures live in each set's
 reference document under a `Procedures` section; no per-crate file carries the
 How-to quadrant alone.
 
-## Retained sets — 20 artifacts
+## Retained sets — 19 artifacts
 
 | Set | Tutorial | How-to | Reference | Explanation |
 | --- | --- | --- | --- | --- |
 | [swarm_system](./swarm_system/) | folded | folded | [Reference](./swarm_system/reference.md) | [Explanation](./swarm_system/explanation.md) |
 | [hkask-types](./hkask-types/) | folded | folded | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
-| [hkask-tool-port](./hkask-tool-port/) | folded | — | [Reference](./hkask-tool-port/reference.md) | [Explanation](./hkask-tool-port/explanation.md) |
+| [hkask-tool-port](./hkask-tool-port/) | folded | — | [Reference](./hkask-tool-port/reference.md) | folded |
 | [hkask-storage](./hkask-storage/) | folded | folded | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
 | [hkask-regulation](./hkask-regulation/) | folded | folded | [Reference](./hkask-regulation/reference.md) | [Explanation](./hkask-regulation/explanation.md) |
 | [hkask-inference](./hkask-inference/) | folded | folded | [Reference](./hkask-inference/reference.md) | [Explanation](./hkask-inference/explanation.md) |

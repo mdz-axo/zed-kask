@@ -1,8 +1,8 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-09-27
-version: "1.4.0"
+last_updated: 2026-09-28
+version: "1.4.1"
 status: "Active"
 domain: "agent interaction"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -178,8 +178,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FUNCTIONAL-001
-verified_date: 2026-09-16
-verified_against: crates/agent/src/templates/system_prompt.hbs:1-20,304-343; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:393-429,541-543
+verified_date: 2026-09-28
+verified_against: crates/agent/src/templates/system_prompt.hbs:1-3,302-358; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:461,517,564
 status: VERIFIED
 -->
 
@@ -204,7 +204,7 @@ The interaction is implemented as two coupled layers.[^kata]
   `Division of Responsibilities` section implements the four moves; move 2 is
   **Decide by class**. Functional questions remain with the user, while the
   agent decides technical questions and reports their functional consequence
-  (`crates/agent/src/templates/system_prompt.hbs:1-20,304-343`). Template tests
+  (`crates/agent/src/templates/system_prompt.hbs:1-3,302-358`). Template tests
   pin the opening roles, decision classification, goal-tool wiring, and
   functional-first closeout (`crates/agent/src/templates.rs`).
 - **Persistent goal layer.** `kanban_goal_create`, `kanban_goal_judge`,

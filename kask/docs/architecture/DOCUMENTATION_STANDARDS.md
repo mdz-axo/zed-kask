@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-09-19
-version: "0.39.3"
+last_updated: 2026-09-28
+version: "0.39.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
-verified_date: 2026-09-19
+verified_date: 2026-09-28
 verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md:51-182; kask/docs/README.md:69-119; kask/docs/plans/logisheets-spreadsheet-capability-plan.md:1-17
 status: VERIFIED
 -->
@@ -323,7 +323,7 @@ type.
 Writing Excellence is integrated into the MDS curation process via two
 mechanisms:
 
-> **Pragmatic-semantics note (2026-08-01 audit):** The two tools below are **planned (OUGHT)**, not implemented. `spec/curate/writing-excellence` and `spec/curate/evaluate` have zero hits in `kask/crates/` and `crates/` (verified by grep). They are retained as the design specification for the intended curation integration; readers should treat them as the *intended* surface, not a verifiable code reference. The 4-perspective rubric in Appendix A is the live standard reviewers apply manually today.
+> **Pragmatic-semantics note (2026-08-01 audit; re-verified 2026-09-28):** The two tools below are **planned (OUGHT)**, not implemented. `spec/curate/writing-excellence` and `spec/curate/evaluate` have zero hits in `kask/crates/` and `crates/` (verified by grep). They are retained as the design specification for the intended curation integration; readers should treat them as the *intended* surface, not a verifiable code reference. The 4-perspective rubric in Appendix A is the live standard reviewers apply manually today.
 
 1. **`spec/curate/writing-excellence`** — Standalone assessment tool that
    evaluates a specification document against the 4-perspective test and

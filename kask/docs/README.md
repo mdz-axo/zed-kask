@@ -14,9 +14,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 20 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16, and on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section); `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-09-28):** 65 Markdown documents and one live YAML inventory, 66 files total (`find kask/docs -type f | wc -l`), under the formal **fewer-than-70** count gate in [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-09-28):** 64 Markdown documents, one live YAML inventory, and two plain-text evidence files, 67 files total (`find kask/docs -type f | wc -l`), under the formal **fewer-than-70** count gate in [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -102,6 +102,7 @@ Git history is the archive of record. Every removed document names its active su
 | `diataxis/hkask-condenser/how-to.md` | `diataxis/hkask-condenser/reference.md` (Procedures section). |
 | `diataxis/kask_bridge/how-to.md` | `diataxis/kask_bridge/reference.md` (Procedures section). |
 | `diataxis/hkask-mcp-server/how-to.md` | `diataxis/hkask-mcp-server/reference.md` (Procedures section). |
+| `diataxis/hkask-tool-port/explanation.md` | `diataxis/hkask-tool-port/reference.md` (capability-separation rationale and the invoke-pipeline/boundary diagrams folded in). |
 | `diataxis/hkask-bridge-ontology/` (empty directory) | Residue of the 2026-09-09 how-to fold; no files. |
 | `reports/` (empty directory) | Residue of the 2026-09-17/19 report deletions; no files. |
 
@@ -172,7 +173,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (106 records, tree-verified 2026-09-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
-- [x] Document count is 66, under the fewer-than-70 cap (`find kask/docs -type f | wc -l`, measured 2026-09-28).
+- [x] Document count is 67, under the fewer-than-70 cap (`find kask/docs -type f | wc -l`, measured 2026-09-28).
 
 ## See also
 

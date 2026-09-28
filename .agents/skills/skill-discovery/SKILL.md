@@ -22,12 +22,14 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 
 ## Reference model and D/P labelling
 
-There is no external reference model. The fit score is a **heuristic
-ranking**: the dimension weights (0.50 / 0.25 / 0.25), the +0.20
+The fit score is a **heuristic ranking** in the form of a fixed-weight
+weighted-sum value model (Belton & Stewart, *Multiple Criteria Decision
+Analysis*, 2002 — the same model `mcda` cites), applied WITHOUT the
+sensitivity analysis that model prescribes: nothing here tests whether
+the 0.50 / 0.25 / 0.25 split changes any ranking. The weights, the +0.20
 epistemic boost, the 0.30 floor, the 0.8 / 0.4 coverage bands and the
 24-of-32 installable threshold are operator-set constants (rulings
-2026-09-26), not values derived from a published method or from measured
-routing outcomes. Treat a fit score as an ordering aid whose arithmetic is
+2026-09-26), not values derived from measured routing outcomes. Treat a fit score as an ordering aid whose arithmetic is
 reproducible, not as a calibrated probability that the skill fits; the
 constants are open to revision when routing outcomes are recorded against
 them.
