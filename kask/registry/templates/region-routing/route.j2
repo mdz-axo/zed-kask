@@ -1,12 +1,13 @@
 {# goal: Classify task steps into the 2x2 regions and emit the routing plan: region, tools, gate, and role per step. #}
 [inference]
-input:
-  task_description: string
-  steps: string[]
-  available_oracles: string[]
-output:
-  step_model: string[]
-  routing_plan: object[]
+contract:
+  input:
+    task_description: string
+    steps: string[]
+    available_oracles: string[]
+  output:
+    step_model: string[]
+    routing_plan: object[]
 ---
 You are routing a task across the region space. The four regions cross the
 representation axis (syntactic form vs semantic meaning) with the process

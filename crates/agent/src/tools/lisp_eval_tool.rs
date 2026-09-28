@@ -329,8 +329,12 @@ mod tests {
         // recursive pair computing narrative blocks' final is_sourced flags
         // from surviving strength-2 claim IDs. Unpinned until 2026-09-28:
         // the same verbatim-pinned, agent-executed, nothing-runs-it risk
-        // class that shipped the floor form broken.
-        let form = r#"(define any-verified (lambda (ids verified) (if (is_null ids) nil (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)"#;
+        // class that shipped the floor form broken. The base case is `false`,
+        // not `nil`: a claimless block is definitively not sourced — `null`
+        // would read as unknown under the D/P discipline. The interpreter's
+        // `to_json` canonicalizes the pair-list into a JSON object
+        // (`{block_name: is_sourced}`), which is the designed output shape.
+        let form = r#"(define any-verified (lambda (ids verified) (if (is_null ids) false (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)"#;
         let marked = hkask_lisp::eval_sandboxed_with_budget(
             form,
             &json!({"blocks": [
@@ -344,12 +348,12 @@ mod tests {
         .expect("mark form must evaluate");
         assert_eq!(
             marked,
-            json!([
-                ["financial_profile", true],
-                ["management_skill", false],
-                ["empty_block", false]
-            ]),
-            "a block is sourced iff at least one of its claims survived verification — an empty claim list is never sourced"
+            json!({
+                "financial_profile": true,
+                "management_skill": false,
+                "empty_block": false
+            }),
+            "a block is sourced iff at least one of its claims survived verification — an empty claim list is never sourced, and every flag is a Boolean, never null"
         );
     }
 
@@ -525,6 +529,11 @@ mod tests {
         assert!(
             skill_md.contains(r#"(assoc "why" (car lst))"#),
             "why-length-check form must stay pinned in grounding-verify SKILL.md"
+        );
+        assert!(
+            skill_md.contains(r#"(if (is_null ids) false"#),
+            "narrative-mark form must stay pinned with the false base case — \
+             the nil base case shipped null flags where the semantics demand false"
         );
     }
 

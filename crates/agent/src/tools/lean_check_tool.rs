@@ -605,8 +605,16 @@ mod tests {
 
     #[tokio::test]
     async fn saved_project_check_reports_proof_failure_and_axiom_trust() -> Result<()> {
-        let lake = std::env::var_os("LEAN_CHECK_TEST_LAKE")
-            .context("set LEAN_CHECK_TEST_LAKE to a Lean 4 Lake binary to run this test")?;
+        // Env-gated integration test: it runs the real Lake binary, which not
+        // every environment has. Skip visibly when the gate is unset — a hard
+        // failure here kept every Lean-less environment's suite red, hiding
+        // real failures (observed 2026-09-28).
+        let Some(lake) = std::env::var_os("LEAN_CHECK_TEST_LAKE") else {
+            eprintln!(
+                "skipping: set LEAN_CHECK_TEST_LAKE to a Lean 4 Lake binary to run this test"
+            );
+            return Ok(());
+        };
         let dir = tempfile::tempdir()?;
         let root = dir.path();
         std::fs::write(root.join("lean-toolchain"), "leanprover/lean4:v4.34.0\n")?;

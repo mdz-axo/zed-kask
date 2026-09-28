@@ -418,7 +418,10 @@ returns.
    the provisional `is_sourced` flags from Step 2. Let `verified_ids` contain
    only claims whose final tier is `tool_verified` or `platform_derived`.
    Compute each block's final flag from its `claim_ids` with `lisp_eval`:
-   `(define any-verified (lambda (ids verified) (if (is_null ids) nil (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)`.
+   `(define any-verified (lambda (ids verified) (if (is_null ids) false (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)`.
+   The result is a `{block_name: is_sourced}` map and every flag is a
+   Boolean — a claimless block is `false` (definitively not sourced), never
+   null/unknown.
    Require block IDs to refer to actual extracted claims; missing/unmapped
    blocks make the scan unverified, not clean. The block-to-claim association
    remains a model-mediated classification; the Boolean is computed from

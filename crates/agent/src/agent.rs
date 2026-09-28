@@ -5503,7 +5503,7 @@ mod internal_tests {
         // Unwired degradation: no injector for any thread.
         assert!(
             context_injector_for(None).is_none(),
-            "unwired hooks must read None for the default thread"
+            "unwired hooks must read None when identity is unavailable"
         );
         assert!(
             context_injector_for(Some(&CURATOR_AGENT_ID)).is_none(),
@@ -5524,8 +5524,8 @@ mod internal_tests {
             Arc::ptr_eq(dispatched, &user_injector),
             "unwired curator injector must degrade to the user injector, not to none"
         );
-        let dispatched =
-            context_injector_for(None).expect("default thread must get the user injector");
+        let dispatched = context_injector_for(None)
+            .expect("identity-unavailable (None) must get the user injector");
         assert!(Arc::ptr_eq(dispatched, &user_injector));
         let dispatched = context_injector_for(Some(&AgentId::new("other")))
             .expect("non-curator agent must get the user injector");
@@ -5541,8 +5541,8 @@ mod internal_tests {
             Arc::ptr_eq(dispatched, &curator_injector),
             "a wired curator thread must get curator-scoped recall, not user-scoped"
         );
-        let dispatched =
-            context_injector_for(None).expect("default thread must still get the user injector");
+        let dispatched = context_injector_for(None)
+            .expect("identity-unavailable (None) must still get the user injector");
         assert!(Arc::ptr_eq(dispatched, &user_injector));
     }
 
