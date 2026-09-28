@@ -49,33 +49,79 @@ use serde::{
     de::{DeserializeOwned, Error as _},
 };
 
-/// Deserialize a value that may have been provided as a JSON-encoded string
-/// instead of the structured value. Some models occasionally stringify nested
-/// arguments, so we accept either form.
-pub(crate) fn deserialize_maybe_stringified<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+/// Deserialize a tool-input field, teaching on rejection: the error names
+/// the field, the received shape, and the accepted shape. An error that does
+/// not teach produces identical retries — the anatomy of the 2026-09-28
+/// audit lockout (5 identical malformed-env emissions hard-refused by the
+/// per-input retry tracker). `tolerate_stringified` additionally accepts
+/// the field as a stringified JSON string (models occasionally stringify
+/// nested arguments — the `lisp_eval.env` / `edit_file.edits` /
+/// `render_template.context` pattern). The teaching message replaces the
+/// inner serde error entirely, so no position noise ("at line 1 column N")
+/// reaches the model.
+pub(crate) fn deserialize_teaching_field<'de, T, D>(
+    deserializer: D,
+    field: &'static str,
+    accepted: &'static str,
+    tolerate_stringified: bool,
+) -> Result<T, D::Error>
 where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    fn to_custom_error<E>(e: serde_json::Error) -> E
-    where
-        E: serde::de::Error,
-    {
-        E::custom(format!("{e}"))
-    }
-
-    let raw_value = serde_json::Value::deserialize(deserializer)
+    let raw = serde_json::Value::deserialize(deserializer)
         .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
 
-    match T::deserialize(&raw_value) {
+    let parsed = match T::deserialize(&raw) {
         Ok(value) => Ok(value),
-        Err(original_error) => {
-            let Some(string) = raw_value.as_str() else {
-                return Err(to_custom_error(original_error));
-            };
-
-            serde_json::from_str(string).map_err(to_custom_error)
+        Err(direct_error) => {
+            if !tolerate_stringified {
+                Err(direct_error)
+            } else {
+                // A stringified emission that parses as JSON but fails T is
+                // MORE specific than the direct attempt's type error (the
+                // string was JSON — its error names the inside problem), so
+                // the stringified error wins.
+                match raw.as_str().map(serde_json::from_str::<T>) {
+                    Some(Ok(value)) => Ok(value),
+                    Some(Err(stringified_error)) => Err(stringified_error),
+                    None => Err(direct_error),
+                }
+            }
         }
+    };
+
+    parsed.map_err(|inner| {
+        // Field-level errors (missing/unknown field inside a container the
+        // model DID send) carry detail the shape description cannot — surface
+        // them alongside the teaching message. Type errors are redundant with
+        // the shape description. Position noise ("at line 1 column N") never
+        // reaches the model.
+        let inner_msg = inner.to_string();
+        let inner_msg = inner_msg.split(" at line ").next().unwrap_or(&inner_msg);
+        let detail =
+            if inner_msg.starts_with("missing field") || inner_msg.starts_with("unknown field") {
+                format!(" — {inner_msg}")
+            } else {
+                String::new()
+            };
+        D::Error::custom(format!(
+            "{field}: received {}, expected {accepted}{detail}",
+            describe_json_shape(&raw)
+        ))
+    })
+}
+
+/// One-line shape description for teaching errors: "null", "boolean true",
+/// "number 5", "string \"abc\"", "an array", "an object".
+fn describe_json_shape(raw: &serde_json::Value) -> String {
+    match raw {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(b) => format!("boolean {b}"),
+        serde_json::Value::Number(n) => format!("number {n}"),
+        serde_json::Value::String(s) => format!("string {s:?}"),
+        serde_json::Value::Array(_) => "an array".to_string(),
+        serde_json::Value::Object(_) => "an object".to_string(),
     }
 }
 

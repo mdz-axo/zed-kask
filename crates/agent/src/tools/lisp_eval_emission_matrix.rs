@@ -4,10 +4,12 @@
 //! Every variant here is a shape a temperature-0 model has been observed or
 //! is plausibly able to emit for `env` / `form` / the budget fields, driven
 //! through the REAL deserialization path (`serde_json::from_value` — which
-//! exercises `deserialize_maybe_stringified` via the serde attribute) and
-//! then `evaluate_lisp`. Each test pins today's outcome class; the exact
-//! current message is carried in the assertion so L1's
-//! teach-the-next-emission improvements have a before/after receipt.
+//! exercises `deserialize_env_field` / the `deserialize_teaching_field` core
+//! via the serde attribute) and then `evaluate_lisp`. Each test pins the L1
+//! outcome: the messages are the L1 TEACHING messages (field + received shape
+//! + accepted shape); each comment carries the pre-L1 message as the
+//! before/after receipt (lisp-repair L1: an error that does not teach
+//! produces identical retries — the 2026-09-28 audit lockout anatomy).
 //!
 //! Failure classes (lisp-repair contract): `refuse` = typed rejection
 //! (acceptable when actionable), `lie` = silent wrong answer (never
@@ -17,7 +19,9 @@
 //! the worst refuse sub-class: a shape that deserializes cleanly but leaves
 //! the form's bindings missing, producing an error that does not name the
 //! actual defect — the anatomy of the 2026-09-28 audit lockout (5 identical
-//! malformed-env retries hard-refused by the per-input tracker).
+//! malformed-env retries hard-refused by the per-input tracker). L1 closed
+//! the unteachable class: the unbound-symbol error now names the available
+//! bindings and the flatten fix.
 
 use serde_json::{Value, json};
 
@@ -42,7 +46,7 @@ fn env_bare_object_is_tolerated() {
 
 #[test]
 fn env_stringified_object_is_tolerated() {
-    // deserialize_maybe_stringified: models that emit env as a stringified
+    // deserialize_env_field: models that emit env as a stringified
     // JSON string get the parsed object.
     assert_eq!(
         run(json!({"form": "(+ a 1)", "env": "{\"a\": 1}"})),
@@ -68,98 +72,119 @@ fn env_missing_defaults_to_empty() {
 
 #[test]
 fn env_null_is_refused() {
-    // today: "deserialize: invalid type: null, expected a map" — the error
-    // does NOT name the field (`env`). L1 fix target: name field + accepted
-    // shape (the "deserialize: " prefix is this harness's; the model-visible
-    // message is the tool framework's rendering of the same serde error).
+    // before L1: "deserialize: invalid type: null, expected a map" — no field
+    // name. After L1: the teaching message (field + received + accepted).
     let out = run(json!({"form": "(+ 1 2)", "env": null}));
     assert_eq!(
         out,
-        Err("deserialize: invalid type: null, expected a map".to_string())
+        Err("deserialize: env: received null, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
     );
 }
 
 #[test]
 fn env_array_is_refused() {
-    // today: "deserialize: invalid type: sequence, expected a map"
+    // before L1: "deserialize: invalid type: sequence, expected a map"
     let out = run(json!({"form": "(+ 1 2)", "env": [["a", 1]]}));
     assert_eq!(
         out,
-        Err("deserialize: invalid type: sequence, expected a map".to_string())
+        Err("deserialize: env: received an array, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
     );
 }
 
 #[test]
 fn env_number_is_refused() {
-    // today: "deserialize: invalid type: integer `5`, expected a map"
+    // before L1: "deserialize: invalid type: integer `5`, expected a map"
     let out = run(json!({"form": "(+ 1 2)", "env": 5}));
     assert_eq!(
         out,
-        Err("deserialize: invalid type: integer `5`, expected a map".to_string())
+        Err("deserialize: env: received number 5, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
     );
 }
 
 #[test]
 fn env_double_stringified_is_refused() {
-    // The string parses to a JSON string, not a map.
-    // today: "deserialize: env: invalid type: string \"{\\\"a\\\": 1}\", expected a map"
+    // The string parses to a JSON string, not a map. before L1 the message
+    // carried position noise ("at line 1 column 12"); after L1 the teaching
+    // message shows the received string — no position noise.
     let out = run(json!({"form": "(+ a 1)", "env": "\"{\\\"a\\\": 1}\""}));
-    assert!(matches!(out, Err(e) if e.contains("invalid type") && e.contains("expected a map")));
+    assert!(
+        matches!(out, Err(e) if e.contains("env: received string") && e.contains("expected a JSON object"))
+    );
 }
 
 #[test]
 fn env_invalid_json_string_is_refused() {
-    // today: "deserialize: env: key must be a string at line 1 column 2" (serde_json parse error)
+    // before L1: "deserialize: key must be a string at line 1 column 2"
+    // (position noise, no field name). After L1: the teaching message shows
+    // the model its own bytes.
     let out = run(json!({"form": "(+ a 1)", "env": "{a: 1}"}));
-    assert!(out.is_err());
+    assert_eq!(
+        out,
+        Err("deserialize: env: received string \"{a: 1}\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+    );
 }
 
 #[test]
 fn env_python_repr_string_is_refused() {
     // Python-style single quotes are not JSON — a common temperature-0
     // emission class for models trained on repr() output.
-    // today: "deserialize: env: key must be a string at line 1 column 1"
+    // before L1: "deserialize: key must be a string at line 1 column 1"
     let out = run(json!({"form": "(+ a 1)", "env": "{'a': 1}"}));
-    assert!(out.is_err());
+    assert_eq!(
+        out,
+        Err("deserialize: env: received string \"{'a': 1}\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+    );
 }
 
 #[test]
 fn env_stringified_array_is_refused() {
     // Parses to a JSON array, not a map.
+    // before L1: "deserialize: invalid type: sequence, expected a map at line 1 column 0"
     let out = run(json!({"form": "(+ 1 2)", "env": "[1, 2]"}));
-    assert!(
-        matches!(out, Err(e) if e.contains("invalid type: sequence") && e.contains("expected a map"))
+    assert_eq!(
+        out,
+        Err("deserialize: env: received string \"[1, 2]\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
     );
 }
 
-// ── env: the unteachable class (deserializes, then fails without teaching) ──
+// ── env: the formerly-unteachable class (L1 closed it) ─────────────────────
 
 #[test]
-fn env_nested_under_env_key_is_unteachable() {
+fn env_nested_under_env_key_error_teaches_the_flatten_fix() {
     // The model wraps env one level too deep: the tool arguments carry
     // {"env": {"env": {...}}}. Deserialization SUCCEEDS — the inner object
-    // becomes a single binding named "env" — and the form fails with an
-    // error that does not name the nesting. This is the anatomy of the
-    // 2026-09-28 audit lockout: the error does not change the next
-    // emission, so the model retries the identical shape.
-    // today: "unbound symbol: a" — no mention of the stray "env" binding.
-    // L1 fix target: this error must teach the next emission (name the
-    // received env keys and the accepted shape).
+    // becomes a single binding named "env" — and pre-L1 the form failed with
+    // "unbound symbol: a", an error that did not name the nesting: the anatomy
+    // of the 2026-09-28 audit lockout (5 identical retries). L1: the
+    // unbound-symbol error names the available bindings and the flatten fix,
+    // so the first error changes the next emission.
     let out = run(json!({"form": "(+ a 1)", "env": {"env": {"a": 1}}}));
-    assert_eq!(out, Err("unbound symbol: a".to_string()));
+    assert_eq!(
+        out,
+        Err("unbound symbol: a — env bindings: [\"env\"] (an env binding named \"env\" was received — if env was nested one level too deep, flatten it: {\"a\": 1}, not {\"env\": {\"a\": 1}})".to_string())
+    );
+}
+
+#[test]
+fn unbound_symbol_with_empty_env_names_the_empty_binding_list() {
+    // The teaching generalizes: any unbound symbol names the available
+    // bindings (sorted — byte-identical across processes), so an empty env
+    // is visibly empty.
+    let out = run(json!({"form": "(+ a 1)", "env": {}}));
+    assert_eq!(out, Err("unbound symbol: a — env bindings: []".to_string()));
 }
 
 // ── form variants ───────────────────────────────────────────────────────────
 
 #[test]
 fn form_non_string_is_refused() {
-    // today: "deserialize: invalid type: integer `5`, expected a string" —
-    // no field name (a model that got both form and env wrong cannot tell
-    // which). L1 fix target: name the field.
+    // before L1: "deserialize: invalid type: integer `5`, expected a string"
+    // — no field name (a model that got both form and env wrong could not
+    // tell which). After L1: the teaching message.
     let out = run(json!({"form": 5, "env": {}}));
     assert_eq!(
         out,
-        Err("deserialize: invalid type: integer `5`, expected a string".to_string())
+        Err("deserialize: form: received number 5, expected a string containing the Lisp form, e.g. \"(+ 1 2)\"".to_string())
     );
 }
 
@@ -192,27 +217,30 @@ fn nested_add_form(levels: usize) -> String {
 }
 
 #[test]
-fn budget_camelcase_max_depth_is_silently_ignored() {
-    // A model emitting camelCase maxDepth (an unknown field to serde) gets
-    // the snake_case default silently: the explicit budget never applies.
-    // Observable via the depth-dominant form: the eval fails with
-    // DepthLimitExceeded(1024) — the DEFAULT, not the emitted 8192 — and
-    // the error names the limit but not the ignored field. Recorded as a
-    // silent-ignore variant; L1 decides teach-vs-tolerate
-    // (deny_unknown_fields would make it a typed refusal; a serde alias
-    // would tolerate it).
+fn budget_camelcase_max_depth_alias_is_tolerated() {
+    // L1 decision (operator-vetoable): camelCase budget fields are tolerated
+    // via serde aliases, so an explicit budget is APPLIED rather than silently
+    // dropped. Pre-L1 this was a silent-ignore: the camelCase field was an
+    // unknown field, serde dropped it, and the eval failed with the DEFAULT
+    // limit while the model believed it had raised it — an unteachable
+    // failure. The alias makes the emission work as intended; the snake_case
+    // control below pins the canonical path.
     let out = run(json!({
         "form": nested_add_form(4000),
         "env": {},
         "maxDepth": 8192
     }));
-    assert_eq!(
-        out,
-        Err(
-            "Lisp exceeded max_depth (1024) — input nesting or evaluation recursion is too deep"
-                .to_string()
-        )
-    );
+    assert_eq!(out, Ok(json!(4001)));
+}
+
+#[test]
+fn unknown_junk_fields_are_tolerated() {
+    // The complement of the alias decision: unknown fields stay IGNORED (no
+    // deny_unknown_fields), so a model adding junk (e.g. a "reasoning" field)
+    // is not hard-refused — the camelCase aliases cover exactly the fields
+    // with semantic effect.
+    let out = run(json!({"form": "(+ 1 2)", "env": {}, "reasoning": "just checking"}));
+    assert_eq!(out, Ok(json!(3)));
 }
 
 #[test]
@@ -229,12 +257,12 @@ fn budget_snake_case_max_depth_is_applied() {
 
 #[test]
 fn budget_string_value_is_refused() {
-    // today: "deserialize: invalid type: string \"100000\", expected u64" —
-    // no field name. L1 fix target: name the field.
+    // before L1: "deserialize: invalid type: string \"100000\", expected u64"
+    // — no field name. After L1: the teaching message.
     let out = run(json!({"form": "(+ 1 2)", "env": {}, "max_steps": "100000"}));
     assert_eq!(
         out,
-        Err("deserialize: invalid type: string \"100000\", expected u64".to_string())
+        Err("deserialize: max_steps: received string \"100000\", expected a non-negative integer (default 100000)".to_string())
     );
 }
 

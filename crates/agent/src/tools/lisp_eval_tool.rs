@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_maybe_stringified};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
@@ -36,27 +36,36 @@ pub struct LispEvalToolInput {
     /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
     /// `numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `max`,
     /// `min`, `eq`, `string=`, `string-contains`, `concat`.
+    #[serde(deserialize_with = "deserialize_form_field")]
     form: String,
     /// JSON object whose keys become top-level Lisp bindings. Values are
     /// converted to Lisp values: objects become association lists, arrays
     /// become lists, numbers stay numbers, strings stay strings.
     ///
     /// Uses `HashMap<String, AnyJsonValue>` (not `serde_json::Value`) so the
-    /// generated schema is `{"type":"object","additionalProperties":{}}` —
-    /// a bare `AnyJsonValue` emits `{}` (any value), which the model doesn't
+    /// generated schema is `{"type":"object","additionalProperties":{}}` — a
+    /// bare `AnyJsonValue` emits `{}` (any value), which the model doesn't
     /// populate; a bare `serde_json::Value` emits `true`, which strict-schema
     /// providers reject outright. The `HashMap` shape gives the model a clear
     /// `type: object` signal to send a JSON object.
     ///
-    /// `deserialize_maybe_stringified` tolerates models that emit `env` as a
-    /// stringified JSON string (e.g. `"{}"`) instead of a bare object — the
-    /// same pattern `edit_file.edits` uses. Without it, a stringified `env`
-    /// fails with "invalid type: string, expected a map" and the tool errors
-    /// out, wasting a turn.
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    /// `deserialize_env_field` tolerates models that emit `env` as a stringified
+    /// JSON string (e.g. `"{}"`) instead of a bare object, and teaches on every
+    /// rejection: the error names the field, the received shape, and the
+    /// accepted shape (an error that does not teach produces identical
+    /// retries — the 2026-09-28 audit lockout anatomy).
+    #[serde(default, deserialize_with = "deserialize_env_field")]
     env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
-    #[serde(default = "default_max_steps")]
+    /// The `maxSteps` alias tolerates camelCase emissions so an explicit budget
+    /// is applied rather than silently dropped (a silently-dropped budget was
+    /// an unteachable failure: the eval failed with the DEFAULT limit while
+    /// the model believed it had raised it).
+    #[serde(
+        default = "default_max_steps",
+        alias = "maxSteps",
+        deserialize_with = "deserialize_max_steps_field"
+    )]
     max_steps: u64,
     /// Maximum evaluation depth (default 1024). Prevents infinite recursion.
     /// Recursive helper forms over lists consume roughly 2–4 depth frames
@@ -65,8 +74,68 @@ pub struct LispEvalToolInput {
     /// and wasted turns on retries (observed live: a 134-element list needed
     /// 300). 1024 covers realistic registries out of the box; genuinely
     /// infinite recursion still trips the budget immediately.
-    #[serde(default = "default_max_depth")]
+    #[serde(
+        default = "default_max_depth",
+        alias = "maxDepth",
+        deserialize_with = "deserialize_max_depth_field"
+    )]
     max_depth: u64,
+}
+
+// Per-field teaching deserializers: each names its field, the received shape,
+// and the accepted shape on rejection (lisp-repair L1). An error that does
+// not teach produces identical retries — the 2026-09-28 audit lockout
+// anatomy: 5 identical malformed-env emissions hard-refused by the per-input
+// retry tracker.
+
+fn deserialize_form_field<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "form",
+        "a string containing the Lisp form, e.g. \"(+ 1 2)\"",
+        false,
+    )
+}
+
+fn deserialize_env_field<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, hkask_types::AnyJsonValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "env",
+        "a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)",
+        true,
+    )
+}
+
+fn deserialize_max_steps_field<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "max_steps",
+        "a non-negative integer (default 100000)",
+        false,
+    )
+}
+
+fn deserialize_max_depth_field<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "max_depth",
+        "a non-negative integer (default 1024)",
+        false,
+    )
 }
 
 fn default_max_steps() -> u64 {
@@ -145,6 +214,15 @@ impl AgentTool for LispEvalTool {
 
 /// The tool's evaluation, shared with delegated `host/lisp_eval` dispatch.
 pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
+    // Sorted for byte-identical error messages across processes (HashMap
+    // iteration order is process-randomized — the L2 canonicalization rule
+    // applied to the error path too).
+    let mut env_bindings: Vec<String> = input.env.keys().cloned().collect();
+    env_bindings.sort();
+    let nested_env = input
+        .env
+        .get("env")
+        .is_some_and(|value| value.as_object().is_some());
     let env_value =
         serde_json::Value::Object(input.env.into_iter().map(|(k, v)| (k, v.into())).collect());
     hkask_lisp::eval_sandboxed_with_budget(
@@ -153,7 +231,23 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
         input.max_steps,
         input.max_depth,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|error| match error {
+        // The unbound-symbol error teaches: it names the available bindings,
+        // so a model that nested env one level too deep (the unteachable class
+        // — the emission deserialized cleanly, the error never named the
+        // nesting) sees the stray "env" binding and the flatten fix.
+        hkask_lisp::LispError::UnboundSymbol(name) => {
+            let mut message = format!("unbound symbol: {name} — env bindings: {env_bindings:?}");
+            if nested_env {
+                message.push_str(
+                    " (an env binding named \"env\" was received — if env was nested one \
+                     level too deep, flatten it: {\"a\": 1}, not {\"env\": {\"a\": 1}})",
+                );
+            }
+            message
+        }
+        other => other.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -281,10 +375,10 @@ mod tests {
     }
 
     // Regression: when the model emits `env` as a stringified JSON string
-    // (e.g. `"{}"`) instead of a bare object, `deserialize_maybe_stringified`
-    // parses the string and the tool succeeds. Without it, the deserializer
-    // rejects with "invalid type: string, expected a map" and the tool errors
-    // out. This is the same pattern `edit_file.edits` uses.
+    // (e.g. `"{}"`) instead of a bare object, `deserialize_env_field` parses
+    // the string and the tool succeeds. Without it, the deserializer rejects
+    // with "invalid type: string, expected a map" and the tool errors out.
+    // This is the same pattern `edit_file.edits` uses.
     #[test]
     fn test_env_accepts_stringified_json() {
         let input = json!({"form": "(+ 1 2)", "env": "{}"});

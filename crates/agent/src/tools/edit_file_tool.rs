@@ -1,4 +1,4 @@
-use super::deserialize_maybe_stringified;
+use super::deserialize_teaching_field;
 pub(crate) use super::edit_session::PartialEdit;
 pub use super::edit_session::{Edit, EditSessionOutput as EditFileToolOutput};
 use super::edit_session::{
@@ -62,7 +62,9 @@ pub struct EditFileToolInput {
 
     /// List of edit operations to apply sequentially.
     /// Each edit finds `old_text` in the file and replaces it with `new_text`.
-    #[serde(deserialize_with = "deserialize_maybe_stringified")]
+    /// `deserialize_edits_field` also tolerates a stringified JSON array and
+    /// teaches on rejection (field + received shape + accepted shape).
+    #[serde(deserialize_with = "deserialize_edits_field")]
     pub edits: Vec<Edit>,
 }
 
@@ -70,8 +72,38 @@ pub struct EditFileToolInput {
 struct EditFileToolPartialInput {
     #[serde(default)]
     path: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    #[serde(default, deserialize_with = "deserialize_partial_edits_field")]
     edits: Option<Vec<PartialEdit>>,
+}
+
+// Per-field teaching deserializers (lisp-repair L1): the error names the
+// field, the received shape, and the accepted shape — an error that does not
+// teach produces identical retries.
+
+fn deserialize_edits_field<'de, D>(deserializer: D) -> Result<Vec<Edit>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "edits",
+        "an array of edit objects like [{\"old_text\": \"...\", \"new_text\": \"...\"}] (stringified JSON also accepted)",
+        true,
+    )
+}
+
+fn deserialize_partial_edits_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<PartialEdit>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "edits",
+        "an array of partial edit objects (stringified JSON also accepted)",
+        true,
+    )
 }
 
 pub struct EditFileTool {
@@ -3150,9 +3182,15 @@ mod tests {
         }))
         .unwrap_err();
 
-        // When the model uses incorrect field names, the error should
-        // tell it what to fix.
-        assert_eq!(err.to_string(), "missing field `old_text`");
+        // When the model uses incorrect field names, the error should tell it
+        // what to fix. L1 (lisp-repair): the teaching wrapper names the field,
+        // the received shape, and the accepted shape, and surfaces the inner
+        // missing-field detail (before L1 the message was only "missing field
+        // `old_text`" — no field name, no accepted shape).
+        assert_eq!(
+            err.to_string(),
+            "edits: received an array, expected an array of edit objects like [{\"old_text\": \"...\", \"new_text\": \"...\"}] (stringified JSON also accepted) — missing field `old_text`"
+        );
     }
 
     async fn setup_test_with_fs(

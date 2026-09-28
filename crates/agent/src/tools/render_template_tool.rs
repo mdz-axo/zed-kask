@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_maybe_stringified};
+use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_teaching_field};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, Task};
@@ -37,11 +37,27 @@ pub struct RenderTemplateToolInput {
     /// which breaks strict-schema providers — context variables silently
     /// don't arrive.
     ///
-    /// `deserialize_maybe_stringified` tolerates models that emit `context` as
-    /// a stringified JSON string instead of a bare object — the same pattern
-    /// `edit_file.edits` uses.
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    /// `deserialize_context_field` tolerates models that emit `context` as a
+    /// stringified JSON string instead of a bare object, and teaches on every
+    /// rejection: the error names the field, the received shape, and the
+    /// accepted shape (lisp-repair L1 — an error that does not teach produces
+    /// identical retries).
+    #[serde(default, deserialize_with = "deserialize_context_field")]
     pub context: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+}
+
+fn deserialize_context_field<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, hkask_types::AnyJsonValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "context",
+        "a JSON object of template variables like {\"task\": \"...\"} (a stringified JSON object is also accepted)",
+        true,
+    )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -767,7 +783,7 @@ mod tests {
     }
 
     // Regression: when the model emits `context` as a stringified JSON string
-    // instead of a bare object, `deserialize_maybe_stringified` parses the
+    // instead of a bare object, `deserialize_context_field` parses the
     // string and the tool succeeds. Same pattern as `edit_file.edits`.
     #[test]
     fn test_context_accepts_stringified_json() {
