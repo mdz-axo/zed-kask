@@ -2018,20 +2018,6 @@ mod env_isolation_tests {
     }
 }
 
-// ── Reconnect-path bookkeeping tests ───────────────────────────────────────
-//
-// These pin the four self-heal mechanisms' bookkeeping against the private
-// `launch_specs` / `last_reconnect` maps and the `try_reconnect` path. They
-// do NOT prove a killed child process is actually reconnected end-to-end —
-// that is the not-yet-restored `tests/reconnect_integration.rs`'s job (see
-// DIVERGENCE.md D3). They DO pin the invariants the integration test would
-// rely on: that a launch spec is recorded, that a deliberate stop clears it,
-// that the cooldown bounds a crash-looping binary, and that a metadata-only
-// server cannot be reconnected.
-//
-// Inline in `runtime.rs` so they can read the private `launch_specs` and
-// `last_reconnect` maps directly. A `#[cfg(test)]` module in a separate file
-// could not.
 #[cfg(test)]
 mod reconnect_path_tests {
     use super::*;

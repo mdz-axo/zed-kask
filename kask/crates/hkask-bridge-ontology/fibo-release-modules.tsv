@@ -1,6 +1,6 @@
 # Q2 Release module manifest follows; every module row is cross-checked against pinned RDF maturity and actual xmlns URI. Provisional and Informative excluded.
 # module	path relative to fibo/	actual RDF XML namespace prefix	ontology IRI
-# Official FIBO Release module inventory and named-constant guard.
+# Official FIBO Q2 Release module inventory (selection is checked against pinned RDF).
 # Source: https://github.com/EDMCouncil/FIBO at Q2 tag commit
 #   f59157fe156e3d91b1c045222d0a7dc06b7d78a2.
 # Each module row below records the source's own owl:Ontology IRI and XML
@@ -8,43 +8,7 @@
 # AboutFIBOProd imports 152 of the 157 Release modules, omits five Release
 # modules and includes one non-Release module (MarketsIndividuals). Inclusion
 # follows the maturity declaration, not that convenience import list.
-# Named constants below were first checked against master in 2026-08/09;
-# the tests now require every one to occur in the pinned Q2 Release index.
-#
-# Named-constant prefix bindings (complete module bindings follow):
-#   fibo-be-le-cb:    BE/LegalEntities/CorporateBodies/
-#   fibo-sec-sec-id:  SEC/Securities/SecuritiesIdentification/
-#   fibo-sec-sec-ast: SEC/Securities/SecurityAssets/
-#   fibo-ind-mkt-bas: IND/MarketIndices/BasketIndices/
-#   fibo-ind-ir-ir:   IND/InterestRates/InterestRates/
-#   fibo-ind-ind-ind: IND/Indicators/Indicators/
-#   fibo-fnd-acc-cur: FND/Accounting/CurrencyAmount/
-#   fibo-ind-ei-ei:   IND/EconomicIndicators/EconomicIndicators/
-#   fibo-fbc-fi-ip:   FBC/FinancialInstruments/InstrumentPricing/
-#
-# Named constant rows: <prefixed term> TAB <defining module>.
-# Release inventory rows: module TAB <RDF path> TAB <source XML prefix> TAB <ontology IRI>.
-#
-# NOTE: the former `fibo-fbc-fct-ra` (Financial Ratios) module prefix never
-# existed in FIBO — no such file in the repository or its git history. Terms
-# formerly carried under it (PriceEarningsRatio, ReturnOnInvestedCapital,
-# margins, DCF line items, analysis tools, etc.) are fabricated and were
-# removed; consumers fall back to Dublin Core per the operator decision
-# 2026-08-29.
-fibo-be-le-cb:Corporation	BE/LegalEntities/CorporateBodies.rdf
-fibo-sec-sec-id:TickerSymbol	SEC/Securities/SecuritiesIdentification.rdf
-fibo-sec-sec-ast:Portfolio	SEC/Securities/SecurityAssets.rdf
-fibo-ind-mkt-bas:MarketCapitalization	IND/MarketIndices/BasketIndices.rdf
-fibo-fbc-fi-ip:InternalRateOfReturn	FBC/FinancialInstruments/InstrumentPricing.rdf
-fibo-ind-ei-ei:ConsumerPriceIndex	IND/EconomicIndicators/EconomicIndicators.rdf
-fibo-ind-ei-ei:ProducerPriceIndex	IND/EconomicIndicators/EconomicIndicators.rdf
-fibo-ind-ei-ei:GrossDomesticProduct	IND/EconomicIndicators/EconomicIndicators.rdf
-fibo-ind-ei-ei:EconomicIndicator	IND/EconomicIndicators/EconomicIndicators.rdf
-fibo-ind-mkt-bas:ReferenceIndex	IND/MarketIndices/BasketIndices.rdf
-fibo-ind-ir-ir:ReferenceInterestRate	IND/InterestRates/InterestRates.rdf
-fibo-ind-ir-ir:InterestRateBenchmark	IND/InterestRates/InterestRates.rdf
-fibo-ind-ind-ind:TermStructure	IND/Indicators/Indicators.rdf
-fibo-fnd-acc-cur:InterestRate	FND/Accounting/CurrencyAmount.rdf
+# Rows: module TAB <RDF path> TAB <source XML prefix> TAB <ontology IRI>.
 module	BE/Corporations/Corporations.rdf	fibo-be-corp-corp	https://spec.edmcouncil.org/fibo/ontology/BE/Corporations/Corporations/
 module	BE/FunctionalEntities/FunctionalEntities.rdf	fibo-be-fct-fct	https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/FunctionalEntities/
 module	BE/FunctionalEntities/Publishers.rdf	fibo-be-fct-pub	https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/Publishers/

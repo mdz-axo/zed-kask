@@ -94,6 +94,7 @@
 //! - SDMX: <https://sdmx.org/> (ISO 17369)
 
 pub mod axis;
+pub mod data_cube;
 pub mod dc_bibo;
 pub mod derived;
 pub mod fibo;
@@ -107,7 +108,7 @@ pub mod published;
 mod published_sources;
 pub mod rdf;
 pub mod schema_org;
-pub mod sdmx;
+
 pub mod sepio;
 pub mod sumo;
 pub mod term_resolution;

@@ -102,8 +102,15 @@ pub struct GoalCreateRequest {
     /// 1–4 observable criteria (Fermi-decomposed from the goal).
     pub criteria: Vec<GoalCriterionInput>,
     /// The agent's intake prediction: probability (0.0–1.0) the goal will be
-    /// achieved. Brier-scored at `kanban_goal_score`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// achieved. Brier-scored at `kanban_goal_score`. Form-tolerant: a
+    /// string-encoded number ("0.8") is coerced (the live 2026-09-27
+    /// incident — three rmcp rejections of a string prediction); the
+    /// 0.0–1.0 range check stays in the service.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "hkask_types::maybe_string::deserialize_optional_f64_from_maybe_string"
+    )]
     pub prediction: Option<f64>,
     /// Optional link to the kanban task executing this goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -731,4 +738,58 @@ pub(crate) struct BoardImportResponse {
     /// Ontology concept: <https://w3id.org/pko#Procedure>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
+}
+
+#[cfg(test)]
+mod goal_wire_form_tests {
+    use super::GoalCreateRequest;
+
+    /// The live 2026-09-27 incident: the agent emitted the intake prediction
+    /// as a string three times and rmcp's macro layer rejected the whole call
+    /// ("invalid type: string \"0.8\", expected f64"). The wire form is now
+    /// tolerant; the 0.0–1.0 range validation stays in the service.
+    #[test]
+    fn goal_create_prediction_accepts_a_string_encoded_number() {
+        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
+            "goal_text": "test goal",
+            "criteria": [{ "description": "criterion" }],
+            "prediction": "0.8"
+        }))
+        .expect("string-encoded prediction deserializes");
+        assert_eq!(request.prediction, Some(0.8));
+    }
+
+    #[test]
+    fn goal_create_prediction_accepts_a_number_unchanged() {
+        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
+            "goal_text": "test goal",
+            "criteria": [{ "description": "criterion" }],
+            "prediction": 0.75
+        }))
+        .expect("numeric prediction deserializes");
+        assert_eq!(request.prediction, Some(0.75));
+    }
+
+    #[test]
+    fn goal_create_prediction_absent_yields_none() {
+        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
+            "goal_text": "test goal",
+            "criteria": [{ "description": "criterion" }]
+        }))
+        .expect("absent prediction deserializes");
+        assert_eq!(request.prediction, None);
+    }
+
+    #[test]
+    fn goal_create_prediction_non_numeric_string_is_rejected() {
+        let result: Result<GoalCreateRequest, _> = serde_json::from_value(serde_json::json!({
+            "goal_text": "test goal",
+            "criteria": [{ "description": "criterion" }],
+            "prediction": "high"
+        }));
+        assert!(
+            result.is_err(),
+            "form tolerance must not admit non-numeric strings"
+        );
+    }
 }

@@ -15,11 +15,11 @@
 //! force a domain ontology where it doesn't fit — the generalists are always
 //! valid.
 
+use crate::data_cube;
 use crate::dc_bibo;
 use crate::golem;
 use crate::omc;
 use crate::pko;
-use crate::sdmx;
 use crate::sumo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,9 +56,8 @@ pub enum OntologyNamespace {
     Golem,
     /// ML-Schema — machine-learning experiments.
     MlSchema,
-    /// SDMX (Statistical Data and Metadata eXchange) — statistical data
-    /// from FRED, DBnomics, World Bank, IMF, OECD, ECB, INSEE.
-    Sdmx,
+    /// W3C RDF Data Cube — statistical data represented as RDF cubes.
+    DataCube,
     /// MovieLabs OMC (Ontology for Media Creation) — media production
     /// workflows: creative works, scenes, shots, assets, captures.
     Omc,
@@ -76,7 +75,7 @@ impl std::str::FromStr for OntologyNamespace {
             "sepio" => Ok(OntologyNamespace::Sepio),
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
-            "sdmx" => Ok(OntologyNamespace::Sdmx),
+            "data_cube" | "data-cube" => Ok(OntologyNamespace::DataCube),
             "omc" => Ok(OntologyNamespace::Omc),
             "sumo" => Ok(OntologyNamespace::Sumo),
             _ => Err(format!("Unknown ontology namespace: {s}")),
@@ -91,7 +90,7 @@ impl std::fmt::Display for OntologyNamespace {
             OntologyNamespace::Sepio => write!(f, "sepio"),
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
-            OntologyNamespace::Sdmx => write!(f, "sdmx"),
+            OntologyNamespace::DataCube => write!(f, "data_cube"),
             OntologyNamespace::Omc => write!(f, "omc"),
             OntologyNamespace::Sumo => write!(f, "sumo"),
         }
@@ -126,7 +125,7 @@ pub enum OntologyAnchor {
 impl OntologyAnchor {
     /// Return the information density expectation for this ontology tier.
     /// hKask tuning choices (not values derived from any published
-    /// source): FIBO-tagged financial passages and ML-Schema/SDMX-tagged
+    /// source): FIBO-tagged financial passages and ML-Schema/Data Cube-tagged
     /// statistical passages carry denser extractable content than the
     /// baseline. Pinned by `ontology_anchor_density_factors` in the
     /// condenser; adjust only with condenser-quality evidence.
@@ -142,7 +141,7 @@ impl OntologyAnchor {
                 OntologyNamespace::Sepio => 1.0,
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
-                OntologyNamespace::Sdmx => 1.1,
+                OntologyNamespace::DataCube => 1.1,
                 OntologyNamespace::Omc => 1.0,
                 OntologyNamespace::Sumo => 1.0,
             },
@@ -175,7 +174,7 @@ impl OntologyAnchor {
 /// concept has no fit in the narrowest applicable ontology, the anchor
 /// falls to progressively broader scopes until one fits:
 ///
-/// 1. **Domain supplement** — SDMX, FIBO, SEPIO, GOLEM, ML-Schema, OMC: the
+/// 1. **Domain supplement** — RDF Data Cube, FIBO, SEPIO, GOLEM, ML-Schema, OMC: the
 ///    domain's specific ontology, when the concept exists in its
 ///    published vocabulary. Never force a concept into an ontology that
 ///    has no place for it in its graph.
@@ -217,24 +216,16 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             || lower.contains(&format!("_{kw}"))
             || lower.contains(&format!(" {kw}"))
     };
-    // Statistical data → SDMX (FRED, DBnomics, World Bank).
-    if [
-        "economic",
-        "fred",
-        "dbnomics",
-        "worldbank",
-        "world_bank",
-        "world bank",
-        "indicator",
-        "timeseries",
-        "time_series",
-    ]
-    .iter()
-    .any(|kw| matches_kw(kw))
+    // A domain hint does not prove that a FRED series or World Bank
+    // indicator is an RDF cube. Only explicitly cube-shaped output takes
+    // this specialized anchor; other statistics fall through to SUMO.
+    if ["data_cube", "data-cube", "statistical_cube"]
+        .iter()
+        .any(|kw| matches_kw(kw))
     {
         return OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Sdmx,
-            concept: sdmx::DATASET.to_string(),
+            namespace: OntologyNamespace::DataCube,
+            concept: data_cube::DATA_SET.to_string(),
         };
     }
     // Financial / company analysis → FIBO. Only domains FIBO's data space
@@ -436,6 +427,23 @@ mod tests {
                     concept: dc_bibo::DATASET.to_string(),
                 },
                 "domain '{domain}' must anchor on the Dublin Core state axis"
+            );
+        }
+        assert_eq!(
+            select_ontology_anchor("data_cube"),
+            OntologyAnchor::DomainSupplement {
+                namespace: OntologyNamespace::DataCube,
+                concept: data_cube::DATA_SET.to_string(),
+            }
+        );
+        for domain in ["fred", "dbnomics", "worldbank", "sdmx:SeriesKey"] {
+            assert_eq!(
+                select_ontology_anchor(domain),
+                OntologyAnchor::DomainSupplement {
+                    namespace: OntologyNamespace::Sumo,
+                    concept: sumo::ENTITY.to_string(),
+                },
+                "a statistical hint alone does not establish a cube: {domain}"
             );
         }
         // Financial domains FIBO actually covers stay on the FIBO supplement.

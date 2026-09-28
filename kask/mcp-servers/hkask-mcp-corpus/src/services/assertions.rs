@@ -44,6 +44,15 @@ pub(crate) struct AssertionsService {
     inference_router: Arc<dyn InferencePort>,
 }
 
+/// DOLCE-Lite-Plus has no pinned licensed source in the bridge. A model may
+/// still emit a retired URI despite the prompt change; do not persist it as
+/// though it were an ontology predicate.
+fn retired_dlp_predicate(predicate: &str) -> bool {
+    predicate
+        .split_once(':')
+        .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case("dlp"))
+}
+
 impl AssertionsService {
     pub fn new(inference_router: Arc<dyn InferencePort>) -> Self {
         Self { inference_router }
@@ -183,18 +192,11 @@ impl AssertionsService {
                 let prompt = render_docproc_template("extract-hmems", &vars);
                 let prompt = if prompt.is_empty() {
                     // Fallback when the registry template is missing. The
-                    // predicate lists are built from the same fixture-guarded
-                    // bridge constants the template's vocabulary pins, so
-                    // the fallback cannot drift from the verified term sets
-                    // (GOLEM v1.1, schema.org release, RDF 1.1).
-                    let golem_examples = [
-                        golem::HAS_CHARACTER,
-                        golem::PARTICIPANT_IN,
-                        golem::HAS_SETTING,
-                        golem::HAS_FEATURE,
-                        golem::REFERS_TO,
-                    ]
-                    .join(", ");
+                    // Predicate examples use bridge constants checked against
+                    // pinned published sources (GOLEM, CIDOC-CRM, schema.org,
+                    // RDF); unverified DOLCE-Lite-Plus terms are not offered.
+                    let golem_examples =
+                        [golem::HAS_CHARACTER, golem::HAS_FEATURE, golem::REFERS_TO].join(", ");
                     let expository_predicates = schema_org::ALL_TERMS.join(", ");
                     let rdf_type = rdf::TYPE;
                     let ontology_hint = if ontology_context.is_empty() {
@@ -282,6 +284,15 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             .get("predicate")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
+                        if retired_dlp_predicate(predicate) {
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.assertions",
+                                entity = %entity_ref,
+                                predicate = %predicate,
+                                "retired unverified DOLCE-Lite-Plus predicate rejected"
+                            );
+                            continue;
+                        }
                         let object = assertion.get("object").cloned().unwrap_or(json!(null));
                         let raw_confidence = assertion
                             .get("confidence")
@@ -327,10 +338,9 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             "subject": subject,
                             "object": object,
                         });
-                        // The predicate is always preserved as a descriptive
-                        // candidate and resolved by the shared authority. The
-                        // chunk-family check still governs confidence, but it
-                        // cannot suppress or privately classify the term.
+                        // Accepted predicates remain descriptive candidates
+                        // resolved by the shared authority. Retired unverified
+                        // DLP predicates are rejected above, not relabeled.
                         //
                         // State-axis type: SEPIO's published `assertion`
                         // class — a statement that a proposition is true.
@@ -389,5 +399,32 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             "h_mems_stored": h_mems_stored,
         });
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retired_dlp_predicate;
+
+    #[test]
+    fn retired_dlp_predicates_do_not_enter_assertion_storage() {
+        for local in [
+            "participant-in",
+            "participant",
+            "generic-location",
+            "setting",
+            "has-state",
+        ] {
+            let term = format!("dlp:{local}");
+            assert!(retired_dlp_predicate(&term), "{term}");
+        }
+        assert!(retired_dlp_predicate(&format!("DLP:{}", "has-state")));
+        for term in [
+            hkask_bridge_ontology::golem::HAS_CHARACTER,
+            hkask_bridge_ontology::golem::REFERS_TO,
+            hkask_bridge_ontology::golem::REALISED_IN,
+        ] {
+            assert!(!retired_dlp_predicate(term), "{term}");
+        }
     }
 }

@@ -141,12 +141,12 @@ async fn read_global_skill_file(
     Ok(result_text.into())
 }
 
-use super::deserialize_optional_u32_from_maybe_string;
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
+use hkask_types::maybe_string::deserialize_optional_u32_from_maybe_string;
 
 /// Reads the content of the given file in the project.
 ///

@@ -77,59 +77,6 @@ where
     }
 }
 
-/// Deserialize an `Option<u64>` that may have been provided as a numeric string
-/// (e.g. `"300000"` instead of `300000`). Some models emit integers as strings;
-/// we coerce rather than reject to avoid wasting a turn on a retry.
-pub(crate) fn deserialize_optional_u64_from_maybe_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum U64OrString {
-        Number(u64),
-        String(String),
-    }
-
-    match Option::<U64OrString>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(U64OrString::Number(n)) => Ok(Some(n)),
-        Some(U64OrString::String(s)) => s
-            .parse::<u64>()
-            .map(Some)
-            .map_err(|error| D::Error::custom(format!("failed to parse u64 from string: {error}"))),
-    }
-}
-
-/// Deserialize an `Option<u32>` that may have been provided as a numeric string
-/// (e.g. `"18"` instead of `18`). Some models emit line numbers as strings; we
-/// coerce rather than reject to avoid wasting a turn on a retry and to keep
-/// persisted tool calls replayable after a schema drift.
-pub(crate) fn deserialize_optional_u32_from_maybe_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<u32>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum U32OrString {
-        Number(u32),
-        String(String),
-    }
-
-    match Option::<U32OrString>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(U32OrString::Number(n)) => Ok(Some(n)),
-        Some(U32OrString::String(s)) => s
-            .parse::<u32>()
-            .map(Some)
-            .map_err(|error| D::Error::custom(format!("failed to parse u32 from string: {error}"))),
-    }
-}
-
 pub use apply_code_action_tool::*;
 pub use ask_user_tool::*;
 pub use context_server_registry::*;
@@ -416,29 +363,6 @@ mod tests {
                 "{name} must expose the same read-only curator_status tool"
             );
         }
-    }
-
-    #[test]
-    fn test_deserialize_optional_u64_from_maybe_string() {
-        // Numeric string is coerced to u64.
-        let input = serde_json::json!("300000");
-        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
-        assert_eq!(result, Some(300000));
-
-        // Integer passes through unchanged.
-        let input = serde_json::json!(180000);
-        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
-        assert_eq!(result, Some(180000));
-
-        // Null / missing field yields None.
-        let input = serde_json::json!(null);
-        let result: Option<u64> = deserialize_optional_u64_from_maybe_string(input).unwrap();
-        assert_eq!(result, None);
-
-        // Non-numeric string is rejected.
-        let input = serde_json::json!("not a number");
-        let result = deserialize_optional_u64_from_maybe_string::<serde_json::Value>(input);
-        assert!(result.is_err());
     }
 
     #[test]

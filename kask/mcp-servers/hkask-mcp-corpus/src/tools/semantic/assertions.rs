@@ -9,8 +9,8 @@ use hkask_bridge_ontology::sepio;
 
 /// Map an abstract-namespace predicate prefix to the chunk-tag namespace
 /// key it must have been tagged with to bypass the subject/object-in-text
-/// check. GOLEM-family prefixes (`gc:`, `crm:`, `dlp:`, `lrmoo:` — GOLEM
-/// reuses CIDOC-CRM, LRMoo, and DOLCE-Lite-Plus terms) all map to the
+/// check. GOLEM-family prefixes (`gc:`, `crm:`, `lrmoo:` — GOLEM
+/// reuses CIDOC-CRM and LRMoo terms) map to the
 /// `"golem"` tag key produced by deterministic ontology resolution. Returns `None` for
 /// non-abstract namespaces (schema, rdf, dcterms, ...), which never bypass.
 pub(crate) fn abstract_namespace_tag_key(pred_ns: &str) -> Option<&'static str> {
@@ -34,7 +34,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
     use hkask_types::Dimension::*;
     let p = predicate.to_lowercase();
 
-    // Curated mapping — every entry is a fixture-guarded bridge constant,
+    // Curated mapping — every entry is a published-source-backed bridge constant,
     // compared case-insensitively (LLM-emitted predicates arrive in any
     // case; the constants carry the canonical mixed-case local names).
     // The comparison must be case-insensitive on BOTH sides: matching a
@@ -70,8 +70,6 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
         // When — SEPIO temporal epistemic
         (sepio::HAS_CONFIDENCE_LEVEL, When),
         // Where — spatial
-        (golem::HAS_SETTING, Where),
-        (golem::GENERIC_LOCATION, Where),
         (schema_org::LOCATION, Where),
         (dc_bibo::SPATIAL, Where),
         // Why — causation, motivation, interpretive reference
@@ -101,7 +99,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 /// Returns the confidence to store for an assertion: the LLM-reported confidence,
 /// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
-/// - Abstract-namespace predicates (GOLEM family — `gc`/`crm`/`dlp`/`lrmoo`,
+/// - Abstract-namespace predicates (GOLEM family — `gc`/`crm`/`lrmoo`,
 ///   plus `sepio`/`pko`/`epistemic`/`other`) bypass the
 ///   subject/object-in-text check ONLY if the predicate's tag family was
 ///   actually tagged for this chunk. Without that cross-check, the LLM could

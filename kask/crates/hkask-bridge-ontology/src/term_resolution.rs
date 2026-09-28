@@ -101,10 +101,11 @@ pub struct CanonicalTerms {
     pub concepts: Vec<String>,
 }
 
-/// Full published vocabularies after FIBO and the remaining local SDMX
-/// registry, in stable resolution order. OMC precedes PKO so media terms
-/// keep their published sense.
+/// Full published domain vocabularies in stable resolution order. FIBO
+/// precedes RDF Data Cube; OMC precedes PKO for media terms.
 const PUBLISHED_DOMAIN: &[&str] = &[
+    "FIBO",
+    "RDF Data Cube",
     "OMC",
     "PKO",
     "P-Plan",
@@ -117,9 +118,6 @@ const PUBLISHED_DOMAIN: &[&str] = &[
     "RDF",
     "RDFS",
 ];
-
-/// The remaining local identifier registry is not yet a published source index.
-const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[("SDMX", crate::sdmx::ALL_CONCEPTS)];
 
 /// Full published vocabularies consulted after the domain and derived rungs,
 /// in ladder order: SUMO (formal upper ontology) first, then schema.org (a
@@ -176,22 +174,7 @@ fn published_senses(tier: &str, namespace: &str, term: &str) -> Vec<Sense> {
 /// `alternatives`.
 pub fn resolve_term(term: &str) -> TermResolution {
     let trimmed = term.trim();
-    let key = normalize(trimmed);
     let mut senses: Vec<Sense> = Vec::new();
-
-    // Preserve the pre-index domain ordering: FIBO before SDMX, then OMC
-    // and the other published supplements. FIBO now resolves from the
-    // source-backed index rather than its named-constant registry.
-    senses.extend(published_senses("domain_supplement", "FIBO", trimmed));
-    for (namespace, registry) in DOMAIN_REGISTRIES {
-        let found = registry.iter().find(|uri| {
-            let name = uri.rsplit(':').next().unwrap_or(uri);
-            trimmed == **uri || (!name.is_empty() && key == normalize(name))
-        });
-        if let Some(uri) = found {
-            senses.push(sense("domain_supplement", namespace, uri));
-        }
-    }
 
     for namespace in PUBLISHED_DOMAIN {
         senses.extend(published_senses("domain_supplement", namespace, trimmed));

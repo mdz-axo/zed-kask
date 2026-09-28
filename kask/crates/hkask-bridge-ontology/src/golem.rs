@@ -3,13 +3,9 @@
 //! Maps hKask narrative concepts to the GOLEM ontology (Golem Ontology for
 //! Narrative and Fiction), v1.1. GOLEM is an extension of CIDOC-CRM and LRMoo
 //! aligned to DOLCE-Lite-Plus: it defines the `gc:` classes and properties
-//! below and otherwise reuses `crm:` (CIDOC-CRM), `lrmoo:` (LRMoo), and
-//! `dlp:` (DOLCE-Lite-Plus) terms. GOLEM, CIDOC-CRM and LRMoo are loaded in
-//! full from `sources/` and resolved through `published`; this module names
-//! only the concepts hKask code emits, and `all_terms_are_official` fails the
-//! build unless each is published. DOLCE-Lite-Plus is not vendored (its
-//! modules state no license): the `dlp:` constants are listed in
-//! `DLP_PENDING_SOURCE` and stay unverifiable until it is.
+//! below and reuses `crm:` (CIDOC-CRM) and `lrmoo:` (LRMoo) terms. GOLEM,
+//! CIDOC-CRM and LRMoo are loaded in full from `sources/` and resolved through
+//! `published`. Unlicensed DOLCE-Lite-Plus terms are not emitted by this bridge.
 //!
 //! Reference: Pianzola, Pannach, Cheng, Yang, Scotti (GOLEM Lab, 2024).
 //! <https://ontology.golemlab.eu/> — IRI <https://w3id.org/golem/ontology>,
@@ -105,24 +101,6 @@ golem_terms! {
     /// A feature is a feature of a narrative or character (GOLEM GP0i).
     IS_FEATURE_OF = "gc:GP0i_is_feature_of",
 
-    /// An endurant (character, object) participates in a narrative event
-    /// (DOLCE-Lite-Plus, reused by GOLEM).
-    PARTICIPANT_IN = "dlp:participant-in",
-
-    /// A narrative event has an endurant participant (DOLCE-Lite-Plus).
-    PARTICIPANT = "dlp:participant",
-
-    /// The location of an enduring entity within the narrative
-    /// (DOLCE-Lite-Plus, reused by GOLEM).
-    GENERIC_LOCATION = "dlp:generic-location",
-
-    /// The setting of an entity — links a character, object, or location to
-    /// the narrative setting it is in (DOLCE-Lite-Plus `setting`).
-    HAS_SETTING = "dlp:setting",
-
-    /// A psychological state of a character (DOLCE-Lite-Plus, reused by
-    /// GOLEM for G3 Psychological State).
-    HAS_STATE = "dlp:has-state",
 
     /// A propositional object (text, narrative unit) makes a statement
     /// about an entity (CIDOC-CRM P67, reused by GOLEM). The honest cover
@@ -136,12 +114,12 @@ golem_terms! {
 /// Map a predicate prefix from the GOLEM family of namespaces to the
 /// chunk-tag namespace key used by the tagging pipeline
 /// (`canonicalize_terms` groups resolved GOLEM concepts under `"golem"`).
-/// GOLEM's own `gc:` terms and the CIDOC-CRM / LRMoo / DOLCE-Lite-Plus
-/// terms it reuses all belong to that one tag family. Returns `None` for
+/// GOLEM's own `gc:` terms and the CIDOC-CRM / LRMoo terms it reuses
+/// belong to that tag family. Returns `None` for
 /// prefixes outside the family.
 pub fn tag_family(predicate_prefix: &str) -> Option<&'static str> {
     match predicate_prefix.to_lowercase().as_str() {
-        "gc" | "crm" | "dlp" | "lrmoo" | "golem" => Some("golem"),
+        "gc" | "crm" | "lrmoo" | "golem" => Some("golem"),
         _ => None,
     }
 }
@@ -154,34 +132,18 @@ mod tests {
     fn tag_family_covers_golem_reused_namespaces() {
         assert_eq!(tag_family("gc"), Some("golem"));
         assert_eq!(tag_family("crm"), Some("golem"));
-        assert_eq!(tag_family("dlp"), Some("golem"));
+        assert_eq!(tag_family("dlp"), None);
         assert_eq!(tag_family("lrmoo"), Some("golem"));
         assert_eq!(tag_family("GOLEM"), Some("golem"));
         assert_eq!(tag_family("schema"), None);
         assert_eq!(tag_family("fibo"), None);
     }
 
-    /// The `dlp:` constants: DOLCE-Lite-Plus is not vendored (no stated
-    /// license), so these cannot be verified against a pinned source. Listed
-    /// explicitly so the gap stays visible and no other term can join it.
-    const DLP_PENDING_SOURCE: &[GolemConcept] = &[
-        PARTICIPANT_IN,
-        PARTICIPANT,
-        GENERIC_LOCATION,
-        HAS_SETTING,
-        HAS_STATE,
-    ];
-
     /// Fabrication guard: every term in this module is published by the
-    /// loaded GOLEM, CIDOC-CRM or LRMoo sources, except the explicit
-    /// DOLCE-Lite-Plus pending list.
+    /// loaded GOLEM, CIDOC-CRM or LRMoo sources.
     #[test]
     fn all_terms_are_official() {
         for term in ALL_TERMS {
-            if DLP_PENDING_SOURCE.contains(term) {
-                assert!(term.starts_with("dlp:"), "{term}");
-                continue;
-            }
             assert!(
                 crate::published::contains(term),
                 "{term} is not published by the loaded GOLEM/CIDOC-CRM/LRMoo sources"

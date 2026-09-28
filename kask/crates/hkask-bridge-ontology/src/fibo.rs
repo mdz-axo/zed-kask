@@ -37,7 +37,8 @@ macro_rules! fibo_terms {
         /// Named FIBO terms used directly by callers; the compiled Release
         /// index contains all published terms, including those not named here.
         /// New named constants must go through this macro.
-        pub const ALL_TERMS: &[FiboConcept] = &[$($name),*];
+        #[cfg(test)]
+        const ALL_TERMS: &[FiboConcept] = &[$($name),*];
     };
 }
 
@@ -127,8 +128,8 @@ mod tests {
     /// ontology leaks in through the production import list.
     #[test]
     fn release_is_complete_and_provisional_is_excluded() {
-        let fixture = include_str!("../fixtures/fibo-verified-terms.txt");
-        let modules: std::collections::HashSet<&str> = fixture
+        let inventory = include_str!("../fibo-release-modules.tsv");
+        let modules: std::collections::HashSet<&str> = inventory
             .lines()
             .filter_map(|line| line.strip_prefix("module\t"))
             .filter_map(|line| line.split('\t').next())

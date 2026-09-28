@@ -15,10 +15,10 @@ that does tagging depends on this crate.
   noun dimension. Always available.
 - **Process axis** — PKO (`pko`): the "how did this come to be" verb dimension.
   Always available.
-- **Domain supplements** — FIBO, SEPIO, GOLEM, ML-Schema and OMC:
-  layered on top where the universal axes aren't specific enough. SDMX
-  currently supplies local identifiers over Information Model class names,
-  not a pinned RDF/OWL vocabulary.
+- **Domain supplements** — FIBO, RDF Data Cube, SEPIO, GOLEM, ML-Schema
+  and OMC: layered on top where the universal axes aren't specific enough.
+  Only explicitly cube-shaped output selects the `data_cube` artifact anchor;
+  a statistical provider hint alone does not establish an RDF cube.
 
 The invariant: one axis is always Dublin Core or PKO, so every artifact has a
 common mapping in process or state space regardless of domain.
@@ -33,7 +33,7 @@ common mapping in process or state space regardless of domain.
 | `sepio` | Scientific Evidence and Provenance Information Ontology | Domain supplement (scientific evidence) |
 | `golem` | GOLEM narrative ontology | Domain supplement (narrative) |
 | `ml_schema` | ML-Schema | Domain supplement (ML training) |
-| `sdmx` | SDMX Information Model class-name identifiers (fixture-backed, not official RDF/OWL URIs) | Domain supplement (statistics) |
+| `data_cube` | W3C RDF Data Cube (`qb:`), three named constants over the pinned full vocabulary | Domain supplement (RDF statistical cubes) |
 | `omc` | MovieLabs Ontology for Media Creation | Domain supplement (media) |
 | `axis` | Domain-selection logic | `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor` |
 | `sumo` | Named SUMO concepts emitted by hKask code | Upper ontology |
@@ -79,23 +79,25 @@ published index. No OWL/KIF axioms are evaluated.
 Current indexed coverage: the complete pinned SUMO distribution (excluding
 `tiny*` test subsets); all layers of schema.org 30.1; DCMI terms/types,
 BIBO, CiTO, PKO with P-Plan and PROV, SEPIO, GOLEM with CIDOC-CRM and LRMoo,
-OMC, ML-Schema, and RDF/RDFS from their pinned published sources. FIBO is the
+OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube from their pinned published
+sources. The RDF Data Cube `cube.ttl` is pinned in `sources/SOURCES.lock`
+(2014 Recommendation, publisher-asserted PDDL 1.0 license). FIBO is the
 pinned Q2 **Release** maturity selection: 157 modules and 6,443 indexed terms;
-its Provisional modules are **not** indexed. `fixtures/fibo-verified-terms.txt`
-retains the selected module/namespace bindings, reconciled by `build.rs`
-against the pinned Release sources — it is not a tiny term-only substitute.
+its Provisional modules are **not** indexed. `fibo-release-modules.tsv`
+selects Release modules and namespace bindings, reconciled by `build.rs`
+against pinned sources — it is not a tiny term-only substitute.
 For source versions and individual license terms, consult `sources/SOURCES.lock`
 (SUMO's `Merge.kif` carries the IEEE notice).
 
-Two explicit exceptions: `sdmx::ALL_CONCEPTS` is a fixture-checked local
-rendering of SDMX Information Model class names; `sdmx:` is **not** an official
-published RDF/OWL URI namespace, and SDMX is not in the published-source index.
-The five `dlp:` constants used by `golem` remain pending a licensable pinned
-DOLCE-Lite-Plus source; they do not gain source-backed definitions by proximity
-to GOLEM. Do not present either as fully loaded.
+Coverage limits: `data_cube` selects `qb:DataSet`, `qb:DataStructureDefinition`
+and `qb:Observation`; former local `sdmx:` Information Model aliases without
+matching published RDF classes are removed, not rebranded as `qb:` terms.
+DOLCE-Lite-Plus is not pinned or indexed: the five unlicensed `dlp:` constants
+were removed from `golem`, and the corpus rejects retired `dlp:` predicates.
+A pinned source may omit a definition; do not supply one on its behalf.
 
-`resolve_term` walks: pinned domain sources (FIBO Release first) and the local
-SDMX identifier registry → derived concepts → full SUMO (`upper`) → full
+`resolve_term` walks: pinned domain sources (FIBO Release first, then RDF
+Data Cube and the other domain vocabularies) → derived concepts → full SUMO (`upper`) → full
 schema.org (`general_vocabulary`) → published Dublin Core/BIBO/CiTO
 (`state_axis`) → 5W1H core. The first sense is the resolution; other found
 senses appear in `alternatives`, with each published sense's source and its

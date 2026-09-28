@@ -463,6 +463,12 @@ pub const RDF_VOCABULARIES: &[RdfVocabulary] = &[
         directory: "rdf-11",
     },
     RdfVocabulary {
+        namespace: "RDF Data Cube",
+        prefix: "qb",
+        iri: "http://purl.org/linked-data/cube#",
+        directory: "rdf-data-cube",
+    },
+    RdfVocabulary {
         namespace: "Dublin Core",
         prefix: "dcterms",
         iri: "http://purl.org/dc/terms/",

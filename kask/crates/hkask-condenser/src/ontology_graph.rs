@@ -299,16 +299,9 @@ pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'st
             ..
         } => vec!["hypothesis", "evidence", "falsification", "corroboration"],
         crate::types::OntologyAnchor::DomainSupplement {
-            namespace: crate::types::OntologyNamespace::Sdmx,
+            namespace: crate::types::OntologyNamespace::DataCube,
             ..
-        } => vec![
-            "statistic",
-            "series",
-            "indicator",
-            "dataset",
-            "frequency",
-            "period",
-        ],
+        } => vec!["observation", "dataset", "dimension", "measure", "slice"],
         // OMC has no section in the condenser's internal concept graph yet,
         // so there is nothing for media keywords to be adjacent TO — empty
         // (like Core) rather than dead keyword config. Add keywords here

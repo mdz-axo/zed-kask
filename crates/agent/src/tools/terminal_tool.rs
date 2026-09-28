@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-use super::deserialize_optional_u64_from_maybe_string;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::SandboxFallbackDecision;
 use crate::sandboxing::{
@@ -21,6 +20,7 @@ use crate::sandboxing::{
     sandboxing_enabled_for_project,
 };
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use hkask_types::maybe_string::deserialize_optional_u64_from_maybe_string;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 

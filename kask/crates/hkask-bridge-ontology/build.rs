@@ -130,7 +130,7 @@ fn read_rdf(sources: &Path, pin: &Pin) -> Result<Vec<published_sources::RdfTripl
     Ok(triples)
 }
 
-/// The fixture is an independent inventory of the tag's Release ontology
+/// The module inventory is an independent selection of the tag's Release ontology
 /// declarations. Checking it against both the pinned bytes and the lock
 /// prevents a missing module from looking like a successful small index.
 fn index_fibo(
@@ -144,9 +144,12 @@ fn index_fibo(
     const MATURITY: &str = "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/hasMaturityLevel";
     const RELEASE: &str =
         "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/Release";
-    let fixture = read(&manifest.join("fixtures/fibo-verified-terms.txt"))?;
+    let inventory = read(&manifest.join("fibo-release-modules.tsv"))?;
     let mut modules = Vec::new();
-    for line in fixture.lines().filter(|line| line.starts_with("module\t")) {
+    for line in inventory
+        .lines()
+        .filter(|line| line.starts_with("module\t"))
+    {
         let fields: Vec<_> = line.split('\t').collect();
         let [_, path, prefix, iri] = fields.as_slice() else {
             return Err(format!("invalid FIBO module row: {line}"));
