@@ -212,12 +212,16 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 // semantically wrong orderings) that no structural validation catches.
 //
 // Decision: ONE `InferencePort::rerank` call carrying all candidates as
-// documents, routed through the zed-side IPC bridge to the provider's
-// rerank endpoint (OpenRouter `/api/v1/rerank`). The default model is a
-// dedicated reranker (`OpenRouter/qwen/qwen3-reranker-8b`, override via
-// `HKASK_RERANK_MODEL` / the kask models settings) whose native output is a
-// per-document `relevance_score` — the model's own relevance judgment, not
-// a parsed LLM generation.
+// documents, routed through the zed-side IPC bridge to the OpenRouter
+// rerank endpoint (`/api/v1/rerank` — the only rerank provider). The
+// shipped default (`deepinfra/Qwen/Qwen3-Reranker-8B`) is not
+// `OpenRouter/`-prefixed and therefore not rerank-eligible: under the
+// default this path degrades to heuristic rerank with the reason
+// surfaced. An `OpenRouter/`-prefixed reranker override (e.g.
+// `OpenRouter/qwen/qwen3-reranker-8b`, via `HKASK_RERANK_MODEL` / the
+// kask models settings) activates native rerank, whose output is a
+// per-document `relevance_score` — the model's own relevance judgment,
+// not a parsed LLM generation.
 //
 // Why the native protocol beats both alternatives:
 // 1. No category-error surface — the model cannot emit prose, hallucinate a

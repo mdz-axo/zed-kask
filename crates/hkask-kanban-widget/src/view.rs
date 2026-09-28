@@ -678,7 +678,7 @@ impl KanbanWidget {
 
     /// Render the card-detail panel (B3) when a card is open. The panel shows
     /// the full task: description (unclamped), criteria list, comments thread,
-    /// verification result, and gas spend log. Closes on a "Close" button
+    /// verification result, and activity log. Closes on a "Close" button
     /// click or Escape (handled on the root element). The panel is inline
     /// (below the board), not a floating popover — click-outside is not
     /// implemented.

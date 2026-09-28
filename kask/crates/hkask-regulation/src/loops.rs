@@ -14,7 +14,7 @@
 //! | 6 | Cybernetics | Homeostatic regulation | Meta |
 //!
 //! **Bridge:**
-//! - Memory consolidation: confidence-based cleanup + budget pruning
+//! - Memory consolidation: confidence-based cleanup
 //!
 //! **Authority DAG:** Curation → Cybernetics → {Inference, Memory}
 //! No sideways edges. Authority flows downward.

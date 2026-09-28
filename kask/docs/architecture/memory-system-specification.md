@@ -1238,9 +1238,7 @@ already exposes this field; no UI omission is intended.
 `HKASK_MEMORY_STORAGE_BUDGET` has no read site in code: count-based pruning
 was removed with the storage budget (operator ruling 2026-09-04, completed
 2026-09-08; `consolidation_service.rs:30-37`). The consolidation pass runs
-confidence-floor cleanup only. The `hkask-memory` README still documents the
-variable as a live knob (`kask/crates/hkask-memory/README.md:75`) — a stale
-README claim, not a code surface.
+confidence-floor cleanup only.
 
 ### Environment variables (live — read via `std::env::var`)
 

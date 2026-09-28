@@ -57,7 +57,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 
 **5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-improvement` skill (`.agents/skills/kata-improvement/`; the Coaching Kata was folded into it from `kata-coaching`, 2026-09-28, commit `ebcd901c80`); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
 
-**Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists in code (zero hits in `kask/**/*.rs`, re-verified 2026-09-28); the kata-kanban README still claims one (`kask/mcp-servers/hkask-mcp-kata-kanban/README.md:85`) — a stale README claim, not a registered span.
+**Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists in code (zero hits in `kask/**/*.rs`, re-verified 2026-09-28).
 
 ### 1.3 Adapter Domain
 
@@ -167,7 +167,7 @@ The corpus server provides tools for style corpus management, prose generation, 
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` (the crate doc comment's own `Tools (25):` heading at `:16` is stale — the list under it names 26) and pinned by `tool_surface_is_exactly_26_registered_tools` at `:286-289` |
+| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_26_registered_tools` at `:286-289` |
 
 ### 4.3 Style Exemplar Architecture
 

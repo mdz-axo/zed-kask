@@ -14,7 +14,7 @@ full turn text.
 - **`MemoryStore`** — wraps `HMemStore` (relational EAV) + `EmbeddingStore`
   (sqlite-vec vectors). Provides `store`, `store_embedding`, `search_similar`,
   `query_deduped`, and decay/touch operations.
-- **`MemoryConsolidator`** — confidence-floor cleanup and storage-budget pruning.
+- **`MemoryConsolidator`** — confidence-floor cleanup.
 
 The bridge that wires thread turns into this store lives in `kask_bridge`
 (`RealMemoryPort`), not in this crate.

@@ -1157,7 +1157,7 @@ mod semantic_tier_tests {
 
     #[test]
     fn semantic_cosine_threshold_is_pinned() {
-        // corpus_deduplicate's threshold, pinned: parallel vectors cluster,
+        // corpus_dedup_chunks' threshold, pinned: parallel vectors cluster,
         // orthogonal do not, and a zero-norm vector is an explicit 0.0 —
         // never a NaN from 0/0.
         assert!((SEMANTIC_COSINE_THRESHOLD - 0.85).abs() < 1e-9);
