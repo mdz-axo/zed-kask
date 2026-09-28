@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.19.0"
+version: "0.19.1"
 status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -112,7 +112,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction vs observed follow-up:** prior pass scored 0 defects / 0 impedances but missed the embedding readback: IS — server emits `Json` (`inference_ipc_server.rs:772-793`) and the client formerly mapped it to `Connection` (`inference_ipc_client.rs:483-488` before this edit). At the approved IPC seam, `embedding_ipc_preserves_json_error_class` failed before and passed after the client maps `Json` to `EmbeddingGenerationError::Json` (`inference_ipc_client.rs:483-487`). The existing `InvalidRequest` and fallback behavior remain represented in the same match; `hkask-inference --lib` ran 54/54 tests. The source change is committed in `e1f1b51cad` (alongside unrelated ontology work), net −1 production line (+5/−6), with 25 test lines added. **Remaining impedance deferred:** `Api` errors are sent as a status-bearing string (`inference_ipc_server.rs:778-780`) but still read as `Connection` (`inference_ipc_client.rs:486`); structured status recovery needs a separately agreed protocol/test seam and may add lines rather than delete them. Risk: a provider API failure can be misclassified as retryable. Falsifier for a future slice: an IPC test sends a server-shaped `Api` response and observes `EmbeddingGenerationError::Api` with the original status. Re-score the Phase 0 prediction only when the row closes.
 - **Hands off to:** L1 (streamed tokens), L2 (inference-resilience sensor, `cybernetics_loop/cycle.rs:144` `sense_inference_resilience`), L6 (embeddings)
 
-### L6 — Corpus pipeline cycle
+### L6 — Corpus pipeline cycle — audited & closed; end-to-end deferred to a caller-selected corpus
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-corpus/src`
 - **Entry point:** `tools/document.rs:35` `corpus_convert`, `:355` `corpus_chunk`; `tools/tagging/ops.rs:263` `corpus_tag_chunks`; `tools/semantic.rs:228` `corpus_embed`, `:170` `corpus_generate_qa_batch`; `tools/corpus.rs:447` `corpus_ground_generated_qa`, `:174` `corpus_ingest_qa`
 - **Trigger:** per-tool requests chained by skills (convert → triage/OCR → chunk → tag → embed → prompts → QA → ground → ingest → assemble)
@@ -133,7 +133,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L1 (prompt submit), L9 (kanban widget ↔ server), L13 (swarm panel ↔ server)
 - **Prediction:** 2 / 2 / 0.45
 - **Phase 1 scoped graph (IS):** `AcpThreadEvent::NewEntry` reaches `conversation_view.rs:1475-1477,1736-1738` → entry/view sync (`:1742-1755`) → active-view change notifies `agent_panel.rs:4662-4677` → render consumes view (`:6641-6648`). For a kanban task move: click stages intent (`crates/hkask-kanban-widget/src/view.rs:662-692`), confirmation dispatches (`:279-289`), `move_controller.rs:194-229` applies optimistic state and invokes L9 tool, then clears/rolls back and notifies (`:230-253`). L1 compose-back is a separate editor prefill (`view.rs:919-931`); no L13 refresh claim follows solely from a swarm badge. Five properties in these two paths: closed conditional on authoritative update; timely unmeasured; accurate conditional on server readback; complete not established for other panels/widgets; actionable via dispatch status/error.
-- **Phase 2 bounded observations:** IS — `set_body` declines an incoming body while a task move is pending/in flight (`view.rs:173-203`); INFERRED — a concurrent authoritative update may remain unseen after completion. Falsifier: prove a fresh authoritative `set_body` is guaranteed after every completion. INFERRED — optimistic mutation without an immediate explicit notify (`move_controller.rs:215-229`) may delay visible feedback; falsifier: a GPUI rendered-frame check showing immediate repaint. No such runtime checks ran; no deletion candidate admitted and no zed-side edits made. Defer pending a measured panel seam test.
+- **Phase 2 bounded observations:** IS — `set_body` declines an incoming body while a task move is pending/in flight (`view.rs:173-203`); INFERRED — a concurrent authoritative update may remain unseen after completion. Falsifier: prove a fresh authoritative `set_body` is guaranteed after every completion. INFERRED — optimistic mutation without an immediate explicit notify (`move_controller.rs:215-229`) may delay visible feedback; falsifier: a GPUI rendered-frame check showing immediate repaint. No such runtime checks ran; no deletion candidate admitted and no zed-side edits made. Defer pending a measured panel seam test. 2026-09-27 hazard note: that test is additionally deferred behind the concurrent streams' in-flight widget subtraction (large staged removals in the kanban and graph widget sources at observation); this row's citations name lines being rewritten, so the scoped graph must be re-mapped against the landed widget state before any seam test is written.
 
 ### L8 — Forecast/calibration loop — AUDITED & CLOSED 2026-09-27
 - **Crate/path:** `kask/crates/hkask-forecast` + `kask/mcp-servers/hkask-mcp-{companies,prediction-markets}`
@@ -436,6 +436,17 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.19.1 confirmed L6's closure on the current tree and
+  recorded an L7 deferral hazard. L6: the corpus surface
+  (hkask-mcp-corpus, hkask-mcp-training, the build-corpus-pipeline skill)
+  is unchanged since the audit commit `1113d8d85d` (git log verified — no
+  commits, no dirty files), so the row's re-verified citations stand, and
+  the 201/201 corpus library receipt was re-run green on the current tree
+  (`92b9f541f8`). L6's title now carries its closed state, matching the
+  ledger. L7: the measured panel seam test is additionally deferred behind
+  the concurrent in-flight widget subtraction — the row's citations name
+  lines being rewritten, so the scoped graph must be re-mapped against the
+  landed widget state first. Doc-only pass; no production lines changed.
 - 2026-09-27 — v0.19.0 L2 verification closed the row: this audit
   independently re-ran the gate on the landed state — the named falsifier
   `accepted_impact_check_retries_a_failed_read_then_verifies_once` green,
